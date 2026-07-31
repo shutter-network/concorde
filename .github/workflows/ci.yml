@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Same toolchain as a developer gets: mise.toml is the only pin.
+      - uses: jdx/mise-action@v4
+
+      - run: npm ci
+
+      # The one command. Whatever this runs is what the project is measured by.
+      - run: npm run check
+
+      # Separate because it packs, installs from the registry, and is slow.
+      - run: npm run check:package

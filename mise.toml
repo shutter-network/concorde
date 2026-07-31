@@ -1,0 +1,7 @@
+# The toolchain. `mise install` provisions everything here.
+#
+# Node is pinned exactly rather than by major, so CI and every developer run the
+# same runtime. npm ships with Node and needs no pin of its own; Docker cannot
+# sensibly come from mise, so it stays a documented prerequisite.
+[tools]
+node = "24.18.1"

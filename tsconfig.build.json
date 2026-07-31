@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "composite": true,
+    "declaration": true,
+    // No source maps: `src` is not shipped, so maps in the tarball would dangle.
+    // Adding both together is a deliberate decision, not a default.
+    "rootDir": "src",
+    "outDir": "dist",
+    // Outside `dist`, which is shipped verbatim via `files`.
+    "tsBuildInfoFile": "node_modules/.cache/tsconfig.build.tsbuildinfo"
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
+}
