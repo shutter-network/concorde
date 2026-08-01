@@ -13,7 +13,6 @@
  */
 
 import path from "node:path";
-import { isValidSessionName } from "../core/handlers.ts";
 
 /**
  * A directory the agent's container needs, in the up-to-three places it is named.
@@ -317,17 +316,12 @@ function containerCommandOf(given: readonly string[] | undefined): readonly [str
  * it can be found from the Run row that names it — which is what the Run's own
  * `session` column cannot say, since it holds `null` for exactly this case.
  *
- * The name is checked again here even though the Handler seam already checked it.
- * It becomes a directory name, and the grammar is what keeps it one path segment.
+ * A name the Handler did choose is passed through untouched, whatever it is: `pi`
+ * validates `--session-id` itself, and a copy of its grammar living here would drift
+ * from it and reject names a second Agent Runtime accepts (ADR-0024, ADR-0016).
  */
 export function sessionFor(session: string | null, runId: string): string {
-  const name = session ?? `run_${runId}`;
-  if (!isValidSessionName(name)) {
-    throw new Error(
-      `${JSON.stringify(name)} is not a Session name the Agent Runtime accepts, and it is also the name of the Session's own directory${session === null ? `; it was generated from the Run id ${JSON.stringify(runId)}` : ""}`,
-    );
-  }
-  return name;
+  return session ?? `run_${runId}`;
 }
 
 /**

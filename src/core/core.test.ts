@@ -508,28 +508,47 @@ describe("the worker", () => {
     });
   });
 
-  it("rejects an invalid Session name where the Handler returned it", async () => {
-    const runtime = fakeRuntime();
+  it("hands the Runtime Adapter any Session name, and fails only the Run it rejects", async () => {
+    // What makes a name acceptable is the Agent Runtime's to say and nothing here
+    // holds a copy of it (ADR-0016), so every Prompt reaches the adapter with the
+    // name its Handler wrote — including the two spellings a check of ours would
+    // have refused.
+    const runtime = fakeRuntime((prompt) =>
+      prompt.session === "user:2"
+        ? { ok: false, error: "Session id must be alphanumeric" }
+        : { ok: true },
+    );
     await withCore(
       {
-        colon: {
+        names: {
           handle: () => [
-            { session: "user_1", text: "would have worked" },
+            { session: "user_1", text: "runs" },
             { session: "user:2", text: "does not" },
+            { session: "../escape", text: "runs, as far as the framework is concerned" },
           ],
         },
       },
       runtime,
       async (core) => {
-        const id = await emit(core, "colon");
+        const id = await emit(core, "names");
         const row = await settled(id);
 
         assert.equal(row.state, "failed");
-        assert.match(row.error ?? "", /user:2/);
-        // Not partway through a Run: the valid Prompt ahead of it never ran either,
-        // so the Operator is told about the name and nothing was set in motion.
-        assert.deepEqual(await runsOf(id), []);
-        assert.deepEqual(runtime.recorded, []);
+        assert.deepEqual(
+          runtime.recorded.map((run) => run.prompt.session),
+          ["user_1", "user:2", "../escape"],
+        );
+        // The rejected name is on its own Run's row beside the runtime's own words,
+        // and the Prompts around it ran — which is the ordinary shape of a failed
+        // Run (ADR-0017) rather than an exception the framework made for names.
+        assert.deepEqual(
+          (await runsOf(id)).map((run) => [run.session, run.state, run.error]),
+          [
+            ["user_1", "done", null],
+            ["user:2", "failed", "Session id must be alphanumeric"],
+            ["../escape", "done", null],
+          ],
+        );
       },
     );
   });

@@ -118,8 +118,8 @@ await runtime.verifyMounts();
 core.start({
   ask: templateHandler<{ user: string; text: string }>({
     template: new URL("./prompts/ask.hbs", import.meta.url),
-    // One Session per user, and the Agent Runtime's grammar rejects colons, so `user_42`
-    // and never `user:42`. An invalid name is refused here, where it was written.
+    // One Session per user: one of the topologies ADR-0006 lists, chosen by this
+    // deployment, and the framework has no opinion about the name it produces.
     session: (signal) => `user_${signal.payload.user}`,
     data: (signal) => signal.payload,
   }),

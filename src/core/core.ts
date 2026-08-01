@@ -32,7 +32,7 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
 import { defaultLogger, type Logger } from "../logging.ts";
 import type { Db, Listening, Store } from "../store/index.ts";
-import { assertSessionName, type Prompt, type Signal, type SignalHandlers } from "./handlers.ts";
+import type { Prompt, Signal, SignalHandlers } from "./handlers.ts";
 import { agentReadRoutes } from "./routes.ts";
 import type { RunOutcome, RuntimeAdapter } from "./runtime.ts";
 import { coreTables, runs, signals } from "./schema.ts";
@@ -248,9 +248,6 @@ export function createCore(options: CoreOptions): Core {
     let failure: string | undefined;
     try {
       prompts = await handler.handle(signal);
-      // Every Session name is checked before any Run exists, so an invalid one
-      // fails where the Handler wrote it rather than partway through a Run.
-      for (const prompt of prompts) assertSessionName(prompt);
     } catch (error) {
       // A Handler is the Operator's own code and may do anything, including
       // throw. It fails its own Signal and nothing else: the worker carries on,

@@ -415,9 +415,12 @@ function summarising(workspace: string): SignalHandler<{ file: string }> {
 
 `core.start({ "file.arrived": summarising("/workspace") })` puts it to work.
 
-`session: null` asks for a fresh Session; a string continues a named one. Names are
-validated where you wrote them, and the grammar **rejects colons** — so `user_42`, never
-`user:42`.
+`session: null` asks for a fresh Session; a string continues a named one. One Session per
+user, one per Run, one for the whole agent, or a hybrid — all four are things you just
+write, and the framework prefers none of them. It also checks nothing: your name reaches
+the Agent Runtime exactly as you wrote it, and one that runtime will not accept fails
+that Prompt's Run with the runtime's own complaint in the Run's `error` and your name in
+its `session`.
 
 `templateHandler`, which the reference deployment uses, is one of these and not a special
 case. It re-reads its `.hbs` file every Run, so you can edit wording without restarting.

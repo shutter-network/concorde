@@ -32,9 +32,13 @@ export type Signal<TPayload = unknown> = {
  * reaches the agent.
  *
  * `session` names the Session this Prompt continues; `null` requests a fresh one
- * (ADR-0006). The name is validated against the Agent Runtime's grammar at this
- * seam rather than mid-Run, and that grammar **rejects colons** — the convention
- * is `user_<id>`, never `user:<id>`.
+ * (ADR-0006). A Session is the agent's own conversation state, kept by the Agent
+ * Runtime and continued by naming it again — which is what makes one Prompt
+ * remember an earlier one. The framework holds no opinion about the names: any
+ * string reaches the Runtime Adapter unchanged, and what a name may contain is a
+ * property of the Agent Runtime an Operator chose. One that runtime will not
+ * accept fails that Prompt's Run alone, with the runtime's own words in the Run's
+ * `error` and the name in its `session`.
  */
 export type Prompt = {
   readonly session: string | null;
@@ -68,31 +72,3 @@ export type SignalHandler<TPayload = unknown> = {
  * unrepresentable (ADR-0021).
  */
 export type SignalHandlers = Readonly<Record<string, SignalHandler>>;
-
-/**
- * The Agent Runtime's session-id grammar. Alphanumeric at both ends, dots,
- * hyphens and underscores inside, and **no colons** — which is the whole reason
- * this is checked rather than assumed, since `user:42` is the obvious spelling and
- * it is invalid.
- */
-const sessionNamePattern = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
-
-/** Whether `name` is a Session name the Agent Runtime will accept. */
-export function isValidSessionName(name: string): boolean {
-  return sessionNamePattern.test(name);
-}
-
-/**
- * Rejects a Prompt whose Session name the Agent Runtime would not accept, before
- * any Run exists.
- *
- * Checked here, where the Handler returned it, rather than when the Runtime
- * Adapter is handed it: the Operator learns the naming rules from a failed Signal
- * naming the value they wrote, instead of from a Run that got partway.
- */
-export function assertSessionName(prompt: Prompt): void {
-  if (prompt.session === null || isValidSessionName(prompt.session)) return;
-  throw new Error(
-    `the Session name ${JSON.stringify(prompt.session)} is not valid: the Agent Runtime accepts ${String(sessionNamePattern)}, which allows dots, hyphens and underscores inside the name but no colons — use user_42 rather than user:42. Pass null to request a fresh Session.`,
-  );
-}

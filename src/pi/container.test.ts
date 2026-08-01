@@ -13,6 +13,9 @@
  *    never created, since `pi` makes each Session's own directory itself (ADR-0025)
  *  - the agent **reaches the Agent server** over HTTP from inside its container, with
  *    `curl` from its own shell tool and no credential (ADR-0010)
+ *  - a **Session name `pi` refuses** fails that Run and no other, with `pi`'s own
+ *    message in the Run's `error` — the framework carries no copy of that grammar and
+ *    checks nothing, so this is the only place the claim can be tested at all
  *
  * What is real here and what is not, exactly: the container, the `pi` binary in it, the
  * three mounts, the Prompt on a pipe, the JSONL that comes back, the Agent server, the
@@ -105,7 +108,9 @@ type Rig = {
   /** Emits a Signal and resolves when its Runs have finished. */
   ask(payload: Ask): Promise<string>;
   /** Every Run recorded for a Signal. */
-  runsOf(signalId: string): Promise<{ state: string; error: string | null }[]>;
+  runsOf(
+    signalId: string,
+  ): Promise<{ session: string | null; state: string; error: string | null }[]>;
 };
 
 /** Where a test wants the three mounts pointed, given where they really are. */
@@ -241,7 +246,7 @@ async function withGateway(
     },
     async runsOf(signalId) {
       const rows = await db.select().from(runs).where(eq(runs.signalId, signalId));
-      return rows.map((row) => ({ state: row.state, error: row.error }));
+      return rows.map((row) => ({ session: row.session, state: row.state, error: row.error }));
     },
   };
 
@@ -327,14 +332,16 @@ describe("pi in a real container", { skip }, () => {
       const fresh = await rig.ask({ session: null, text: "This is a one-off Prompt." });
 
       // A Signal produced an actual agent Run, recorded with its true outcome.
-      for (const [label, signalId] of [
-        ["the first", first],
-        ["the second", second],
-        ["the fresh", fresh],
+      for (const [label, signalId, session] of [
+        ["the first", first, "user_42"],
+        ["the second", second, "user_42"],
+        // `null`, because the Run row records what the Handler asked for and this
+        // Handler asked for a fresh Session; the generated name is the adapter's.
+        ["the fresh", fresh, null],
       ] as const) {
         assert.deepEqual(
           await rig.runsOf(signalId),
-          [{ state: "done", error: null }],
+          [{ session, state: "done", error: null }],
           `${label} Signal should have one Run, done`,
         );
       }
@@ -406,6 +413,32 @@ describe("pi in a real container", { skip }, () => {
       assert.equal(failed?.state, "failed");
       assert.match(failed?.error ?? "", /this deployment has no model/);
       assert.match(failed?.error ?? "", /stopReason/);
+
+      // And a Session name `pi` will not have: nothing in the framework inspected it,
+      // so this is `pi`'s own refusal, reaching the Operator through the Run's `error`
+      // with the name they wrote in the Run's `session` beside it. The framework used
+      // to carry a transcription of that grammar and fail the whole Signal before any
+      // Run existed; this is the diagnostic that replaced it, and it cannot go stale
+      // when `pi` changes its mind (ADR-0024).
+      const rejectedName = "user:42";
+      const [rejected] = await rig.runsOf(
+        await rig.ask({ session: rejectedName, text: "This name is not one pi accepts." }),
+      );
+      assert.equal(rejected?.state, "failed");
+      assert.equal(rejected?.session, rejectedName);
+      // The clause that describes *this* refusal, not merely one of `pi`'s.
+      assert.match(rejected?.error ?? "", /Session id must .*only alphanumeric characters/);
+      // `pi` exits 1 without writing a line of JSONL, so the adapter's own half of the
+      // message is there too — the exit code, which is what says the process refused
+      // rather than the model.
+      assert.match(rejected?.error ?? "", /exited with code 1/);
+      // It created nothing on the way out: the Session root still holds one directory
+      // per Session that actually ran.
+      assert.deepEqual(
+        (await readdir(rig.sessionRoot)).filter((entry) => entry.includes(":")),
+        [],
+        "a Session pi refused should have left no directory behind",
+      );
     });
   });
 

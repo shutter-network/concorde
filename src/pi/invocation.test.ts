@@ -405,11 +405,28 @@ describe("the Session a Prompt runs in", () => {
     assert.ok(!invocation.args.includes("--no-session"));
   });
 
-  it("is refused when it would not be one path segment", () => {
-    // The Handler seam already refuses these, and this is the second line: the name
-    // becomes a directory name under the Session root.
-    for (const session of ["../escape", "user:42", "a/b", ""]) {
-      assert.throws(() => invocationFor({}, { session, text: "hi" }), /Session name/);
+  it("is whatever the Handler wrote, including a name `pi` will not accept", () => {
+    // Nothing here holds a copy of `pi`'s session-id grammar. `pi` checks
+    // `--session-id` itself and exits 1 with its own message, which the adapter puts
+    // in the failed Run's `error` beside the name in its `session` — a diagnostic
+    // that cannot go stale, unlike a transcribed pattern (ADR-0024, ADR-0016).
+    //
+    // The Session directory follows the name wherever it goes, and the second column
+    // is why that is safe without a path-segment check of ours: it is a path inside a
+    // `--rm` container, so a name climbing out of the mounted Session root lands in
+    // the container's own filesystem and dies with it, touching nothing on the host
+    // (ADR-0025). The Gateway creates none of these.
+    for (const [session, sessionDirectory] of [
+      ["../escape", "/srv/saf/escape"],
+      ["user:42", "/srv/saf/sessions/user:42"],
+      ["a/b", "/srv/saf/sessions/a/b"],
+      ["", "/srv/saf/sessions"],
+    ] as const) {
+      const invocation = invocationFor({}, { session, text: "hi" });
+
+      assert.equal(invocation.session, session);
+      assert.equal(argumentAfter(invocation, "--session-id"), session);
+      assert.equal(argumentAfter(invocation, "--session-dir"), sessionDirectory);
     }
   });
 });

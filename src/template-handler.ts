@@ -54,10 +54,8 @@ export type TemplateHandlerOptions<TPayload = unknown> = {
 
   /**
    * Which Session this Signal's Prompt continues, or `null` for a fresh one
-   * (ADR-0006).
-   *
-   * The name is validated by the Core against the Agent Runtime's grammar, which
-   * **rejects colons** — the convention is `user_<id>`, never `user:<id>`.
+   * (ADR-0006). One per user, one per Run, one for the whole agent, or a hybrid: the
+   * topology is this function's to choose, and the framework prefers none of them.
    */
   readonly session: (signal: Signal<TPayload>) => string | null | Promise<string | null>;
 

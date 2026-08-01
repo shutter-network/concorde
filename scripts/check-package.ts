@@ -547,9 +547,9 @@ try {
         // and a reintroduced normaliser would fail the assertion below.
         "const agentServerUrl = 'http://host.docker.internal:7411/';",
         // The `/pi` subpath, actually run rather than only resolved: `composeInvocation`
-        // reaches for `../core/handlers.ts` to check the Session name, so this is what
-        // proves a relative `.ts` import *inside* the subpath survives being compiled
-        // and installed — the thing the deleted placeholder used to stand for.
+        // reaches for `./configuration.ts` to settle the Session name and the mounts, so
+        // this is what proves a relative `.ts` import *inside* the subpath survives being
+        // compiled and installed — the thing the deleted placeholder used to stand for.
         "const piConfig = {",
         "  image: 'saf/pi:latest', model: 'sonnet', workspace: '/srv/saf/workspace',",
         "  agentDir: '/srv/saf/agent', sessionRoot: '/srv/saf/sessions',",
