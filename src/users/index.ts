@@ -11,6 +11,11 @@
  * register `agentRoutes` on the Agent server and `publicRoutes` on the Public one,
  * each under a prefix of your choosing.
  *
+ * `IssuedToken` is here because `users.issueToken` answers with one, and that method is
+ * the substitute for a pluggable Authenticator: a deployment's own OIDC route
+ * establishes identity however it likes and answers with this exact shape, which is
+ * also what `POST /auth/tokens` answers with (ADR-0030).
+ *
  * One thing arrives here without being named in an import: the `declare module
  * "fastify"` augmentation that types `request.safUser`, which travels with the
  * `UserRecord` re-exported below. It is global, so a program that imports this subpath
@@ -19,7 +24,7 @@
  */
 
 export { usersMigrations } from "./migrations.ts";
-export type { UserRecord } from "./routes.ts";
+export type { IssuedToken, UserRecord } from "./routes.ts";
 export type { ScryptParameters } from "./secrets.ts";
 export type { Users, UsersOptions } from "./users.ts";
 export { createUsers } from "./users.ts";

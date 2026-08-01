@@ -16,6 +16,14 @@
  *  - **Nothing removes a User.** No delete, no deactivation, no `deactivated_at`
  *    (ADR-0029).
  *
+ * The third thing is the asymmetry the whole part is arranged around. Setting
+ * Attributes, replacing a password and issuing a Token are **methods and not routes**:
+ * Signal Handlers and an Operator's entry point are trusted code (ADR-0009, ADR-0020)
+ * and hold this object, while the Agent server is the one surface an injected prompt
+ * reaches and it has no authentication at all (ADR-0003, ADR-0010). So the agent may
+ * create a User and read Users, and the three capabilities that could turn that into an
+ * escalation are not on its surface to reach — by absence, not by a guard.
+ *
  * The consequence of the first is worth stating where it will be met: a caller
  * **cannot read its own uncommitted write**. A Handler that creates a User inside a
  * transaction and then calls `get` gets nothing, because the read is on a different
@@ -139,6 +147,111 @@ export type Users = {
   create<TSchema extends Record<string, unknown>>(tx: Db<TSchema>): Promise<UserRecord>;
 
   /**
+   * Replaces a User's Attributes, **wholesale**.
+   *
+   * This is where authorization lives, since there is no Party (ADR-0008, ADR-0014),
+   * and it is the one capability the agent is denied by the **absence of a parameter**
+   * rather than by a check: `POST /users` has nowhere for an attribute to arrive
+   * through, so an injected prompt cannot mint a privileged User (ADR-0029). Which
+   * makes this method the other half of that boundary, and the reason it takes trusted
+   * code to reach it.
+   *
+   * **Wholesale and not a merge**, and the choice is written here because an
+   * undocumented one becomes a deployment's bug the first time somebody sets one key
+   * and finds another still set. Three reasons, and the first is the load-bearing one:
+   *
+   *  - A merge cannot express **removal**. Taking `role` away from somebody would need
+   *    a sentinel value invented for it, and a framework that stores Attributes without
+   *    interpreting them has no business interpreting one. Replacement is total, and a
+   *    merge is written from it in one line — read, spread, set — while removal cannot
+   *    be written from a merge at all.
+   *  - Attributes are **arbitrary JSON** and need not be an object. There is no merge
+   *    of an array with an object, so a merging method would have a shape it silently
+   *    behaved differently for.
+   *  - `jsonb ||` merges only the **top level**, so a nested object would be replaced
+   *    wholesale while its siblings were merged — the one behaviour nobody predicts.
+   *
+   * A write, so it takes the caller's transaction first (ADR-0023): granting somebody a
+   * group and recording in the Operator's own tables who granted it commit together or
+   * not at all.
+   *
+   * Unlike `revoke`, it **throws** when no User has that id rather than doing nothing.
+   * Silence is right for a revocation because the postcondition holds either way — the
+   * Token is gone whether or not this call removed it — and wrong here, because a
+   * mistyped id would otherwise be an authorization grant that quietly did not happen.
+   */
+  setAttributes<TSchema extends Record<string, unknown>>(
+    tx: Db<TSchema>,
+    user: string,
+    attributes: unknown,
+  ): Promise<void>;
+
+  /**
+   * Replaces a User's password, proving nothing.
+   *
+   * The whole of "account recovery" in this framework: an Operator sets a new one, from
+   * their own code, having established out of band that they should. There is no route
+   * for this on either server — `PUT /password` requires the current password, which is
+   * what makes it self-service rather than recovery, and a User whose `password_hash` is
+   * null has nothing to prove there at all (ADR-0014, ADR-0030).
+   *
+   * It also gives a password to a User who had none, which is the OIDC path run
+   * backwards: somebody admitted through a deployment's own login route can be handed
+   * one later without being created again.
+   *
+   * It **revokes nothing**, deliberately, and the same way `PUT /password` does not: an
+   * Operator locking somebody out replaces the password *and* calls `revoke`, and one
+   * that bundled the two would take that choice away from a routine rotation. The
+   * ordering that matters is `revoke` last, since a Token issued between the two calls
+   * would outlive both.
+   *
+   * A write, so it takes the caller's transaction first (ADR-0023), and it throws when
+   * no User has that id for the reason `setAttributes` does.
+   *
+   * There is **no bound on the password's length** here, where the route has one: the
+   * bound exists because scrypt reads its whole input on a route nothing rate limits,
+   * and trusted code calling this is not that. Nor is the empty string refused — it
+   * derives and stores like any other, and the login route's schema will not accept one,
+   * so setting it leaves a User who cannot log in. Recorded rather than guarded against.
+   */
+  setPassword<TSchema extends Record<string, unknown>>(
+    tx: Db<TSchema>,
+    user: string,
+    password: string,
+  ): Promise<void>;
+
+  /**
+   * Issues a Token to a User who presented nothing, and answers exactly what a login
+   * answers.
+   *
+   * **This is the extension point that replaced the Authenticator** (ADR-0030). A
+   * deployment wanting OIDC — or a wallet signature, or a corporate header — writes its
+   * own login route on the Public server, establishes identity however it likes, and
+   * calls this. What comes back is an ordinary Token, and nothing downstream, including
+   * `requireUser`, the Operator's own routes and the Messenger when it exists, can tell
+   * how it was obtained. That is why there is no `verify(request)` interface to
+   * implement: an implementation of one would still have had to answer "and where does
+   * the credential live?", and would have reimplemented this storage to satisfy it.
+   *
+   * The User needs **no password**, and `password_hash` is nullable exactly so that such
+   * a User need never have one. Their Token is not a lesser Token: it expires from the
+   * same construction-time lifetime, is revoked by the same two routes, and is
+   * indistinguishable from one a password bought.
+   *
+   * A write, so it takes the caller's transaction first (ADR-0023) — which also means
+   * the User it names may be one the same transaction just created, since this reads on
+   * the caller's connection. So an OIDC callback that admits somebody on first sight and
+   * hands them a Token is one transaction, and a rollback leaves neither.
+   *
+   * It throws when no User has that id, for the reason `setAttributes` does and because
+   * there is no Token it could answer with.
+   */
+  issueToken<TSchema extends Record<string, unknown>>(
+    tx: Db<TSchema>,
+    user: string,
+  ): Promise<IssuedToken>;
+
+  /**
    * Revokes every Token of one User, so that none of them works again.
    *
    * The same thing `DELETE /tokens` does, reachable without HTTP: an Operator who
@@ -216,6 +329,10 @@ export function createUsers(options: UsersOptions): Users {
     requireUser: presentedUser,
 
     create: (tx) => insertUser(tx, undefined, parameters),
+    setAttributes: (tx, user, attributes) => updateUser(tx, user, { attributes }),
+    setPassword: async (tx, user, password) =>
+      updateUser(tx, user, { passwordHash: await hashPassword(password, parameters) }),
+    issueToken: (tx, user) => grantToken(tx, user, tokenTtl),
     revoke: (tx, user) => deleteTokens(tx, user),
     get: (id) => selectUser(db, id),
     list: (asked) => selectUsers(db, asked?.limit ?? limitSchema.default),
@@ -249,6 +366,94 @@ async function insertUser<TSchema extends Record<string, unknown>>(
 }
 
 /**
+ * The one update statement behind both of the things trusted code may change about a
+ * User, over whichever handle the caller reached it by.
+ *
+ * One function and not two, because the two differ only in which column they name and
+ * everything else about them is the same decision: the query-builder form so it works
+ * on a transaction carrying any part's schema (ADR-0023), and a `returning` so that
+ * "there is no such User" is distinguishable from "there was nothing to change".
+ *
+ * That distinction is why this throws where `deleteTokens` says nothing. A revocation's
+ * postcondition holds whether or not it was this call that removed the row; an
+ * authorization grant's does not, and an id with a typo in it would otherwise be a
+ * permission quietly not given. The message names the id, because the caller is trusted
+ * code reading a stack trace and not a stranger probing for who exists.
+ */
+async function updateUser<TSchema extends Record<string, unknown>>(
+  db: Db<TSchema>,
+  user: string,
+  columns: { readonly attributes: unknown } | { readonly passwordHash: string },
+): Promise<void> {
+  const updated = await db
+    .update(users)
+    .set(columns)
+    .where(eq(users.id, user))
+    .returning({ id: users.id });
+  if (updated.length === 0) {
+    throw new Error(`no User ${user} exists`);
+  }
+}
+
+/**
+ * A Token issued to a User who presented nothing: the OIDC path, and the only path to a
+ * Token that does not begin with a password.
+ *
+ * The read is on the **caller's** handle rather than the part's own, which is what lets
+ * a transaction create a User and issue them a Token in one go — the read sees the
+ * caller's own uncommitted write precisely because it is not on another connection. It
+ * is also what makes the row this answers with the row as the caller's transaction will
+ * commit it, Attributes and all.
+ */
+async function grantToken<TSchema extends Record<string, unknown>>(
+  db: Db<TSchema>,
+  user: string,
+  tokenTtl: number,
+): Promise<IssuedToken> {
+  const [row] = await db.select().from(users).where(eq(users.id, user));
+  if (row === undefined) {
+    throw new Error(`no User ${user} exists`);
+  }
+  return insertToken(db, row, tokenTtl);
+}
+
+/**
+ * The row a Token is, and the one place it is written.
+ *
+ * Shared by the login route and by `issueToken`, which is the claim rather than a
+ * saving: a Token minted for an OIDC callback and a Token bought with a password are
+ * the same row written by the same statement, so nothing downstream could tell them
+ * apart even if it wanted to.
+ */
+async function insertToken<TSchema extends Record<string, unknown>>(
+  db: Db<TSchema>,
+  user: typeof users.$inferSelect,
+  tokenTtl: number,
+): Promise<IssuedToken> {
+  const minted = mintToken();
+  const [issued] = await db
+    .insert(tokens)
+    .values({
+      userId: user.id,
+      tokenHash: minted.hash,
+      // The database's clock and not this process's, because the comparison that
+      // will refuse this Token is made against the database's too. `make_interval`
+      // takes seconds as a float, so a lifetime of a millisecond is expressible and
+      // a test needs no clock to be moved.
+      expiresAt: sql`clock_timestamp() + make_interval(secs => ${tokenTtl / 1000})`,
+    })
+    .returning({ expiresAt: tokens.expiresAt });
+  if (issued === undefined) {
+    throw new Error("issuing a Token inserted no row");
+  }
+  return {
+    token: minted.token,
+    expiresAt: issued.expiresAt.toISOString(),
+    user: asUserRecord(user),
+  };
+}
+
+/**
  * A password traded for a Token, or `undefined`, and the same `undefined` for every
  * way it can fail.
  *
@@ -269,27 +474,9 @@ async function logIn(
   const matched = await verifyPassword(stored, credentials.password);
   if (row === undefined || row.passwordHash === null || !matched) return undefined;
 
-  const minted = mintToken();
-  const [issued] = await db
-    .insert(tokens)
-    .values({
-      userId: row.id,
-      tokenHash: minted.hash,
-      // The database's clock and not this process's, because the comparison that
-      // will refuse this Token is made against the database's too. `make_interval`
-      // takes seconds as a float, so a lifetime of a millisecond is expressible and
-      // a test needs no clock to be moved.
-      expiresAt: sql`clock_timestamp() + make_interval(secs => ${directory.tokenTtl / 1000})`,
-    })
-    .returning({ expiresAt: tokens.expiresAt });
-  if (issued === undefined) {
-    throw new Error("issuing a Token inserted no row");
-  }
-  return {
-    token: minted.token,
-    expiresAt: issued.expiresAt.toISOString(),
-    user: asUserRecord(row),
-  };
+  // The same statement `issueToken` reaches, so a Token bought with a password and a
+  // Token minted by an OIDC callback are one row written one way (ADR-0030).
+  return insertToken(db, row, directory.tokenTtl);
 }
 
 /**
