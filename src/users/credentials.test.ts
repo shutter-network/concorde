@@ -70,7 +70,8 @@ let publicServer: FastifyInstance;
 before(async () => {
   database = await createTestDatabase("users_credentials");
   db = database.db;
-  await db.migrate(usersMigrations);
+  db.registerMigrations(usersMigrations);
+  await db.migrate();
 
   directory = createUsers({ db, tokenTtl: hour, scrypt: cheap });
 

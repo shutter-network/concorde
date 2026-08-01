@@ -98,10 +98,11 @@ const operatorRoutes: FastifyPluginAsync = async (fastify) => {
 before(async () => {
   database = await createTestDatabase("users_trusted");
   db = database.db;
-  // Both descriptors in the one call an Operator already makes, because one test here
-  // spans both parts. The Directory needs no other part migrated to work, which
-  // `users.test.ts` is what proves.
-  await db.migrate(signalsMigrations, usersMigrations);
+  // Both descriptors registered, because one test here spans both parts. The
+  // Directory needs no other part migrated to work, which `users.test.ts` is what
+  // proves.
+  db.registerMigrations(signalsMigrations, usersMigrations);
+  await db.migrate();
 
   directory = createUsers({ db, tokenTtl: hour, scrypt: cheap });
   // Constructed and never started: this file emits Signals and reads them back, and a

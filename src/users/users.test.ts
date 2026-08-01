@@ -55,7 +55,8 @@ before(async () => {
   db = database.db;
   // The part's own descriptor, alone: it owns a schema and a tracking table of its
   // own and needs no other part migrated to work.
-  await db.migrate(usersMigrations);
+  db.registerMigrations(usersMigrations);
+  await db.migrate();
 
   // A Token lifetime is required of every construction, and nothing in this file
   // issues one: logging in is observable on the Public server, which is

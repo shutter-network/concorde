@@ -121,7 +121,8 @@ before(async () => {
   image = await buildPiImage();
   database = await createTestDatabase("pi_container");
   db = database.db;
-  await db.migrate(signalsMigrations);
+  db.registerMigrations(signalsMigrations);
+  await db.migrate();
 });
 
 after(async () => {

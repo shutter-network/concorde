@@ -23,7 +23,7 @@ export type TestDatabase = {
   readonly db: Db;
   /** The fresh database's own URL, for opening a second Db on it. */
   readonly url: string;
-  /** Closes the Db and drops the database. */
+  /** Stops the Db and drops the database. */
   drop(): Promise<void>;
 };
 
@@ -47,7 +47,7 @@ export async function createTestDatabase(name: string): Promise<TestDatabase> {
     db,
     url: url.href,
     async drop() {
-      await db.close();
+      await db.stop();
       await onServer(async (server) => {
         await server.execute(sql`drop database if exists ${sql.identifier(database)}`);
       });
@@ -70,6 +70,6 @@ async function onServer(run: (server: Handle) => Promise<void>): Promise<void> {
   try {
     await run(server.handle({}));
   } finally {
-    await server.close();
+    await server.stop();
   }
 }

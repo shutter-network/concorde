@@ -408,7 +408,8 @@ describe("the template Handler under the worker", () => {
   before(async () => {
     database = await createTestDatabase("template_handler");
     db = database.db;
-    await db.migrate(signalsMigrations);
+    db.registerMigrations(signalsMigrations);
+    await db.migrate();
   });
 
   after(() => database.drop());

@@ -70,7 +70,12 @@ await Promise.all(
 );
 
 const db = openDb(process.env.DATABASE_URL ?? "postgres://saf:saf@localhost:5433/saf");
-await db.migrate(signalsMigrations);
+// Registered rather than passed: `db.migrate()` applies whatever registered, and
+// `db.start()` refuses to start against a schema that is behind its folder. The same
+// two lines are in migrate.ts, which is the entry point a deploy runs instead of this
+// one, and registering the identical descriptor twice is one registration.
+db.registerMigrations(signalsMigrations);
+await db.migrate();
 
 // Two ordinary Fastify instances, because the framework ships no server: there is nothing
 // of ours between this file and Fastify, and every option, hook and plugin is reachable
@@ -180,7 +185,7 @@ await agentServer.listen({
 process.on("SIGINT", async () => {
   await worker.stop();
   await Promise.all([agentServer.close(), publicServer.close()]);
-  await db.close();
+  await db.stop();
 });
 
 // A Producer: something inside the Gateway that puts a Signal in the queue. There is no

@@ -2,8 +2,9 @@ import type { MigrationDescriptor } from "../db/index.ts";
 import { workerSchema } from "./schema.ts";
 
 /**
- * The Signal Worker's migration descriptor: inert data the Operator's entry point
- * hands to `db.migrate` alongside every other part's (ADR-0021, ADR-0022).
+ * The Signal Worker's migration descriptor: inert data registered with the Db,
+ * which applies it alongside every other part's when `db.migrate()` is called and
+ * verifies it at `db.start()` (ADR-0022, ADR-0032).
  *
  * The relative `../../migrations/signals` is what makes `dist` mirroring `src`
  * load-bearing — the same relative path has to reach the same folder from

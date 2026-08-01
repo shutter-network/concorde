@@ -14,7 +14,8 @@ let db: Db;
 before(async () => {
   database = await createTestDatabase("db");
   db = database.db;
-  await db.migrate(alphaMigrations);
+  db.registerMigrations(alphaMigrations);
+  await db.migrate();
 });
 
 after(() => database.drop());
@@ -37,6 +38,20 @@ async function labels(): Promise<string[]> {
   const rows = await db.handle({ widgets }).select({ label: widgets.label }).from(widgets);
   return rows.map((row) => row.label).sort();
 }
+
+describe("db.start", () => {
+  it("opens the pool, so a database nothing answers on fails at start", async () => {
+    // Port 1 on loopback, where nothing listens: the connection is refused rather
+    // than left hanging, which is the point — a URL that is wrong is this call's
+    // failure and not the first query's, hours later.
+    const unreachable = openDb("postgres://saf:saf@127.0.0.1:1/none");
+    try {
+      await assert.rejects(() => unreachable.start(), /ECONNREFUSED/);
+    } finally {
+      await unreachable.stop();
+    }
+  });
+});
 
 describe("db.handle", () => {
   it("returns a handle scoped to the schema it was given", async () => {
@@ -219,7 +234,7 @@ describe("db.listen", () => {
 
       await Promise.all(saturating);
     } finally {
-      await sender.close();
+      await sender.stop();
       await listening.close();
     }
   });
@@ -261,8 +276,8 @@ describe("db.listen", () => {
     assert.deepEqual(recorded.payloads, []);
   });
 
-  it("closes what listening opened when the Db closes", async () => {
-    // Its own Db: closing this file's would take the rest of the tests with it.
+  it("closes what listening opened when the Db stops", async () => {
+    // Its own Db: stopping this file's would take the rest of the tests with it.
     const other = openDb(database.url);
     const recorded = recording();
     other.listen("orphan", recorded.listener);
@@ -272,7 +287,7 @@ describe("db.listen", () => {
     // A listening connection nobody closed keeps the process alive and the database
     // undroppable, so the Db closing what it opened is the difference between a
     // clean exit and a hang.
-    await other.close();
+    await other.stop();
     assert.equal(await listeningBackends(db), 0);
   });
 });

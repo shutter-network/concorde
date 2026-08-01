@@ -7,9 +7,9 @@
  * imports nothing from here (ADR-0029).
  *
  * `createUsers` is the whole of it for an Operator: hand it the Db and a Token
- * lifetime, add `usersMigrations` to the `db.migrate` call already being made, and
- * register `agentRoutes` on the Agent server and `publicRoutes` on the Public one,
- * each under a prefix of your choosing.
+ * lifetime, register `usersMigrations` with that Db, and register `agentRoutes` on
+ * the Agent server and `publicRoutes` on the Public one, each under a prefix of
+ * your choosing.
  *
  * `IssuedToken` is here because `users.issueToken` answers with one, and that method is
  * the substitute for a pluggable Authenticator: a deployment's own OIDC route

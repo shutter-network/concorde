@@ -2,9 +2,9 @@ import type { MigrationDescriptor } from "../db/index.ts";
 import { usersSchema } from "./schema.ts";
 
 /**
- * The User Directory's migration descriptor: inert data the Operator's entry point
- * hands to `db.migrate` alongside the Signal Worker's, in the one call they already make
- * (ADR-0021, ADR-0022).
+ * The User Directory's migration descriptor: inert data registered with the Db,
+ * which applies it alongside the Signal Worker's when `db.migrate()` is called and
+ * verifies it at `db.start()` (ADR-0022, ADR-0032).
  *
  * Its own schema and its own tracking table, and both are mandatory rather than
  * tidy: Drizzle's guard compares folder timestamps against only the newest row of a

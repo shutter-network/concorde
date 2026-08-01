@@ -67,7 +67,8 @@ const scripted: SignalHandler<{ readonly prompts: readonly Prompt[] }> = {
 before(async () => {
   database = await createTestDatabase("core_routes");
   db = database.db;
-  await db.migrate(signalsMigrations);
+  db.registerMigrations(signalsMigrations);
+  await db.migrate();
 
   // The framework constructs no server: this is a bare Fastify instance, the same call
   // an Operator's entry point makes, with the Worker's plugin registered on it below.

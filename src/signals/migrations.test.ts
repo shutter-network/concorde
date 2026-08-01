@@ -20,7 +20,8 @@ let db: Db;
 before(async () => {
   database = await createTestDatabase("signals_migrations");
   db = database.db;
-  await db.migrate(signalsMigrations);
+  db.registerMigrations(signalsMigrations);
+  await db.migrate();
 });
 
 after(() => database.drop());

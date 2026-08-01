@@ -77,7 +77,8 @@ const alsoAt = "/sign-in";
 before(async () => {
   database = await createTestDatabase("users_login");
   db = database.db;
-  await db.migrate(usersMigrations);
+  db.registerMigrations(usersMigrations);
+  await db.migrate();
 
   directory = createUsers({ db, tokenTtl: hour, scrypt: cheap });
 
