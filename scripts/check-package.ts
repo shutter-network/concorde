@@ -44,7 +44,7 @@ const migrationsRoot = path.join(repoRoot, "migrations");
 
 /** The consumer's imports, spelled once: the type checker and Node see the same two. */
 const consumerImports = [
-  'import { coreMigrations, createCore, defaultLogger, openStore, templateHandler } from "shared-agent-framework";',
+  'import { coreMigrations, createAgentServer, createCore, createPublicServer, defaultLogger, openStore, templateHandler } from "shared-agent-framework";',
   'import { piScaffoldCheck } from "shared-agent-framework/pi";',
 ];
 
@@ -118,6 +118,13 @@ try {
     // so its position in `dist` is what makes the shipped folder reachable.
     "dist/core/migrations.js",
     "dist/core/core.js",
+    // The Core's Agent server routes, and the two servers they are registered on.
+    // Both reach for `fastify`, which is public API rather than an internal
+    // (ADR-0021), so the declarations below are imported by the scratch project.
+    "dist/core/routes.js",
+    "dist/core/routes.d.ts",
+    "dist/servers.js",
+    "dist/servers.d.ts",
     // The template Handler is public surface of its own, and the only module that
     // reaches for `handlebars` — so a missing `dependencies` entry surfaces when the
     // scratch project imports it below rather than at an Operator's first Signal.
@@ -198,7 +205,14 @@ try {
   // a `URL`, which is a Node global rather than a TypeScript one. Every consumer
   // of a Node-only ESM package has it; asserting that here keeps the requirement
   // from being discovered by an Operator.
-  run("npm", ["install", "--no-audit", "--no-fund", tarball, "@types/node"], consumer);
+  //
+  // `fastify` too, and declared by the consumer rather than relied on through
+  // ours: Fastify is public API (ADR-0021), so an Operator writing a plugin
+  // imports its types themselves, and this is the arrangement they will have —
+  // their own dependency, deduplicated with ours because both ranges are `^5`.
+  // What it proves is that the two agree; two *major* versions in one tree is the
+  // breaking change ADR-0026 already accepts, and is not what this checks.
+  run("npm", ["install", "--no-audit", "--no-fund", tarball, "@types/node", "fastify"], consumer);
 
   step("type-checking the scratch project against the installed package");
   writeFileSync(
@@ -236,6 +250,8 @@ try {
       // nothing checks: a declaration that resolved to `any`, or went missing
       // altogether, would type-check in this project without it.
       "import type {",
+      "  AgentServer,",
+      "  AgentServerOptions,",
       "  ChannelListener,",
       "  Core,",
       "  CoreOptions,",
@@ -247,16 +263,27 @@ try {
       "  MigrationDescriptor,",
       "  PostOutcome,",
       "  Prompt,",
+      "  PublicServer,",
+      "  PublicServerOptions,",
       "  RunOutcome,",
+      "  RunRecord,",
+      "  RunState,",
       "  RuntimeAdapter,",
       "  Signal,",
       "  SignalHandler,",
       "  SignalHandlers,",
+      "  SignalRecord,",
+      "  SignalState,",
       "  Store,",
       "  TemplateHandlerOptions,",
       "  Transaction,",
       '} from "shared-agent-framework";',
       'import { pgSchema, text } from "drizzle-orm/pg-core";',
+      // Fastify is public API (ADR-0021), so a consumer names its types directly.
+      // Importing them here is also what proves they resolve from the installed
+      // package: `skipLibCheck` would swallow an unresolved import inside our own
+      // declarations and quietly leave every server `any`.
+      'import type { FastifyInstance, FastifyPluginAsync } from "fastify";',
       "",
       "// Annotated throughout, so a declaration that resolved to `any` fails here.",
       'export const fromPi: "ok" = piScaffoldCheck();',
@@ -294,6 +321,52 @@ try {
       "",
       "const options: CoreOptions = { store, runtime, logger: log, sweepIntervalMs: 500 };",
       "export const core: Core = createCore(options);",
+      "",
+      "// The two servers. Each takes its own configuration and neither is handed the",
+      "// other; the Agent server binds loopback unless told otherwise and carries the",
+      "// separately stated address the agent's container reaches it at (ADR-0010).",
+      "const publicOptions: PublicServerOptions = { port: 8080, logger: log };",
+      "export const publicServer: PublicServer = createPublicServer(publicOptions);",
+      "const agentOptions: AgentServerOptions = {",
+      "  port: 7411,",
+      '  reachableAt: "http://host.docker.internal:7411",',
+      "  logger: log,",
+      "  fastifyOptions: { bodyLimit: 1048576 },",
+      "};",
+      "export const agentServer: AgentServer = createAgentServer(agentOptions);",
+      "",
+      "// The Core contributes its Signal and Run routes as a Fastify plugin, which the",
+      "// Operator registers — and not registering it is how an endpoint group is",
+      "// switched off (ADR-0010, ADR-0021).",
+      "const coreRoutes: FastifyPluginAsync = core.agentRoutes;",
+      "const agentFastify: FastifyInstance = agentServer.fastify;",
+      "",
+      "// An Operator's own routes, on Fastify's mechanism and no contract of ours.",
+      "const ownRoutes: FastifyPluginAsync = async (fastify) => {",
+      '  fastify.get("/healthz", async () => ({ ok: true }));',
+      "};",
+      "",
+      "// What the Agent server answers with, annotated so a field that went missing",
+      "// from the declaration fails here.",
+      "const readSignal: SignalRecord = {",
+      '  id: "6f1d2c3b-4a59-4e6f-8a1b-2c3d4e5f6a7b",',
+      '  kind: "message.received",',
+      '  payload: { userId: "u1" },',
+      "  emittedAt: new Date().toISOString(),",
+      '  state: "done",',
+      "  error: null,",
+      "};",
+      "const readRun: RunRecord = {",
+      '  id: "7a2e3d4c-5b6a-4f70-9b2c-3d4e5f6a7b8c",',
+      "  signalId: readSignal.id,",
+      '  session: "user_u1",',
+      '  prompt: "hello",',
+      '  state: "failed",',
+      '  error: "the agent gave up",',
+      "  startedAt: new Date().toISOString(),",
+      "  endedAt: null,",
+      "};",
+      'const states: [SignalState, RunState] = ["processing", "running"];',
       "",
       "// A Handler declaring the payload shape its Producer writes, closing over",
       "// everything else it needs (ADR-0024).",
@@ -348,6 +421,17 @@ try {
       "    const id: string = await core.emit(tx, emitted);",
       '    shipped.info({ signalId: id }, "emitted");',
       "  });",
+      "  await agentFastify.register(coreRoutes);",
+      '  await publicServer.fastify.register(ownRoutes, { prefix: "/ops" });',
+      "  const publicAddress: string = await publicServer.listen();",
+      "  const agentAddress: string = await agentServer.listen();",
+      "  const reachableAt: string = agentServer.reachableAt;",
+      "  shipped.info(",
+      "    { publicAddress, agentAddress, reachableAt, readSignal, readRun, states },",
+      '    "the Gateway is up",',
+      "  );",
+      "  await publicServer.close();",
+      "  await agentServer.close();",
       "  await core.stop();",
       "  await store.close();",
       "}",
@@ -368,17 +452,22 @@ try {
       "-e",
       [
         ...consumerImports,
-        // `templateHandler` is here because importing it loads `handlebars`, which
-        // an installed package only resolves if it is declared as a dependency.
-        "process.stdout.write(typeof openStore + ':' + typeof templateHandler + ':' + piScaffoldCheck());",
+        // `templateHandler` is here because importing it loads `handlebars`, and
+        // constructing a server loads `fastify`: an installed package resolves
+        // neither unless it is declared as a dependency, and our own
+        // `node_modules` would hide that in every other check.
+        "const agentServer = createAgentServer({ port: 0, reachableAt: 'http://host.docker.internal:7411/' });",
+        "const publicServer = createPublicServer({ port: 0 });",
+        "const built = [typeof openStore, typeof templateHandler, piScaffoldCheck(), agentServer.reachableAt, typeof publicServer.fastify.register];",
+        "process.stdout.write(built.join(':'));",
       ].join("\n"),
     ],
     consumer,
   );
   assert.equal(
     imported,
-    "function:function:ok",
-    "both subpaths should resolve at runtime, and the template Handler should load handlebars",
+    "function:function:ok:http://host.docker.internal:7411:function",
+    "both subpaths should resolve at runtime, and the template Handler and the servers should load handlebars and fastify",
   );
 
   step("applying a shipped migration folder from inside the installed package");

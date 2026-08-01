@@ -29,11 +29,13 @@
 
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import type { FastifyPluginAsync } from "fastify";
 import { defaultLogger, type Logger } from "../logging.ts";
 import type { Db, Listening, Store } from "../store/index.ts";
 import { assertSessionName, type Prompt, type Signal, type SignalHandlers } from "./handlers.ts";
+import { agentReadRoutes } from "./routes.ts";
 import type { RunOutcome, RuntimeAdapter } from "./runtime.ts";
-import { runs, signals } from "./schema.ts";
+import { coreTables, runs, signals } from "./schema.ts";
 
 /** What a Producer hands to `core.emit`. */
 export type EmittedSignal = {
@@ -68,6 +70,24 @@ export type CoreOptions = {
 };
 
 export type Core = {
+  /**
+   * The Core's Agent server routes — reading prior Signals and Runs — as a Fastify
+   * plugin: `agentServer.fastify.register(core.agentRoutes)`.
+   *
+   * A plugin the Operator registers rather than something the Core does to a server
+   * it was handed, for three reasons that all point the same way. Switching an
+   * endpoint group off is then *not registering it*, which is what ADR-0010 says
+   * turning one off means. The prefix and everything else Fastify offers stay the
+   * Operator's, since Fastify's plugin system is the extension mechanism and we have
+   * no other (ADR-0021). And construction stays free of side effects, like migrations
+   * before it.
+   *
+   * The routes are the Core's own: they read the Core's tables, and no other part's.
+   * The whole surface is read-only and deliberately **unscoped** — every Signal and
+   * every Run, whatever Session the Run doing the reading is in (ADR-0011).
+   */
+  readonly agentRoutes: FastifyPluginAsync;
+
   /**
    * Records a Signal as `pending` and returns its id.
    *
@@ -149,7 +169,7 @@ export function createCore(options: CoreOptions): Core {
 
   // The Core's own handle, typed to the Core's own schema. `pg` never leaves the
   // Store (ADR-0022).
-  const db = options.store.handle({ signals, runs });
+  const db = options.store.handle(coreTables);
 
   let handlers: SignalHandlers | undefined;
   let ticker: NodeJS.Timeout | undefined;
@@ -434,6 +454,8 @@ export function createCore(options: CoreOptions): Core {
   }
 
   return {
+    agentRoutes: agentReadRoutes(db),
+
     async emit(tx, signal) {
       // The query-builder form, not the relational one: it generates SQL from the
       // table object and so works on a transaction carrying any part's schema,

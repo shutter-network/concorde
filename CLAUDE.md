@@ -52,7 +52,17 @@ Conventions the build depends on:
   properties. `erasableSyntaxOnly` rejects them, because Node strips types
   rather than compiling them.
 - **Anything shipped must be under `files` in `package.json`** and proven by
-  `npm run check:package`, not by reading the configuration.
+  `npm run check:package`, not by reading the configuration. Every public export
+  must also appear in the annotated `main.ts` that `scripts/check-package.ts`
+  writes, and anything reaching for a new runtime dependency must be *imported
+  and called* in the runtime step there — that is what proves the dependency is
+  declared rather than merely present in our own `node_modules`.
+- **`dependencies` carry caret ranges; `devDependencies` are pinned exactly.**
+  The lockfile is committed, so exact pins in `dependencies` buy nothing for our
+  own reproducibility and cost a consumer real things: a published library that
+  pins forces duplicate installs in their tree and holds them at one patch
+  version. `devDependencies` are ours alone, where an exact pin is what makes a
+  toolchain upgrade a commit rather than a surprise.
 - **Tests and their fixtures live beside the code they exercise and never ship.**
   `src/**/*.test.ts` and `src/test-support/` are excluded from
   `tsconfig.build.json`, which the tarball check asserts.

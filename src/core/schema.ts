@@ -134,3 +134,10 @@ export const runs = coreSchema.table(
     index("runs_signal_idx").on(table.signalId),
   ],
 );
+
+/**
+ * Everything the Core keeps, as `store.handle` wants it: one object, so the worker
+ * and the Agent server routes ask for the same handle by the same name rather than
+ * each assembling its own from the tables above.
+ */
+export const coreTables = { signals, runs };
