@@ -14,13 +14,14 @@
 
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import type { LogFields, Logger } from "../logging.ts";
-import type { Store } from "../store/index.ts";
+import type { Listening, Store } from "../store/index.ts";
+import { cutListeningBackends } from "../test-support/backends.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
-import { type Core, createCore } from "./core.ts";
+import { type Core, createCore, signalChannel } from "./core.ts";
 import type { SignalHandler, SignalHandlers } from "./handlers.ts";
 import { coreMigrations } from "./migrations.ts";
 import type { RuntimeAdapter } from "./runtime.ts";
@@ -37,38 +38,94 @@ before(async () => {
 
 after(() => database.drop());
 
-/** The Core logs on every Signal; only the logging tests care what it said. */
-const silent: Logger = {
-  debug() {},
-  info() {},
-  warn() {},
-  error() {},
+type LogEntry = {
+  readonly level: "debug" | "info" | "warn" | "error";
+  readonly fields: LogFields;
+  readonly message: string;
 };
 
+function recordingLogger(entries: LogEntry[]): Logger {
+  const at =
+    (level: LogEntry["level"]) =>
+    (fields: LogFields, message: string): void => {
+      entries.push({ level, fields, message });
+    };
+  return { debug: at("debug"), info: at("info"), warn: at("warn"), error: at("error") };
+}
+
 /**
- * Fast enough that no test waits on the interval. It is the only wakeup mechanism
- * in this slice; ticket 04 makes the emitting transaction wake the worker and
- * leaves this as the sweep behind it.
+ * A sweep fast enough that no test about dispatch waits on a notification arriving,
+ * and one far enough away that a test about notifications cannot be rescued by it.
+ *
+ * The second number is the load-bearing one: it is longer than `waitUntil`'s own
+ * patience, so a Signal that only the sweep could have found fails the test.
  */
-const wakeupIntervalMs = 5;
+const sweepingMs = 5;
+const sleepingSweepMs = 60_000;
+
+/** What the Core logs once its notification connection is up. */
+const listeningMessage = "listening for Signal notifications";
+
+type CoreBody = (core: Core, entries: readonly LogEntry[]) => Promise<void>;
 
 /**
  * A Core of its own per test, so each brings its own Handler map — which is what
  * `start` taking the map means in practice. Signals from earlier tests are all in a
  * terminal state, so nothing carries over.
+ *
+ * Every Core records what it logged, because what woke the worker is only visible
+ * there: a Signal reaching `done` says nothing about which of the two mechanisms
+ * found it.
  */
 async function withCore(
   handlers: SignalHandlers,
   runtime: RuntimeAdapter,
-  body: (core: Core) => Promise<void>,
+  body: CoreBody,
+  sweepIntervalMs: number = sweepingMs,
 ): Promise<void> {
-  const core = createCore({ store, runtime, logger: silent, wakeupIntervalMs });
+  const entries: LogEntry[] = [];
+  const core = createCore({ store, runtime, logger: recordingLogger(entries), sweepIntervalMs });
   core.start(handlers);
   try {
-    await body(core);
+    await body(core, entries);
   } finally {
     await core.stop();
   }
+}
+
+/**
+ * A Core whose sweep is out of reach, and which is already listening before the body
+ * runs — so a notification is the only thing that can wake it, and one sent in the
+ * gap before the registration was in place cannot be mistaken for one that was lost.
+ */
+function withNotifiedCore(
+  handlers: SignalHandlers,
+  runtime: RuntimeAdapter,
+  body: CoreBody,
+): Promise<void> {
+  return withCore(
+    handlers,
+    runtime,
+    async (core, entries) => {
+      await waitUntil("the Core is listening for Signal notifications", async () =>
+        entries.some((entry) => entry.message === listeningMessage),
+      );
+      await body(core, entries);
+    },
+    sleepingSweepMs,
+  );
+}
+
+/** How many times the worker was woken for a given reason. */
+function wakeups(entries: readonly LogEntry[], reason: string): number {
+  return entries.filter(
+    (entry) => entry.message === "worker woken" && entry.fields.reason === reason,
+  ).length;
+}
+
+/** A notification for the Core's channel that no Signal is behind. */
+function notifyNothing(): Promise<unknown> {
+  return store.handle({}).execute(sql`select pg_notify(${signalChannel}, '')`);
 }
 
 /** Emitting as a Producer does: inside a transaction the caller owns (ADR-0023). */
@@ -105,7 +162,7 @@ function runsOf(signalId: string): Promise<(typeof runs.$inferSelect)[]> {
 describe("core.emit", () => {
   it("records a Signal as pending", async () => {
     // No worker started, so what is asserted is what `emit` wrote and nothing else.
-    const core = createCore({ store, runtime: fakeRuntime(), logger: silent });
+    const core = createCore({ store, runtime: fakeRuntime(), logger: recordingLogger([]) });
     const id = await emit(core, "recorded.pending", { hello: "world" });
 
     const row = await signalRow(id);
@@ -129,33 +186,48 @@ describe("core.emit", () => {
     };
     const runtime = fakeRuntime();
 
-    await withCore({ "rolled-back": handler, marker: handler }, runtime, async (core) => {
-      let rolledBackId: string | undefined;
-      await assert.rejects(
-        () =>
-          store.tx(async (tx) => {
-            rolledBackId = await core.emit(tx, { kind: "rolled-back", payload: {} });
-            throw new Error("the Producer changed its mind");
-          }),
-        /changed its mind/,
-      );
-      assert.ok(rolledBackId, "emit should have returned an id before the rollback");
+    await withNotifiedCore(
+      { "rolled-back": handler, marker: handler },
+      runtime,
+      async (core, entries) => {
+        let rolledBackId: string | undefined;
+        await assert.rejects(
+          () =>
+            store.tx(async (tx) => {
+              rolledBackId = await core.emit(tx, { kind: "rolled-back", payload: {} });
+              throw new Error("the Producer changed its mind");
+            }),
+          /changed its mind/,
+        );
+        assert.ok(rolledBackId, "emit should have returned an id before the rollback");
 
-      // A Signal emitted afterwards that does commit is what makes "never
-      // processed" a fact rather than a race this test happened to win: the worker
-      // demonstrably looked at the queue after the rollback.
-      const markerId = await emit(core, "marker");
-      assert.equal((await settled(markerId)).state, "done");
+        // A Signal emitted afterwards that does commit is what makes "never
+        // processed" a fact rather than a race this test happened to win: the worker
+        // demonstrably looked at the queue after the rollback.
+        const markerId = await emit(core, "marker");
+        assert.equal((await settled(markerId)).state, "done");
 
-      assert.deepEqual(seen, ["marker"]);
-      assert.equal(await signalRow(rolledBackId), undefined);
-    });
+        assert.deepEqual(seen, ["marker"]);
+        assert.equal(await signalRow(rolledBackId), undefined);
+
+        // And the wakeup went with it. The notification is sent inside the caller's
+        // transaction, so the abandoned one was never delivered — exactly one
+        // notification arrived, the marker's. Nudging the worker after commit
+        // instead would have woken it for a Signal that does not exist.
+        assert.equal(wakeups(entries, "notification"), 1);
+      },
+    );
   });
 });
 
 describe("core.start", () => {
   it("refuses a second call, because one Core runs one worker", async () => {
-    const core = createCore({ store, runtime: fakeRuntime(), logger: silent, wakeupIntervalMs });
+    const core = createCore({
+      store,
+      runtime: fakeRuntime(),
+      logger: recordingLogger([]),
+      sweepIntervalMs: sweepingMs,
+    });
     core.start({ started: { handle: () => [] } });
     try {
       assert.throws(() => core.start({ started: { handle: () => [] } }), /already been called/);
@@ -532,20 +604,260 @@ describe("the worker", () => {
   });
 });
 
-type LogEntry = {
-  readonly level: "debug" | "info" | "warn" | "error";
-  readonly fields: LogFields;
-  readonly message: string;
-};
+describe("wakeup", () => {
+  const one: SignalHandlers = { woken: { handle: () => [{ session: null, text: "woken" }] } };
 
-function recordingLogger(entries: LogEntry[]): Logger {
-  const at =
-    (level: LogEntry["level"]) =>
-    (fields: LogFields, message: string): void => {
-      entries.push({ level, fields, message });
+  it("reaches a Signal the moment its transaction commits, with no sweep to wait for", async () => {
+    const runtime = fakeRuntime();
+    await withNotifiedCore(one, runtime, async (core, entries) => {
+      const id = await emit(core, "woken");
+      assert.equal((await settled(id)).state, "done");
+
+      // The sweep is a minute away and the test's own patience is ten seconds, so a
+      // Signal that arrived here at all arrived on a notification.
+      assert.equal(wakeups(entries, "sweep"), 0);
+      assert.ok(wakeups(entries, "notification") >= 1, "the notification should have woken it");
+    });
+  });
+
+  it("drains a burst emitted together without one wakeup per Signal", async () => {
+    const runtime = fakeRuntime();
+    const numbered: SignalHandler<{ n: number }> = {
+      handle: (signal) => [{ session: null, text: String(signal.payload.n) }],
     };
-  return { debug: at("debug"), info: at("info"), warn: at("warn"), error: at("error") };
-}
+
+    await withNotifiedCore({ burst: numbered }, runtime, async (core, entries) => {
+      const ids = await store.tx(async (tx) => {
+        const emitted: string[] = [];
+        for (const n of [1, 2, 3, 4, 5]) {
+          emitted.push(await core.emit(tx, { kind: "burst", payload: { n } }));
+        }
+        return emitted;
+      });
+      for (const id of ids) assert.equal((await settled(id)).state, "done");
+
+      assert.deepEqual(runtime.texts(), ["1", "2", "3", "4", "5"]);
+      assert.equal(runtime.overlapped, false);
+      // One wakeup for five Signals, from both halves of the design: PostgreSQL
+      // collapses identical notifications sent in one transaction, and the worker
+      // drains rather than taking one Signal per wakeup.
+      assert.equal(wakeups(entries, "notification"), 1);
+      assert.equal(wakeups(entries, "sweep"), 0);
+    });
+  });
+
+  it("finds a Signal that arrived with no notification, on the sweep", async () => {
+    const runtime = fakeRuntime();
+    await withCore(one, runtime, async (_core, entries) => {
+      // Two sweeps in, so the drain that `start` kicked off is long finished and the
+      // row below can only be found by a sweep after it.
+      await waitUntil("the worker has swept twice", async () => wakeups(entries, "sweep") >= 2);
+
+      // A row in the queue with nothing sent on the channel: the shape of a
+      // notification lost while the listening connection was down, which is the only
+      // thing the sweep exists for. Without it this Signal would sit here forever
+      // and nothing would say so.
+      const [inserted] = await store
+        .handle({ signals })
+        .insert(signals)
+        .values({ kind: "woken", payload: {} })
+        .returning({ id: signals.id });
+      assert.ok(inserted);
+
+      assert.equal((await settled(inserted.id)).state, "done");
+      assert.equal(wakeups(entries, "notification"), 0, "no notification was ever sent");
+    });
+  });
+
+  it("is harmless when a notification arrives with nothing pending", async () => {
+    const runtime = fakeRuntime();
+    await withNotifiedCore(one, runtime, async (core, entries) => {
+      for (const _ of [1, 2, 3]) await notifyNothing();
+      await waitUntil("all three spurious notifications arrive", async () => {
+        return wakeups(entries, "notification") >= 3;
+      });
+
+      // The worker looked three times, found nothing, and is still working.
+      const id = await emit(core, "woken");
+      assert.equal((await settled(id)).state, "done");
+      assert.deepEqual(
+        entries.filter((entry) => entry.level === "error"),
+        [],
+      );
+    });
+  });
+
+  it("processes a Signal once however many notifications arrive for it", async () => {
+    const runtime = fakeRuntime();
+    await withNotifiedCore(one, runtime, async (core, entries) => {
+      const id = await emit(core, "woken");
+      // Duplicates while the Run is still in flight, which is when a second drain
+      // would break the serial guarantee rather than merely waste a query.
+      for (const _ of [1, 2, 3]) await notifyNothing();
+      assert.equal((await settled(id)).state, "done");
+
+      assert.deepEqual(runtime.texts(), ["woken"]);
+      assert.equal(runtime.overlapped, false);
+      assert.equal((await runsOf(id)).length, 1);
+      assert.equal(
+        entries.filter((entry) => entry.message === "Signal claimed").length,
+        1,
+        "the Signal should have been claimed once",
+      );
+    });
+  });
+
+  it("keeps working when its listening connection is cut", async () => {
+    const runtime = fakeRuntime();
+    await withNotifiedCore(one, runtime, async (core, entries) => {
+      const before = await emit(core, "woken");
+      assert.equal((await settled(before)).state, "done");
+
+      // Cut from the server's side, as a restart or an operator would.
+      await cutListeningBackends(store);
+      await waitUntil("the Core is listening again", async () => {
+        return entries.filter((entry) => entry.message === listeningMessage).length >= 2;
+      });
+
+      const after = await emit(core, "woken");
+      assert.equal((await settled(after)).state, "done");
+
+      // Reported rather than swallowed, and the reconnection is itself a wakeup:
+      // anything sent while the connection was down was never delivered.
+      assert.ok(
+        entries.some((entry) => entry.level === "warn" && /notification/.test(entry.message)),
+        "the lost connection should be reported",
+      );
+      assert.ok(wakeups(entries, "listening") >= 2, "reconnecting should wake the worker");
+      assert.equal(wakeups(entries, "sweep"), 0, "the sweep never ran, so the notification did it");
+    });
+  });
+
+  it("catches a Signal emitted before its registration was in place", async () => {
+    // The gap `start` leaves: it returns before the `LISTEN` is registered, and a
+    // notification sent in between is lost exactly as one sent while the connection
+    // was down is. A Producer emitting immediately is not a contrived case — it is a
+    // Gateway's first Signal, when someone is watching.
+    //
+    // The gap is a few milliseconds wide, so it is held open here instead of raced
+    // for: a Store that delays only the registration, and the real one behind it.
+    const held = 300;
+    const slowToRegister: Store = {
+      ...store,
+      listen(channel, listener) {
+        let real: Listening | undefined;
+        let closed = false;
+        const timer = setTimeout(() => {
+          if (!closed) real = store.listen(channel, listener);
+        }, held);
+        return {
+          async close() {
+            closed = true;
+            clearTimeout(timer);
+            await real?.close();
+          },
+        };
+      },
+    };
+
+    const runtime = fakeRuntime();
+    const entries: LogEntry[] = [];
+    const core = createCore({
+      store: slowToRegister,
+      runtime,
+      logger: recordingLogger(entries),
+      sweepIntervalMs: sleepingSweepMs,
+    });
+    core.start(one);
+    try {
+      const id = await emit(core, "woken");
+      // Nothing heard the notification, and the sweep is a minute away, so the only
+      // thing that can find this Signal is the registration completing.
+      assert.equal((await settled(id)).state, "done");
+      assert.equal(wakeups(entries, "notification"), 0, "nothing was listening when it was sent");
+      assert.equal(wakeups(entries, "sweep"), 0);
+      assert.ok(wakeups(entries, "listening") >= 1);
+    } finally {
+      await core.stop();
+    }
+  });
+});
+
+describe("restart recovery", () => {
+  it("fails a Signal left processing, resolves its Runs, and never re-runs it", async () => {
+    // What a worker that died mid-Signal leaves behind: the Signal it had claimed,
+    // one Run it had started, and one it had recorded but not begun.
+    const [stranded] = await store
+      .handle({ signals })
+      .insert(signals)
+      .values({ kind: "stranded", payload: { half: "done" }, state: "processing" })
+      .returning({ id: signals.id });
+    assert.ok(stranded);
+    await store
+      .handle({ runs })
+      .insert(runs)
+      .values([
+        {
+          signalId: stranded.id,
+          session: "user_1",
+          prompt: "was running",
+          state: "running",
+          startedAt: new Date(),
+        },
+        { signalId: stranded.id, session: "user_2", prompt: "never started", state: "pending" },
+      ]);
+
+    const runtime = fakeRuntime();
+    let handled = 0;
+    await withCore(
+      {
+        stranded: {
+          handle: () => {
+            handled += 1;
+            return [];
+          },
+        },
+      },
+      runtime,
+      async (core, entries) => {
+        const row = await settled(stranded.id);
+        assert.equal(row.state, "failed");
+        // Why, in the row rather than only in a log line: this is where an Operator
+        // asks what happened to it.
+        assert.match(row.error ?? "", /restart/);
+
+        // Not re-run, which is the whole point (ADR-0017): its Runs may already have
+        // sent Messages, written the Workspace, or called something outside.
+        assert.equal(handled, 0);
+        assert.deepEqual(runtime.recorded, []);
+
+        // And nothing is left claiming to be in flight.
+        const rows = await runsOf(stranded.id);
+        assert.deepEqual(
+          rows.map((run) => [run.prompt, run.state]).sort(),
+          [
+            ["never started", "failed"],
+            ["was running", "failed"],
+          ].sort(),
+        );
+        assert.ok(
+          rows.every((run) => run.error !== null && run.endedAt instanceof Date),
+          "every Run should carry a reason and an end",
+        );
+        assert.ok(
+          entries.some((entry) => entry.level === "warn" && entry.fields.signalId === stranded.id),
+          "the recovery should be reported",
+        );
+
+        // The worker went on to do its actual job, rather than recovery being
+        // something that happens instead of working.
+        const next = await emit(core, "stranded");
+        assert.equal((await settled(next)).state, "done");
+        assert.equal(handled, 1);
+      },
+    );
+  });
+});
 
 describe("logging", () => {
   it("logs the Signal claimed, and each Run started and finished", async () => {
@@ -554,7 +866,7 @@ describe("logging", () => {
       store,
       runtime: fakeRuntime(),
       logger: recordingLogger(entries),
-      wakeupIntervalMs,
+      sweepIntervalMs: sweepingMs,
     });
     core.start({ logged: { handle: () => [{ session: "user_1", text: "hello" }] } });
 
@@ -578,7 +890,7 @@ describe("logging", () => {
       store,
       runtime: fakeRuntime(),
       logger: recordingLogger(entries),
-      wakeupIntervalMs,
+      sweepIntervalMs: sweepingMs,
     });
     core.start({
       "logged.failure": {
@@ -607,7 +919,7 @@ describe("logging", () => {
   it("works with the default logger when the Operator supplies none", async () => {
     // The only test with no `logger`, and the only one whose evidence is partly in
     // the test output: `pino`'s JSON lines on stdout are the default working.
-    const core = createCore({ store, runtime: fakeRuntime(), wakeupIntervalMs });
+    const core = createCore({ store, runtime: fakeRuntime(), sweepIntervalMs: sweepingMs });
     core.start({ "default.logger": { handle: () => [{ session: null, text: "logged by pino" }] } });
 
     try {

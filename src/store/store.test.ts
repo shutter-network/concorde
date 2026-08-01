@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
+import { sql } from "drizzle-orm";
+import { cutListeningBackends, listeningBackends } from "../test-support/backends.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { alphaMigrations, widgets } from "../test-support/fixtures.ts";
-import type { Db, Store } from "./index.ts";
+import { waitUntil } from "../test-support/wait.ts";
+import type { ChannelListener, Db, Store } from "./index.ts";
+import { openStore } from "./index.ts";
 
 let database: TestDatabase;
 let store: Store;
@@ -94,5 +98,185 @@ describe("store.tx", () => {
     );
 
     assert.ok(!(await labels()).includes("via-transaction"));
+  });
+});
+
+/**
+ * Everything a caller of `store.listen` can see: what arrives, what does not, and
+ * that the connection carrying it is the Store's own rather than a pooled one.
+ *
+ * `pg_notify` rather than `NOTIFY` throughout, here and in the Core: `NOTIFY` is a
+ * utility statement, so its channel and payload cannot be bind parameters.
+ */
+describe("store.listen", () => {
+  /** Records everything a listener is told, so a test can assert on absence too. */
+  function recording(): {
+    readonly payloads: string[];
+    readonly losses: unknown[];
+    connections(): number;
+    readonly listener: ChannelListener;
+  } {
+    const payloads: string[] = [];
+    const losses: unknown[] = [];
+    let connections = 0;
+    return {
+      payloads,
+      losses,
+      connections: () => connections,
+      listener: {
+        notified: (payload) => {
+          payloads.push(payload);
+        },
+        connected: () => {
+          connections += 1;
+        },
+        lost: (error) => {
+          losses.push(error);
+        },
+      },
+    };
+  }
+
+  function notify(channel: string, payload: string, on: Db = store.handle({})): Promise<unknown> {
+    return on.execute(sql`select pg_notify(${channel}, ${payload})`);
+  }
+
+  /**
+   * A notification is not queued for a connection that is not there yet, so a test
+   * that sends one before the registration is in place is testing nothing.
+   */
+  async function connected(reported: () => number, atLeast = 1): Promise<void> {
+    await waitUntil(`the listening connection is up (${atLeast})`, async () => {
+      return reported() >= atLeast;
+    });
+  }
+
+  it("delivers what was notified on its channel, with its payload", async () => {
+    const recorded = recording();
+    const listening = store.listen("first_channel", recorded.listener);
+    try {
+      await connected(recorded.connections);
+
+      await notify("other_channel", "not for us");
+      await notify("first_channel", "for us");
+      await waitUntil("the notification arrives", async () => recorded.payloads.length > 0);
+
+      assert.deepEqual(recorded.payloads, ["for us"]);
+      assert.deepEqual(recorded.losses, []);
+    } finally {
+      await listening.close();
+    }
+  });
+
+  it("never delivers a notification from a transaction that rolled back", async () => {
+    const recorded = recording();
+    const listening = store.listen("transactional", recorded.listener);
+    try {
+      await connected(recorded.connections);
+
+      await assert.rejects(
+        () =>
+          store.tx(async (tx) => {
+            await notify("transactional", "abandoned", tx);
+            throw new Error("deliberate");
+          }),
+        /deliberate/,
+      );
+
+      // The marker is what makes the absence above a fact rather than a race this
+      // test won: it went through the same channel afterwards and did arrive.
+      await store.tx((tx) => notify("transactional", "committed", tx));
+      await waitUntil("the committed notification arrives", async () => {
+        return recorded.payloads.length > 0;
+      });
+
+      assert.deepEqual(recorded.payloads, ["committed"]);
+    } finally {
+      await listening.close();
+    }
+  });
+
+  it("keeps its connection outside the pool, so a saturated pool cannot deafen it", async () => {
+    const recorded = recording();
+    const listening = store.listen("saturated", recorded.listener);
+    // A second Store on the same database, because sending the notification through
+    // the saturated pool would only queue behind the sleeps.
+    const sender = openStore(database.url);
+    try {
+      await connected(recorded.connections);
+      assert.equal(
+        await listeningBackends(store),
+        1,
+        "the listener should have a backend of its own",
+      );
+
+      // More concurrent queries than the pool holds, so every pooled connection is
+      // busy and two callers are queued for one.
+      const saturating = Array.from({ length: 12 }, () =>
+        store.handle({}).execute(sql`select pg_sleep(0.3)`),
+      );
+      await notify("saturated", "while busy", sender.handle({}));
+      await waitUntil("the notification arrives while the pool is busy", async () => {
+        return recorded.payloads.length > 0;
+      });
+      assert.deepEqual(recorded.payloads, ["while busy"]);
+
+      await Promise.all(saturating);
+    } finally {
+      await sender.close();
+      await listening.close();
+    }
+  });
+
+  it("reconnects when its connection is cut, and reports the loss", async () => {
+    const recorded = recording();
+    const listening = store.listen("cut", recorded.listener);
+    try {
+      await connected(recorded.connections);
+      await cutListeningBackends(store);
+
+      await connected(recorded.connections, 2);
+      assert.ok(recorded.losses.length > 0, "the loss should have been reported");
+
+      // What matters is not that it reconnected but that it is listening again.
+      await notify("cut", "after the cut");
+      await waitUntil("a notification arrives on the new connection", async () => {
+        return recorded.payloads.length > 0;
+      });
+      assert.deepEqual(recorded.payloads, ["after the cut"]);
+    } finally {
+      await listening.close();
+    }
+  });
+
+  it("releases its connection and stops delivering when closed", async () => {
+    const recorded = recording();
+    const listening = store.listen("closed", recorded.listener);
+    await connected(recorded.connections);
+    await listening.close();
+    // Twice, because a caller stopping a Core that is already stopped should not be
+    // the caller's problem to avoid.
+    await listening.close();
+
+    assert.equal(await listeningBackends(store), 0, "the connection should be gone");
+
+    await notify("closed", "too late");
+    await new Promise((resume) => setTimeout(resume, 50));
+    assert.deepEqual(recorded.payloads, []);
+  });
+
+  it("closes what listening opened when the Store closes", async () => {
+    // Its own Store: closing this file's would take the rest of the tests with it.
+    const other = openStore(database.url);
+    const recorded = recording();
+    other.listen("orphan", recorded.listener);
+    await connected(recorded.connections);
+    assert.equal(await listeningBackends(store), 1);
+
+    // A listening connection nobody closed keeps the process alive and the database
+    // undroppable, so the Store closing what it opened is the difference between a
+    // clean exit and a hang.
+    await other.close();
+    assert.equal(await listeningBackends(store), 0);
   });
 });

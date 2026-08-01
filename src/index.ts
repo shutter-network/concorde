@@ -13,5 +13,12 @@ export type {
 export { coreMigrations, createCore } from "./core/index.ts";
 export type { LogFields, Logger } from "./logging.ts";
 export { defaultLogger } from "./logging.ts";
-export type { Db, MigrationDescriptor, Store, Transaction } from "./store/index.ts";
+export type {
+  ChannelListener,
+  Db,
+  Listening,
+  MigrationDescriptor,
+  Store,
+  Transaction,
+} from "./store/index.ts";
 export { openStore } from "./store/index.ts";

@@ -62,7 +62,9 @@ Conventions the build depends on:
   `src/core/migrations.test.ts` scans every shipped folder and fails on one left
   in.
 - **Nothing outside `src/store/` imports `pg`.** Enforced by a Biome override:
-  parts obtain a handle with `store.handle(schema)`.
+  parts obtain a handle with `store.handle(schema)`, and the one thing that needs a
+  connection of its own — a `LISTEN` registration — with `store.listen(channel,
+  listener)`, which keeps that connection inside the Store too.
 
 ## Agent skills
 

@@ -4,7 +4,7 @@ import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate as applyFolder } from "drizzle-orm/node-postgres/migrator";
 import type { PgDatabase, PgQueryResultHKT, PgTransaction } from "drizzle-orm/pg-core";
-import { Pool } from "pg";
+import { Client, Pool } from "pg";
 
 /**
  * A database handle or a transaction, whichever schema it carries.
@@ -65,6 +65,36 @@ export type MigrationDescriptor = {
   readonly table: string;
 };
 
+/**
+ * What `store.listen` reports.
+ *
+ * `notified` is the point of it. The other two are about the connection
+ * underneath, which a caller has to care about because **PostgreSQL queues
+ * nothing for a listener that is not connected**: whatever was sent while the
+ * connection was down is gone, with no gap visible in what does arrive.
+ */
+export type ChannelListener = {
+  /** A notification arrived. `payload` is `NOTIFY`'s, empty when it carried none. */
+  notified(payload: string): void;
+  /**
+   * The registration is in place — on the first connection, and again after every
+   * loss. A caller that cannot afford to miss a notification does here whatever it
+   * does on one, since a reconnection is exactly where one goes missing.
+   */
+  connected?(): void;
+  /** The connection was lost, or an attempt to open one failed. Another follows. */
+  lost?(error: unknown): void;
+};
+
+/** A registration made by `store.listen`. */
+export type Listening = {
+  /**
+   * Stops listening and closes the connection. Idempotent, and safe to call while a
+   * reconnection is pending.
+   */
+  close(): Promise<void>;
+};
+
 export type Store = {
   /**
    * A handle over the shared pool, typed to `schema`. Keeps `pg` internal: the
@@ -72,6 +102,25 @@ export type Store = {
    * public API.
    */
   handle<TSchema extends Record<string, unknown>>(schema: TSchema): Db<TSchema>;
+
+  /**
+   * Registers `listen <channel>` on a connection of the Store's own, outside the
+   * pool, and reports what arrives on it.
+   *
+   * It cannot be a pooled connection: a `LISTEN` registration belongs to a session,
+   * and a pooled connection goes back to the pool as soon as the query using it
+   * resolves — so there is nothing left holding the session, and no way to ask for
+   * that one back. This is therefore the one place the Store keeps a connection open
+   * on a caller's behalf, and it is still the Store that owns it, which is what
+   * keeps `pg` out of the public API (ADR-0022).
+   *
+   * Returns without waiting for the connection, and never rejects. A caller that
+   * cannot connect yet is in exactly the position of one whose connection dropped an
+   * hour in, and giving both one path means the reconnection path is the one that
+   * runs on every start rather than only in an incident. Failures go to
+   * `listener.lost` and are retried with a backoff until `close`.
+   */
+  listen(channel: string, listener: ChannelListener): Listening;
 
   /**
    * Applies each descriptor into its own schema with its own tracker, in the
@@ -83,7 +132,14 @@ export type Store = {
   /** Runs `body` in a transaction: commits on return, rolls back on throw. */
   tx<T>(body: (tx: Transaction) => Promise<T>): Promise<T>;
 
-  /** Closes the pool. Nothing in the framework calls this; shutdown is the Operator's. */
+  /**
+   * Closes the pool and every connection `listen` opened. Nothing in the framework
+   * calls this; shutdown is the Operator's.
+   *
+   * Listening connections are included because they are the Store's, and one left
+   * connected keeps the process alive and its database undroppable — a leak whose
+   * symptom is a deploy that never exits rather than an error anyone can read.
+   */
   close(): Promise<void>;
 };
 
@@ -101,9 +157,18 @@ export function openStore(url: string): Store {
   // migrating, transactions, and raw statements. Every handle shares the pool.
   const bare = drizzle(pool);
 
+  // Every registration still open, so `close` can take them with it.
+  const listeners = new Set<Listening>();
+
   return {
     handle(schema) {
       return drizzle(pool, { schema });
+    },
+
+    listen(channel, listener) {
+      const listening = startListening(url, channel, listener, () => listeners.delete(listening));
+      listeners.add(listening);
+      return listening;
     },
 
     async migrate(...descriptors) {
@@ -125,7 +190,121 @@ export function openStore(url: string): Store {
     },
 
     async close() {
+      // Copied, because closing removes each from the set as it goes.
+      await Promise.all([...listeners].map((listening) => listening.close()));
       await pool.end();
+    },
+  };
+}
+
+/**
+ * How a listening connection names itself in `pg_stat_activity`.
+ *
+ * Not decoration: it is a connection an Operator did not ask for and cannot see in
+ * the Store's surface, so it says what it is where they will look for it. The tests
+ * find and cut it by the same name.
+ */
+export const listenApplicationName = "saf listen";
+
+/** How long before the first reconnection attempt, and the ceiling it doubles to. */
+const firstRetryMs = 100;
+const maxRetryMs = 5_000;
+
+/**
+ * Holds one connection open with a `LISTEN` on it, and puts it back whenever it is
+ * lost.
+ *
+ * A dropped connection is normal operation rather than a failure: PostgreSQL
+ * restarts, connections are terminated, networks break. So nothing here throws at a
+ * caller — a loss is reported and retried, and the caller's own recovery (for the
+ * Core, a sweep of the queue) covers what went missing in the meantime.
+ */
+function startListening(
+  url: string,
+  channel: string,
+  listener: ChannelListener,
+  forget: () => void,
+): Listening {
+  let closed = false;
+  let connected: Client | undefined;
+  let attempting: Promise<void> | undefined;
+  let retry: NodeJS.Timeout | undefined;
+  let retryMs = firstRetryMs;
+
+  function scheduleRetry(): void {
+    if (closed || retry !== undefined) return;
+    const delay = retryMs;
+    retryMs = Math.min(retryMs * 2, maxRetryMs);
+    retry = setTimeout(() => {
+      retry = undefined;
+      attempting = attempt();
+    }, delay);
+  }
+
+  async function attempt(): Promise<void> {
+    if (closed) return;
+    const client = new Client({
+      connectionString: url,
+      application_name: `${listenApplicationName} ${channel}`,
+    });
+
+    let lost = false;
+    const lose = (error: unknown): void => {
+      // A terminated connection reports itself twice, as an error and as an end.
+      if (lost) return;
+      lost = true;
+      if (connected === client) connected = undefined;
+      if (closed) return;
+      void client.end().catch(() => {});
+      listener.lost?.(error);
+      scheduleRetry();
+    };
+
+    // Attached before connecting: an idle client reports a connection it lost as an
+    // `error` event, and an `error` event with no handler takes the process down.
+    client.on("error", lose);
+    client.on("end", () => lose(new Error(`the connection listening on ${channel} ended`)));
+    client.on("notification", (message) => {
+      if (!closed) listener.notified(message.payload ?? "");
+    });
+
+    try {
+      await client.connect();
+      // Through Drizzle for the identifier quoting rather than the query builder:
+      // `LISTEN` is a utility statement, so the channel cannot be a bind parameter
+      // and has to be quoted into the statement itself.
+      await drizzle(client).execute(sql`listen ${sql.identifier(channel)}`);
+    } catch (error) {
+      lose(error);
+      return;
+    }
+
+    if (closed) {
+      await client.end().catch(() => {});
+      return;
+    }
+    connected = client;
+    retryMs = firstRetryMs;
+    listener.connected?.();
+  }
+
+  attempting = attempt();
+
+  return {
+    async close() {
+      if (closed) return;
+      closed = true;
+      forget();
+      if (retry !== undefined) {
+        clearTimeout(retry);
+        retry = undefined;
+      }
+      // An attempt already in flight sees `closed` and closes its own client; without
+      // waiting for it, `close` could return while a connection is still being made.
+      await attempting;
+      const client = connected;
+      connected = undefined;
+      if (client !== undefined) await client.end();
     },
   };
 }

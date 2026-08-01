@@ -6,15 +6,31 @@
  * time regardless of Session, which is the only reason a Workspace shared by every
  * Signal Handler and the agent is safe to have at all (ADR-0012).
  *
- * Wakeup here is a plain interval. Ticket 04 replaces it with a PostgreSQL
- * `NOTIFY` issued inside the emitting transaction, and keeps an interval alongside
- * as the slow sweep; nothing outside this file needs to change when it does.
+ * Three things wake it, and the difference between them is the whole of this file's
+ * subtlety:
+ *
+ *  - **a notification**, sent by `emit` inside the caller's transaction. Because
+ *    PostgreSQL notifications are transactional, the wakeup and the row becoming
+ *    visible are one event: neither can happen without the other, and a Signal from
+ *    a transaction that rolled back wakes nobody. Nudging the worker after commit
+ *    was the alternative, and it puts that guarantee in every Producer's hands.
+ *  - **the sweep**, an interval, because a notification sent while the listening
+ *    connection is down is *gone* — PostgreSQL queues nothing for an absent
+ *    listener. Without the sweep a dropped connection is a Signal stuck at
+ *    `pending` with no error anywhere.
+ *  - **the registration going in**, first time and after every reconnection, which
+ *    is the same case caught early: a notification sent in the moment before the
+ *    worker could hear it is lost exactly like one sent while it was disconnected.
+ *
+ * None of them says how much there is to do, so the worker **drains**: it runs until
+ * the queue is empty. That is what makes a duplicated or spurious wakeup harmless
+ * and a burst one wakeup rather than five.
  */
 
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { defaultLogger, type Logger } from "../logging.ts";
-import type { Db, Store } from "../store/index.ts";
+import type { Db, Listening, Store } from "../store/index.ts";
 import { assertSessionName, type Prompt, type Signal, type SignalHandlers } from "./handlers.ts";
 import type { RunOutcome, RuntimeAdapter } from "./runtime.ts";
 import { runs, signals } from "./schema.ts";
@@ -39,13 +55,16 @@ export type CoreOptions = {
   /** Defaults to a `pino` instance on stdout. */
   readonly logger?: Logger;
   /**
-   * How often the worker looks for pending Signals, in milliseconds.
+   * How often the worker looks for pending Signals regardless of notifications, in
+   * milliseconds.
    *
-   * The only wakeup mechanism in this slice, so it is also the worst-case latency
-   * of a Signal. Ticket 04 makes the emitting transaction wake the worker directly
-   * and demotes this to the sweep that covers a lost notification.
+   * Deliberately not the latency of a Signal: emitting one wakes the worker
+   * immediately, and this is the safety net for the notification that was sent while
+   * the listening connection was down and so was never delivered. Lower it if a
+   * Signal waiting this long during a database restart is unacceptable; there is no
+   * correctness in the number.
    */
-  readonly wakeupIntervalMs?: number;
+  readonly sweepIntervalMs?: number;
 };
 
 export type Core = {
@@ -76,6 +95,11 @@ export type Core = {
    * permanently and is never retried (ADR-0017, ADR-0021). A Handler may close
    * over this Core: it is constructed, then Handlers are built against it, then it
    * is started with them (ADR-0024).
+   *
+   * Returns immediately, and the first thing the worker does is **fail whatever a
+   * previous worker left `processing`** (ADR-0017). Synchronous because nothing an
+   * Operator does next depends on it: a Signal emitted in the meantime is a row in a
+   * queue, and it is drained when recovery is done.
    */
   start(handlers: SignalHandlers): void;
 
@@ -90,13 +114,38 @@ export type Core = {
   stop(): Promise<void>;
 };
 
-/** The Core's worst-case Signal latency in this slice; see `wakeupIntervalMs`. */
-const defaultWakeupIntervalMs = 200;
+/**
+ * The channel the Core notifies and listens on.
+ *
+ * Prefixed for the same reason the schema is: notification channels are per
+ * database, and the framework is installed into one it does not own. Not
+ * overridable — a Core notifying a channel a different Core listens on is a Gateway
+ * that looks healthy and never runs a Signal until the sweep, and there is nothing
+ * an Operator gains by choosing the name. Exported for the tests, which send
+ * spurious notifications on it, and not from the package.
+ */
+export const signalChannel = "saf_core_signal";
+
+/** How long a Signal can sit unnoticed if its notification was lost. */
+const defaultSweepIntervalMs = 5_000;
+
+/** What a Signal and its Runs are failed with when a previous worker left them behind. */
+const strandedSignal =
+  "the worker stopped while this Signal was processing, and it is failed rather than re-run after the restart: its Runs may already have sent Messages, written the Workspace, or called something outside (ADR-0017)";
+const strandedRun = "the worker stopped before this Run finished; Runs are never re-run (ADR-0017)";
+
+/**
+ * Why the worker woke, for the debug line — and for the tests that pin them.
+ *
+ * `listening` covers the first registration and every reconnection alike: both mean
+ * the worker can now be notified and could not a moment ago.
+ */
+type WakeupReason = "start" | "notification" | "listening" | "sweep";
 
 export function createCore(options: CoreOptions): Core {
   const log = options.logger ?? defaultLogger();
   const runtime = options.runtime;
-  const wakeupIntervalMs = options.wakeupIntervalMs ?? defaultWakeupIntervalMs;
+  const sweepIntervalMs = options.sweepIntervalMs ?? defaultSweepIntervalMs;
 
   // The Core's own handle, typed to the Core's own schema. `pg` never leaves the
   // Store (ADR-0022).
@@ -104,7 +153,12 @@ export function createCore(options: CoreOptions): Core {
 
   let handlers: SignalHandlers | undefined;
   let ticker: NodeJS.Timeout | undefined;
-  let draining: Promise<void> | undefined;
+  let listening: Listening | undefined;
+  /** The worker, while it is awake. One at a time, or the queue is not serial. */
+  let working: Promise<void> | undefined;
+  /** A wakeup arrived. Cleared by the drain that acts on it, never by the wakeup. */
+  let woken = false;
+  let recovered = false;
   let stopping = false;
 
   /**
@@ -295,22 +349,86 @@ export function createCore(options: CoreOptions): Core {
   }
 
   /**
-   * Starts a drain unless one is already running, so overlapping wakeups cannot
-   * produce a second worker and break the serial guarantee.
+   * Fails every Signal a previous worker left `processing`, and resolves the Runs
+   * under them.
+   *
+   * They are **not re-run** (ADR-0017): a Run may already have sent Messages, written
+   * the Workspace, or called something outside, and its Prompt is already in the
+   * Session on disk. Replaying it duplicates all of that. The Runs are failed too,
+   * including ones that were only recorded — a Run row saying `running` with nothing
+   * running is a lie an Operator has no way to see through.
+   *
+   * This is why it must finish before anything is claimed: a drain alongside it would
+   * mark its own Signal `processing` and have recovery fail it underneath. It also
+   * assumes it is the only worker on this database, which ADR-0012 already requires —
+   * two Gateways sharing a queue break the serial guarantee before they get here.
+   *
+   * A crash is not the only way in. So is a Store error inside a drain, which is
+   * exactly the case that convinced us this cannot be startup-only forever; for now
+   * the next start resolves it, and the row says why.
    */
-  function wakeup(): void {
-    if (draining !== undefined) return;
-    draining = (async () => {
+  async function recover(): Promise<void> {
+    const stranded = await options.store.tx(async (tx) => {
+      const failed = await tx
+        .update(signals)
+        .set({ state: "failed", error: strandedSignal })
+        .where(eq(signals.state, "processing"))
+        .returning({ id: signals.id, kind: signals.kind });
+      if (failed.length > 0) {
+        await tx
+          .update(runs)
+          .set({ state: "failed", error: strandedRun, endedAt: sql`clock_timestamp()` })
+          .where(
+            and(
+              inArray(
+                runs.signalId,
+                failed.map((signal) => signal.id),
+              ),
+              inArray(runs.state, ["pending", "running"]),
+            ),
+          );
+      }
+      return failed;
+    });
+
+    for (const signal of stranded) {
+      log.warn(
+        { signalId: signal.id, kind: signal.kind },
+        "Signal was left processing by a stopped worker: failed, and not re-run after the restart",
+      );
+    }
+  }
+
+  /**
+   * Notes that there is something to look at, and starts the worker if it is asleep.
+   *
+   * A wakeup during a drain sets the flag rather than starting a second drain: two
+   * would break the serial guarantee, and dropping it would lose the Signal that
+   * committed just after the drain's last look at the queue — which is precisely the
+   * Signal a notification exists to deliver promptly.
+   */
+  function wakeup(reason: WakeupReason): void {
+    log.debug({ reason }, "worker woken");
+    woken = true;
+    if (working !== undefined) return;
+    working = (async () => {
       try {
-        await drain();
+        if (!recovered) {
+          await recover();
+          recovered = true;
+        }
+        while (woken && !stopping) {
+          woken = false;
+          await drain();
+        }
       } catch (error) {
-        // Only the Store can get here: Handler and adapter failures are handled
-        // per Signal. The Signal stays `processing` and ticket 04's restart
-        // recovery resolves it; the worker tries again on the next wakeup rather
-        // than dying quietly.
-        log.error({ err: error }, "the Signal worker stopped draining");
+        // Only the Store can get here: Handler and adapter failures are handled per
+        // Signal. Whatever was claimed stays `processing` for the next start to
+        // resolve, `woken` is still set, and the worker tries again on the next
+        // wakeup rather than dying quietly.
+        log.error({ err: error }, "the Signal worker stopped short, and retries when next woken");
       } finally {
-        draining = undefined;
+        working = undefined;
       }
     })();
   }
@@ -327,6 +445,20 @@ export function createCore(options: CoreOptions): Core {
       if (inserted === undefined) {
         throw new Error("emitting a Signal inserted no row");
       }
+
+      // The wakeup, in the caller's transaction with the row. PostgreSQL delivers a
+      // notification at commit and not at all on rollback, so this cannot wake the
+      // worker for a Signal that never existed, and cannot fail to wake it for one
+      // that does — which is the guarantee a post-commit nudge cannot make, since
+      // there is no post-commit hook and the Producer would have to remember.
+      //
+      // `pg_notify` and not `NOTIFY`, because a utility statement takes no bind
+      // parameters. The payload is empty on purpose: the worker drains the whole
+      // queue, so a notification means only "look again" and carries nothing worth
+      // saying — and identical notifications sent in one transaction are collapsed by
+      // PostgreSQL, so a Producer emitting a hundred Signals at once wakes the worker
+      // once.
+      await tx.execute(sql`select pg_notify(${signalChannel}, '')`);
       return inserted.id;
     },
 
@@ -337,11 +469,35 @@ export function createCore(options: CoreOptions): Core {
         );
       }
       handlers = registered;
+
+      // The connection carrying the notifications is the Store's to hold — a
+      // `LISTEN` registration cannot live on a pooled connection, and `pg` does not
+      // leave the Store to get one (ADR-0022).
+      listening = options.store.listen(signalChannel, {
+        notified: () => wakeup("notification"),
+        connected: () => {
+          log.debug({ channel: signalChannel }, "listening for Signal notifications");
+          // Every registration is a reason to look, the first one included. Anything
+          // sent before it was in place was never delivered — and the first
+          // registration has a gap in front of it just as a reconnection does, because
+          // `start` returns before it completes and a Producer may well emit in
+          // between. Missing that is a Signal waiting a whole sweep on a Gateway that
+          // has only just started, which is exactly when someone is watching.
+          wakeup("listening");
+        },
+        lost: (error) => {
+          log.warn(
+            { err: error },
+            "the Signal notification connection dropped; reconnecting, and the sweep covers the gap",
+          );
+        },
+      });
+
       // Deliberately not unref'd: the worker is what keeps a Gateway alive, and a
       // process whose only job is to run Signals should not exit because the queue
       // happens to be empty.
-      ticker = setInterval(wakeup, wakeupIntervalMs);
-      wakeup();
+      ticker = setInterval(() => wakeup("sweep"), sweepIntervalMs);
+      wakeup("start");
     },
 
     async stop() {
@@ -350,7 +506,13 @@ export function createCore(options: CoreOptions): Core {
         clearInterval(ticker);
         ticker = undefined;
       }
-      await draining;
+      // Both sources of wakeups are gone before the wait, so nothing new starts
+      // while it is going on.
+      if (listening !== undefined) {
+        await listening.close();
+        listening = undefined;
+      }
+      await working;
     },
   };
 }
