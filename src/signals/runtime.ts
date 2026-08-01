@@ -1,6 +1,6 @@
 /**
  * The Runtime Adapter seam: the part that drives one kind of Agent Runtime on the
- * Core's behalf.
+ * Signal Worker's behalf.
  *
  * Deliberately the narrowest interface in the framework, because it is the one
  * that decides whether a second Agent Runtime is possible at all. Everything

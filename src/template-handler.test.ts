@@ -5,7 +5,7 @@
  * its factory was given (ADR-0024), so the rendering criteria are unit tests over
  * files in a temporary directory. The last two are not — "fails that Signal with a
  * reason" is a claim about the Signal log, and "does not stop the worker" is a claim
- * about what happens to the *next* Signal, so those run through a real Core against
+ * about what happens to the *next* Signal, so those run through a real Signal Worker against
  * real PostgreSQL with the template edited underneath a worker that never restarts.
  *
  * The escaping assertions are byte-for-byte on purpose. `noEscape: true` looks like
@@ -21,11 +21,11 @@ import path from "node:path";
 import { after, before, describe, it, type TestContext } from "node:test";
 import { eq } from "drizzle-orm";
 import Handlebars from "handlebars";
-import { type Core, createCore } from "./core/core.ts";
-import type { Prompt, Signal, SignalHandler, SignalHandlers } from "./core/handlers.ts";
-import { coreMigrations } from "./core/migrations.ts";
-import { signals } from "./core/schema.ts";
 import type { Db } from "./db/index.ts";
+import type { Prompt, Signal, SignalHandler, SignalHandlers } from "./signals/handlers.ts";
+import { signalsMigrations } from "./signals/migrations.ts";
+import { signals } from "./signals/schema.ts";
+import { createSignalWorker, type SignalWorker } from "./signals/worker.ts";
 import { templateHandler } from "./template-handler.ts";
 import { createTestDatabase, type TestDatabase } from "./test-support/database.ts";
 import { type FakeRuntime, fakeRuntime } from "./test-support/fake-runtime.ts";
@@ -397,8 +397,8 @@ describe("a Handler's Handlebars environment", () => {
  * The two criteria that are about the Signal log rather than the Handler.
  *
  * PostgreSQL is real and the Runtime Adapter is the only fake (ADR-0022), and the
- * Core here is started once and never restarted — which is what "no restart" in the
- * ticket means and what a second `templateHandler` call in a fresh process would not
+ * Signal Worker here is started once and never restarted — which is what "no restart" in
+ * the ticket means and what a second `templateHandler` call in a fresh process would not
  * demonstrate.
  */
 describe("the template Handler under the worker", () => {
@@ -408,7 +408,7 @@ describe("the template Handler under the worker", () => {
   before(async () => {
     database = await createTestDatabase("template_handler");
     db = database.db;
-    await db.migrate(coreMigrations);
+    await db.migrate(signalsMigrations);
   });
 
   after(() => database.drop());
@@ -434,21 +434,21 @@ describe("the template Handler under the worker", () => {
     return stateOf(signalId);
   }
 
-  async function emit(core: Core, kind: string): Promise<string> {
-    return db.tx((tx) => core.emit(tx, { kind, payload: {} }));
+  async function emit(worker: SignalWorker, kind: string): Promise<string> {
+    return db.tx((tx) => worker.emit(tx, { kind, payload: {} }));
   }
 
   async function withWorker(
     handlers: SignalHandlers,
-    body: (core: Core, runtime: FakeRuntime) => Promise<void>,
+    body: (worker: SignalWorker, runtime: FakeRuntime) => Promise<void>,
   ): Promise<void> {
     const runtime = fakeRuntime();
-    const core = createCore({ db, runtime, sweepIntervalMs });
-    core.start(handlers);
+    const worker = createSignalWorker({ db, runtime, sweepIntervalMs });
+    worker.start(handlers);
     try {
-      await body(core, runtime);
+      await body(worker, runtime);
     } finally {
-      await core.stop();
+      await worker.stop();
     }
   }
 
@@ -460,14 +460,14 @@ describe("the template Handler under the worker", () => {
       data: () => ({}),
     });
 
-    await withWorker({ "prompt.render": handler }, async (core, runtime) => {
-      const first = await emit(core, "prompt.render");
+    await withWorker({ "prompt.render": handler }, async (worker, runtime) => {
+      const first = await emit(worker, "prompt.render");
       assert.deepEqual(await settled(first), { state: "done", error: null });
 
       // The Gateway keeps running while the Operator edits the file.
       await writeFile(file, "the second wording", "utf8");
 
-      const second = await emit(core, "prompt.render");
+      const second = await emit(worker, "prompt.render");
       assert.deepEqual(await settled(second), { state: "done", error: null });
 
       assert.deepEqual(
@@ -500,14 +500,14 @@ describe("the template Handler under the worker", () => {
       "prompt.malformed": of(malformed),
     };
 
-    await withWorker(handlers, async (core, runtime) => {
+    await withWorker(handlers, async (worker, runtime) => {
       const broken = {
-        [missing]: await emit(core, "prompt.missing"),
-        [unsupplied]: await emit(core, "prompt.unsupplied"),
-        [malformed]: await emit(core, "prompt.malformed"),
+        [missing]: await emit(worker, "prompt.missing"),
+        [unsupplied]: await emit(worker, "prompt.unsupplied"),
+        [malformed]: await emit(worker, "prompt.malformed"),
       };
       // Emitted last, so reaching `done` means the worker survived all three.
-      const after = await emit(core, "prompt.good");
+      const after = await emit(worker, "prompt.good");
 
       for (const [template, signalId] of Object.entries(broken)) {
         const outcome = await settled(signalId);

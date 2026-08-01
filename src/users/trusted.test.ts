@@ -28,7 +28,7 @@
  *    probing a list of URLs. A route added later shows up there and fails, which is
  *    what makes it an assertion of absence rather than a habit of not adding things.
  *
- * The Core is present here and nowhere else in this part, for one criterion: a
+ * The Signal Worker is present here and nowhere else in this part, for one criterion: a
  * transaction that creates a User and emits a Signal must commit or roll back as one.
  * The User Directory is not a Producer and emits nothing itself (ADR-0029), so that
  * pattern is the deployment's, and this is where it is proved to work.
@@ -40,9 +40,9 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance, type FastifyPluginAsync } from "fastify";
-import { type Core, coreMigrations, createCore } from "../core/index.ts";
 import type { Db } from "../db/index.ts";
 import type { Logger } from "../logging.ts";
+import { createSignalWorker, type SignalWorker, signalsMigrations } from "../signals/index.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { usersMigrations } from "./migrations.ts";
 import type { IssuedToken, UserRecord } from "./routes.ts";
@@ -68,7 +68,7 @@ const ops = "/ops";
 let database: TestDatabase;
 let db: Db;
 let directory: Users;
-let core: Core;
+let worker: SignalWorker;
 let agentServer: FastifyInstance;
 let publicServer: FastifyInstance;
 
@@ -101,16 +101,16 @@ before(async () => {
   // Both descriptors in the one call an Operator already makes, because one test here
   // spans both parts. The Directory needs no other part migrated to work, which
   // `users.test.ts` is what proves.
-  await db.migrate(coreMigrations, usersMigrations);
+  await db.migrate(signalsMigrations, usersMigrations);
 
   directory = createUsers({ db, tokenTtl: hour, scrypt: cheap });
   // Constructed and never started: this file emits Signals and reads them back, and a
   // running worker would take them off the queue and try to handle them.
-  core = createCore({ db, runtime: { run: async () => ({ ok: true }) }, logger: silent });
+  worker = createSignalWorker({ db, runtime: { run: async () => ({ ok: true }) }, logger: silent });
 
   agentServer = Fastify();
   await agentServer.register(directory.agentRoutes, { prefix: users });
-  await agentServer.register(core.agentRoutes);
+  await agentServer.register(worker.agentRoutes);
 
   publicServer = Fastify();
   await publicServer.register(directory.publicRoutes, { prefix: auth });
@@ -120,7 +120,7 @@ before(async () => {
 after(async () => {
   await agentServer.close();
   await publicServer.close();
-  await core.stop();
+  await worker.stop();
   await database.drop();
 });
 
@@ -562,7 +562,7 @@ describe("the Agent server", () => {
 });
 
 describe("a User and a Signal in one transaction", () => {
-  /** The Signals the Core's own read route reports, newest first. */
+  /** The Signals the Signal Worker's own read route reports, newest first. */
   async function signals(kind: string): Promise<Array<{ payload: { user?: string } }>> {
     const response = await agentServer.inject({ method: "GET", url: `/signals?kind=${kind}` });
     assert.equal(response.statusCode, 200, response.body);
@@ -570,15 +570,15 @@ describe("a User and a Signal in one transaction", () => {
   }
 
   it("commits as one, which is how a deployment gets a `user.created` Signal", async () => {
-    // The User Directory is **not** a Producer: it takes no reference to the Core and
-    // emits nothing, because the worker is globally serial and a Signal per User event
-    // would put a Run behind one (ADR-0029). A deployment that wants the Signal emits
+    // The User Directory is **not** a Producer: it takes no reference to the Signal
+    // Worker and emits nothing, because the worker is globally serial and a Signal per
+    // User event would put a Run behind one (ADR-0029). A deployment that wants it emits
     // it itself, and this is the pattern — both writes take the caller's transaction
     // (ADR-0023), so there is one.
     const created = await db.tx(async (tx) => {
       const user = await directory.create(tx);
       await directory.setAttributes(tx, user.id, { invitedBy: "the Operator" });
-      await core.emit(tx, { kind: "user.created", payload: { user: user.id } });
+      await worker.emit(tx, { kind: "user.created", payload: { user: user.id } });
       return user;
     });
 
@@ -601,7 +601,7 @@ describe("a User and a Signal in one transaction", () => {
     await assert.rejects(
       db.tx(async (tx) => {
         attempted = await directory.create(tx);
-        await core.emit(tx, { kind: "user.created", payload: { user: attempted.id } });
+        await worker.emit(tx, { kind: "user.created", payload: { user: attempted.id } });
         throw new Error("the Operator's own write failed");
       }),
       /the Operator's own write failed/,

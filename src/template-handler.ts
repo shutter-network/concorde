@@ -2,7 +2,7 @@
  * A Signal Handler that renders its Prompt from a Handlebars file on disk.
  *
  * This is **one predefined Handler, not a framework special case** (ADR-0027). It
- * satisfies the ordinary contract in `core/handlers.ts` and closes over everything
+ * satisfies the ordinary contract in `signals/handlers.ts` and closes over everything
  * it needs, exactly as an Operator's own Handler does (ADR-0024) — so an Operator
  * who outgrows it stops calling it and writes the twenty lines themselves, with
  * nothing to unwire.
@@ -35,7 +35,7 @@
 
 import { readFile } from "node:fs/promises";
 import Handlebars from "handlebars";
-import type { Prompt, Signal, SignalHandler } from "./core/handlers.ts";
+import type { Prompt, Signal, SignalHandler } from "./signals/handlers.ts";
 
 /**
  * What `templateHandler` needs. Everything is supplied here rather than through a

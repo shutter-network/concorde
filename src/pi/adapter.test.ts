@@ -25,8 +25,8 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
-import type { RuntimeAdapter } from "../core/runtime.ts";
 import type { LogFields, Logger } from "../logging.ts";
+import type { RuntimeAdapter } from "../signals/runtime.ts";
 import {
   type FakeContainerReport,
   type FakeContainerScript,

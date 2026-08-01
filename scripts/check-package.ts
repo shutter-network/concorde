@@ -47,7 +47,7 @@ const migrationsRoot = path.join(repoRoot, "migrations");
 
 /** The consumer's imports, spelled once: the type checker and Node see the same three. */
 const consumerImports = [
-  'import { coreMigrations, createCore, defaultLogger, openDb, resolveMountTable, templateHandler } from "shared-agent-framework";',
+  'import { createSignalWorker, defaultLogger, openDb, resolveMountTable, signalsMigrations, templateHandler } from "shared-agent-framework";',
   'import { composeInvocation, createPiAdapter, interpretPiOutput, resolvePiConfiguration } from "shared-agent-framework/pi";',
   'import { createUsers, usersMigrations } from "shared-agent-framework/users";',
 ];
@@ -133,15 +133,15 @@ try {
     // both. Migration folders resolve because of this and nothing else.
     "dist/db/db.js",
     "dist/db/db.d.ts",
-    // The Core's descriptor resolves `../../migrations/core` from its own module,
-    // so its position in `dist` is what makes the shipped folder reachable.
-    "dist/core/migrations.js",
-    "dist/core/core.js",
-    // The Core's Agent server routes: a Fastify plugin, and the only shipped module
-    // that names Fastify at all. Fastify is public API rather than an internal
+    // The Signal Worker's descriptor resolves `../../migrations/core` from its own
+    // module, so its position in `dist` is what makes the shipped folder reachable.
+    "dist/signals/migrations.js",
+    "dist/signals/worker.js",
+    // The Signal Worker's Agent server routes: a Fastify plugin, and the only shipped
+    // module that names Fastify at all. Fastify is public API rather than an internal
     // (ADR-0021), so the consumer brings the instance and registers this on it.
-    "dist/core/routes.js",
-    "dist/core/routes.d.ts",
+    "dist/signals/routes.js",
+    "dist/signals/routes.d.ts",
     // The User Directory, under its own subpath and with its own migration
     // descriptor: `dist/users/migrations.js` resolves `../../migrations/users` from
     // its own module, so its position in `dist` is what makes that folder reachable
@@ -297,8 +297,6 @@ try {
       // altogether, would type-check in this project without it.
       "import type {",
       "  ChannelListener,",
-      "  Core,",
-      "  CoreOptions,",
       "  Db,",
       "  EmittedSignal,",
       "  Handle,",
@@ -321,6 +319,8 @@ try {
       "  SignalHandlers,",
       "  SignalRecord,",
       "  SignalState,",
+      "  SignalWorker,",
+      "  SignalWorkerOptions,",
       "  TemplateHandlerOptions,",
       "  Transaction,",
       '} from "shared-agent-framework";',
@@ -347,12 +347,12 @@ try {
       // framework constructs no server, so the instance comes from this call.
       // Importing the types here is also what proves they resolve from the installed
       // package: `skipLibCheck` would swallow an unresolved import inside our own
-      // declarations and quietly leave the Core's route plugin `any`.
+      // declarations and quietly leave the Signal Worker's route plugin `any`.
       'import Fastify from "fastify";',
       'import type { FastifyInstance, FastifyPluginAsync } from "fastify";',
       "",
       "// Annotated throughout, so a declaration that resolved to `any` fails here.",
-      "export const descriptor: MigrationDescriptor = coreMigrations;",
+      "export const descriptor: MigrationDescriptor = signalsMigrations;",
       'export const db: Db = openDb("postgres://nobody@example.invalid/none");',
       "",
       "// An Operator's own schema and tables, kept through the same call the",
@@ -384,8 +384,8 @@ try {
       "};",
       "export const shipped: Logger = defaultLogger();",
       "",
-      "const options: CoreOptions = { db, runtime, logger: log, sweepIntervalMs: 500 };",
-      "export const core: Core = createCore(options);",
+      "const options: SignalWorkerOptions = { db, runtime, logger: log, sweepIntervalMs: 500 };",
+      "export const worker: SignalWorker = createSignalWorker(options);",
       "",
       "// The two servers: two bare Fastify instances the consumer constructs, because",
       "// the framework ships none and holds no opinion about either bind address. What",
@@ -393,10 +393,10 @@ try {
       "export const publicServer: FastifyInstance = Fastify({ bodyLimit: 1048576 });",
       "export const agentServer: FastifyInstance = Fastify();",
       "",
-      "// The Core contributes its Signal and Run routes as a Fastify plugin, which the",
-      "// Operator registers — and not registering it is how an endpoint group is",
-      "// switched off (ADR-0010, ADR-0021).",
-      "const coreRoutes: FastifyPluginAsync = core.agentRoutes;",
+      "// The Signal Worker contributes its Signal and Run routes as a Fastify plugin,",
+      "// which the Operator registers — and not registering it is how an endpoint group",
+      "// is switched off (ADR-0010, ADR-0021).",
+      "const workerRoutes: FastifyPluginAsync = worker.agentRoutes;",
       "",
       "// The User Directory: constructed from the same Db, contributing one more",
       "// migration descriptor to the one call and one more plugin to the Agent server,",
@@ -519,10 +519,10 @@ try {
       '  "6f1d2c3b-4a59-4e6f-8a1b-2c3d4e5f6a7b",',
       ");",
       "",
-      "// The adapter itself, which is what an Operator actually passes to the Core: a",
-      "// plain Runtime Adapter, with no second call to remember and no type of its own",
-      "// to hold one (ADR-0028). Annotated as a RuntimeAdapter because that is the seam",
-      "// the Core is given and the whole of what construction returns.",
+      "// The adapter itself, which is what an Operator actually passes to the Signal",
+      "// Worker: a plain Runtime Adapter, with no second call to remember and no type",
+      "// of its own to hold one (ADR-0028). Annotated as a RuntimeAdapter because that is the seam",
+      "// the Signal Worker is given and the whole of what construction returns.",
       "const piAdapterOptions: PiAdapterOptions = { ...piConfig, logger: log };",
       "export const piAdapter: RuntimeAdapter = createPiAdapter(piAdapterOptions);",
       "",
@@ -559,13 +559,13 @@ try {
       '    "message.received": greeter("hello"),',
       '    "prompt.render": fromTemplate,',
       "  };",
-      "  core.start(handlers);",
+      "  worker.start(handlers);",
       "  await db.tx(async (tx: Transaction) => {",
       '    const emitted: EmittedSignal = { kind: "message.received", payload: { userId: "u1" } };',
-      "    const id: string = await core.emit(tx, emitted);",
+      "    const id: string = await worker.emit(tx, emitted);",
       '    shipped.info({ signalId: id }, "emitted");',
       "  });",
-      "  await agentServer.register(coreRoutes);",
+      "  await agentServer.register(workerRoutes);",
       '  await agentServer.register(userRoutes, { prefix: "/users" });',
       '  await publicServer.register(loginRoutes, { prefix: "/auth" });',
       '  await publicServer.register(ownRoutes, { prefix: "/ops" });',
@@ -606,7 +606,7 @@ try {
       "  );",
       "  await publicServer.close();",
       "  await agentServer.close();",
-      "  await core.stop();",
+      "  await worker.stop();",
       "  await db.close();",
       "}",
       "",
@@ -693,21 +693,21 @@ try {
   writeFileSync(
     path.join(consumer, "migrate.ts"),
     [
-      'import { coreMigrations, createCore, openDb } from "shared-agent-framework";',
+      'import { createSignalWorker, openDb, signalsMigrations } from "shared-agent-framework";',
       'import { createUsers, usersMigrations } from "shared-agent-framework/users";',
       'import Fastify from "fastify";',
       "",
       "const db = openDb(process.argv[2]);",
-      "const core = createCore({ db, runtime: { run: async () => ({ ok: true }) } });",
+      "const worker = createSignalWorker({ db, runtime: { run: async () => ({ ok: true }) } });",
       "// A cost no deployment should use, because this proves the folder applied and",
       "// not that scrypt is slow.",
       "const users = createUsers({ db, tokenTtl: 60_000, scrypt: { logN: 12, blockSize: 8, parallelism: 1 } });",
       "try {",
-      "  await db.migrate(coreMigrations, usersMigrations);",
+      "  await db.migrate(signalsMigrations, usersMigrations);",
       "  // Emitting and admitting are what prove both folders resolved and their",
       "  // statements actually ran: neither row has anywhere to go otherwise. The",
       "  // worker is never started, so nothing processes the Signal.",
-      '  const id = await db.tx((tx) => core.emit(tx, { kind: "probe", payload: {} }));',
+      '  const id = await db.tx((tx) => worker.emit(tx, { kind: "probe", payload: {} }));',
       "  const user = await db.tx((tx) => users.create(tx));",
       "  // And a login, which is what proves the User Directory's *second* migration",
       "  // applied: a Token has nowhere to be written otherwise. It goes over the two",

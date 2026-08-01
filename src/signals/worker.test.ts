@@ -1,5 +1,5 @@
 /**
- * The worker and Signal Handler dispatch: the heart of the Core.
+ * The drain loop and Signal Handler dispatch: the heart of the Signal Worker.
  *
  * PostgreSQL is real (ADR-0022) and the only fake is the Runtime Adapter, which is
  * the seam a container would otherwise sit behind. The Handlers are written inline,
@@ -21,19 +21,19 @@ import { cutListeningBackends } from "../test-support/backends.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
-import { type Core, createCore, signalChannel } from "./core.ts";
 import type { SignalHandler, SignalHandlers } from "./handlers.ts";
-import { coreMigrations } from "./migrations.ts";
+import { signalsMigrations } from "./migrations.ts";
 import type { RuntimeAdapter } from "./runtime.ts";
 import { runs, signals } from "./schema.ts";
+import { createSignalWorker, type SignalWorker, signalChannel } from "./worker.ts";
 
 let database: TestDatabase;
 let db: Db;
 
 before(async () => {
-  database = await createTestDatabase("core");
+  database = await createTestDatabase("worker");
   db = database.db;
-  await db.migrate(coreMigrations);
+  await db.migrate(signalsMigrations);
 });
 
 after(() => database.drop());
@@ -63,54 +63,58 @@ function recordingLogger(entries: LogEntry[]): Logger {
 const sweepingMs = 5;
 const sleepingSweepMs = 60_000;
 
-/** What the Core logs once its notification connection is up. */
+/** What the Signal Worker logs once its notification connection is up. */
 const listeningMessage = "listening for Signal notifications";
 
-type CoreBody = (core: Core, entries: readonly LogEntry[]) => Promise<void>;
+type WorkerBody = (worker: SignalWorker, entries: readonly LogEntry[]) => Promise<void>;
 
 /**
- * A Core of its own per test, so each brings its own Handler map — which is what
- * `start` taking the map means in practice. Signals from earlier tests are all in a
- * terminal state, so nothing carries over.
+ * A Signal Worker of its own per test, so each brings its own Handler map — which is
+ * what `start` taking the map means in practice. Signals from earlier tests are all
+ * in a terminal state, so nothing carries over.
  *
- * Every Core records what it logged, because what woke the worker is only visible
- * there: a Signal reaching `done` says nothing about which of the two mechanisms
- * found it.
+ * Every Worker records what it logged, because what woke it is only visible there: a
+ * Signal reaching `done` says nothing about which of the two mechanisms found it.
  */
-async function withCore(
+async function withWorker(
   handlers: SignalHandlers,
   runtime: RuntimeAdapter,
-  body: CoreBody,
+  body: WorkerBody,
   sweepIntervalMs: number = sweepingMs,
 ): Promise<void> {
   const entries: LogEntry[] = [];
-  const core = createCore({ db, runtime, logger: recordingLogger(entries), sweepIntervalMs });
-  core.start(handlers);
+  const worker = createSignalWorker({
+    db,
+    runtime,
+    logger: recordingLogger(entries),
+    sweepIntervalMs,
+  });
+  worker.start(handlers);
   try {
-    await body(core, entries);
+    await body(worker, entries);
   } finally {
-    await core.stop();
+    await worker.stop();
   }
 }
 
 /**
- * A Core whose sweep is out of reach, and which is already listening before the body
- * runs — so a notification is the only thing that can wake it, and one sent in the
- * gap before the registration was in place cannot be mistaken for one that was lost.
+ * A Signal Worker whose sweep is out of reach, and which is already listening before
+ * the body runs — so a notification is the only thing that can wake it, and one sent
+ * in the gap before the registration was in place cannot be mistaken for one lost.
  */
-function withNotifiedCore(
+function withNotifiedWorker(
   handlers: SignalHandlers,
   runtime: RuntimeAdapter,
-  body: CoreBody,
+  body: WorkerBody,
 ): Promise<void> {
-  return withCore(
+  return withWorker(
     handlers,
     runtime,
-    async (core, entries) => {
-      await waitUntil("the Core is listening for Signal notifications", async () =>
+    async (worker, entries) => {
+      await waitUntil("the Signal Worker is listening for Signal notifications", async () =>
         entries.some((entry) => entry.message === listeningMessage),
       );
-      await body(core, entries);
+      await body(worker, entries);
     },
     sleepingSweepMs,
   );
@@ -123,14 +127,14 @@ function wakeups(entries: readonly LogEntry[], reason: string): number {
   ).length;
 }
 
-/** A notification for the Core's channel that no Signal is behind. */
+/** A notification for the Signal Worker's channel that no Signal is behind. */
 function notifyNothing(): Promise<unknown> {
   return db.handle({}).execute(sql`select pg_notify(${signalChannel}, '')`);
 }
 
 /** Emitting as a Producer does: inside a transaction the caller owns (ADR-0023). */
-function emit(core: Core, kind: string, payload: unknown = {}): Promise<string> {
-  return db.tx((tx) => core.emit(tx, { kind, payload }));
+function emit(worker: SignalWorker, kind: string, payload: unknown = {}): Promise<string> {
+  return db.tx((tx) => worker.emit(tx, { kind, payload }));
 }
 
 async function signalRow(id: string): Promise<typeof signals.$inferSelect | undefined> {
@@ -159,11 +163,11 @@ function runsOf(signalId: string): Promise<(typeof runs.$inferSelect)[]> {
     .orderBy(asc(runs.startedAt));
 }
 
-describe("core.emit", () => {
+describe("worker.emit", () => {
   it("records a Signal as pending", async () => {
     // No worker started, so what is asserted is what `emit` wrote and nothing else.
-    const core = createCore({ db, runtime: fakeRuntime(), logger: recordingLogger([]) });
-    const id = await emit(core, "recorded.pending", { hello: "world" });
+    const worker = createSignalWorker({ db, runtime: fakeRuntime(), logger: recordingLogger([]) });
+    const id = await emit(worker, "recorded.pending", { hello: "world" });
 
     const row = await signalRow(id);
     assert.equal(row?.state, "pending");
@@ -171,7 +175,7 @@ describe("core.emit", () => {
     assert.deepEqual(row?.payload, { hello: "world" });
     assert.equal(row?.error, null);
 
-    // Nothing would ever claim it, and a later test's Core would fail it as an
+    // Nothing would ever claim it, and a later test's Signal Worker would fail it as an
     // unhandled kind.
     await db.handle({ signals }).delete(signals).where(eq(signals.id, id));
   });
@@ -186,15 +190,15 @@ describe("core.emit", () => {
     };
     const runtime = fakeRuntime();
 
-    await withNotifiedCore(
+    await withNotifiedWorker(
       { "rolled-back": handler, marker: handler },
       runtime,
-      async (core, entries) => {
+      async (worker, entries) => {
         let rolledBackId: string | undefined;
         await assert.rejects(
           () =>
             db.tx(async (tx) => {
-              rolledBackId = await core.emit(tx, { kind: "rolled-back", payload: {} });
+              rolledBackId = await worker.emit(tx, { kind: "rolled-back", payload: {} });
               throw new Error("the Producer changed its mind");
             }),
           /changed its mind/,
@@ -204,7 +208,7 @@ describe("core.emit", () => {
         // A Signal emitted afterwards that does commit is what makes "never
         // processed" a fact rather than a race this test happened to win: the worker
         // demonstrably looked at the queue after the rollback.
-        const markerId = await emit(core, "marker");
+        const markerId = await emit(worker, "marker");
         assert.equal((await settled(markerId)).state, "done");
 
         assert.deepEqual(seen, ["marker"]);
@@ -220,32 +224,32 @@ describe("core.emit", () => {
   });
 });
 
-describe("core.start", () => {
-  it("refuses a second call, because one Core runs one worker", async () => {
-    const core = createCore({
+describe("worker.start", () => {
+  it("refuses a second call, because one Signal Worker drains one queue", async () => {
+    const worker = createSignalWorker({
       db,
       runtime: fakeRuntime(),
       logger: recordingLogger([]),
       sweepIntervalMs: sweepingMs,
     });
-    core.start({ started: { handle: () => [] } });
+    worker.start({ started: { handle: () => [] } });
     try {
-      assert.throws(() => core.start({ started: { handle: () => [] } }), /already been called/);
+      assert.throws(() => worker.start({ started: { handle: () => [] } }), /already been called/);
     } finally {
-      await core.stop();
+      await worker.stop();
     }
   });
 });
 
 /**
- * The type checker is the assertion: the Handler map is a parameter of `start`, so
- * a Core started with none registered is unrepresentable (ADR-0021). Never called —
- * if `start` ever grew an optional signature, `@ts-expect-error` would fail the
- * typecheck.
+ * The type checker is the assertion: the Handler map is a parameter of `start`, so a
+ * Signal Worker started with none registered is unrepresentable (ADR-0021). Never
+ * called — if `start` ever grew an optional signature, `@ts-expect-error` would fail
+ * the typecheck.
  */
-export function startingWithoutHandlersDoesNotCompile(core: Core): void {
+export function startingWithoutHandlersDoesNotCompile(worker: SignalWorker): void {
   // @ts-expect-error start takes the kind-to-Handler map
-  core.start();
+  worker.start();
 }
 
 describe("the worker", () => {
@@ -253,7 +257,7 @@ describe("the worker", () => {
     const seenByA: string[] = [];
     const seenByB: string[] = [];
 
-    await withCore(
+    await withWorker(
       {
         "a.kind": {
           handle: (signal) => {
@@ -269,8 +273,8 @@ describe("the worker", () => {
         },
       },
       fakeRuntime(),
-      async (core) => {
-        const id = await emit(core, "b.kind");
+      async (worker) => {
+        const id = await emit(worker, "b.kind");
         await settled(id);
 
         assert.deepEqual(seenByA, []);
@@ -281,8 +285,8 @@ describe("the worker", () => {
 
   it("leaves a Signal that produced no Prompts done, with no Runs", async () => {
     const runtime = fakeRuntime();
-    await withCore({ decline: { handle: () => [] } }, runtime, async (core) => {
-      const id = await emit(core, "decline");
+    await withWorker({ decline: { handle: () => [] } }, runtime, async (worker) => {
+      const id = await emit(worker, "decline");
       const row = await settled(id);
 
       // Declining is not a special case, and the arrival record survives it —
@@ -296,7 +300,7 @@ describe("the worker", () => {
 
   it("produces one Run per Prompt, each carrying its own Session name", async () => {
     const runtime = fakeRuntime();
-    await withCore(
+    await withWorker(
       {
         fan: {
           handle: () => [
@@ -307,8 +311,8 @@ describe("the worker", () => {
         },
       },
       runtime,
-      async (core) => {
-        const id = await emit(core, "fan");
+      async (worker) => {
+        const id = await emit(worker, "fan");
         assert.equal((await settled(id)).state, "done");
 
         const rows = await runsOf(id);
@@ -338,9 +342,9 @@ describe("the worker", () => {
     // serial globally, and a shared Workspace is safe for no other reason
     // (ADR-0012).
     //
-    // The Handler also declares the payload it expects. The Core carries payloads
-    // as `unknown`, because their shape is the Producer's contract rather than the
-    // framework's, and a Handler narrowing it still goes in the map.
+    // The Handler also declares the payload it expects. The Signal Worker carries
+    // payloads as `unknown`, because their shape is the Producer's contract rather
+    // than the framework's, and a Handler narrowing it still goes in the map.
     const ordered: SignalHandler<{ n: number }> = {
       handle: (signal) => [
         { session: `user_${signal.payload.n}`, text: `${signal.payload.n}a` },
@@ -348,10 +352,10 @@ describe("the worker", () => {
       ],
     };
 
-    await withCore({ ordered }, runtime, async (core) => {
+    await withWorker({ ordered }, runtime, async (worker) => {
       const ids: string[] = [];
       for (const n of [1, 2, 3] as const) {
-        ids.push(await emit(core, "ordered", { n }));
+        ids.push(await emit(worker, "ordered", { n }));
       }
       for (const id of ids) await settled(id);
 
@@ -368,7 +372,7 @@ describe("the worker", () => {
     });
     let told: boolean | undefined;
 
-    await withCore(
+    await withWorker(
       {
         posted: {
           handle: () => [
@@ -382,8 +386,8 @@ describe("the worker", () => {
         },
       },
       runtime,
-      async (core) => {
-        const id = await emit(core, "posted");
+      async (worker) => {
+        const id = await emit(worker, "posted");
         assert.equal((await settled(id)).state, "done");
 
         assert.deepEqual(timeline, ["run a", "run b", "post"]);
@@ -398,7 +402,7 @@ describe("the worker", () => {
     );
     let told: boolean | undefined;
 
-    await withCore(
+    await withWorker(
       {
         posted: {
           handle: () => [
@@ -411,8 +415,8 @@ describe("the worker", () => {
         },
       },
       runtime,
-      async (core) => {
-        const id = await emit(core, "posted");
+      async (worker) => {
+        const id = await emit(worker, "posted");
         const row = await settled(id);
 
         assert.equal(told, true);
@@ -434,7 +438,7 @@ describe("the worker", () => {
 
   it("fails the Signal when the post phase throws, and says which half went wrong", async () => {
     const runtime = fakeRuntime();
-    await withCore(
+    await withWorker(
       {
         "posted.badly": {
           handle: () => [{ session: null, text: "ran fine" }],
@@ -444,8 +448,8 @@ describe("the worker", () => {
         },
       },
       runtime,
-      async (core) => {
-        const id = await emit(core, "posted.badly");
+      async (worker) => {
+        const id = await emit(worker, "posted.badly");
         const row = await settled(id);
 
         // The Runs succeeded and the Signal still failed, because processing it
@@ -465,7 +469,7 @@ describe("the worker", () => {
     const runtime = fakeRuntime();
     let told: boolean | undefined;
 
-    await withCore(
+    await withWorker(
       {
         boom: {
           handle: () => {
@@ -478,9 +482,9 @@ describe("the worker", () => {
         fine: { handle: () => [{ session: "user_1", text: "still working" }] },
       },
       runtime,
-      async (core) => {
-        const boomId = await emit(core, "boom");
-        const fineId = await emit(core, "fine");
+      async (worker) => {
+        const boomId = await emit(worker, "boom");
+        const fineId = await emit(worker, "fine");
 
         const boom = await settled(boomId);
         assert.equal(boom.state, "failed");
@@ -497,8 +501,8 @@ describe("the worker", () => {
 
   it("fails a Signal whose kind has no Handler, naming the kind", async () => {
     const runtime = fakeRuntime();
-    await withCore({ known: { handle: () => [] } }, runtime, async (core) => {
-      const id = await emit(core, "typo.in.kind");
+    await withWorker({ known: { handle: () => [] } }, runtime, async (worker) => {
+      const id = await emit(worker, "typo.in.kind");
       const row = await settled(id);
 
       assert.equal(row.state, "failed");
@@ -518,7 +522,7 @@ describe("the worker", () => {
         ? { ok: false, error: "Session id must be alphanumeric" }
         : { ok: true },
     );
-    await withCore(
+    await withWorker(
       {
         names: {
           handle: () => [
@@ -529,8 +533,8 @@ describe("the worker", () => {
         },
       },
       runtime,
-      async (core) => {
-        const id = await emit(core, "names");
+      async (worker) => {
+        const id = await emit(worker, "names");
         const row = await settled(id);
 
         assert.equal(row.state, "failed");
@@ -564,7 +568,7 @@ describe("the worker", () => {
       return { ok: true };
     });
 
-    await withCore(
+    await withWorker(
       {
         paired: {
           handle: () => [
@@ -574,8 +578,8 @@ describe("the worker", () => {
         },
       },
       runtime,
-      async (core) => {
-        const id = await emit(core, "paired");
+      async (worker) => {
+        const id = await emit(worker, "paired");
         await settled(id);
 
         const rows = await runsOf(id);
@@ -605,11 +609,11 @@ describe("the worker", () => {
     const runtime = fakeRuntime(() => {
       throw new Error("the container would not start");
     });
-    await withCore(
+    await withWorker(
       { thrown: { handle: () => [{ session: null, text: "attempted" }] } },
       runtime,
-      async (core) => {
-        const id = await emit(core, "thrown");
+      async (worker) => {
+        const id = await emit(worker, "thrown");
         const row = await settled(id);
 
         assert.equal(row.state, "failed");
@@ -628,8 +632,8 @@ describe("wakeup", () => {
 
   it("reaches a Signal the moment its transaction commits, with no sweep to wait for", async () => {
     const runtime = fakeRuntime();
-    await withNotifiedCore(one, runtime, async (core, entries) => {
-      const id = await emit(core, "woken");
+    await withNotifiedWorker(one, runtime, async (worker, entries) => {
+      const id = await emit(worker, "woken");
       assert.equal((await settled(id)).state, "done");
 
       // The sweep is a minute away and the test's own patience is ten seconds, so a
@@ -645,11 +649,11 @@ describe("wakeup", () => {
       handle: (signal) => [{ session: null, text: String(signal.payload.n) }],
     };
 
-    await withNotifiedCore({ burst: numbered }, runtime, async (core, entries) => {
+    await withNotifiedWorker({ burst: numbered }, runtime, async (worker, entries) => {
       const ids = await db.tx(async (tx) => {
         const emitted: string[] = [];
         for (const n of [1, 2, 3, 4, 5]) {
-          emitted.push(await core.emit(tx, { kind: "burst", payload: { n } }));
+          emitted.push(await worker.emit(tx, { kind: "burst", payload: { n } }));
         }
         return emitted;
       });
@@ -667,7 +671,7 @@ describe("wakeup", () => {
 
   it("finds a Signal that arrived with no notification, on the sweep", async () => {
     const runtime = fakeRuntime();
-    await withCore(one, runtime, async (_core, entries) => {
+    await withWorker(one, runtime, async (_core, entries) => {
       // Two sweeps in, so the drain that `start` kicked off is long finished and the
       // row below can only be found by a sweep after it.
       await waitUntil("the worker has swept twice", async () => wakeups(entries, "sweep") >= 2);
@@ -690,14 +694,14 @@ describe("wakeup", () => {
 
   it("is harmless when a notification arrives with nothing pending", async () => {
     const runtime = fakeRuntime();
-    await withNotifiedCore(one, runtime, async (core, entries) => {
+    await withNotifiedWorker(one, runtime, async (worker, entries) => {
       for (const _ of [1, 2, 3]) await notifyNothing();
       await waitUntil("all three spurious notifications arrive", async () => {
         return wakeups(entries, "notification") >= 3;
       });
 
       // The worker looked three times, found nothing, and is still working.
-      const id = await emit(core, "woken");
+      const id = await emit(worker, "woken");
       assert.equal((await settled(id)).state, "done");
       assert.deepEqual(
         entries.filter((entry) => entry.level === "error"),
@@ -708,8 +712,8 @@ describe("wakeup", () => {
 
   it("processes a Signal once however many notifications arrive for it", async () => {
     const runtime = fakeRuntime();
-    await withNotifiedCore(one, runtime, async (core, entries) => {
-      const id = await emit(core, "woken");
+    await withNotifiedWorker(one, runtime, async (worker, entries) => {
+      const id = await emit(worker, "woken");
       // Duplicates while the Run is still in flight, which is when a second drain
       // would break the serial guarantee rather than merely waste a query.
       for (const _ of [1, 2, 3]) await notifyNothing();
@@ -728,17 +732,17 @@ describe("wakeup", () => {
 
   it("keeps working when its listening connection is cut", async () => {
     const runtime = fakeRuntime();
-    await withNotifiedCore(one, runtime, async (core, entries) => {
-      const before = await emit(core, "woken");
+    await withNotifiedWorker(one, runtime, async (worker, entries) => {
+      const before = await emit(worker, "woken");
       assert.equal((await settled(before)).state, "done");
 
       // Cut from the server's side, as a restart or an operator would.
       await cutListeningBackends(db);
-      await waitUntil("the Core is listening again", async () => {
+      await waitUntil("the Signal Worker is listening again", async () => {
         return entries.filter((entry) => entry.message === listeningMessage).length >= 2;
       });
 
-      const after = await emit(core, "woken");
+      const after = await emit(worker, "woken");
       assert.equal((await settled(after)).state, "done");
 
       // Reported rather than swallowed, and the reconnection is itself a wakeup:
@@ -781,15 +785,15 @@ describe("wakeup", () => {
 
     const runtime = fakeRuntime();
     const entries: LogEntry[] = [];
-    const core = createCore({
+    const worker = createSignalWorker({
       db: slowToRegister,
       runtime,
       logger: recordingLogger(entries),
       sweepIntervalMs: sleepingSweepMs,
     });
-    core.start(one);
+    worker.start(one);
     try {
-      const id = await emit(core, "woken");
+      const id = await emit(worker, "woken");
       // Nothing heard the notification, and the sweep is a minute away, so the only
       // thing that can find this Signal is the registration completing.
       assert.equal((await settled(id)).state, "done");
@@ -797,7 +801,7 @@ describe("wakeup", () => {
       assert.equal(wakeups(entries, "sweep"), 0);
       assert.ok(wakeups(entries, "listening") >= 1);
     } finally {
-      await core.stop();
+      await worker.stop();
     }
   });
 });
@@ -828,7 +832,7 @@ describe("restart recovery", () => {
 
     const runtime = fakeRuntime();
     let handled = 0;
-    await withCore(
+    await withWorker(
       {
         stranded: {
           handle: () => {
@@ -838,7 +842,7 @@ describe("restart recovery", () => {
         },
       },
       runtime,
-      async (core, entries) => {
+      async (worker, entries) => {
         const row = await settled(stranded.id);
         assert.equal(row.state, "failed");
         // Why, in the row rather than only in a log line: this is where an Operator
@@ -870,7 +874,7 @@ describe("restart recovery", () => {
 
         // The worker went on to do its actual job, rather than recovery being
         // something that happens instead of working.
-        const next = await emit(core, "stranded");
+        const next = await emit(worker, "stranded");
         assert.equal((await settled(next)).state, "done");
         assert.equal(handled, 1);
       },
@@ -881,16 +885,16 @@ describe("restart recovery", () => {
 describe("logging", () => {
   it("logs the Signal claimed, and each Run started and finished", async () => {
     const entries: LogEntry[] = [];
-    const core = createCore({
+    const worker = createSignalWorker({
       db,
       runtime: fakeRuntime(),
       logger: recordingLogger(entries),
       sweepIntervalMs: sweepingMs,
     });
-    core.start({ logged: { handle: () => [{ session: "user_1", text: "hello" }] } });
+    worker.start({ logged: { handle: () => [{ session: "user_1", text: "hello" }] } });
 
     try {
-      const id = await emit(core, "logged");
+      const id = await emit(worker, "logged");
       await settled(id);
 
       assert.deepEqual(
@@ -898,20 +902,20 @@ describe("logging", () => {
         ["Signal claimed", "Run started", "Run finished", "Signal finished"],
       );
     } finally {
-      await core.stop();
+      await worker.stop();
     }
   });
 
   it("carries the Handler's own error on the failure it logs", async () => {
     const entries: LogEntry[] = [];
     const thrown = new Error("the Handler could not cope");
-    const core = createCore({
+    const worker = createSignalWorker({
       db,
       runtime: fakeRuntime(),
       logger: recordingLogger(entries),
       sweepIntervalMs: sweepingMs,
     });
-    core.start({
+    worker.start({
       "logged.failure": {
         handle: () => {
           throw thrown;
@@ -920,7 +924,7 @@ describe("logging", () => {
     });
 
     try {
-      const id = await emit(core, "logged.failure");
+      const id = await emit(worker, "logged.failure");
       await settled(id);
 
       const failure = entries.find(
@@ -931,21 +935,23 @@ describe("logging", () => {
       // stack, and one the Operator wrote can do as it likes with it.
       assert.equal(failure.fields.err, thrown);
     } finally {
-      await core.stop();
+      await worker.stop();
     }
   });
 
   it("works with the default logger when the Operator supplies none", async () => {
     // The only test with no `logger`, and the only one whose evidence is partly in
     // the test output: `pino`'s JSON lines on stdout are the default working.
-    const core = createCore({ db, runtime: fakeRuntime(), sweepIntervalMs: sweepingMs });
-    core.start({ "default.logger": { handle: () => [{ session: null, text: "logged by pino" }] } });
+    const worker = createSignalWorker({ db, runtime: fakeRuntime(), sweepIntervalMs: sweepingMs });
+    worker.start({
+      "default.logger": { handle: () => [{ session: null, text: "logged by pino" }] },
+    });
 
     try {
-      const id = await emit(core, "default.logger");
+      const id = await emit(worker, "default.logger");
       assert.equal((await settled(id)).state, "done");
     } finally {
-      await core.stop();
+      await worker.stop();
     }
   });
 });

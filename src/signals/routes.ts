@@ -1,11 +1,11 @@
 /**
- * The Core's contribution to the Agent server: reading prior Signals and Runs.
+ * The Signal Worker's contribution to the Agent server: reading prior Signals and Runs.
  *
  * A **Fastify plugin**, and not a monolithic API object handed the whole Gateway.
  * Whichever part owns the concern contributes the routes, through Fastify's own
  * plugin mechanism, because there is no plugin contract of ours for it to satisfy
  * (ADR-0021). Two consequences follow from that and are the reason it is shaped this
- * way rather than registered by the Core on a server it was constructed with:
+ * way rather than registered by the Worker on a server it was constructed with:
  * switching an endpoint group off is *not registering the plugin* (ADR-0010), and the
  * prefix, the ordering, and anything else Fastify offers stay the Operator's.
  *
@@ -25,16 +25,16 @@
  * deployment that believed it was scoping something finds out at the first request
  * instead of never. That refusal, the pattern-validated ids, the capped limit and the
  * envelope, and the 404 body are the conventions in `route-conventions.ts`, which
- * every part's routes share; only the sentence the refusal ends with is the Core's.
+ * every part's routes share; only the sentence the refusal ends with is this part's.
  * The limit's cap has a consequence worth stating here: with no cursor and no offset,
  * the records past it are reachable only by narrowing with `kind` or `signalId`.
  * ADR-0011 says the agent may read every Signal, and it is not being refused any of
  * them — there is simply no paging yet, because no Run has had a use for it.
  *
  * Nothing here writes. The agent's writes belong to the parts that own what is
- * written — the Messenger for Messages, the Scheduler for schedules — and the Core
- * has nothing an agent may change: a Signal is immutable but for the state the worker
- * gives it, and a Run is the worker's record of its own work.
+ * written — the Messenger for Messages, the Scheduler for schedules — and the Signal
+ * Worker has nothing an agent may change: a Signal is immutable but for the state the
+ * worker gives it, and a Run is the worker's record of its own work.
  */
 
 import { desc, eq } from "drizzle-orm";
@@ -47,16 +47,16 @@ import {
   notFound,
   unknownQueryRefusal,
 } from "../route-conventions.ts";
-import { type coreTables, type RunState, runs, type SignalState, signals } from "./schema.ts";
+import { type RunState, runs, type SignalState, signals, type workerTables } from "./schema.ts";
 
-/** A handle typed to the Core's own tables, and to no other part's (ADR-0022). */
-export type CoreHandle = Handle<typeof coreTables>;
+/** A handle typed to the Signal Worker's own tables, and to no other part's (ADR-0022). */
+export type WorkerHandle = Handle<typeof workerTables>;
 
 /**
  * A Signal as the agent reads it, and the JSON one route answers with.
  *
- * The Signal's own `payload` reaches the agent as the Producer wrote it — the Core
- * never interpreted it and does not start here. `emittedAt` is an ISO 8601 string
+ * The Signal's own `payload` reaches the agent as the Producer wrote it — the Signal
+ * Worker never interpreted it and does not start here. `emittedAt` is an ISO 8601 string
  * because JSON has no date, and the `state` and `error` are included because a
  * Signal's outcome is most of what there is to know about a prior arrival: a failed
  * one is failed permanently (ADR-0017), so the reason has to be readable by whoever
@@ -76,7 +76,7 @@ export type SignalRecord = {
  *
  * `signalId` is the Signal whose Handler produced this Prompt, and `session` is a
  * plain name rather than a reference to anything — `null` means the Prompt asked for
- * a fresh Session, whose generated name the Core never learns (ADR-0016). The
+ * a fresh Session, whose generated name the Signal Worker never learns (ADR-0016). The
  * timings are ISO 8601 strings, or `null` for a Run that has not reached that point.
  */
 export type RunRecord = {
@@ -93,7 +93,7 @@ export type RunRecord = {
 /**
  * The refusal these routes answer an unknown query parameter with.
  *
- * The convention and its reasoning are in `route-conventions.ts`; what is the Core's
+ * The convention and its reasoning are in `route-conventions.ts`; what is this part's
  * own is the sentence the message ends with. `?session=user_a` quietly returning every
  * Session's Signals is the exact mistake ADR-0011 forbids designing for, so the
  * refusal says outright that there is no such parameter — a deployment that believed
@@ -104,12 +104,12 @@ const rejectUnknownQuery = unknownQueryRefusal(
 );
 
 /**
- * The Core's read routes, over a handle to the Core's own tables.
+ * The Signal Worker's read routes, over a handle to its own tables.
  *
- * Takes the handle rather than the Db, so this plugin can read the Core's tables
- * and nothing else.
+ * Takes the handle rather than the Db, so this plugin can read the Signal Worker's
+ * tables and nothing else.
  */
-export function agentReadRoutes(handle: CoreHandle): FastifyPluginAsync {
+export function agentReadRoutes(handle: WorkerHandle): FastifyPluginAsync {
   return async (fastify) => {
     fastify.get<{ Querystring: { limit: number; kind?: string } }>(
       "/signals",

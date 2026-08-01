@@ -3,7 +3,7 @@
  *
  * Constructed like every other part — one call, an ordinary object back, nothing to
  * register it with and no lifecycle (ADR-0021). It is **not a Producer**: it takes
- * no reference to the Core and emits no Signals, because the worker is serial
+ * no reference to the Signal Worker and emits no Signals, because the worker is serial
  * globally and a Signal per User event would put a Run behind one (ADR-0029). A
  * deployment that wants that Signal emits it itself, atomically, because `create`
  * takes the caller's transaction.

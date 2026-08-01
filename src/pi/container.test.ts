@@ -1,5 +1,5 @@
 /**
- * `pi` in a real container, driven by a real Core: the one opt-in end-to-end test.
+ * `pi` in a real container, driven by a real Signal Worker: the one opt-in end-to-end test.
  *
  * One test path, deliberately. It is slow and it needs Docker and the network, so it
  * earns its place by proving the things nothing faster can:
@@ -30,9 +30,9 @@
  *
  * What is real here and what is not, exactly: the container, the `pi` binary in it, the
  * mounts, the files the Operator placed in them, the Prompt on a pipe, the JSONL that
- * comes back, the Agent server, the Core, and PostgreSQL. **Only the model is stubbed** —
- * a scripted OpenAI-compatible server on this host, which is what makes the test
- * deterministic and what makes it need no provider credentials. The consequence, stated
+ * comes back, the Agent server, the Signal Worker, and PostgreSQL. **Only the model is
+ * stubbed** — a scripted OpenAI-compatible server on this host, which is what makes the
+ * test deterministic and what makes it need no provider credentials. The consequence, stated
  * rather than hidden: this proves the framework's half of a Run end to end, and says
  * nothing about whether a real model would choose to call the Agent server unprompted.
  *
@@ -57,12 +57,12 @@ import { after, before, describe, it, type TestContext } from "node:test";
 import { eq } from "drizzle-orm";
 import Fastify from "fastify";
 import type { Mount } from "../container/index.ts";
-import { createCore } from "../core/core.ts";
-import type { SignalHandler } from "../core/handlers.ts";
-import { coreMigrations } from "../core/migrations.ts";
-import type { RuntimeAdapter } from "../core/runtime.ts";
-import { runs } from "../core/schema.ts";
 import type { Db } from "../db/index.ts";
+import type { SignalHandler } from "../signals/handlers.ts";
+import { signalsMigrations } from "../signals/migrations.ts";
+import type { RuntimeAdapter } from "../signals/runtime.ts";
+import { runs } from "../signals/schema.ts";
+import { createSignalWorker } from "../signals/worker.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import {
   addHostToGateway,
@@ -103,11 +103,12 @@ const agentNote = "agent-note.txt";
  */
 const agentsFileName = "AGENTS.md";
 /**
- * A Run id of the shape the Core hands the adapter.
+ * A Run id of the shape the Signal Worker hands the adapter.
  *
- * Only the two cases that drive the adapter directly need one. They have no Core because
- * they have no need of one: what they are about is what the container runtime does with
- * a Mount Table, and a Signal on a queue would add a database and prove nothing more.
+ * Only the two cases that drive the adapter directly need one. They have no Signal
+ * Worker because they have no need of one: what they are about is what the container
+ * runtime does with a Mount Table, and a Signal on a queue would add a database and
+ * prove nothing more.
  */
 const runId = "6f1a3c7e-0000-4000-8000-000000000001";
 
@@ -120,7 +121,7 @@ before(async () => {
   image = await buildPiImage();
   database = await createTestDatabase("pi_container");
   db = database.db;
-  await db.migrate(coreMigrations);
+  await db.migrate(signalsMigrations);
 });
 
 after(async () => {
@@ -209,7 +210,7 @@ async function placeModels(paths: Paths, baseUrl: string): Promise<void> {
  *
  * Nothing of the framework's is in it, and nothing of the framework's produced it — the
  * quickstart is where an Operator gets this text, and a copy of it can go stale when the
- * Core's routes change (ADR-0025).
+ * Signal Worker's routes change (ADR-0025).
  */
 async function placeInstructions(paths: Paths, agentServerUrl: string): Promise<void> {
   await writeFile(
@@ -269,8 +270,8 @@ function instructionsEntry(paths: Paths): Mount {
 /**
  * Stands up a whole Gateway around one `pi` adapter and hands it to `body`.
  *
- * One end-to-end path, so this is used once: a Core, a real database, the Agent server
- * with the Core's routes on it, and the scripted model.
+ * One end-to-end path, so this is used once: a Signal Worker, a real database, the
+ * Agent server with the Worker's routes on it, and the scripted model.
  */
 async function withGateway(
   t: TestContext,
@@ -299,10 +300,10 @@ async function withGateway(
 
   const runtime = adapterOn(paths, [instructionsEntry(paths)]);
 
-  const core = createCore({ db, runtime });
-  // Nothing registers the Core's routes for you, and Fastify refuses a registration
+  const worker = createSignalWorker({ db, runtime });
+  // Nothing registers the Signal Worker's routes for you, and Fastify refuses one
   // after a server is listening.
-  await agentServer.register(core.agentRoutes);
+  await agentServer.register(worker.agentRoutes);
   // Bound beyond loopback on purpose: under a plain Linux daemon a container cannot
   // reach a loopback-bound server at all, and this test has to pass on both. Nothing
   // warns about it, and nothing inspects what was bound — the address is the
@@ -316,7 +317,7 @@ async function withGateway(
     agentServerUrl,
     ...paths,
     async ask(payload) {
-      const id = await db.tx((tx) => core.emit(tx, { kind: "ask", payload }));
+      const id = await db.tx((tx) => worker.emit(tx, { kind: "ask", payload }));
       await waitUntil(
         `the Signal ${id} has been processed`,
         async () => {
@@ -336,11 +337,11 @@ async function withGateway(
     },
   };
 
-  core.start({ ask: asking });
+  worker.start({ ask: asking });
   try {
     await body(rig);
   } finally {
-    await core.stop();
+    await worker.stop();
     await agentServer.close();
     await model.close();
   }
@@ -534,7 +535,7 @@ describe("pi in a real container", { skip }, () => {
     // The claim the deleted startup mount check was traded for, and the only place it can
     // be made: `--mount type=bind` refuses a missing source, where `-v` would invent it
     // as a `root`-owned directory and let the Run succeed against an empty Workspace
-    // (ADR-0028). No Core and no Agent server here — the container never starts.
+    // (ADR-0028). No Signal Worker and no Agent server here — the container never starts.
     const paths = await temporaryPaths(t);
     // Everything but the Workspace, which is the typo this is about.
     await mkdir(paths.agentDir, { recursive: true });

@@ -18,7 +18,7 @@
  *
  * `TPayload` is a convenience for Handler authors — a Producer's payload shape is
  * that Producer's contract rather than the framework's ([`data-model.md`](../../docs/data-model.md)),
- * so the Core carries it as `unknown` and a Handler declares what it expects.
+ * so the Signal Worker carries it as `unknown` and a Handler declares what it expects.
  */
 export type Signal<TPayload = unknown> = {
   readonly id: string;
@@ -66,7 +66,7 @@ export type SignalHandler<TPayload = unknown> = {
 };
 
 /**
- * The `kind`-to-Handler map `core.start` takes. A Signal whose `kind` is absent
+ * The `kind`-to-Handler map `worker.start` takes. A Signal whose `kind` is absent
  * fails permanently (ADR-0017), which is why the map is a parameter of `start`
  * rather than something registered afterwards: starting with none registered is
  * unrepresentable (ADR-0021).

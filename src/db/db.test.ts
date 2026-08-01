@@ -105,7 +105,7 @@ describe("db.tx", () => {
  * Everything a caller of `db.listen` can see: what arrives, what does not, and
  * that the connection carrying it is the Db's own rather than a pooled one.
  *
- * `pg_notify` rather than `NOTIFY` throughout, here and in the Core: `NOTIFY` is a
+ * `pg_notify` rather than `NOTIFY` throughout, here and in the Signal Worker: `NOTIFY` is a
  * utility statement, so its channel and payload cannot be bind parameters.
  */
 describe("db.listen", () => {
@@ -250,7 +250,7 @@ describe("db.listen", () => {
     const listening = db.listen("closed", recorded.listener);
     await connected(recorded.connections);
     await listening.close();
-    // Twice, because a caller stopping a Core that is already stopped should not be
+    // Twice, because a caller stopping a Signal Worker that is already stopped should not be
     // the caller's problem to avoid.
     await listening.close();
 

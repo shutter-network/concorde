@@ -1,9 +1,9 @@
 /**
- * The Core's tables: `signals` and `runs`, in the Core's own PostgreSQL schema
+ * The Signal Worker's tables: `signals` and `runs`, in its own PostgreSQL schema
  * ([`data-model.md`](../../docs/data-model.md)).
  *
  * Not public API. Every part of the Gateway owns a schema and no part reads
- * another's tables, so these objects are exported for the Core's own modules and
+ * another's tables, so these objects are exported for this part's own modules and
  * are deliberately absent from the package's root export — an Operator who wants
  * tables gets them through `db.handle(theirOwnSchema)`, the same call the
  * framework's parts use (ADR-0021, ADR-0022).
@@ -26,13 +26,13 @@ import {
 } from "drizzle-orm/pg-core";
 
 /**
- * The Core's schema. Prefixed because the framework is installed into a database
- * it does not own: an unprefixed `core` is a plausible name for a schema an
+ * The Signal Worker's schema. Prefixed because the framework is installed into a
+ * database it does not own: an unprefixed `core` is a plausible name for a schema an
  * Operator already has, and this name is not theirs to change — the tables below
  * are compiled against it, so a descriptor naming a different schema would migrate
  * one place and read another.
  */
-export const coreSchema = pgSchema("saf_core");
+export const workerSchema = pgSchema("saf_core");
 
 /**
  * A Signal's processing state. One-way: nothing returns to `pending`, and a
@@ -68,18 +68,18 @@ function stateIsKnown(column: PgColumn, states: readonly string[]): SQL {
  * An arrival record, written by a Producer. Immutable but for `state` and
  * `error`.
  *
- * There is deliberately **no `user_id`**: the Core authenticates nobody, so
- * attribution is not a fact it holds. It travels in the payload, which the Core
+ * There is deliberately **no `user_id`**: the Signal Worker authenticates nobody, so
+ * attribution is not a fact it holds. It travels in the payload, which the Worker
  * takes as fact because only a trusted Producer can write one (ADR-0020,
  * superseding ADR-0019).
  */
-export const signals = coreSchema.table(
+export const signals = workerSchema.table(
   "signals",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     /** Selects exactly one Signal Handler. An unhandled `kind` fails the Signal. */
     kind: text("kind").notNull(),
-    /** Arbitrary JSON. The Core never interprets it. */
+    /** Arbitrary JSON. The Signal Worker never interprets it. */
     payload: jsonb("payload").notNull(),
     /**
      * `clock_timestamp()` rather than `now()`, which is the transaction's start
@@ -105,13 +105,13 @@ export const signals = coreSchema.table(
  * One Prompt executed in one Session.
  *
  * `session` is a plain name and **not** a foreign key — Sessions live in the
- * Agent Runtime, and the Core stores only the name it routed to (ADR-0016). It is
- * nullable because a Prompt may request a fresh Session by naming none: the
+ * Agent Runtime, and the Signal Worker stores only the name it routed to (ADR-0016).
+ * It is nullable because a Prompt may request a fresh Session by naming none: the
  * Runtime Adapter generates a name for it, and the contract carries nothing back
- * (the Adapter returns an outcome, not output), so the Core has nothing to record
+ * (the Adapter returns an outcome, not output), so the Worker has nothing to record
  * there.
  */
-export const runs = coreSchema.table(
+export const runs = workerSchema.table(
   "runs",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -136,8 +136,8 @@ export const runs = coreSchema.table(
 );
 
 /**
- * Everything the Core keeps, as `db.handle` wants it: one object, so the worker
- * and the Agent server routes ask for the same handle by the same name rather than
- * each assembling its own from the tables above.
+ * Everything the Signal Worker keeps, as `db.handle` wants it: one object, so the
+ * worker and the Agent server routes ask for the same handle by the same name
+ * rather than each assembling its own from the tables above.
  */
-export const coreTables = { signals, runs };
+export const workerTables = { signals, runs };

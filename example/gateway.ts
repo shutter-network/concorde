@@ -12,10 +12,10 @@
  *   1. **open the Db** — a connection URL, and nothing happens on the wire yet
  *   2. **migrate** — explicitly, so it can also be a deploy step of its own
  *   3. **construct, and register routes** — two Fastify instances, the Runtime Adapter,
- *      the Core, and the Core's own routes onto the Agent one. None of it has a side
+ *      the Signal Worker, and its own routes onto the Agent one. None of it has a side
  *      effect beyond that registration
- *   4. **start the Core with its Handlers** — passing them in, because a Core started
- *      with none registered should not be expressible
+ *   4. **start the Signal Worker with its Handlers** — passing them in, because a
+ *      Worker started with none registered should not be expressible
  *   5. **listen** — last, because Fastify refuses a route registration after that
  *
  * Two things this file is deliberately on the hook for, because the framework ships
@@ -32,7 +32,12 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import Fastify from "fastify";
-import { coreMigrations, createCore, openDb, templateHandler } from "shared-agent-framework";
+import {
+  createSignalWorker,
+  openDb,
+  signalsMigrations,
+  templateHandler,
+} from "shared-agent-framework";
 import { createPiAdapter } from "shared-agent-framework/pi";
 
 // Refused here rather than discovered later: a Run that fails is never retried, so a
@@ -65,7 +70,7 @@ await Promise.all(
 );
 
 const db = openDb(process.env.DATABASE_URL ?? "postgres://saf:saf@localhost:5433/saf");
-await db.migrate(coreMigrations);
+await db.migrate(signalsMigrations);
 
 // Two ordinary Fastify instances, because the framework ships no server: there is nothing
 // of ours between this file and Fastify, and every option, hook and plugin is reachable
@@ -129,16 +134,16 @@ const runtime = createPiAdapter({
     ],
   },
 });
-const core = createCore({ db, runtime });
+const worker = createSignalWorker({ db, runtime });
 // Nothing does this for you. Not registering a route group is how you switch it off, and
 // this one is read-only and unscoped: the agent sees every Signal and every Run.
-await agentServer.register(core.agentRoutes);
+await agentServer.register(worker.agentRoutes);
 
 // The primary extension point, and the only one that needs learning. A Handler is a
 // plain object with a `handle` — this one is shipped, renders a Handlebars file per Run,
 // and closes over its template and its Session-naming rule rather than being handed a
 // context object. A Signal whose `kind` is not a key here fails permanently.
-core.start({
+worker.start({
   ask: templateHandler<{ user: string; text: string }>({
     template: new URL("./prompts/ask.hbs", import.meta.url),
     // One Session per user: one of the topologies ADR-0006 lists, chosen by this
@@ -167,13 +172,13 @@ await agentServer.listen({
   host: "localhost",
 });
 
-// Shutdown, in the order that matters. `core.stop()` first: it waits for the Run in
+// Shutdown, in the order that matters. `worker.stop()` first: it waits for the Run in
 // flight and closes the connection the worker listens for wakeups on. Closing the Db
-// first instead pulls that connection out from under a running Core, which then logs a
-// dropped connection and retries forever. Nothing here handles a Run that is mid-flight
-// when the signal arrives — that is a situation every Operator meets alone.
+// first instead pulls that connection out from under a running Signal Worker, which
+// then logs a dropped connection and retries forever. Nothing here handles a Run that
+// is mid-flight when the signal arrives — that is a situation every Operator meets alone.
 process.on("SIGINT", async () => {
-  await core.stop();
+  await worker.stop();
   await Promise.all([agentServer.close(), publicServer.close()]);
   await db.close();
 });
@@ -183,4 +188,4 @@ process.on("SIGINT", async () => {
 // finding one — so recording something and telling the agent about it cannot come apart,
 // and a rollback wakes nobody. The Messenger will be one of these; so is this line.
 const asked = process.argv[2] ?? "Say hello, and tell me what has arrived recently.";
-await db.tx((tx) => core.emit(tx, { kind: "ask", payload: { user: "42", text: asked } }));
+await db.tx((tx) => worker.emit(tx, { kind: "ask", payload: { user: "42", text: asked } }));

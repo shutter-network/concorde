@@ -7,12 +7,12 @@ Terminology is defined in [CONTEXT.md](../CONTEXT.md). Decisions and their ratio
 The Gateway is one deployable application assembled from parts, several of which contribute routes to the Public server, the Agent server, or both. Three rings, from the inside out:
 
 1. **Agent Runtime** — `pi` primarily, `openclaw` as the alternative, driven by a Runtime Adapter. In the reference deployment it runs inside a container.
-2. **Core** — the Signal queue, Signal Handler dispatch, Run execution, and Agent server routes for Signals and Runs. Holds no identity and knows nothing about messaging.
-3. **Producers** — trusted parts that emit Signals into the Core: the **Messenger** for messaging, and the **Scheduler** for time. An Operator picks the ones they want and writes their own where needed. **v1 ships only the Messenger**; the Scheduler is designed and deferred ([ADR-0018](./adr/0018-scheduling-is-a-separate-component.md)).
+2. **Signal Worker** — the Signal queue, Signal Handler dispatch, Run execution, and Agent server routes for Signals and Runs. Holds no identity and knows nothing about messaging.
+3. **Producers** — trusted parts that emit Signals into the Signal Worker: the **Messenger** for messaging, and the **Scheduler** for time. An Operator picks the ones they want and writes their own where needed. **v1 ships only the Messenger**; the Scheduler is designed and deferred ([ADR-0018](./adr/0018-scheduling-is-a-separate-component.md)).
 
 Not every part is a Producer. The **User Directory** owns Users, their Attributes and their Tokens, and contributes routes to both servers, but emits no Signals at all — a Signal per login would put a Run behind every authentication, and the worker is serial ([ADR-0029](./adr/0029-users-are-a-part-of-their-own.md)).
 
-Nothing represents the Gateway itself. There is no plugin system and no registry of parts: the Operator's entry point constructs the Db, the two servers, the Core, and whichever Producers the deployment wants, wiring them by passing them to each other ([ADR-0021](./adr/0021-the-framework-has-no-plugin-system.md)).
+Nothing represents the Gateway itself. There is no plugin system and no registry of parts: the Operator's entry point constructs the Db, the two servers, the Signal Worker, and whichever Producers the deployment wants, wiring them by passing them to each other ([ADR-0021](./adr/0021-the-framework-has-no-plugin-system.md)).
 
 Users talk to the User Directory and the Messenger, and to nothing else. They never see a Signal. The Agent Runtime never reaches a User except through the Agent server. That, and nothing more, is what **Shielded** means.
 
@@ -50,7 +50,7 @@ Two kinds of row below, and the distinction matters. **Objects** are things the 
 | Db | object | framework | — | Signals, Runs, and whatever Producers keep |
 | Public server | object | Operator | — | the one surface exposed outside; a `Fastify()` the entry point constructs and states a bind address for |
 | Agent server | object | Operator | — | reachable only by the Agent Runtime; a second `Fastify()`, bound loopback in the reference deployment |
-| Core | object | framework | agent: read prior Signals, read Runs | owns the serial worker; one Run at a time, globally |
+| Signal Worker | object | framework | agent: read prior Signals, read Runs | owns the serial worker; one Run at a time, globally |
 | User Directory | object, replaceable | framework | public: log in, log out, change password, read self — agent: create and read Users | Users, their Attributes, and their Tokens. Not a Producer (ADR-0029) |
 | Messenger | object, replaceable | framework | public: submit, poll Outbox — agent: send Message, read the Message log | the Message log in both directions, Outboxes as a view over it, optional Conversations. Constructed with the User Directory; owns no Users |
 | Scheduler | object, replaceable | framework | agent: schedule future work | recurrence, cancellation, next-fire. **Deferred, not in v1** (ADR-0018) |
@@ -58,7 +58,7 @@ Two kinds of row below, and the distinction matters. **Objects** are things the 
 | Signal Handler | seam | Operator | — | arbitrary code; the primary extension point |
 | Workspace | directory | Operator | — | files shared by handlers and agent; global, not per Session |
 
-Anything not in this table an Operator adds themselves: routes as Fastify plugins on either server, and background work as ordinary code that calls the Core's emit method.
+Anything not in this table an Operator adds themselves: routes as Fastify plugins on either server, and background work as ordinary code that calls the Signal Worker's emit method.
 
 ## The loop
 
@@ -73,7 +73,7 @@ Anything not in this table an Operator adds themselves: routes as Fastify plugin
 
 ## Extension points
 
-**Signal Handler** and **Runtime Adapter** — both arbitrary code, neither restricted. The **User Directory**, **Messenger** and **Scheduler** are replaceable by construction: don't build ours, build yours. Replacing only *how a User proves who they are*, while keeping our Tokens, is narrower still: write your own login route and call the User Directory's token issuance. That is the seam, and there is no Authenticator interface ([ADR-0030](./adr/0030-passwords-are-traded-for-bearer-tokens.md)). Routes extend through Fastify's plugin system on either server, and further Producers are ordinary code calling the Core's emit method. There is deliberately no framework-level plugin contract ([ADR-0021](./adr/0021-the-framework-has-no-plugin-system.md)).
+**Signal Handler** and **Runtime Adapter** — both arbitrary code, neither restricted. The **User Directory**, **Messenger** and **Scheduler** are replaceable by construction: don't build ours, build yours. Replacing only *how a User proves who they are*, while keeping our Tokens, is narrower still: write your own login route and call the User Directory's token issuance. That is the seam, and there is no Authenticator interface ([ADR-0030](./adr/0030-passwords-are-traded-for-bearer-tokens.md)). Routes extend through Fastify's plugin system on either server, and further Producers are ordinary code calling the Signal Worker's emit method. There is deliberately no framework-level plugin contract ([ADR-0021](./adr/0021-the-framework-has-no-plugin-system.md)).
 
 ## What this framework provides
 

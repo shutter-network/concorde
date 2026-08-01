@@ -10,7 +10,7 @@
  * because resolving a Session by id parses every Session file in its directory.
  */
 
-import type { Prompt } from "../core/handlers.ts";
+import type { Prompt } from "../signals/handlers.ts";
 import {
   type PiConfiguration,
   type ResolvedPiConfiguration,

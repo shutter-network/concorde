@@ -1,6 +1,6 @@
 /**
- * What a fresh database ends up containing when the Core's descriptor is applied,
- * so this file takes a database of its own.
+ * What a fresh database ends up containing when the Signal Worker's descriptor is
+ * applied, so this file takes a database of its own.
  */
 
 import assert from "node:assert/strict";
@@ -11,22 +11,22 @@ import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
 import type { Db } from "../db/index.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
-import { coreMigrations } from "./migrations.ts";
+import { signalsMigrations } from "./migrations.ts";
 import { runs, signals } from "./schema.ts";
 
 let database: TestDatabase;
 let db: Db;
 
 before(async () => {
-  database = await createTestDatabase("core_migrations");
+  database = await createTestDatabase("signals_migrations");
   db = database.db;
-  await db.migrate(coreMigrations);
+  await db.migrate(signalsMigrations);
 });
 
 after(() => database.drop());
 
-describe("the Core's migrations", () => {
-  it("creates signals and runs in the Core's own schema", async () => {
+describe("the Signal Worker's migrations", () => {
+  it("creates signals and runs in the Signal Worker's own schema", async () => {
     const handle = db.handle({ signals, runs });
 
     const [signal] = await handle

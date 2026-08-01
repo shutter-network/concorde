@@ -2,7 +2,7 @@
  * The User Directory, from `shared-agent-framework/users`.
  *
  * A subpath of its own, like the `pi` adapter's, so that what a deployment depends
- * on is legible from its import statements: the Core and the Db come from the
+ * on is legible from its import statements: the Signal Worker and the Db come from the
  * package root and know nothing about Users, and a deployment with no identity in it
  * imports nothing from here (ADR-0029).
  *

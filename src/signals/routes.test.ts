@@ -1,8 +1,8 @@
 /**
- * The Core's Agent server routes: reading prior Signals and Runs.
+ * The Signal Worker's Agent server routes: reading prior Signals and Runs.
  *
- * The subject is not that Fastify routes a request. It is what the agent can see —
- * so every assertion here is made against state a real Core recorded, by emitting
+ * The subject is not that Fastify routes a request. It is what the agent can see — so
+ * every assertion here is made against state a real Signal Worker recorded, by emitting
  * Signals through a real worker against real PostgreSQL and then reading them back
  * over HTTP. Nothing inserts a row directly.
  *
@@ -20,15 +20,15 @@ import type { Db } from "../db/index.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
-import { type Core, createCore } from "./core.ts";
 import type { Prompt, SignalHandler } from "./handlers.ts";
-import { coreMigrations } from "./migrations.ts";
+import { signalsMigrations } from "./migrations.ts";
 import type { RunRecord, SignalRecord } from "./routes.ts";
 import { signals } from "./schema.ts";
+import { createSignalWorker, type SignalWorker } from "./worker.ts";
 
 let database: TestDatabase;
 let db: Db;
-let core: Core;
+let worker: SignalWorker;
 /** The Agent server: a bare Fastify instance, exactly as an Operator constructs one. */
 let agentServer: FastifyInstance;
 /** Where the Agent server bound, for the one test that goes over a real socket. */
@@ -67,10 +67,10 @@ const scripted: SignalHandler<{ readonly prompts: readonly Prompt[] }> = {
 before(async () => {
   database = await createTestDatabase("core_routes");
   db = database.db;
-  await db.migrate(coreMigrations);
+  await db.migrate(signalsMigrations);
 
   // The framework constructs no server: this is a bare Fastify instance, the same call
-  // an Operator's entry point makes, with the Core's plugin registered on it below.
+  // an Operator's entry point makes, with the Worker's plugin registered on it below.
   agentServer = Fastify();
 
   const runtime = fakeRuntime(async (prompt) => {
@@ -88,16 +88,16 @@ before(async () => {
     return { ok: true };
   });
 
-  core = createCore({ db, runtime, sweepIntervalMs: 50 });
-  // The Core contributes its own routes rather than handing them to a monolithic API
-  // object: this plugin is the Signal and Run surface, and an Operator registers it
-  // on the Agent server (ADR-0021).
-  await agentServer.register(core.agentRoutes);
+  worker = createSignalWorker({ db, runtime, sweepIntervalMs: 50 });
+  // The Signal Worker contributes its own routes rather than handing them to a
+  // monolithic API object: this plugin is the Signal and Run surface, and an Operator
+  // registers it on the Agent server (ADR-0021).
+  await agentServer.register(worker.agentRoutes);
   // An explicit loopback host and an ephemeral port, both this test's to state — the
   // framework supplies no default for either. Fastify resolves to the address it bound,
   // which is what the one test over a real socket fetches.
   address = await agentServer.listen({ port: 0, host: "127.0.0.1" });
-  core.start({ alpha: scripted, beta: scripted });
+  worker.start({ alpha: scripted, beta: scripted });
 
   // Arrival order matters to every ordering assertion below, so each Signal is
   // emitted in its own transaction and awaited.
@@ -121,14 +121,14 @@ before(async () => {
 });
 
 after(async () => {
-  await core.stop();
+  await worker.stop();
   await agentServer.close();
   await database.drop();
 });
 
 /** Emits one Signal of the fixture and remembers its id under `label`. */
 async function emit(label: string, kind: string, prompts: readonly Prompt[]): Promise<void> {
-  const id = await db.tx((tx) => core.emit(tx, { kind, payload: { prompts } }));
+  const id = await db.tx((tx) => worker.emit(tx, { kind, payload: { prompts } }));
   emitted.set(label, id);
 }
 
@@ -238,7 +238,7 @@ describe("reading Runs over the Agent server", () => {
     const fresh = list.find((run) => run.prompt === "fresh");
     assert.ok(fresh !== undefined);
     // `null` is a Run whose Prompt asked for a fresh Session: the name is the Agent
-    // Runtime's to generate and the Core never learns it.
+    // Runtime's to generate and the Signal Worker never learns it.
     assert.equal(fresh.session, null);
     assert.equal(fresh.state, "done");
     assert.equal(fresh.error, null);

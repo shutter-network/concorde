@@ -6,8 +6,17 @@ export type {
 } from "./container/index.ts";
 export { resolveMountTable } from "./container/index.ts";
 export type {
-  Core,
-  CoreOptions,
+  ChannelListener,
+  Db,
+  Handle,
+  Listening,
+  MigrationDescriptor,
+  Transaction,
+} from "./db/index.ts";
+export { openDb } from "./db/index.ts";
+export type { LogFields, Logger } from "./logging.ts";
+export { defaultLogger } from "./logging.ts";
+export type {
   EmittedSignal,
   PostOutcome,
   Prompt,
@@ -20,18 +29,9 @@ export type {
   SignalHandlers,
   SignalRecord,
   SignalState,
-} from "./core/index.ts";
-export { coreMigrations, createCore } from "./core/index.ts";
-export type {
-  ChannelListener,
-  Db,
-  Handle,
-  Listening,
-  MigrationDescriptor,
-  Transaction,
-} from "./db/index.ts";
-export { openDb } from "./db/index.ts";
-export type { LogFields, Logger } from "./logging.ts";
-export { defaultLogger } from "./logging.ts";
+  SignalWorker,
+  SignalWorkerOptions,
+} from "./signals/index.ts";
+export { createSignalWorker, signalsMigrations } from "./signals/index.ts";
 export type { TemplateHandlerOptions } from "./template-handler.ts";
 export { templateHandler } from "./template-handler.ts";

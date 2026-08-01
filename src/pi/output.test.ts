@@ -20,7 +20,7 @@ import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import { describe, it } from "node:test";
-import type { RunOutcome } from "../core/runtime.ts";
+import type { RunOutcome } from "../signals/runtime.ts";
 import { interpretPiOutput } from "./output.ts";
 
 /**

@@ -8,7 +8,7 @@
  * plugin, and one replacing password authentication with its own scheme does not
  * register the Public plugin (ADR-0021, ADR-0030).
  *
- * Both carry **no prefix of their own**, exactly as the Core's routes do: the
+ * Both carry **no prefix of their own**, exactly as the Signal Worker's routes do: the
  * Operator registers each where they want it, and there is no plugin contract of ours
  * for either to satisfy (ADR-0021). Every path below is therefore relative, which is
  * why the Agent plugin's paths name no resource at all: under the conventional

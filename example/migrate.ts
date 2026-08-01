@@ -11,18 +11,18 @@
  *
  * Every part of the Gateway exports a migration descriptor, which is inert data: a
  * folder, a PostgreSQL schema, a tracking table. This deployment has one part, the
- * Core, so there is one descriptor. A deployment with its own tables adds its own to the
- * same call — and to nothing else, because `db.migrate` is the only place the
- * per-part tracking tables can be checked for collisions.
+ * Signal Worker, so there is one descriptor. A deployment with its own tables adds its
+ * own to the same call — and to nothing else, because `db.migrate` is the only place
+ * the per-part tracking tables can be checked for collisions.
  */
 
-import { coreMigrations, defaultLogger, openDb } from "shared-agent-framework";
+import { defaultLogger, openDb, signalsMigrations } from "shared-agent-framework";
 
 const log = defaultLogger();
 const db = openDb(process.env.DATABASE_URL ?? "postgres://saf:saf@localhost:5433/saf");
 
-await db.migrate(coreMigrations);
-log.info({ schema: coreMigrations.schema }, "migrations applied");
+await db.migrate(signalsMigrations);
+log.info({ schema: signalsMigrations.schema }, "migrations applied");
 
 // Nothing else opened a connection, so this is the whole of shutdown here.
 await db.close();

@@ -1,5 +1,5 @@
 /**
- * The Core: the Signal queue, Signal Handler dispatch, and Run execution.
+ * The Signal Worker: the Signal queue, Signal Handler dispatch, and Run execution.
  *
  * It holds no identity and knows nothing about messaging (ADR-0020). What it does
  * hold is the one worker, and the worker is **serial globally** — one Run at a
@@ -35,14 +35,14 @@ import { defaultLogger, type Logger } from "../logging.ts";
 import type { Prompt, Signal, SignalHandlers } from "./handlers.ts";
 import { agentReadRoutes } from "./routes.ts";
 import type { RunOutcome, RuntimeAdapter } from "./runtime.ts";
-import { coreTables, runs, signals } from "./schema.ts";
+import { runs, signals, workerTables } from "./schema.ts";
 
-/** What a Producer hands to `core.emit`. */
+/** What a Producer hands to `worker.emit`. */
 export type EmittedSignal = {
   /** Selects exactly one Signal Handler. A `kind` with no Handler fails the Signal. */
   readonly kind: string;
   /**
-   * Arbitrary JSON, taken as fact. Whatever a Producer writes here the Core
+   * Arbitrary JSON, taken as fact. Whatever a Producer writes here the Signal Worker
    * believes, including any claim about who the Signal came from — which is
    * precisely why Producers are parts of the Gateway rather than peers outside it
    * (ADR-0020).
@@ -50,7 +50,7 @@ export type EmittedSignal = {
   readonly payload: unknown;
 };
 
-export type CoreOptions = {
+export type SignalWorkerOptions = {
   readonly db: Db;
   /** Drives the Agent Runtime. One Run at a time; never called concurrently. */
   readonly runtime: RuntimeAdapter;
@@ -69,21 +69,21 @@ export type CoreOptions = {
   readonly sweepIntervalMs?: number;
 };
 
-export type Core = {
+export type SignalWorker = {
   /**
-   * The Core's Agent server routes — reading prior Signals and Runs — as a Fastify
-   * plugin: `agentServer.register(core.agentRoutes)`, on the Fastify instance the
-   * Operator constructed.
+   * The Signal Worker's Agent server routes — reading prior Signals and Runs — as a
+   * Fastify plugin: `agentServer.register(worker.agentRoutes)`, on the Fastify
+   * instance the Operator constructed.
    *
-   * A plugin the Operator registers rather than something the Core does to a server
-   * it was handed, for three reasons that all point the same way. Switching an
+   * A plugin the Operator registers rather than something the Signal Worker does to a
+   * server it was handed, for three reasons that all point the same way. Switching an
    * endpoint group off is then *not registering it*, which is what ADR-0010 says
    * turning one off means. The prefix and everything else Fastify offers stay the
    * Operator's, since Fastify's plugin system is the extension mechanism and we have
    * no other (ADR-0021). And construction stays free of side effects, like migrations
    * before it.
    *
-   * The routes are the Core's own: they read the Core's tables, and no other part's.
+   * The routes are the Signal Worker's own: they read its tables, and no other part's.
    * The whole surface is read-only and deliberately **unscoped** — every Signal and
    * every Run, whatever Session the Run doing the reading is in (ADR-0011).
    */
@@ -111,11 +111,11 @@ export type Core = {
   /**
    * Starts the worker with the `kind`-to-Handler map.
    *
-   * The map is a parameter and not a registration call, so a Core started with no
-   * Handlers is unrepresentable — which matters because an unhandled Signal fails
-   * permanently and is never retried (ADR-0017, ADR-0021). A Handler may close
-   * over this Core: it is constructed, then Handlers are built against it, then it
-   * is started with them (ADR-0024).
+   * The map is a parameter and not a registration call, so a Signal Worker started
+   * with no Handlers is unrepresentable — which matters because an unhandled Signal
+   * fails permanently and is never retried (ADR-0017, ADR-0021). A Handler may close
+   * over this Signal Worker: it is constructed, then Handlers are built against it,
+   * then it is started with them (ADR-0024).
    *
    * Returns immediately, and the first thing the worker does is **fail whatever a
    * previous worker left `processing`** (ADR-0017). Synchronous because nothing an
@@ -136,13 +136,13 @@ export type Core = {
 };
 
 /**
- * The channel the Core notifies and listens on.
+ * The channel the Signal Worker notifies and listens on.
  *
  * Prefixed for the same reason the schema is: notification channels are per
  * database, and the framework is installed into one it does not own. Not
- * overridable — a Core notifying a channel a different Core listens on is a Gateway
- * that looks healthy and never runs a Signal until the sweep, and there is nothing
- * an Operator gains by choosing the name. Exported for the tests, which send
+ * overridable — a Signal Worker notifying a channel a different one listens on is a
+ * Gateway that looks healthy and never runs a Signal until the sweep, and there is
+ * nothing an Operator gains by choosing the name. Exported for the tests, which send
  * spurious notifications on it, and not from the package.
  */
 export const signalChannel = "saf_core_signal";
@@ -163,14 +163,14 @@ const strandedRun = "the worker stopped before this Run finished; Runs are never
  */
 type WakeupReason = "start" | "notification" | "listening" | "sweep";
 
-export function createCore(options: CoreOptions): Core {
+export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   const log = options.logger ?? defaultLogger();
   const runtime = options.runtime;
   const sweepIntervalMs = options.sweepIntervalMs ?? defaultSweepIntervalMs;
 
-  // The Core's own handle, typed to the Core's own schema. `pg` never leaves the
+  // The Signal Worker's own handle, typed to its own schema. `pg` never leaves the
   // Db (ADR-0022).
-  const handle = options.db.handle(coreTables);
+  const handle = options.db.handle(workerTables);
 
   let handlers: SignalHandlers | undefined;
   let ticker: NodeJS.Timeout | undefined;
@@ -485,7 +485,7 @@ export function createCore(options: CoreOptions): Core {
     start(registered) {
       if (handlers !== undefined) {
         throw new Error(
-          "core.start has already been called. One Core runs one worker, because Runs are serial globally (ADR-0012); construct a second Core if a second queue is really what you want.",
+          "worker.start has already been called. One Signal Worker drains one queue, because Runs are serial globally (ADR-0012); construct a second Signal Worker if a second queue is really what you want.",
         );
       }
       handlers = registered;

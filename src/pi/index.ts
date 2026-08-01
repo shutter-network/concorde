@@ -2,12 +2,12 @@
  * The `pi` Runtime Adapter, from `shared-agent-framework/pi`.
  *
  * A subpath of its own so that what a deployment depends on is legible from its import
- * statements: the Core and the Db come from the package root and know nothing about
+ * statements: the Signal Worker and the Db come from the package root and know nothing about
  * `pi`, and swapping the Agent Runtime is a change to one import and one configuration
  * object (ADR-0016, ADR-0026).
  *
  * `createPiAdapter` is the whole of it for an Operator: hand it the agent's
- * configuration and pass what comes back as the Core's `runtime`. It is a plain
+ * configuration and pass what comes back as the Signal Worker's `runtime`. It is a plain
  * Runtime Adapter, with nothing to call before starting. Everything below is what it
  * is made of, exported because each is useful on its own and because that is what
  * makes the adapter's own order — compose, start, interpret — inspectable rather than

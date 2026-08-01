@@ -227,7 +227,7 @@ const maxRetryMs = 5_000;
  * A dropped connection is normal operation rather than a failure: PostgreSQL
  * restarts, connections are terminated, networks break. So nothing here throws at a
  * caller — a loss is reported and retried, and the caller's own recovery (for the
- * Core, a sweep of the queue) covers what went missing in the meantime.
+ * Signal Worker, a sweep of the queue) covers what went missing in the meantime.
  */
 function startListening(
   url: string,

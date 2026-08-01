@@ -13,7 +13,7 @@
  * lives, so an agent that could choose them could mint itself an administrator, and
  * an injected prompt reaches this surface with nothing in its way.
  *
- * The Core is deliberately absent from this file. The User Directory takes no
+ * The Signal Worker is deliberately absent from this file. The User Directory takes no
  * reference to it, emits no Signals, and its migration descriptor is applied alone
  * here — so a deployment with identity and no Signals at all is what these tests
  * actually run.

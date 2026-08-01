@@ -28,7 +28,7 @@
  * inferred from the records that happened to parse.
  */
 
-import type { RunOutcome } from "../core/runtime.ts";
+import type { RunOutcome } from "../signals/runtime.ts";
 
 /**
  * The stop reasons that mean the agent finished answering. **Anything else fails.**

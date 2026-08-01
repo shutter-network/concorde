@@ -15,12 +15,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Mount } from "../container/index.ts";
-import type { Prompt } from "../core/handlers.ts";
+import type { Prompt } from "../signals/handlers.ts";
 import type { PiConfiguration } from "./configuration.ts";
 import { resolvePiConfiguration } from "./configuration.ts";
 import { composeInvocation, type PiInvocation } from "./invocation.ts";
 
-/** A Run id, of the shape the Core hands the adapter. */
+/** A Run id, of the shape the Signal Worker hands the adapter. */
 const runId = "6f1a3c7e-0000-4000-8000-000000000001";
 
 /** The three entries the reference deployment declares, and every test's default. */

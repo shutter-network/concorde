@@ -12,8 +12,8 @@
  * failure that matters most and the only place it is observable is here.
  */
 
-import type { Prompt } from "../core/handlers.ts";
-import type { RunOutcome, RuntimeAdapter } from "../core/runtime.ts";
+import type { Prompt } from "../signals/handlers.ts";
+import type { RunOutcome, RuntimeAdapter } from "../signals/runtime.ts";
 
 export type RecordedRun = {
   readonly prompt: Prompt;

@@ -56,7 +56,7 @@ schema generation tool. Each part has a config file of its own and passes it wit
 `--config`, because `out` is one folder and each part owns its own:
 
 ```sh
-npm run migrations:generate                                        # the Core
+npm run migrations:generate                                        # the Signal Worker
 npm run migrations:generate -- --config drizzle.users.config.ts    # the User Directory
 ```
 
@@ -94,8 +94,8 @@ Conventions the build depends on:
 - **A shipped migration folder contains no `CREATE SCHEMA`.** `db.migrate`
   creates the descriptor's schema, and the tracking table lives in it, so a
   generated `CREATE SCHEMA` line must be removed after `drizzle-kit` writes it.
-  `src/core/migrations.test.ts` scans every shipped folder and fails on one left
-  in.
+  `src/signals/migrations.test.ts` scans every shipped folder and fails on one
+  left in.
 - **Nothing outside `src/db/` imports `pg`.** Enforced by a Biome override:
   parts obtain a handle with `db.handle(schema)`, and the one thing that needs a
   connection of its own — a `LISTEN` registration — with `db.listen(channel,

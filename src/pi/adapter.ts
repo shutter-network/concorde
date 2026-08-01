@@ -28,9 +28,9 @@
  *    Run of every named Session.
  */
 
-import type { Prompt } from "../core/handlers.ts";
-import type { RunOutcome, RuntimeAdapter } from "../core/runtime.ts";
 import { defaultLogger, type Logger } from "../logging.ts";
+import type { Prompt } from "../signals/handlers.ts";
+import type { RunOutcome, RuntimeAdapter } from "../signals/runtime.ts";
 import { type PiConfiguration, resolvePiConfiguration } from "./configuration.ts";
 import { composeInvocation } from "./invocation.ts";
 import { interpretPiOutput } from "./output.ts";

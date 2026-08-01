@@ -2,11 +2,11 @@
 
 Terminology is in [CONTEXT.md](../CONTEXT.md); rationale is in [docs/adr/](./adr/).
 
-The model splits along the Gateway's internal boundaries ([ADR-0020](./adr/0020-producers-are-trusted-components-of-the-gateway.md)): the **Core** owns Signals and Runs, the **User Directory** owns Users and their Tokens, the **Messenger** owns Messages and Outboxes. The Scheduler keeps its own model, not described here. The Workspace is files, not rows. Signal Handlers are code, not data.
+The model splits along the Gateway's internal boundaries ([ADR-0020](./adr/0020-producers-are-trusted-components-of-the-gateway.md)): the **Signal Worker** owns Signals and Runs, the **User Directory** owns Users and their Tokens, the **Messenger** owns Messages and Outboxes. The Scheduler keeps its own model, not described here. The Workspace is files, not rows. Signal Handlers are code, not data.
 
 The split is literal: each part owns a PostgreSQL schema and migrates it independently, and no table references another part's ([ADR-0022](./adr/0022-the-store-is-postgresql-through-drizzle.md)).
 
-## Core
+## Signal Worker
 
 ### Signal
 
@@ -21,7 +21,7 @@ An arrival record, emitted by a Producer. Immutable except for `state` and `erro
 | `state` | `pending` \| `processing` \| `done` \| `failed` |
 | `error` | nullable |
 
-There is **no `user_id` column**. The core authenticates nobody, so attribution is not a fact it holds. The Messenger's payload contract carries the submitting User's id, which is trustworthy because the Messenger writes it and the client never does ([ADR-0020](./adr/0020-producers-are-trusted-components-of-the-gateway.md), superseding [ADR-0019](./adr/0019-signals-are-attributed-arrival-records.md)).
+There is **no `user_id` column**. The Signal Worker authenticates nobody, so attribution is not a fact it holds. The Messenger's payload contract carries the submitting User's id, which is trustworthy because the Messenger writes it and the client never does ([ADR-0020](./adr/0020-producers-are-trusted-components-of-the-gateway.md), superseding [ADR-0019](./adr/0019-signals-are-attributed-arrival-records.md)).
 
 ### Run
 
@@ -92,13 +92,13 @@ Here rather than on the User row, because a read position is Outbox state and th
 
 The **Outbox** is a view over the Message table: `direction = 'outbound' AND user_id = ? AND seq > cursor`. The agent's history query ignores `direction` and reads both sides interleaved, which is the reason the log exists — a Session is a lossy cache of it.
 
-There is **no `run_id`**. Populating one would require the Messenger to ask the Core which Run is in flight, since the agent never names a Run — a second dependency in the one direction we keep thin. Traceability stays available on the Core's side instead: the worker is globally serial, so at most one Run exists at any moment and the Core can attribute an agent's call to it without the Messenger learning that Runs exist.
+There is **no `run_id`**. Populating one would require the Messenger to ask the Signal Worker which Run is in flight, since the agent never names a Run — a second dependency in the one direction we keep thin. Traceability stays available on the Signal Worker's side instead: the worker is globally serial, so at most one Run exists at any moment and the Signal Worker can attribute an agent's call to it without the Messenger learning that Runs exist.
 
-A **Conversation** entity may be added here if a deployment needs one. It is a Messenger concept and must not appear in the Core.
+A **Conversation** entity may be added here if a deployment needs one. It is a Messenger concept and must not appear in the Signal Worker.
 
 ### The Messenger's Signal contract
 
-The `kind` and payload shape of the Signals the Messenger emits are **the Messenger's contract, not the framework's** ([ADR-0020](./adr/0020-producers-are-trusted-components-of-the-gateway.md)). The Core treats the payload as opaque; a Signal Handler is written against this shape.
+The `kind` and payload shape of the Signals the Messenger emits are **the Messenger's contract, not the framework's** ([ADR-0020](./adr/0020-producers-are-trusted-components-of-the-gateway.md)). The Signal Worker treats the payload as opaque; a Signal Handler is written against this shape.
 
 | | |
 | --- | --- |
@@ -114,18 +114,18 @@ The `kind` and payload shape of the Signals the Messenger emits are **the Messen
 3. **Every Message belongs to exactly one Run, and every Run to exactly one Signal.** True but unrecorded in the Messenger — see Message above.
 4. **A Signal with no Prompts is still a Signal.** Handler-level refusal leaves an arrival record, which is what makes authorization auditable.
 5. **`state` transitions are one-way.** Nothing returns to `pending`; failed Signals are never re-run (ADR-0017).
-6. **Users never read Signals.** The core's Signal log is not a user-facing surface at all (ADR-0020).
+6. **Users never read Signals.** The Signal Worker's Signal log is not a user-facing surface at all (ADR-0020).
 7. **A stored credential is never readable, only verifiable.** A Token's plaintext exists once, in the response that issued it, and a password's never. Nothing in the framework can answer "what is this User's Token".
 8. **A User may read their own Attributes.** They govern that User's authorization, they are not secret, and a Signal Handler's behaviour reveals them anyway.
 
 ## What is deliberately absent
 
 - **Party.** No table, no identifier, no API field (ADR-0008).
-- **Session.** Not modelled; the core stores only the name it routes to (ADR-0016).
+- **Session.** Not modelled; the Signal Worker stores only the name it routes to (ADR-0016).
 - **Agent configuration.** Opaque to the framework (ADR-0016).
 - **Per-Signal permissions.** Authorization lives in Signal Handlers (ADR-0009).
 - **Delivery state on Messages.** Cursors replace acks and redelivery bookkeeping (ADR-0015).
-- **Identity in the core.** It belongs to the User Directory alone (ADR-0020, ADR-0029).
+- **Identity in the Signal Worker.** It belongs to the User Directory alone (ADR-0020, ADR-0029).
 - **Any way to remove a User.** No delete, no deactivation flag (ADR-0029).
 - **Credentials other than a password.** No table of credential kinds, no `kind` column with one value in it. A second first-class kind would be an ADR and a migration; a deployment that wants one today writes its own login route and issues a Token (ADR-0030).
 - **Account-recovery state.** No reset tokens, no verification records, no security answers (ADR-0014, ADR-0030).

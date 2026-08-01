@@ -2,7 +2,7 @@
  * The User Directory's tables, in the part's own PostgreSQL schema
  * ([`data-model.md`](../../docs/data-model.md)).
  *
- * Not public API, for the same reason the Core's schema is not: every part of the
+ * Not public API, for the same reason the Signal Worker's schema is not: every part of the
  * Gateway owns a schema and no part reads another's tables, so these objects are
  * exported for this part's own modules and are deliberately absent from the
  * package's `/users` subpath — an Operator who wants tables gets them through
@@ -18,7 +18,7 @@ import { sql } from "drizzle-orm";
 import { index, jsonb, pgSchema, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 /**
- * The User Directory's schema. Prefixed for the reason the Core's is: the framework
+ * The User Directory's schema. Prefixed for the reason the Signal Worker's is: the framework
  * is installed into a database it does not own, an unprefixed `users` is a schema an
  * Operator plausibly already has, and this name is not theirs to change — the table
  * below is compiled against it, so a descriptor naming a different schema would
@@ -115,7 +115,7 @@ export const tokens = usersSchema.table(
   (table) => [
     // Not redundant with the two indexes PostgreSQL makes for us: it indexes the
     // primary key and the unique constraint, not the referencing side, and revoking
-    // every Token of one User reads exactly this way. The Core's `runs_signal_idx`
+    // every Token of one User reads exactly this way. The Signal Worker's `runs_signal_idx`
     // is there for the same reason.
     index("tokens_user_idx").on(table.userId),
   ],

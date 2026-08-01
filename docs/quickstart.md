@@ -194,8 +194,9 @@ them is a request that would otherwise be written and quietly misunderstood:
 - **`limit` defaults to 50 and caps at 200.** Asking for more is refused rather than
   quietly reduced. There is no cursor and no offset, so records past the cap are reached
   by narrowing with `kind` or `signalId` and not by paging.
-- **Nothing here writes.** The Core has nothing an agent may change: a Signal is immutable
-  but for the state the worker gives it, and a Run is the worker's record of its own work.
+- **Nothing here writes.** The Signal Worker has nothing an agent may change: a Signal
+  is immutable but for the state the worker gives it, and a Run is the worker's record of
+  its own work.
 
 `pi` ships no HTTP client, so the agent calls this with its shell tool and `curl` — which
 is why `curl` is one of the four things the agent's image needs:
@@ -247,14 +248,14 @@ not arbitrary:
    lets it also be [a deploy step of its own](#migrations-as-a-separate-step).
 3. **Construct, and register routes.** Two Fastify instances — the framework ships no
    server, so `Fastify()` is what you call and everything Fastify offers is yours without
-   asking — then the Runtime Adapter and the Core, handing each what it needs, and then
-   the Core's own routes onto the Agent one. Nothing constructed here has a side effect;
+   asking — then the Runtime Adapter and the Signal Worker, handing each what it needs,
+   and then its own routes onto the Agent one. Nothing constructed here has a side effect;
    the registration is the only one. The adapter takes the Mount Table and settles it on
    the spot, as a pure function of what you wrote: a relative path, or an entry no
    `hostPaths` prefix covers, is refused **at this line** rather than at the first Signal.
-4. **Start the Core with its Handlers.** The Handler map is a parameter of `start`, so a
-   Gateway running with no Handlers registered is not something you can express by
-   accident.
+4. **Start the Signal Worker with its Handlers.** The Handler map is a parameter of
+   `start`, so a Gateway running with no Handlers registered is not something you can
+   express by accident.
 5. **Listen.** Last, because Fastify refuses a route registration after a server is
    listening. Both bind addresses are stated here, next to each other, and there is no
    framework default behind either — see
@@ -390,7 +391,7 @@ your system already logs through satisfies it without wrapping:
 ```ts
 const logger = pino({ level: "debug" });          // or your own object with those four
 const runtime = createPiAdapter({ /* ... */, logger });
-const core = createCore({ db, runtime, logger });
+const worker = createSignalWorker({ db, runtime, logger });
 ```
 
 Safe to keep in a log file: the argument list on that line has environment **values**
@@ -446,7 +447,7 @@ plugin mechanism and the only extension mechanism there is.
 
 The same is true in the other direction: nothing emits Signals in this slice either,
 because the Messenger was the only shipped thing that would. That is why the last line
-of the entry point calls `core.emit` directly — and that is not a stand-in for a real
+of the entry point calls `worker.emit` directly — and that is not a stand-in for a real
 Producer, it *is* one. Anything inside the Gateway that emits a Signal is a Producer,
 including a loop you write.
 
@@ -458,18 +459,18 @@ entry point is an example, and the ordering in it is the part that matters:
 
 ```ts
 process.on("SIGINT", async () => {
-  await core.stop();                                            // first
+  await worker.stop();                                          // first
   await Promise.all([agentServer.close(), publicServer.close()]);
   await db.close();                                             // last
 });
 ```
 
-`core.stop()` **before** `db.close()`. The worker holds a dedicated PostgreSQL
+`worker.stop()` **before** `db.close()`. The worker holds a dedicated PostgreSQL
 connection to be woken on, and the Db owns it — so closing the Db first pulls that
-connection out from under a running Core, which then logs a dropped connection and
-retries reconnecting forever.
+connection out from under a running Signal Worker, which then logs a dropped connection
+and retries reconnecting forever.
 
-And the part no ordering fixes: **a Run in flight when the signal arrives.** `core.stop()`
+And the part no ordering fixes: **a Run in flight when the signal arrives.** `worker.stop()`
 waits for it, which can be minutes. Killing the process instead leaves that Signal marked
 `processing`; the next start marks it `failed` and never re-runs it, because it may
 already have written the Workspace or made external calls, and replaying it would do all
@@ -548,11 +549,11 @@ node example/migrate.ts       # against the new schema, before anything serves n
 
 Same call, six lines, no Gateway involved. Each part of the framework exports a
 *migration descriptor* — inert data naming a folder, a PostgreSQL schema, and a tracking
-table — and your entry point hands them all to one `db.migrate(...)`. The Core's is
-`coreMigrations`; add your own alongside it. Do add them to that one call rather than
-making a second: each part having its own tracking table is not tidiness, it is the only
-thing that stops one part's migrations being silently skipped, and the one call is where
-a collision can be caught.
+table — and your entry point hands them all to one `db.migrate(...)`. The Signal
+Worker's is `signalsMigrations`; add your own alongside it. Do add them to that one call
+rather than making a second: each part having its own tracking table is not tidiness, it
+is the only thing that stops one part's migrations being silently skipped, and the one
+call is where a collision can be caught.
 
 You never run a schema generation tool. The SQL ships inside the package.
 
@@ -574,7 +575,7 @@ function summarising(workspace: string): SignalHandler<{ file: string }> {
 }
 ```
 
-`core.start({ "file.arrived": summarising("/workspace") })` puts it to work.
+`worker.start({ "file.arrived": summarising("/workspace") })` puts it to work.
 
 `session: null` asks for a fresh Session; a string continues a named one. One Session per
 user, one per Run, one for the whole agent, or a hybrid — all four are things you just
@@ -603,7 +604,7 @@ are ordinary Fastify plugins with no prefix of their own, so you supply one; `/a
 
 ```ts
 const users = createUsers({ db, tokenTtl: 30 * 24 * 60 * 60 * 1000 });
-await db.migrate(coreMigrations, usersMigrations);   // the same one call, one more descriptor
+await db.migrate(signalsMigrations, usersMigrations);   // the same one call, one more descriptor
 
 await publicServer.register(users.publicRoutes, { prefix: "/auth" });
 await agentServer.register(users.agentRoutes, { prefix: "/users" });
@@ -616,7 +617,7 @@ that should require one takes `users.requireUser` as a `preHandler` and reads
 ```ts
 publicServer.post("/ask", { preHandler: users.requireUser }, async (request) => {
   const user = request.safUser;
-  await db.tx((tx) => core.emit(tx, { kind: "ask", payload: { user: user.id, text: "…" } }));
+  await db.tx((tx) => worker.emit(tx, { kind: "ask", payload: { user: user.id, text: "…" } }));
   return { accepted: true };
 });
 ```
@@ -641,14 +642,14 @@ discover:
   matters to you, run this on a schedule of your own:
   `delete from saf_users.tokens where expires_at < now()`.
 
-**Your own Producer.** Anything that calls `core.emit(tx, { kind, payload })`. A webhook
+**Your own Producer.** Anything that calls `worker.emit(tx, { kind, payload })`. A webhook
 route, a poller, a loop. Note the transaction: `emit` takes yours rather than finding one,
 so recording something in your own tables and telling the agent about it either both
 happen or neither does — and a rollback wakes nobody.
 
 **Your own tables.** `db.handle(yourSchema)` gives you a typed Drizzle handle through
 the same call the framework's own parts use, and `db.tx(cb)` a transaction you can pass
-into `core.emit`. No privileged access and no special case. Give your part its own
+into `worker.emit`. No privileged access and no special case. Give your part its own
 PostgreSQL schema and its own migration tracking table.
 
 **Your own mount.** One more thing for the agent to see is one more entry in

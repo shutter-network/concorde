@@ -71,8 +71,8 @@ export const idParams = {
  * this hook is what makes it a refusal.
  *
  * `explanation` is the sentence the refusal ends with, and it belongs to the caller
- * because the useful thing to say is about *that* surface: the Core's routes explain
- * that reads are not scoped by Session or by User, which is the right sentence there
+ * because the useful thing to say is about *that* surface: the Signal Worker's routes
+ * explain that reads are not scoped by Session or by User, which is the right sentence there
  * and the wrong one anywhere else. Omit it and the message stops after the parameter
  * list.
  *
