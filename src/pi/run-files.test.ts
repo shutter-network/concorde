@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it, type TestContext } from "node:test";
 import type { PiConfiguration } from "./configuration.ts";
-import { composeInvocation, instructionsFileName } from "./invocation.ts";
+import { instructionsFileName } from "./invocation.ts";
 import { writeRunConfiguration } from "./run-files.ts";
 
 type Directories = {
@@ -51,17 +51,6 @@ async function directories(
   };
 }
 
-/**
- * Writes the configuration for a Run in `session`.
- *
- * Through `composeInvocation`, because that is the only way to obtain an invocation and
- * the ordering the adapter uses: compose, write, start.
- */
-async function writeFor(config: PiConfiguration, session: string): Promise<void> {
-  const invocation = composeInvocation(config, { session, text: "what happened?" }, "r1");
-  await writeRunConfiguration(config, invocation);
-}
-
 async function readJson(file: string): Promise<unknown> {
   return JSON.parse(await readFile(file, "utf8"));
 }
@@ -77,7 +66,7 @@ describe("the configuration written before a Run", () => {
       models: { providers: { ollama: { baseUrl: "http://localhost:11434/v1" } } },
     });
 
-    await writeFor(config, "user_42");
+    await writeRunConfiguration(config);
 
     assert.deepEqual(await readJson(path.join(agentDir, "settings.json")), {
       defaultProjectTrust: "never",
@@ -92,7 +81,7 @@ describe("the configuration written before a Run", () => {
   it("writes them even when the Operator configured none, so nothing carries over", async (t) => {
     const { config, agentDir } = await directories(t);
 
-    await writeFor(config, "user_42");
+    await writeRunConfiguration(config);
 
     assert.deepEqual(await readJson(path.join(agentDir, "settings.json")), {});
     assert.deepEqual(await readJson(path.join(agentDir, "models.json")), {});
@@ -101,7 +90,7 @@ describe("the configuration written before a Run", () => {
   it("creates the agent's directory if it is not there yet", async (t) => {
     const { config, agentDir } = await directories(t);
 
-    await writeFor(config, "user_42");
+    await writeRunConfiguration(config);
 
     assert.ok(await isDirectory(agentDir));
   });
@@ -119,7 +108,7 @@ describe("the configuration written before a Run", () => {
     await writeFile(path.join(agentDir, "models.json"), JSON.stringify({ providers: {} }), "utf8");
     await writeFile(path.join(agentDir, instructionsFileName), "instructions of its own", "utf8");
 
-    await writeFor(config, "user_42");
+    await writeRunConfiguration(config);
 
     assert.deepEqual(
       await readJson(path.join(agentDir, "settings.json")),
@@ -143,7 +132,7 @@ describe("the configuration written before a Run", () => {
     await writeFile(path.join(agentDir, "trust.json"), '{"/workspace":"never"}', "utf8");
     await writeFile(path.join(agentDir, "bin", "rg"), "a binary it installed", "utf8");
 
-    await writeFor(config, "user_42");
+    await writeRunConfiguration(config);
 
     assert.equal(
       await readFile(path.join(agentDir, "auth.json"), "utf8"),
@@ -167,7 +156,7 @@ describe("the configuration written before a Run", () => {
   it("does not create the Workspace, which is the Operator's", async (t) => {
     const { config } = await directories(t);
 
-    await writeFor(config, "user_42");
+    await writeRunConfiguration(config);
 
     // A Gateway that conjured the Workspace would hide a wrong mount rather than let
     // the startup check find it (ADR-0025).
@@ -176,29 +165,16 @@ describe("the configuration written before a Run", () => {
 });
 
 describe("the Session's directory", () => {
-  it("is created under the Session root, one per Session", async (t) => {
+  it("is not created here: the Agent Runtime makes it, inside the container", async (t) => {
     const { config, sessionRoot } = await directories(t);
 
-    await writeFor(config, "user_42");
-    await writeFor(config, "user_7");
+    await writeRunConfiguration(config);
 
-    assert.ok(await isDirectory(path.join(sessionRoot, "user_42")));
-    assert.ok(await isDirectory(path.join(sessionRoot, "user_7")));
-    assert.deepEqual((await readdir(sessionRoot)).toSorted(), ["user_42", "user_7"]);
-  });
-
-  it("is left alone when it already holds a Session, so a named Session resumes", async (t) => {
-    const { config, sessionRoot } = await directories(t);
-    const directory = path.join(sessionRoot, "user_42");
-    await mkdir(directory, { recursive: true });
-    await writeFile(path.join(directory, "2026-01-01_user_42.jsonl"), "the first Run\n", "utf8");
-
-    await writeFor(config, "user_42");
-
-    assert.equal(
-      await readFile(path.join(directory, "2026-01-01_user_42.jsonl"), "utf8"),
-      "the first Run\n",
-    );
+    // Not the Session root either, which is the startup check's and is made once
+    // (ADR-0025). Asserting on the root rather than on the Session's own directory
+    // inside it, because a `recursive` mkdir of the second is what used to create the
+    // first, and that side effect is the part worth being sure has gone.
+    await assert.rejects(() => stat(sessionRoot), /ENOENT/);
   });
 });
 
@@ -216,7 +192,7 @@ describe("the instructions file", () => {
     extra: Partial<PiConfiguration> = {},
   ): Promise<string> {
     const { config, agentDir } = await directories(t, extra);
-    await writeFor(config, "user_42");
+    await writeRunConfiguration(config);
     return readFile(path.join(agentDir, instructionsFileName), "utf8");
   }
 

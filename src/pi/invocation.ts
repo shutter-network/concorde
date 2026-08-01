@@ -53,7 +53,15 @@ export type PiInvocation = {
    * two implementations of the same rule.
    */
   readonly session: string;
-  /** Where that Session's own directory is, as the Gateway sees it. */
+  /**
+   * Where that Session's own directory will be, as the Gateway sees it.
+   *
+   * Nothing creates it: the Agent Runtime does, inside the container, into the mounted
+   * Session root. This is here **for the adapter's debug line alone**. "Where is this
+   * Session's transcript on my disk" is the question asked while diagnosing the
+   * forgetful-agent failure ADR-0025 describes, and the container path in the logged
+   * argv does not answer it.
+   */
   readonly sessionDirectory: string;
 };
 

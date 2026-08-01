@@ -23,33 +23,28 @@ import {
   type ResolvedPiConfiguration,
   resolvePiConfiguration,
 } from "./configuration.ts";
-import { instructionsFileName, type PiInvocation } from "./invocation.ts";
+import { instructionsFileName } from "./invocation.ts";
 
 /**
- * Writes the agent's configuration for the Run `invocation` will start, and makes that
- * Run's Session its own directory.
+ * Writes the agent's configuration for the Run that is about to start.
  *
  * Every file is written whole, so a key the Operator removed from their configuration
  * is gone rather than merged forward from last time — the same reason the files are
  * written at all.
  *
- * Takes the invocation rather than a Session name, so the directory prepared here is
- * the same string the agent is told to keep its Session in, computed once. It also
- * makes the ordering unmistakable: compose, write, then start.
+ * Nothing about a Session is prepared here. The Agent Runtime creates each Session's
+ * own directory itself, inside the container and into the mounted Session root, as the
+ * Gateway's own uid ([ADR-0025](../../docs/adr/0025-the-pi-adapter-spawns-one-confined-process-per-run.md)).
  */
-export async function writeRunConfiguration(
-  config: PiConfiguration,
-  invocation: PiInvocation,
-): Promise<void> {
+export async function writeRunConfiguration(config: PiConfiguration): Promise<void> {
   const resolved = resolvePiConfiguration(config);
   const agentDir = resolved.agentDir.localPath;
 
-  // Both are ours to create: the agent directory holds the files below, and a Session
-  // directory has to exist before `pi` is told to keep a Session in it. The Workspace
-  // is not created — it is the Operator's, shared with their Handlers, and a Gateway
-  // that conjured it would hide a wrong mount instead of failing on it.
+  // Ours to create, because the three files below go in it. The Workspace is not — it
+  // is the Operator's, shared with their Handlers, and a Gateway that conjured it would
+  // hide a wrong mount instead of failing on it. Nor is the Session root, which the
+  // startup check creates once so that the daemon never invents it as `root`.
   await mkdir(agentDir, { recursive: true });
-  await mkdir(invocation.sessionDirectory, { recursive: true });
 
   await Promise.all([
     writeJson(path.join(agentDir, "settings.json"), resolved.settings),

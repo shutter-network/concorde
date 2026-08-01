@@ -3,9 +3,9 @@
  *
  * This is where the pieces around it are finally used, in the one order that works:
  * **compose, write, start, interpret.** Composing settles the Session name and the
- * Session's own directory; writing puts the configuration and the instructions file
- * where the composed invocation says the agent will look for them; only then is the
- * container started; and the outcome is read from the stream it produces.
+ * argv; writing puts the configuration and the instructions file into the agent's
+ * directory, where the container is about to look for them; only then is the container
+ * started; and the outcome is read from the stream it produces.
  *
  * A container rather than this process, and that is the load-bearing decision here
  * ([ADR-0025](../../docs/adr/0025-the-pi-adapter-spawns-one-confined-process-per-run.md)):
@@ -93,12 +93,15 @@ export function createPiAdapter(options: PiAdapterOptions): PiRuntime {
 
     async run(prompt: Prompt, runId: string): Promise<RunOutcome> {
       const invocation = composeInvocation(options, prompt, runId);
-      await writeRunConfiguration(options, invocation);
+      await writeRunConfiguration(options);
 
       log.debug(
         {
           runId,
           session: invocation.session,
+          // The one place this Session's transcript is named as a path on the
+          // Operator's own disk. The argv below carries the container's path, which
+          // answers a different question.
           sessionDirectory: invocation.sessionDirectory,
           command: invocation.command,
           // `redactedArgs`, never `args`: the invocation carries whatever `env` holds,

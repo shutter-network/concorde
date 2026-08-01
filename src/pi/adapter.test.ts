@@ -77,9 +77,9 @@ type Adapter = {
  * An adapter over real directories, whose container runtime is the stub running
  * `script`.
  *
- * The three directories are real because the adapter writes into two of them before it
- * starts anything, and because the Workspace not being created by the framework is
- * itself a decision worth having a test walk into.
+ * The three directories are real because the adapter writes into one of them before it
+ * starts anything, and because which of the other two are there when the container
+ * starts — neither, as it happens — is itself a decision worth having a test walk into.
  */
 async function adapterOn(
   script: Omit<FakeContainerScript, "reportTo"> = {},
@@ -90,8 +90,9 @@ async function adapterOn(
   const workspace = path.join(root, "workspace");
   const agentDir = path.join(root, "agent");
   const sessionRoot = path.join(root, "sessions");
-  // Only the Workspace: the other two are the framework's to create, and a test that
-  // made them itself would hide that.
+  // Only the Workspace. The agent directory is the framework's to create and a test
+  // that made it itself would hide that; the Session root is the startup check's, which
+  // is not what these tests exercise, so it stays missing here on purpose.
   await mkdir(workspace, { recursive: true });
 
   const reportTo = path.join(root, "report.json");
@@ -106,7 +107,7 @@ async function adapterOn(
     containerCommand: fakeContainerCommand({
       ...script,
       reportTo,
-      expectExisting: [
+      checkExisting: [
         path.join(agentDir, instructionsFileName),
         path.join(agentDir, "settings.json"),
         path.join(agentDir, "models.json"),
@@ -166,14 +167,18 @@ describe("the pi adapter", () => {
     assert.ok(report.args.slice(0, image).includes("--volume"));
     assert.deepEqual(report.args.slice(image + 1, image + 3), ["--mode", "json"]);
     assert.equal(report.args.at(-1), "--no-approve");
-    // Compose, write, *then* start: the agent reads its configuration and its
-    // instructions as it starts, and `--append-system-prompt` silently falls back to
-    // using the path as the prompt text when the file is not there.
+    // Write, *then* start: the agent reads its configuration and its instructions as it
+    // starts, and `--append-system-prompt` silently falls back to using the path as the
+    // prompt text when the file is not there.
+    //
+    // And the Session's own directory is *not* there, which is the same claim from the
+    // other side: the Agent Runtime creates it inside the container, so the Gateway
+    // starting one without it is the ordinary case rather than a broken one (ADR-0025).
     assert.deepEqual(report.existing, {
       [path.join(adapter.agentDir, instructionsFileName)]: true,
       [path.join(adapter.agentDir, "settings.json")]: true,
       [path.join(adapter.agentDir, "models.json")]: true,
-      [path.join(adapter.sessionRoot, "user_42")]: true,
+      [path.join(adapter.sessionRoot, "user_42")]: false,
     });
   });
 

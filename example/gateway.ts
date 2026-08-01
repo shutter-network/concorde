@@ -56,8 +56,9 @@ const agentServerUrl = `http://host.docker.internal:${agentPort}`;
 // Three directories, all of them this process's own, all bind-mounted into the agent's
 // container. The Workspace is created here because the framework refuses to create it: it
 // is shared with the Signal Handlers, and a Gateway that conjured a missing one would
-// hide a wrong path instead of failing on it. The other two are the framework's and it
-// makes them itself.
+// hide a wrong path instead of failing on it. The other two the framework makes itself,
+// in the startup check below — and each Session's own directory is made by `pi`, inside
+// the container.
 const state = path.join(import.meta.dirname, "state");
 const workspace = path.join(state, "workspace");
 await mkdir(workspace, { recursive: true });

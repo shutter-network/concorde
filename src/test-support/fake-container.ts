@@ -35,7 +35,7 @@ export type FakeContainerScript = {
   /** Where to write what this process was given, as `FakeContainerReport` JSON. */
   readonly reportTo?: string;
   /** Paths to test for existence at the moment this runs, for the report. */
-  readonly expectExisting?: readonly string[];
+  readonly checkExisting?: readonly string[];
 };
 
 /** What the fake container runtime saw. */
@@ -44,7 +44,7 @@ export type FakeContainerReport = {
   readonly args: readonly string[];
   /** Everything written to its stdin, byte for byte. */
   readonly stdin: string;
-  /** Which of `expectExisting` were there when it ran. */
+  /** Which of `checkExisting` were there when it ran. */
   readonly existing: Readonly<Record<string, boolean>>;
 };
 
@@ -74,7 +74,7 @@ if (process.argv[1] === thisFile) {
       args,
       stdin: Buffer.concat(chunks).toString("utf8"),
       existing: Object.fromEntries(
-        (script.expectExisting ?? []).map((file) => [file, existsSync(file)]),
+        (script.checkExisting ?? []).map((file) => [file, existsSync(file)]),
       ),
     };
     writeFileSync(script.reportTo, JSON.stringify(report), "utf8");

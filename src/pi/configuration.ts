@@ -85,12 +85,16 @@ export type PiConfiguration = {
    */
   readonly agentDir: Mount;
   /**
-   * The directory Session directories are created under, one per Session.
+   * The directory the Agent Runtime creates Session directories under, one per Session.
    *
    * Per Session rather than one flat directory because resolving a Session by id
    * parses every Session file in its directory, whole message text included — so a
    * flat directory makes every Run scan every Session the deployment ever
    * accumulated, on the hot path (ADR-0025).
+   *
+   * The framework never creates a directory in here. It creates this root, once, in
+   * the startup check: a bind-mount source the daemon has to invent is created as
+   * `root`, and the agent's container then cannot write inside it.
    */
   readonly sessionRoot: Mount;
   /**
@@ -327,7 +331,9 @@ export function sessionFor(session: string | null, runId: string): string {
 }
 
 /**
- * Where a Session's own directory sits, on both sides of the mount.
+ * Where a Session's own directory will sit, on both sides of the mount. Neither side is
+ * created from here: `--session-dir` is given the agent's, and the Gateway's is for the
+ * log line that says where the transcript landed on the Operator's own disk.
  *
  * Both at once and from one place, because the two are joined differently: the agent's
  * is a path inside the container and always POSIX, and the Gateway's is whatever this

@@ -468,7 +468,7 @@ try {
       "export const piRuntime: RuntimeAdapter = {",
       "  async run(prompt: Prompt, id: string): Promise<RunOutcome> {",
       "    const invocation: PiInvocation = composeInvocation(piConfig, prompt, id);",
-      "    await writeRunConfiguration(piConfig, invocation);",
+      "    await writeRunConfiguration(piConfig);",
       "    const stdout: AsyncIterable<Uint8Array> = (async function* () {",
       '      yield new TextEncoder().encode(invocation.redactedArgs.join(" "));',
       "    })();",

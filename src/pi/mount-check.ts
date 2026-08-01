@@ -60,8 +60,13 @@ type Probe = {
    *
    * The Workspace may not be: it is the Operator's, shared with their Signal
    * Handlers, and a Gateway that conjured it would hide a wrong path rather than fail
-   * on it. The other two are the framework's own — it writes the agent's
-   * configuration and the Session directories into them.
+   * on it. The other two are the framework's own — it writes the agent's configuration
+   * into one, and the Agent Runtime creates each Session's directory inside the other.
+   *
+   * That second one is why this is not merely convenience: a bind mount whose source
+   * is missing is created by the daemon **as `root`**, and the agent's container, which
+   * runs as the Gateway's uid, then cannot write inside it. Creating it here, from this
+   * process, is what makes it the Gateway's.
    */
   readonly createLocally: boolean;
   /** What the Gateway writes, for the container to read back. */
@@ -180,6 +185,21 @@ function filesFor(mount: ResolvedMount, name: string): MountedFile {
   };
 }
 
+/**
+ * Why each mount has to be writable by this process, one sentence per role.
+ *
+ * Keyed by role rather than by whether the framework creates the directory, because the
+ * two it creates are created for different reasons: it writes the agent's configuration
+ * into one, and never writes anything at all into the other.
+ */
+const unwritable: Readonly<Record<MountRole, string>> = {
+  workspace:
+    "The Workspace is the Operator's, shared with their Signal Handlers, and the framework never creates it: a Gateway that conjured a missing one would hide a wrong path instead of failing on it.",
+  agentDir: "That is where the framework writes the agent's configuration before every Run.",
+  sessionRoot:
+    "That is where the agent's container creates each Session's own directory, as this process's own user — so what cannot write here is the agent, and a Signal Handler reading a transcript back.",
+};
+
 async function writeGatewayToken(probe: Probe): Promise<void> {
   if (probe.createLocally) {
     await mkdir(probe.mount.localPath, { recursive: true }).catch((error: unknown) => {
@@ -187,7 +207,7 @@ async function writeGatewayToken(probe: Probe): Promise<void> {
         mountProblem(
           probe,
           `the Gateway cannot create its localPath: ${describe(error)}`,
-          "This directory is the framework's own — it writes the agent's configuration and Session directories into it — so it is created rather than required to exist.",
+          "This directory is the framework's own — the agent's configuration is written into one and the Agent Runtime creates its Session directories inside the other — so it is created rather than required to exist.",
         ),
         { cause: error },
       );
@@ -198,9 +218,7 @@ async function writeGatewayToken(probe: Probe): Promise<void> {
       mountProblem(
         probe,
         `the Gateway cannot write into its localPath: ${describe(error)}`,
-        probe.createLocally
-          ? "That is where the framework writes the agent's configuration before every Run."
-          : "The Workspace is the Operator's, shared with their Signal Handlers, and the framework never creates it: a Gateway that conjured a missing one would hide a wrong path instead of failing on it.",
+        unwritable[probe.role],
       ),
       { cause: error },
     );

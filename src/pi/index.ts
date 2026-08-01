@@ -16,8 +16,9 @@
  *    a relative mount path is refused at startup rather than at its first Signal. What
  *    it settles it does not rewrite: `agentServerUrl` comes back exactly as supplied.
  *  - `composeInvocation` builds the container invocation for one Run.
- *  - `writeRunConfiguration` writes the agent's configuration files, fresh, and makes
- *    the Session its own directory.
+ *  - `writeRunConfiguration` writes the agent's configuration files, fresh, into the
+ *    agent's own directory. Nothing about a Session: the Agent Runtime creates each
+ *    Session's directory itself, inside the container.
  *  - `interpretPiOutput` reads the JSONL event stream into a Run outcome. This is where
  *    the three traps ADR-0025 records live, and it is worth reading before changing:
  *    the exit code says nothing, the terminal record is `agent_settled` and not

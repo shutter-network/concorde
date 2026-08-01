@@ -9,7 +9,8 @@
  *  - the **user ids match**, so a file the agent created is one a Signal Handler can
  *    read and edit
  *  - a **named Session resumes** across two Runs, which is a claim about a Session file
- *    on disk being found and parsed by a second container
+ *    on disk being found and parsed by a second container — in a directory the Gateway
+ *    never created, since `pi` makes each Session's own directory itself (ADR-0025)
  *  - the agent **reaches the Agent server** over HTTP from inside its container, with
  *    `curl` from its own shell tool and no credential (ADR-0010)
  *
@@ -378,7 +379,9 @@ describe("pi in a real container", { skip }, () => {
       );
       assert.ok(resumed !== undefined, "the second Run should carry the first Run's conversation");
 
-      // One directory per Session, and a fresh Session gets its own.
+      // One directory per Session, and a fresh Session gets its own — every one of them
+      // created by `pi` inside its container, since the Gateway creates only the root
+      // and does that in the startup check above (ADR-0025).
       const sessions = (await readdir(rig.sessionRoot)).sort();
       assert.ok(sessions.includes("user_42"), `the named Session: ${sessions.join(", ")}`);
       assert.equal(sessions.length, 2, `one directory per Session: ${sessions.join(", ")}`);
