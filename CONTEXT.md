@@ -56,6 +56,10 @@ _Avoid_: engine, backend, model, LLM
 The part that drives one kind of Agent Runtime on the Core's behalf. Its contract is narrow: start a Run against a Session with a Prompt, collect the output, report completion or failure. It passes the agent's configuration through without interpreting it. See [ADR-0016](./docs/adr/0016-agent-configuration-is-opaque-to-the-framework.md).
 _Avoid_: driver, plugin, connector, backend
 
+**Mount Table**:
+The declaration of which directories and files the Agent Runtime's container sees, where each one comes from, and which user the container runs as. Runtime-agnostic and inert: it creates nothing, writes nothing and checks nothing, resolving to container arguments and no more. One entry is a **Mount**. The Workspace is one of them; so is any file the Operator wants the agent to be unable to change. See [ADR-0028](./docs/adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md).
+_Avoid_: volume, bind, share, sandbox, mount config
+
 **OpenClaw daemon**:
 OpenClaw's own central process, which its own documentation calls "the Gateway". Always written as "the OpenClaw daemon" here — unqualified "Gateway" always means ours.
 
