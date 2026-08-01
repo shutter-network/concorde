@@ -24,10 +24,24 @@
     "erasableSyntaxOnly": true,
 
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+
+    // `example/` imports the package by name, exactly as an Operator's entry point
+    // does, and that is the point of it: the reference entry point has to read like
+    // the thing it is a reference for, not like a file reaching into `src`. Node
+    // resolves that by itself — a package may refer to its own `exports` — but it
+    // resolves it to `dist`, which is generated and gitignored, so a typecheck
+    // before a build would fail on a fresh clone. These two lines point the type
+    // checker at the sources instead. Nothing in `src` imports the package by name,
+    // so nothing else is affected.
+    "paths": {
+      "shared-agent-framework": ["./src/index.ts"],
+      "shared-agent-framework/pi": ["./src/pi/index.ts"]
+    }
   },
   // `drizzle.config.ts` is included but not built: it is how `migrations/core` is
   // generated, so a mistake in it should fail the typecheck rather than the next
-  // person to run the generator.
-  "include": ["src", "scripts", "drizzle.config.ts"]
+  // person to run the generator. `example` is included for the same reason — it is
+  // the reference deployment, and one that does not compile is worse than none.
+  "include": ["src", "scripts", "drizzle.config.ts", "example"]
 }

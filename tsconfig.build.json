@@ -6,7 +6,13 @@
     // No source maps: `src` is not shipped, so maps in the tarball would dangle.
     // Adding both together is a deliberate decision, not a default.
     "rootDir": "src",
-    "outDir": "dist"
+    "outDir": "dist",
+    // Dropped rather than inherited. The base config maps the package's own name at
+    // `example/`'s benefit, and nothing shipped may resolve through it: a module under
+    // `src` importing `shared-agent-framework` would type-check against `src/index.ts`
+    // here and emit that bare specifier into `dist`, where it would resolve to the
+    // consumer's copy of the package or to nothing.
+    "paths": {}
     // No `composite`, and so no build-info file: this is one project with no
     // references, so incremental mode bought nothing and cost the guarantee that
     // matters. `tsc --build` trusted a build info whose outputs had been deleted

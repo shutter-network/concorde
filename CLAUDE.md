@@ -1,5 +1,13 @@
 # Shared Agent Framework
 
+[`docs/quickstart.md`](./docs/quickstart.md) takes a reader from a clone to a completed
+agent Run, and [`example/`](./example/) is the reference deployment it describes:
+`gateway.ts` is the worked entry point, `migrate.ts` the same migration call as a step of
+its own, `compose.yaml` the containers, `agent/Dockerfile` the agent image. Nothing in
+`example/` ships in the tarball; `tsconfig.json` type-checks it against `src` through a
+`paths` mapping, while Node resolves the same imports to `dist` at runtime — so
+`node example/gateway.ts` needs a build first.
+
 ## Toolchain and checks
 
 ```sh

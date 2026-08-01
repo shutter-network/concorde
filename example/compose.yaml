@@ -1,0 +1,65 @@
+# The reference deployment's containers: PostgreSQL, the agent image, and the networks.
+#
+#     docker compose -f example/compose.yaml up -d --build
+#
+# Note what is *not* here: the Gateway. It runs on the host, as an ordinary Node
+# process (`node example/gateway.ts`), and that is a deliberate choice rather than a
+# gap. The Gateway starts a container per Run, so containerising it means handing it a
+# container runtime socket — which is root on the host, a far larger hole than the one
+# it would close. Running it on the host also makes the file ownership story true by
+# construction: the agent's container runs as the Gateway process's own uid, and the
+# bind-mounted directories under `example/state/` are that user's already.
+#
+# See ../docs/quickstart.md, which this file is one step of.
+
+name: saf-example
+
+services:
+  # The Store. Published on **5433**, not 5432, so that this deployment and the
+  # `saf-pg` container CLAUDE.md tells contributors to run for the test suite can be up
+  # at the same time. Bound to loopback: the Gateway is the only thing that needs it.
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: saf
+      POSTGRES_PASSWORD: saf
+      POSTGRES_DB: saf
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - store:/var/lib/postgresql/data
+    # Not the agent's network. The agent cannot resolve `postgres` at all, which is the
+    # point — read the network note in the quickstart for what that does and does not
+    # buy you.
+    networks: [store]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "saf", "-d", "saf"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # Builds the agent image — and then runs it once, so that "the image built" and "`pi`
+  # actually runs in it" are the same command. It exits immediately and is *meant* to
+  # sit there as `Exited (0)`; `docker compose logs agent-image` shows the version it
+  # printed. Every real agent container is started by the Gateway's Runtime Adapter,
+  # one per Run, and is never a service here.
+  agent-image:
+    build: ./agent
+    image: saf-agent:0.83.0
+    command: ["--version"]
+    restart: "no"
+    networks: [agent]
+
+networks:
+  # The Store's network, which the agent is not on.
+  store:
+    name: saf_store
+  # The agent's own network: only the agent and the Gateway are meant to be reachable
+  # across it. Named explicitly rather than left to Compose's `<project>_<network>`
+  # prefixing, because the entry point passes this exact string to the Runtime Adapter
+  # as `network` and a mismatch is a container that will not start.
+  agent:
+    name: saf_agent
+
+volumes:
+  store:
