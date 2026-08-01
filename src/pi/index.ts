@@ -2,9 +2,9 @@
  * The `pi` Runtime Adapter, from `shared-agent-framework/pi`.
  *
  * A subpath of its own so that what a deployment depends on is legible from its import
- * statements: the Core, the Store and the servers come from the package root and know
- * nothing about `pi`, and swapping the Agent Runtime is a change to one import and one
- * configuration object (ADR-0016, ADR-0026).
+ * statements: the Core and the Store come from the package root and know nothing about
+ * `pi`, and swapping the Agent Runtime is a change to one import and one configuration
+ * object (ADR-0016, ADR-0026).
  *
  * `createPiAdapter` is the whole of it for an Operator: hand it the agent's
  * configuration, call `verifyMounts()` before starting the Core, and pass it as the

@@ -42,8 +42,8 @@ Two kinds of row below, and the distinction matters. **Objects** are things the 
 | Part | Kind | Supplied by | Routes it contributes | Notes |
 | --- | --- | --- | --- | --- |
 | Store | object | framework | — | Signals, Runs, and whatever Producers keep |
-| Public server | object | framework | — | the one surface exposed outside |
-| Agent server | object | framework | — | reachable only by the Agent Runtime |
+| Public server | object | Operator | — | the one surface exposed outside; a `Fastify()` the entry point constructs and states a bind address for |
+| Agent server | object | Operator | — | reachable only by the Agent Runtime; a second `Fastify()`, bound loopback in the reference deployment |
 | Core | object | framework | agent: read prior Signals, read Runs | owns the serial worker; one Run at a time, globally |
 | Messenger | object, replaceable | framework | public: authenticate, submit, poll Outbox — agent: send Message, read the Message log, read and create Users | Users, the Message log in both directions, Outboxes as a view over it, optional Conversations |
 | Scheduler | object, replaceable | framework | agent: schedule future work | recurrence, cancellation, next-fire. **Deferred, not in v1** (ADR-0018) |
@@ -87,7 +87,7 @@ Each is a deliberate decision, not an omission:
 - **Isolation of any kind.** A deployment needing real isolation runs two Shared Agents.
 - **Protection against a bad Producer.** Producers are trusted by construction (ADR-0020).
 - **Availability under a hostile User.** With no timeouts and a serial worker, a User who steers the agent into an unbounded tool loop halts it for every Party until an Operator restarts (ADR-0017).
-- **Authentication on the Agent server.** There is none. It binds `127.0.0.1` by default, and reaching the port is access — so keeping it unreachable is the deployment's job (ADR-0010).
+- **Authentication on the Agent server.** There is none, and reaching the port is access — so keeping it unreachable is the deployment's job, through the bind address its entry point states on `listen` (ADR-0004, ADR-0010).
 
 ## Known limits
 

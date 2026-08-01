@@ -44,7 +44,7 @@ const migrationsRoot = path.join(repoRoot, "migrations");
 
 /** The consumer's imports, spelled once: the type checker and Node see the same two. */
 const consumerImports = [
-  'import { coreMigrations, createAgentServer, createCore, createPublicServer, defaultLogger, openStore, templateHandler } from "shared-agent-framework";',
+  'import { coreMigrations, createCore, defaultLogger, openStore, templateHandler } from "shared-agent-framework";',
   'import { composeInvocation, createPiAdapter, instructionsFileName, interpretPiOutput, resolveMount, resolvePiConfiguration, writeRunConfiguration } from "shared-agent-framework/pi";',
 ];
 
@@ -128,13 +128,11 @@ try {
     // so its position in `dist` is what makes the shipped folder reachable.
     "dist/core/migrations.js",
     "dist/core/core.js",
-    // The Core's Agent server routes, and the two servers they are registered on.
-    // Both reach for `fastify`, which is public API rather than an internal
-    // (ADR-0021), so the declarations below are imported by the scratch project.
+    // The Core's Agent server routes: a Fastify plugin, and the only shipped module
+    // that names Fastify at all. Fastify is public API rather than an internal
+    // (ADR-0021), so the consumer brings the instance and registers this on it.
     "dist/core/routes.js",
     "dist/core/routes.d.ts",
-    "dist/servers.js",
-    "dist/servers.d.ts",
     // The template Handler is public surface of its own, and the only module that
     // reaches for `handlebars` — so a missing `dependencies` entry surfaces when the
     // scratch project imports it below rather than at an Operator's first Signal.
@@ -267,8 +265,6 @@ try {
       // nothing checks: a declaration that resolved to `any`, or went missing
       // altogether, would type-check in this project without it.
       "import type {",
-      "  AgentServer,",
-      "  AgentServerOptions,",
       "  ChannelListener,",
       "  Core,",
       "  CoreOptions,",
@@ -280,8 +276,6 @@ try {
       "  MigrationDescriptor,",
       "  PostOutcome,",
       "  Prompt,",
-      "  PublicServer,",
-      "  PublicServerOptions,",
       "  RunOutcome,",
       "  RunRecord,",
       "  RunState,",
@@ -309,10 +303,12 @@ try {
       "  ResolvedPiConfiguration,",
       '} from "shared-agent-framework/pi";',
       'import { pgSchema, text } from "drizzle-orm/pg-core";',
-      // Fastify is public API (ADR-0021), so a consumer names its types directly.
-      // Importing them here is also what proves they resolve from the installed
+      // Fastify is public API (ADR-0021) and the consumer's own dependency: the
+      // framework constructs no server, so the instance comes from this call.
+      // Importing the types here is also what proves they resolve from the installed
       // package: `skipLibCheck` would swallow an unresolved import inside our own
-      // declarations and quietly leave every server `any`.
+      // declarations and quietly leave the Core's route plugin `any`.
+      'import Fastify from "fastify";',
       'import type { FastifyInstance, FastifyPluginAsync } from "fastify";',
       "",
       "// Annotated throughout, so a declaration that resolved to `any` fails here.",
@@ -351,24 +347,20 @@ try {
       "const options: CoreOptions = { store, runtime, logger: log, sweepIntervalMs: 500 };",
       "export const core: Core = createCore(options);",
       "",
-      "// The two servers. Each takes its own configuration and neither is handed the",
-      "// other; the Agent server binds loopback unless told otherwise and carries the",
-      "// separately stated address the agent's container reaches it at (ADR-0010).",
-      "const publicOptions: PublicServerOptions = { port: 8080, logger: log };",
-      "export const publicServer: PublicServer = createPublicServer(publicOptions);",
-      "const agentOptions: AgentServerOptions = {",
-      "  port: 7411,",
-      '  reachableAt: "http://host.docker.internal:7411",',
-      "  logger: log,",
-      "  fastifyOptions: { bodyLimit: 1048576 },",
-      "};",
-      "export const agentServer: AgentServer = createAgentServer(agentOptions);",
+      "// The two servers: two bare Fastify instances the consumer constructs, because",
+      "// the framework ships none and holds no opinion about either bind address. What",
+      "// separates them is what gets registered on each and where each one listens.",
+      "export const publicServer: FastifyInstance = Fastify({ bodyLimit: 1048576 });",
+      "export const agentServer: FastifyInstance = Fastify();",
+      "",
+      "// How the agent's container reaches the Agent server: stated, never derived, and",
+      "// nowhere near the bind address below (ADR-0010, ADR-0016).",
+      'const agentServerUrl = "http://host.docker.internal:7411";',
       "",
       "// The Core contributes its Signal and Run routes as a Fastify plugin, which the",
       "// Operator registers — and not registering it is how an endpoint group is",
       "// switched off (ADR-0010, ADR-0021).",
       "const coreRoutes: FastifyPluginAsync = core.agentRoutes;",
-      "const agentFastify: FastifyInstance = agentServer.fastify;",
       "",
       "// An Operator's own routes, on Fastify's mechanism and no contract of ours.",
       "const ownRoutes: FastifyPluginAsync = async (fastify) => {",
@@ -427,8 +419,8 @@ try {
       "",
       "// The `pi` Runtime Adapter's configuration, every field of it, so a field that",
       "// went missing from the declaration fails here rather than being ignored at the",
-      "// Operator's first Run. `agentServerUrl` is the Agent server's own reachable-from",
-      "// address: how the agent reaches the Gateway is stated, never derived (ADR-0010).",
+      "// Operator's first Run. `agentServerUrl` travels straight from the Operator to the",
+      "// adapter: no server holds it, and nothing validates it (ADR-0010, ADR-0016).",
       "const workspace: Mount = {",
       '  localPath: "/srv/saf/workspace",',
       '  agentPath: "/workspace",',
@@ -442,7 +434,7 @@ try {
       "  workspace,",
       '  agentDir: "/srv/saf/agent",',
       '  sessionRoot: { localPath: "/srv/saf/sessions", agentPath: "/sessions" },',
-      "  agentServerUrl: agentServer.reachableAt,",
+      "  agentServerUrl,",
       '  instructions: "You are the shared assistant of a book club.",',
       "  settings,",
       "  models: {},",
@@ -511,13 +503,15 @@ try {
       "    const id: string = await core.emit(tx, emitted);",
       '    shipped.info({ signalId: id }, "emitted");',
       "  });",
-      "  await agentFastify.register(coreRoutes);",
-      '  await publicServer.fastify.register(ownRoutes, { prefix: "/ops" });',
-      "  const publicAddress: string = await publicServer.listen();",
-      "  const agentAddress: string = await agentServer.listen();",
-      "  const reachableAt: string = agentServer.reachableAt;",
+      "  await agentServer.register(coreRoutes);",
+      '  await publicServer.register(ownRoutes, { prefix: "/ops" });',
+      "  // Both bind addresses stated by the consumer, because no default of ours is",
+      "  // behind either: every interface for the Public server, loopback for the",
+      "  // unauthenticated Agent server (ADR-0004, ADR-0010).",
+      '  const publicAddress: string = await publicServer.listen({ port: 8080, host: "0.0.0.0" });',
+      '  const agentAddress: string = await agentServer.listen({ port: 7411, host: "localhost" });',
       "  shipped.info(",
-      "    { publicAddress, agentAddress, reachableAt, readSignal, readRun, states },",
+      "    { publicAddress, agentAddress, agentServerUrl, readSignal, readRun, states },",
       '    "the Gateway is up",',
       "  );",
       "  await publicServer.close();",
@@ -542,35 +536,35 @@ try {
       "-e",
       [
         ...consumerImports,
-        // `templateHandler` is here because importing it loads `handlebars`, and
-        // constructing a server loads `fastify`: an installed package resolves
-        // neither unless it is declared as a dependency, and our own
-        // `node_modules` would hide that in every other check.
-        "const agentServer = createAgentServer({ port: 0, reachableAt: 'http://host.docker.internal:7411/' });",
-        "const publicServer = createPublicServer({ port: 0 });",
+        // `templateHandler` is here because importing it loads `handlebars`: an
+        // installed package resolves it only if it is declared as a dependency, and
+        // our own `node_modules` would hide a missing entry in every other check.
+        //
+        // The URL the agent's container calls back on is a plain string the consumer
+        // writes and hands to the adapter. The trailing slash is the point: a resolved
+        // configuration that gives it back is one that interpreted nothing (ADR-0016),
+        // and a reintroduced normaliser would fail the assertion below.
+        "const agentServerUrl = 'http://host.docker.internal:7411/';",
         // The `/pi` subpath, actually run rather than only resolved: `composeInvocation`
         // reaches for `../core/handlers.ts` to check the Session name, so this is what
         // proves a relative `.ts` import *inside* the subpath survives being compiled
         // and installed — the thing the deleted placeholder used to stand for.
-        "const invocation = composeInvocation({",
+        "const piConfig = {",
         "  image: 'saf/pi:latest', model: 'sonnet', workspace: '/srv/saf/workspace',",
         "  agentDir: '/srv/saf/agent', sessionRoot: '/srv/saf/sessions',",
-        "  agentServerUrl: agentServer.reachableAt,",
-        "}, { session: null, text: 'what happened?' }, 'r1');",
+        "  agentServerUrl,",
+        "};",
+        "const invocation = composeInvocation(piConfig, { session: null, text: 'what happened?' }, 'r1');",
         // And the adapter itself, constructed as an Operator constructs it. It refuses a
         // configuration it cannot work with at construction, so this also proves the
         // check inside it runs from the installed package rather than only here.
-        "const adapter = createPiAdapter({",
-        "  image: 'saf/pi:latest', model: 'sonnet', workspace: '/srv/saf/workspace',",
-        "  agentDir: '/srv/saf/agent', sessionRoot: '/srv/saf/sessions',",
-        "  agentServerUrl: agentServer.reachableAt,",
-        "});",
+        "const adapter = createPiAdapter(piConfig);",
         "const encoder = new TextEncoder();",
         "const settled = await interpretPiOutput((async function* () {",
         "  yield encoder.encode(JSON.stringify({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop' } }) + '\\n');",
         "  yield encoder.encode(JSON.stringify({ type: 'agent_settled' }) + '\\n');",
         "})());",
-        "const built = [typeof openStore, typeof templateHandler, invocation.command, invocation.session, String(settled.ok), typeof resolveMount, typeof resolvePiConfiguration, typeof writeRunConfiguration, instructionsFileName, agentServer.reachableAt, typeof publicServer.fastify.register, typeof adapter.run, typeof adapter.verifyMounts];",
+        "const built = [typeof openStore, typeof templateHandler, invocation.command, invocation.session, String(settled.ok), typeof resolveMount, typeof writeRunConfiguration, instructionsFileName, resolvePiConfiguration(piConfig).agentServerUrl, typeof adapter.run, typeof adapter.verifyMounts];",
         "process.stdout.write(built.join(':'));",
       ].join("\n"),
     ],
@@ -578,8 +572,8 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker:run_r1:true:function:function:function:gateway-instructions.md:http://host.docker.internal:7411:function:function:function",
-    "both subpaths should resolve at runtime, the template Handler and the servers should load handlebars and fastify, and the pi adapter should construct, compose an invocation and read an outcome",
+    "function:function:docker:run_r1:true:function:function:gateway-instructions.md:http://host.docker.internal:7411/:function:function",
+    "both subpaths should resolve at runtime, the template Handler should load handlebars, and the pi adapter should construct, compose an invocation, carry the callback URL through unchanged and read an outcome",
   );
 
   step("applying a shipped migration folder from inside the installed package");

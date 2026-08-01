@@ -72,7 +72,8 @@ export type CoreOptions = {
 export type Core = {
   /**
    * The Core's Agent server routes — reading prior Signals and Runs — as a Fastify
-   * plugin: `agentServer.fastify.register(core.agentRoutes)`.
+   * plugin: `agentServer.register(core.agentRoutes)`, on the Fastify instance the
+   * Operator constructed.
    *
    * A plugin the Operator registers rather than something the Core does to a server
    * it was handed, for three reasons that all point the same way. Switching an

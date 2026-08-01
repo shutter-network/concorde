@@ -15,8 +15,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { inArray } from "drizzle-orm";
-import type { AgentServer } from "../servers.ts";
-import { createAgentServer } from "../servers.ts";
+import Fastify, { type FastifyInstance } from "fastify";
 import type { Store } from "../store/index.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
@@ -30,7 +29,8 @@ import { signals } from "./schema.ts";
 let database: TestDatabase;
 let store: Store;
 let core: Core;
-let agentServer: AgentServer;
+/** The Agent server: a bare Fastify instance, exactly as an Operator constructs one. */
+let agentServer: FastifyInstance;
 /** Where the Agent server bound, for the one test that goes over a real socket. */
 let address: string;
 
@@ -69,7 +69,9 @@ before(async () => {
   store = database.store;
   await store.migrate(coreMigrations);
 
-  agentServer = createAgentServer({ port: 0, reachableAt: "http://host.docker.internal:7411" });
+  // The framework constructs no server: this is a bare Fastify instance, the same call
+  // an Operator's entry point makes, with the Core's plugin registered on it below.
+  agentServer = Fastify();
 
   const runtime = fakeRuntime(async (prompt) => {
     if (prompt.text === "doomed") {
@@ -90,8 +92,11 @@ before(async () => {
   // The Core contributes its own routes rather than handing them to a monolithic API
   // object: this plugin is the Signal and Run surface, and an Operator registers it
   // on the Agent server (ADR-0021).
-  await agentServer.fastify.register(core.agentRoutes);
-  address = await agentServer.listen();
+  await agentServer.register(core.agentRoutes);
+  // An explicit loopback host and an ephemeral port, both this test's to state — the
+  // framework supplies no default for either. Fastify resolves to the address it bound,
+  // which is what the one test over a real socket fetches.
+  address = await agentServer.listen({ port: 0, host: "127.0.0.1" });
   core.start({ alpha: scripted, beta: scripted });
 
   // Arrival order matters to every ordering assertion below, so each Signal is
@@ -128,11 +133,12 @@ async function emit(label: string, kind: string, prompts: readonly Prompt[]): Pr
 }
 
 /**
- * One read over the Agent server. `inject` rather than a socket: which address the
- * server bound is `servers.test.ts`'s subject, and what it answers is this one's.
+ * One read over the Agent server. `inject` rather than a socket: what the surface
+ * answers is this file's subject, and a socket per case would only re-prove Fastify.
+ * The one case that does go over the wire is `answers over HTTP` below.
  */
 function read(path: string) {
-  return agentServer.fastify.inject({ method: "GET", url: path });
+  return agentServer.inject({ method: "GET", url: path });
 }
 
 async function readSignals(path = "/signals"): Promise<SignalRecord[]> {

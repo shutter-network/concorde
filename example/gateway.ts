@@ -11,9 +11,9 @@
  *
  *   1. **open the Store** — a connection URL, and nothing happens on the wire yet
  *   2. **migrate** — explicitly, so it can also be a deploy step of its own
- *   3. **construct, and register routes** — the servers, the Runtime Adapter, the Core,
- *      and the Core's own routes onto the Agent server. None of it has a side effect
- *      beyond that registration
+ *   3. **construct, and register routes** — two Fastify instances, the Runtime Adapter,
+ *      the Core, and the Core's own routes onto the Agent one. None of it has a side
+ *      effect beyond that registration
  *   4. **verify the mounts** — one throwaway container, which refuses the deploy if the
  *      agent cannot see the directories this process thinks it mounted. A step of its own
  *      rather than part of constructing the adapter, for the reason migrating is one
@@ -34,14 +34,8 @@
 
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import {
-  coreMigrations,
-  createAgentServer,
-  createCore,
-  createPublicServer,
-  openStore,
-  templateHandler,
-} from "shared-agent-framework";
+import Fastify from "fastify";
+import { coreMigrations, createCore, openStore, templateHandler } from "shared-agent-framework";
 import { createPiAdapter } from "shared-agent-framework/pi";
 
 // Refused here rather than discovered later: a Run that fails is never retried, so a
@@ -50,11 +44,14 @@ import { createPiAdapter } from "shared-agent-framework/pi";
 const apiKey = process.env.ANTHROPIC_API_KEY;
 if (apiKey === undefined) throw new Error("set ANTHROPIC_API_KEY; the agent's model needs it");
 
-// The port appears twice on purpose. Where the Agent server *binds* and how the agent's
-// container *reaches* it are two separate values, and neither can be derived from the
-// other — see the quickstart's note on this, which is the one thing in this file most
-// likely to need changing on another machine.
+// The port appears twice on purpose. Where the Agent server *binds* — the `listen` call
+// at the bottom of this file — and how the agent's container *reaches* it are two
+// separate values, and neither can be derived from the other. Nothing validates the URL
+// either, so it arrives in the agent's instructions exactly as written here. See the
+// quickstart's note on this, which is the one thing in this file most likely to need
+// changing on another machine.
 const agentPort = 7411;
+const agentServerUrl = `http://host.docker.internal:${agentPort}`;
 
 // Three directories, all of them this process's own, all bind-mounted into the agent's
 // container. The Workspace is created here because the framework refuses to create it: it
@@ -68,15 +65,16 @@ await mkdir(workspace, { recursive: true });
 const store = openStore(process.env.DATABASE_URL ?? "postgres://saf:saf@localhost:5433/saf");
 await store.migrate(coreMigrations);
 
-// No routes at all, and that is finished work rather than a stub: Users reach the
-// Messenger through this server and the Messenger is out of scope. It is here because it
-// is part of the Gateway's shape, and because it is where your own Fastify plugins go.
-const publicServer = createPublicServer({ port: 8080 });
-
-const agentServer = createAgentServer({
-  port: agentPort,
-  reachableAt: `http://host.docker.internal:${agentPort}`,
-});
+// Two ordinary Fastify instances, because the framework ships no server: there is nothing
+// of ours between this file and Fastify, and every option, hook and plugin is reachable
+// without asking whether we pass it through. What makes them two different surfaces is
+// what goes on each of them, and nothing else.
+//
+// The Public one carries no routes at all, and that is finished work rather than a stub:
+// Users reach the Messenger through it and the Messenger is out of scope. It is here
+// because it is part of the Gateway's shape, and because it is where your own plugins go.
+const publicServer = Fastify();
+const agentServer = Fastify();
 
 const runtime = createPiAdapter({
   image: "saf-agent:0.83.0",
@@ -98,13 +96,13 @@ const runtime = createPiAdapter({
   workspace: { localPath: workspace, agentPath: "/workspace" },
   agentDir: { localPath: path.join(state, "agent"), agentPath: "/home/agent/.pi/agent" },
   sessionRoot: { localPath: path.join(state, "sessions"), agentPath: "/sessions" },
-  agentServerUrl: agentServer.reachableAt,
+  agentServerUrl,
   instructions: "You are the shared agent of several people. Be brief and be careful.",
 });
 const core = createCore({ store, runtime });
 // Nothing does this for you. Not registering a route group is how you switch it off, and
 // this one is read-only and unscoped: the agent sees every Signal and every Run.
-await agentServer.fastify.register(core.agentRoutes);
+await agentServer.register(core.agentRoutes);
 
 // One throwaway container, before anything serves: it writes a token into each of the
 // three mounts, has the container read it back and write its own, and reads that. It
@@ -126,8 +124,24 @@ core.start({
   }),
 });
 
-await publicServer.listen();
-await agentServer.listen();
+// The two bind addresses, side by side, because the asymmetry between them is the reason
+// there are two servers and no default of ours hides either one.
+await publicServer.listen({
+  port: 8080,
+  // Every interface. This is the surface meant to be exposed, and a Public server on
+  // loopback inside a container is reachable by nobody at all — a deployment that looks
+  // healthy and serves no User. Behind a reverse proxy on this host, write "localhost".
+  host: "0.0.0.0",
+});
+await agentServer.listen({
+  port: agentPort,
+  // Loopback, which is also Fastify's own default and written out anyway because it is
+  // the more consequential of the two: this server has no authentication, so reaching the
+  // port is read-write access to the whole Store, and moving it off loopback should be a
+  // change someone made on purpose (ADR-0010). "localhost" rather than "127.0.0.1"
+  // because Fastify expands it to both loopback addresses, IPv4 and IPv6.
+  host: "localhost",
+});
 
 // Shutdown, in the order that matters. `core.stop()` first: it waits for the Run in
 // flight and closes the connection the worker listens for wakeups on. Closing the Store

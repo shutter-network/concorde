@@ -36,11 +36,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
+import Fastify from "fastify";
 import { createCore } from "../core/core.ts";
 import type { SignalHandler } from "../core/handlers.ts";
 import { coreMigrations } from "../core/migrations.ts";
 import { runs } from "../core/schema.ts";
-import { createAgentServer } from "../servers.ts";
 import type { Store } from "../store/index.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import {
@@ -97,7 +97,7 @@ type Rig = {
   readonly runtime: PiRuntime;
   readonly model: MockModel;
   /** Where the agent's container was told to reach the Agent server. */
-  readonly reachableAt: string;
+  readonly agentServerUrl: string;
   readonly workspace: string;
   readonly agentDir: string;
   readonly sessionRoot: string;
@@ -181,21 +181,18 @@ async function withGateway(
   };
   await mkdir(paths.workspace, { recursive: true });
 
-  // The port before the server, because `reachableAt` is a construction argument and has
-  // to name the port the agent's container will connect to.
+  // The port before the server, because `agentServerUrl` is a construction argument of
+  // the adapter and has to name the port the agent's container will connect to.
   const port = await reservePort();
-  const agentServer = createAgentServer({
-    port,
-    // Beyond loopback on purpose: under a plain Linux daemon a container cannot reach a
-    // loopback-bound server at all, and this test has to pass on both.
-    host: "0.0.0.0",
-    reachableAt: `http://${hostFromContainer}:${port}`,
-  });
+  const agentServerUrl = `http://${hostFromContainer}:${port}`;
+  // A bare Fastify instance, as an Operator's entry point constructs it. The framework
+  // ships no server and no bind default, so the host below is this test's to state.
+  const agentServer = Fastify();
   const model = await startMockModel(reply);
 
   const runtime = adapterOn(
     paths,
-    agentServer.reachableAt,
+    agentServerUrl,
     {
       providers: {
         mock: {
@@ -213,14 +210,18 @@ async function withGateway(
   const core = createCore({ store, runtime });
   // Nothing registers the Core's routes for you, and Fastify refuses a registration
   // after a server is listening.
-  await agentServer.fastify.register(core.agentRoutes);
-  await agentServer.listen();
+  await agentServer.register(core.agentRoutes);
+  // Bound beyond loopback on purpose: under a plain Linux daemon a container cannot
+  // reach a loopback-bound server at all, and this test has to pass on both. Nothing
+  // warns about it, and nothing inspects what was bound — the address is the
+  // deployment's alone (ADR-0004).
+  await agentServer.listen({ port, host: "0.0.0.0" });
 
   const db = store.handle({ runs });
   const rig: Rig = {
     runtime,
     model,
-    reachableAt: agentServer.reachableAt,
+    agentServerUrl,
     ...paths,
     async ask(payload) {
       const id = await store.tx((tx) => core.emit(tx, { kind: "ask", payload }));
@@ -363,7 +364,10 @@ describe("pi in a real container", { skip }, () => {
       // The instructions file reached the agent, with the address this Gateway stated.
       const system = rig.model.requests[0]?.system ?? "";
       assert.match(system, /The Gateway's Agent server/);
-      assert.ok(system.includes(rig.reachableAt), "the stated address should be the one written");
+      assert.ok(
+        system.includes(rig.agentServerUrl),
+        "the stated address should be the one written",
+      );
 
       // The Session resumed: the second Run's container found the Session file the first
       // one left, parsed it, and sent its messages to the model.

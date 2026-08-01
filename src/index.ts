@@ -18,13 +18,6 @@ export { coreMigrations, createCore } from "./core/index.ts";
 export type { LogFields, Logger } from "./logging.ts";
 export { defaultLogger } from "./logging.ts";
 export type {
-  AgentServer,
-  AgentServerOptions,
-  PublicServer,
-  PublicServerOptions,
-} from "./servers.ts";
-export { createAgentServer, createPublicServer } from "./servers.ts";
-export type {
   ChannelListener,
   Db,
   Listening,

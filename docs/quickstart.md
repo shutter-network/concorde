@@ -45,13 +45,16 @@ immediately. You should see roughly this, one JSON line at a time:
 
 ```
 the agent's container reads and writes every mount, as this process's own user
-the Public server is listening              {"address":"http://0.0.0.0:8080"}
-the Agent server is listening               {"address":"http://127.0.0.1:7411", ...}
 Signal claimed                              {"kind":"ask", ...}
 Run started                                 {"session":"user_42", ...}
 Run finished                                {"session":"user_42", ...}
 Signal finished                             {"state":"done", ...}
 ```
+
+Nothing announces that either server started, because the framework starts neither: the
+`listen` calls are yours, in your entry point, and so is any line you want about them.
+The mount check runs before both of them, so the first line above is still the sign that
+the process got up.
 
 `Ctrl-C` stops it — after the Run in flight has finished, which is not instant and is
 [the part of shutdown nothing can fix for you](#shutdown-handling-is-yours-to-write). It
@@ -120,9 +123,9 @@ Session directory is how, and it is why Sessions get a directory each.
 
 ## What the entry point actually does
 
-Read [`../example/gateway.ts`](../example/gateway.ts) — fifty-five lines of code under a
-hundred and forty with the comments, and the best documentation this project has. Thirty-one
-of those lines are the assembly itself; the rest are eleven lines of imports, the
+Read [`../example/gateway.ts`](../example/gateway.ts) — fifty-three lines of code under a
+hundred and seventy with the comments, and the best documentation this project has. Thirty-four
+of those lines are the assembly itself; the rest are five lines of imports, the
 configuration literals, and the shutdown handler the framework does not ship. Nothing in the framework represents the Gateway:
 there is no object to construct, no registry to add parts to, no lifecycle to implement,
 and no plugin system. The file *is* the Gateway, and every line of it is a part being
@@ -134,9 +137,11 @@ not arbitrary:
 1. **Open the Store.** One PostgreSQL URL. Nothing touches the network yet.
 2. **Migrate.** An explicit call, never a side effect of construction — which is what
    lets it also be [a deploy step of its own](#migrations-as-a-separate-step).
-3. **Construct, and register routes.** The two servers, the Runtime Adapter, the Core —
-   handing each what it needs — and then the Core's own routes onto the Agent server.
-   Nothing constructed here has a side effect; the registration is the only one.
+3. **Construct, and register routes.** Two Fastify instances — the framework ships no
+   server, so `Fastify()` is what you call and everything Fastify offers is yours without
+   asking — then the Runtime Adapter and the Core, handing each what it needs, and then
+   the Core's own routes onto the Agent one. Nothing constructed here has a side effect;
+   the registration is the only one.
 4. **Verify the mounts.** One throwaway container that proves the agent can really see
    the three directories, and refuses the deploy if it cannot. A step of its own rather
    than something constructing the adapter does, for the same reason migrating is.
@@ -144,7 +149,9 @@ not arbitrary:
    Gateway running with no Handlers registered is not something you can express by
    accident.
 6. **Listen.** Last, because Fastify refuses a route registration after a server is
-   listening.
+   listening. Both bind addresses are stated here, next to each other, and there is no
+   framework default behind either — see
+   ["Where each server binds is yours to state"](#where-each-server-binds-is-yours-to-state).
 
 Then two things the framework does not do for you, both at the bottom of the file:
 **shutdown** and **emitting Signals**.
@@ -153,17 +160,42 @@ Then two things the framework does not do for you, both at the bottom of the fil
 
 These are not edge cases. Every one of them is something you meet on day one.
 
-### The agent's reachable address is not derivable
+### Where each server binds is yours to state
 
-Two separate values, both yours, and the framework cannot compute either from the other:
+The framework has no opinion about either bind address, and supplies no default for
+either. Both are arguments to the `listen` calls at the bottom of your own entry point,
+where the reference deployment writes them next to each other:
 
-- **`host`** on the Agent server — where the socket binds. Defaults to `127.0.0.1`.
-- **`reachableAt`** — the base URL the agent's container uses to call back. No default;
-  you have to say it.
+```ts
+await publicServer.listen({ port: 8080, host: "0.0.0.0" });   // the exposed surface
+await agentServer.listen({ port: 7411, host: "localhost" });  // loopback, deliberately
+```
 
-The reference deployment uses `http://host.docker.internal:7411` with the default
-loopback bind, and that works **on Docker Desktop**, which routes that name to the host
-including its loopback interface.
+The asymmetry is the reason there are two servers. The Public server is the one meant to
+be reached, and a Public server on loopback inside a container answers nobody — a
+deployment that looks healthy and serves no User. The Agent server is the opposite: it
+has no authentication, so **reaching the port is access**, and loopback is what keeps
+that true. Moving it should be something you did on purpose, which is why it is written
+out rather than inherited.
+
+Two details worth knowing. `localhost` and `127.0.0.1` are not the same instruction to
+Fastify — `localhost` binds both loopback addresses, IPv4 and IPv6, and `127.0.0.1` binds
+only the first, so `localhost` is the one to write. And `localhost` is also Fastify's own
+default, so a `listen` that says nothing about `host` is already on loopback; the
+reference deployment states it anyway, because the most consequential value in a
+deployment should not be one you have to know a library's defaults to find.
+
+### `agentServerUrl` is not derivable from where the server binds
+
+Where the Agent server's socket **binds** and how the agent's container **reaches** it
+are two separate values, and nothing can compute either from the other. The second one is
+`agentServerUrl`, a field of the Runtime Adapter's configuration: an absolute base URL,
+no default, and nothing validates it — it is written into the agent's instructions file
+byte for byte as you wrote it, a trailing slash included.
+
+The reference deployment uses `http://host.docker.internal:7411` with a loopback bind,
+and that works **on Docker Desktop**, which routes that name to the host including its
+loopback interface.
 
 **On a plain Linux daemon it does not.** There, you need both of:
 
@@ -175,11 +207,12 @@ including its loopback interface.
   applies to you.
 
 On a shared Compose network where the Gateway is itself a service, neither is needed:
-`reachableAt` is `http://<service-name>:7411` and the bind stays inside the network.
+`agentServerUrl` is `http://<service-name>:7411` and the bind stays inside the network.
 
 If you get this wrong the symptom is clear at least: the agent says it cannot reach the
-URL it was given. Compare the two values in the `the Agent server is listening` log
-line, which prints both together for exactly this reason.
+URL it was given. Both values are in your own entry point, a few lines apart — the `host`
+and `port` you passed to `agentServer.listen`, and the `agentServerUrl` you passed to
+`createPiAdapter`. Read them together; nothing else has to be consulted.
 
 ### The agent's container runs as *your* uid
 
@@ -257,8 +290,8 @@ boundary.
 
 ### The Public server has no routes, and that is finished work
 
-`createPublicServer` starts a Fastify instance carrying nothing. This is a **scope
-boundary, not an unimplemented feature.**
+The entry point constructs a second Fastify instance and puts nothing on it. This is a
+**scope boundary, not an unimplemented feature.**
 
 The Public server is the surface the outside world reaches, and in this framework the
 only thing users talk to is the **Messenger** — the part that authenticates them,
@@ -267,9 +300,9 @@ deliberately not built yet. Until it is, there is nothing for users to reach, so
 are no routes.
 
 It exists in the entry point anyway, for two reasons. It is part of the Gateway's shape:
-what the world can reach and what the agent can reach are different servers **by
-construction**, not by a check somewhere. And it is where your own routes go —
-`publicServer.fastify.register(yourPlugin, { prefix: "/api" })`, which is Fastify's own
+what the world can reach and what the agent can reach are different servers, kept apart
+by what you register on each and by where each one binds. And it is where your own routes
+go — `publicServer.register(yourPlugin, { prefix: "/api" })`, which is Fastify's own
 plugin mechanism and the only extension mechanism there is.
 
 The same is true in the other direction: nothing emits Signals in this slice either,
@@ -280,7 +313,8 @@ including a loop you write.
 
 ### Shutdown handling is yours to write
 
-The framework ships **none**. No signal handling, no drain, no ordering. What is in the
+The framework ships **none**. No signal handling, no drain, no ordering — and the two
+servers are yours to close, because they are yours to have constructed. What is in the
 entry point is an example, and the ordering in it is the part that matters:
 
 ```ts
@@ -329,8 +363,9 @@ every Signal and every Run in the Store, unscoped by Session or by User.
 
 That is deliberate: a credential is no boundary against the agent, which is the only
 party meant to reach it at all. What follows is that keeping the port unreachable is
-your whole defence, which is why it binds `127.0.0.1` unless you say otherwise, and why
-it logs a warning every time it binds anywhere else.
+your whole defence, and that defence is the `host` you pass to `listen` and nothing else.
+Nothing checks it and nothing warns about it: the framework never sees the address, and
+where a server binds is the deployment's to decide and this page's to explain.
 
 The specific trap worth knowing: **publishing a container port inserts firewall rules
 that bypass your host's own.** A `ports:` entry that looks like it is behind `ufw` or
@@ -392,9 +427,9 @@ variable you did not supply **throws** rather than rendering empty. That second 
 the Signal permanently, which is the trade: a Prompt with a silent hole in it misleads the
 agent invisibly, and a failed Signal is in the log with a reason.
 
-**Your own routes.** `server.fastify.register(plugin, { prefix })`, on either server.
-Fastify's plugin system is the extension mechanism; there is no contract of ours to
-satisfy. Register before `listen()`.
+**Your own routes.** `server.register(plugin, { prefix })`, on either instance. They are
+plain Fastify instances, so its plugin system is the extension mechanism and there is no
+contract of ours to satisfy. Register before `listen`.
 
 **Your own Producer.** Anything that calls `core.emit(tx, { kind, payload })`. A webhook
 route, a poller, a loop. Note the transaction: `emit` takes yours rather than finding one,
