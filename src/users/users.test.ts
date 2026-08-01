@@ -37,11 +37,14 @@ let agentServer: FastifyInstance;
 /**
  * Where the Operator put the plugin, and where they put it a second time.
  *
- * Two registrations of one plugin on one instance, because the claim is that the
- * prefix is Fastify's own mechanism and nothing of ours: the same routes answer
- * under both, the same Users are visible through both, and neither URL is baked in.
+ * The first is the prefix the quickstart documents, so the URLs asserted here are the
+ * ones a reader will type: the plugin's own paths are `/`, `/` and `/:id`, and it is
+ * the prefix that makes them `/users`, `/users` and `/users/:id`. The second is
+ * nothing like it, because the claim is that the prefix is Fastify's own mechanism
+ * and nothing of ours: the same routes answer under both, the same Users are visible
+ * through both, and neither URL is baked in.
  */
-const prefix = "/directory";
+const prefix = "/users";
 const alsoAt = "/admin/people";
 
 /** The Users the fixture created, oldest first. */
@@ -71,39 +74,47 @@ after(async () => {
   await database.drop();
 });
 
-/** One read over the Agent server, under the prefix the Operator chose. */
+/**
+ * One read over the Agent server, under the prefix the Operator chose.
+ *
+ * `path` is relative to that prefix, exactly as the plugin's own paths are, so `""`
+ * is the list and `/${id}` is one User.
+ */
 function read(path: string, at = prefix) {
   return agentServer.inject({ method: "GET", url: `${at}${path}` });
 }
 
 /** One `POST /users`, with whatever body the caller wants sent — or none at all. */
 function post(payload?: Record<string, unknown>, at = prefix) {
-  const url = `${at}/users`;
   return payload === undefined
-    ? agentServer.inject({ method: "POST", url })
-    : agentServer.inject({ method: "POST", url, payload });
+    ? agentServer.inject({ method: "POST", url: at })
+    : agentServer.inject({ method: "POST", url: at, payload });
 }
 
 /** Creates a User over HTTP and asserts only that it was created. */
 async function created(payload?: Record<string, unknown>, at = prefix): Promise<UserRecord> {
   const response = await post(payload, at);
-  assert.equal(response.statusCode, 201, `POST /users should have answered: ${response.body}`);
+  assert.equal(response.statusCode, 201, `POST ${at} should have answered: ${response.body}`);
   return response.json<UserRecord>();
 }
 
 /** Reads one User back, so an assertion is about the row and not about a response. */
 async function readBack(id: string): Promise<UserRecord> {
-  const response = await read(`/users/${id}`);
-  assert.equal(response.statusCode, 200, `GET /users/${id} should have answered: ${response.body}`);
+  const response = await read(`/${id}`);
+  assert.equal(
+    response.statusCode,
+    200,
+    `GET ${prefix}/${id} should have answered: ${response.body}`,
+  );
   return response.json<UserRecord>();
 }
 
 async function readUsers(query = ""): Promise<UserRecord[]> {
-  const response = await read(`/users${query}`);
+  const response = await read(query);
   assert.equal(
     response.statusCode,
     200,
-    `GET /users${query} should have answered: ${response.body}`,
+    `GET ${prefix}${query} should have answered: ${response.body}`,
   );
   return response.json<{ users: UserRecord[] }>().users;
 }
@@ -145,7 +156,7 @@ describe("creating a User over the Agent server", () => {
     const chosen = "11111111-2222-3333-4444-555555555555";
     const user = await created({ id: chosen });
     assert.notEqual(user.id, chosen);
-    assert.equal((await read(`/users/${chosen}`)).statusCode, 404);
+    assert.equal((await read(`/${chosen}`)).statusCode, 404);
   });
 
   it("needs no body at all, and refuses a query parameter", async () => {
@@ -156,7 +167,7 @@ describe("creating a User over the Agent server", () => {
     // request silently answered as though it had been honoured.
     const scoped = await agentServer.inject({
       method: "POST",
-      url: `${prefix}/users?attributes=admin`,
+      url: `${prefix}?attributes=admin`,
     });
     assert.equal(scoped.statusCode, 400);
   });
@@ -170,7 +181,7 @@ describe("reading Users over the Agent server", () => {
 
     // Fastify's own error shape, so the surface answers one error shape rather than
     // two.
-    const absent = await read("/users/2f1b4d54-1c3a-4f2e-9d7b-8e6a5c4b3a21");
+    const absent = await read("/2f1b4d54-1c3a-4f2e-9d7b-8e6a5c4b3a21");
     assert.equal(absent.statusCode, 404);
     assert.deepEqual(absent.json(), {
       statusCode: 404,
@@ -180,11 +191,11 @@ describe("reading Users over the Agent server", () => {
 
     // A malformed id is a bad request rather than a 500 from PostgreSQL refusing to
     // cast it, which is what an unvalidated parameter would produce.
-    assert.equal((await read("/users/not-an-id")).statusCode, 400);
+    assert.equal((await read("/not-an-id")).statusCode, 400);
 
     // A single record takes no parameters, so a filter on one is refused rather than
     // answered as though it had been applied.
-    assert.equal((await read(`/users/${one.id}?attributes=admin`)).statusCode, 400);
+    assert.equal((await read(`/${one.id}?attributes=admin`)).statusCode, 400);
   });
 
   it("lists Users newest first, in an envelope, under a capped limit", async () => {
@@ -199,7 +210,7 @@ describe("reading Users over the Agent server", () => {
     assert.equal((await readUsers("?limit=2")).length, 2);
 
     for (const query of ["limit=0", "limit=201", "limit=nine"]) {
-      assert.equal((await read(`/users?${query}`)).statusCode, 400, query);
+      assert.equal((await read(`?${query}`)).statusCode, 400, query);
     }
   });
 
@@ -208,7 +219,7 @@ describe("reading Users over the Agent server", () => {
     // key, so there is no filter to pass — and a `?role=admin` answered 200 reads as
     // though one had been.
     for (const query of ["role=admin", "attributes=admin", "limt=2"]) {
-      const refused = await read(`/users?${query}`);
+      const refused = await read(`?${query}`);
       assert.equal(refused.statusCode, 400, query);
       assert.match(refused.json<{ message: string }>().message, /not a parameter of this route/);
     }
@@ -229,7 +240,7 @@ describe("creating a User from the Operator's own code", () => {
       /the Operator's own write failed/,
     );
     assert.ok(attempted !== undefined, "the User should have been created before the rollback");
-    assert.equal((await read(`/users/${attempted.id}`)).statusCode, 404);
+    assert.equal((await read(`/${attempted.id}`)).statusCode, 404);
   });
 
   it("cannot be read back before the caller commits", async () => {
@@ -239,7 +250,7 @@ describe("creating a User from the Operator's own code", () => {
     const user = await store.tx(async (tx) => {
       const created = await directory.create(tx);
       assert.equal(
-        (await read(`/users/${created.id}`)).statusCode,
+        (await read(`/${created.id}`)).statusCode,
         404,
         "an uncommitted User should not be visible",
       );
@@ -264,13 +275,16 @@ describe("the Agent server plugin", () => {
     // The prefix is Fastify's own mechanism and nothing of ours: the plugin carries
     // none, so the URL layout stays the Operator's (ADR-0021).
     const user = await created(undefined, alsoAt);
-    assert.deepEqual((await read(`/users/${user.id}`, alsoAt)).json(), user);
+    assert.deepEqual((await read(`/${user.id}`, alsoAt)).json(), user);
     // And the same User through the other registration, because both are the same
     // Directory over the same Store.
     assert.deepEqual(await readBack(user.id), user);
 
-    // Nothing answers where the plugin was not put.
-    assert.equal((await agentServer.inject({ method: "GET", url: "/users" })).statusCode, 404);
-    assert.equal((await agentServer.inject({ method: "POST", url: "/users" })).statusCode, 404);
+    // Nothing answers where the plugin was not put, including at the root, which is
+    // where a plugin that named its own resource would have put the routes.
+    for (const url of ["/", "/directory"]) {
+      assert.equal((await agentServer.inject({ method: "GET", url })).statusCode, 404, url);
+      assert.equal((await agentServer.inject({ method: "POST", url })).statusCode, 404, url);
+    }
   });
 });

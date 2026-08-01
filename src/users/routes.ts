@@ -8,13 +8,17 @@
  * (ADR-0021). A deployment where the agent must not create Users simply does not
  * offer it the capability.
  *
+ * The paths below are relative to that prefix, which is why they name no resource:
+ * under the conventional `/users` they are `POST /users`, `GET /users` and
+ * `GET /users/:id`, and under any other prefix they are whatever the Operator chose.
+ *
  * | Route | Answers |
  * | --- | --- |
- * | `POST /users` | the created `UserRecord`, 201 |
- * | `GET /users?limit=` | `{ users: UserRecord[] }`, newest first |
- * | `GET /users/:id` | `UserRecord`, or 404 |
+ * | `POST /` | the created `UserRecord`, 201 |
+ * | `GET /?limit=` | `{ users: UserRecord[] }`, newest first |
+ * | `GET /:id` | `UserRecord`, or 404 |
  *
- * **`POST /users` accepts no Attributes, and that is the security boundary of the
+ * **Creating a User accepts no Attributes, and that is the security boundary of the
  * whole part.** Attributes are where grouping and therefore authorization live
  * (ADR-0008, ADR-0014), so an agent that could choose them could mint itself an
  * administrator — and ADR-0003 accepts that a hostile User may steer the agent,
@@ -84,7 +88,7 @@ const rejectUnknownQuery = unknownQueryRefusal(
 export function agentUserRoutes(directory: UserOperations): FastifyPluginAsync {
   return async (fastify) => {
     fastify.post(
-      "/users",
+      "/",
       // No body schema, and the handler never looks at `request.body`. That is the
       // absent capability: whatever is posted, there is nothing here that could
       // carry an attribute into the row, so the column's default decides and the
@@ -94,7 +98,7 @@ export function agentUserRoutes(directory: UserOperations): FastifyPluginAsync {
     );
 
     fastify.get<{ Querystring: { limit: number } }>(
-      "/users",
+      "/",
       {
         schema: {
           querystring: {
@@ -109,7 +113,7 @@ export function agentUserRoutes(directory: UserOperations): FastifyPluginAsync {
     );
 
     fastify.get<{ Params: { id: string } }>(
-      "/users/:id",
+      "/:id",
       // No query parameters at all on a single record, and asking for one is refused
       // rather than ignored — the same reason the list route refuses.
       { schema: { params: idParams }, preValidation: rejectUnknownQuery() },
