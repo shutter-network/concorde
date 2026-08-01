@@ -14,8 +14,10 @@
  * rather than a claim:
  *
  *  - `resolvePiConfiguration` settles and checks a configuration, so a deployment with
- *    a relative mount path is refused at startup rather than at its first Signal. What
- *    it settles it does not rewrite: `agentServerUrl` comes back exactly as supplied.
+ *    a relative container path or an unusable Mount Table is refused at startup rather
+ *    than at its first Signal. What it settles it does not rewrite: `agentServerUrl`
+ *    comes back exactly as supplied. The Mount Table itself is not `pi`'s and comes from
+ *    the package root, not from here.
  *  - `composeInvocation` builds the container invocation for one Run.
  *  - `writeRunConfiguration` writes the agent's configuration files, fresh, into the
  *    agent's own directory. Nothing about a Session: the Agent Runtime creates each
@@ -31,14 +33,8 @@
 
 export type { PiAdapterOptions } from "./adapter.ts";
 export { createPiAdapter } from "./adapter.ts";
-export type {
-  Mount,
-  OpaqueJson,
-  PiConfiguration,
-  ResolvedMount,
-  ResolvedPiConfiguration,
-} from "./configuration.ts";
-export { resolveMount, resolvePiConfiguration } from "./configuration.ts";
+export type { OpaqueJson, PiConfiguration, ResolvedPiConfiguration } from "./configuration.ts";
+export { resolvePiConfiguration } from "./configuration.ts";
 export type { PiInvocation } from "./invocation.ts";
 export { composeInvocation, instructionsFileName } from "./invocation.ts";
 export { interpretPiOutput } from "./output.ts";

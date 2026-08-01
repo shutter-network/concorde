@@ -1,4 +1,11 @@
 export type {
+  Mount,
+  MountTable,
+  ResolvedMount,
+  ResolvedMountTable,
+} from "./container/index.ts";
+export { resolveMountTable } from "./container/index.ts";
+export type {
   Core,
   CoreOptions,
   EmittedSignal,

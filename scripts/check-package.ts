@@ -44,8 +44,8 @@ const migrationsRoot = path.join(repoRoot, "migrations");
 
 /** The consumer's imports, spelled once: the type checker and Node see the same two. */
 const consumerImports = [
-  'import { coreMigrations, createCore, defaultLogger, openStore, templateHandler } from "shared-agent-framework";',
-  'import { composeInvocation, createPiAdapter, instructionsFileName, interpretPiOutput, resolveMount, resolvePiConfiguration, writeRunConfiguration } from "shared-agent-framework/pi";',
+  'import { coreMigrations, createCore, defaultLogger, openStore, resolveMountTable, templateHandler } from "shared-agent-framework";',
+  'import { composeInvocation, createPiAdapter, instructionsFileName, interpretPiOutput, resolvePiConfiguration, writeRunConfiguration } from "shared-agent-framework/pi";',
 ];
 
 function run(command: string, args: string[], cwd: string): string {
@@ -118,6 +118,13 @@ try {
     "dist/pi/output.js",
     "dist/pi/process.js",
     "dist/pi/run-files.js",
+    // The Mount Table, which is not the `pi` adapter's: it ships under its own directory
+    // and is reachable from the package root, because nothing in it knows about an Agent
+    // Runtime (ADR-0028).
+    "dist/container/index.js",
+    "dist/container/index.d.ts",
+    "dist/container/mount-table.js",
+    "dist/container/mount-table.d.ts",
     // `dist` mirrors `src`, so `src/store/store.ts` becomes `dist/store/store.js`
     // and a folder reached from `import.meta.url` is the same relative path in
     // both. Migration folders resolve because of this and nothing else.
@@ -274,8 +281,12 @@ try {
       "  LogFields,",
       "  Logger,",
       "  MigrationDescriptor,",
+      "  Mount,",
+      "  MountTable,",
       "  PostOutcome,",
       "  Prompt,",
+      "  ResolvedMount,",
+      "  ResolvedMountTable,",
       "  RunOutcome,",
       "  RunRecord,",
       "  RunState,",
@@ -293,12 +304,10 @@ try {
       // that is the point of the subpath: what a deployment depends on is legible from
       // its imports, and nothing `pi`-shaped is reachable from the package root.
       "import type {",
-      "  Mount,",
       "  OpaqueJson,",
       "  PiAdapterOptions,",
       "  PiConfiguration,",
       "  PiInvocation,",
-      "  ResolvedMount,",
       "  ResolvedPiConfiguration,",
       '} from "shared-agent-framework/pi";',
       'import { pgSchema, text } from "drizzle-orm/pg-core";',
@@ -420,30 +429,39 @@ try {
       "// went missing from the declaration fails here rather than being ignored at the",
       "// Operator's first Run. `agentServerUrl` travels straight from the Operator to the",
       "// adapter: no server holds it, and nothing validates it (ADR-0010, ADR-0016).",
-      "const workspace: Mount = {",
-      '  localPath: "/srv/saf/workspace",',
-      '  agentPath: "/workspace",',
-      '  source: "/srv/saf/workspace",',
+      "// The Mount Table comes from the package root, not from `/pi`: it knows nothing",
+      "// about an Agent Runtime, and an entry may name a directory or a single file and",
+      "// may be read-only (ADR-0028).",
+      'const workspace: Mount = { containerPath: "/workspace", gatewayPath: "/srv/saf/workspace" };',
+      "const mounts: MountTable = {",
+      "  entries: [",
+      "    workspace,",
+      '    { containerPath: "/home/agent/.pi/agent", gatewayPath: "/srv/saf/agent" },',
+      '    { containerPath: "/sessions", gatewayPath: "/srv/saf/sessions" },',
+      '    { containerPath: "/workspace/AGENTS.md", gatewayPath: "/srv/saf/AGENTS.md", readOnly: true },',
+      "  ],",
+      '  user: "1000:1000",',
       "};",
       'const settings: OpaqueJson = { defaultProjectTrust: "never" };',
       "const piConfig: PiConfiguration = {",
       '  image: "saf/pi:latest",',
       '  model: "claude-sonnet-4-5",',
       '  provider: "anthropic",',
-      "  workspace,",
-      '  agentDir: "/srv/saf/agent",',
-      '  sessionRoot: { localPath: "/srv/saf/sessions", agentPath: "/sessions" },',
+      '  workspacePath: "/workspace",',
+      '  agentDirPath: "/home/agent/.pi/agent",',
+      '  sessionRootPath: "/sessions",',
+      "  mounts,",
       "  agentServerUrl,",
       '  instructions: "You are the shared assistant of a book club.",',
       "  settings,",
       "  models: {},",
       '  env: { ANTHROPIC_API_KEY: "sk-not-a-key" },',
       '  network: "saf-agent",',
-      '  user: "1000:1000",',
       '  extraArgs: ["--memory", "2g"],',
       '  containerCommand: ["docker"],',
       "};",
-      'export const piWorkspace: ResolvedMount = resolveMount(workspace, "workspace");',
+      "export const piMounts: ResolvedMountTable = resolveMountTable(mounts);",
+      "export const piWorkspace: ResolvedMount | undefined = piMounts.entries[0];",
       "export const piResolved: ResolvedPiConfiguration = resolvePiConfiguration(piConfig);",
       "export const piInvocation: PiInvocation = composeInvocation(",
       "  piConfig,",
@@ -544,9 +562,19 @@ try {
         // reaches for `./configuration.ts` to settle the Session name and the mounts, so
         // this is what proves a relative `.ts` import *inside* the subpath survives being
         // compiled and installed — the thing the deleted placeholder used to stand for.
+        // The Mount Table, constructed and resolved from the package root the way an
+        // Operator meets it: this is what proves `--mount type=bind` arguments come out
+        // of an installed package rather than only out of this repository.
+        "const mounts = { entries: [",
+        "  { containerPath: '/workspace', gatewayPath: '/srv/saf/workspace' },",
+        "  { containerPath: '/srv/saf/agent', gatewayPath: '/srv/saf/agent' },",
+        "  { containerPath: '/sessions', gatewayPath: '/srv/saf/sessions' },",
+        "  { containerPath: '/workspace/AGENTS.md', gatewayPath: '/srv/saf/AGENTS.md', readOnly: true },",
+        "] };",
+        "const resolvedMounts = resolveMountTable(mounts);",
         "const piConfig = {",
-        "  image: 'saf/pi:latest', model: 'sonnet', workspace: '/srv/saf/workspace',",
-        "  agentDir: '/srv/saf/agent', sessionRoot: '/srv/saf/sessions',",
+        "  image: 'saf/pi:latest', model: 'sonnet', workspacePath: '/workspace',",
+        "  agentDirPath: '/srv/saf/agent', sessionRootPath: '/sessions', mounts,",
         "  agentServerUrl,",
         "};",
         "const invocation = composeInvocation(piConfig, { session: null, text: 'what happened?' }, 'r1');",
@@ -559,7 +587,7 @@ try {
         "  yield encoder.encode(JSON.stringify({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop' } }) + '\\n');",
         "  yield encoder.encode(JSON.stringify({ type: 'agent_settled' }) + '\\n');",
         "})());",
-        "const built = [typeof openStore, typeof templateHandler, invocation.command, invocation.session, String(settled.ok), typeof resolveMount, typeof writeRunConfiguration, instructionsFileName, resolvePiConfiguration(piConfig).agentServerUrl, typeof adapter.run, String(Object.keys(adapter))];",
+        "const built = [typeof openStore, typeof templateHandler, invocation.command, invocation.session, String(settled.ok), resolvedMounts.containerArguments()[1], resolvedMounts.gatewayPathFor('/sessions/user_42'), typeof writeRunConfiguration, instructionsFileName, resolvePiConfiguration(piConfig).agentServerUrl, typeof adapter.run, String(Object.keys(adapter))];",
         "process.stdout.write(built.join(':'));",
       ].join("\n"),
     ],
@@ -567,8 +595,8 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker:run_r1:true:function:function:gateway-instructions.md:http://host.docker.internal:7411/:function:run",
-    "both subpaths should resolve at runtime, the template Handler should load handlebars, and the pi adapter should construct as a plain Runtime Adapter — `run` and nothing else — compose an invocation, carry the callback URL through unchanged and read an outcome",
+    "function:function:docker:run_r1:true:type=bind,source=/srv/saf/workspace,target=/workspace:/srv/saf/sessions/user_42:function:gateway-instructions.md:http://host.docker.internal:7411/:function:run",
+    "both subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount and answer where a container path is on the Operator's disk, and the pi adapter should construct as a plain Runtime Adapter — `run` and nothing else — compose an invocation, carry the callback URL through unchanged and read an outcome",
   );
 
   step("applying a shipped migration folder from inside the installed package");

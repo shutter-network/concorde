@@ -14,21 +14,30 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type { Mount } from "../container/index.ts";
 import type { Prompt } from "../core/handlers.ts";
 import type { PiConfiguration } from "./configuration.ts";
-import { resolveMount, resolvePiConfiguration } from "./configuration.ts";
+import { resolvePiConfiguration } from "./configuration.ts";
 import { composeInvocation, instructionsFileName, type PiInvocation } from "./invocation.ts";
 
 /** A Run id, of the shape the Core hands the adapter. */
 const runId = "6f1a3c7e-0000-4000-8000-000000000001";
 
-/** The least configuration the adapter accepts, with matching paths throughout. */
+/** The three entries the reference deployment declares, and every test's default. */
+const entries: readonly Mount[] = [
+  { containerPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
+  { containerPath: "/home/agent/.pi/agent", gatewayPath: "/srv/saf/agent" },
+  { containerPath: "/sessions", gatewayPath: "/srv/saf/sessions" },
+];
+
+/** The least configuration the adapter accepts. */
 const minimal: PiConfiguration = {
   image: "saf/pi:latest",
   model: "anthropic/claude-sonnet-4-5",
-  workspace: "/srv/saf/workspace",
-  agentDir: "/srv/saf/agent",
-  sessionRoot: "/srv/saf/sessions",
+  workspacePath: "/workspace",
+  agentDirPath: "/home/agent/.pi/agent",
+  sessionRootPath: "/sessions",
+  mounts: { entries },
   agentServerUrl: "http://host.docker.internal:7411",
 };
 
@@ -81,66 +90,118 @@ function agentArgsOf(invocation: PiInvocation): string[] {
   return invocation.args.slice(invocation.args.indexOf(minimal.image) + 1);
 }
 
-describe("a mount", () => {
-  it("expands a single path to all three roles", () => {
-    assert.deepEqual(resolveMount("/srv/saf/workspace"), {
-      localPath: "/srv/saf/workspace",
-      agentPath: "/srv/saf/workspace",
-      source: "/srv/saf/workspace",
-    });
+describe("the Mount Table", () => {
+  it("emits one bind mount per entry, in the order they were declared", () => {
+    assert.deepEqual(valuesOf(invocationFor(), "--mount"), [
+      "type=bind,source=/srv/saf/workspace,target=/workspace",
+      "type=bind,source=/srv/saf/agent,target=/home/agent/.pi/agent",
+      "type=bind,source=/srv/saf/sessions,target=/sessions",
+    ]);
+    // The container's working directory is where the agent sees the Workspace, not where
+    // the Gateway does — which is the whole of what the adapter knows about it.
+    assert.equal(argumentAfter(invocationFor(), "--workdir"), "/workspace");
   });
 
-  it("expands the object form the same way, one field at a time", () => {
-    assert.deepEqual(resolveMount({ localPath: "/local" }), {
-      localPath: "/local",
-      agentPath: "/local",
-      source: "/local",
-    });
-    assert.deepEqual(resolveMount({ localPath: "/local", agentPath: "/inside" }), {
-      localPath: "/local",
-      agentPath: "/inside",
-      source: "/local",
-    });
-    assert.deepEqual(resolveMount({ localPath: "/local", source: "/on-the-host" }), {
-      localPath: "/local",
-      agentPath: "/local",
-      source: "/on-the-host",
-    });
+  it("never emits -v, which is what makes the daemon refuse a source that is not there", () => {
+    // The load-bearing subtraction of ADR-0028, and the reason the startup mount check
+    // could go: `-v` invents a missing directory source as `root`, and invents a
+    // *directory* even where a file was meant. `--mount` refuses both, naming the path.
+    const invocation = invocationFor({ extraArgs: ["--memory", "2g"] });
+
+    assert.ok(!invocation.args.includes("-v"));
+    assert.ok(!invocation.args.includes("--volume"));
   });
 
-  it("keeps all three when all three differ, which is the containerised Gateway", () => {
-    assert.deepEqual(
-      resolveMount({ localPath: "/data/workspace", agentPath: "/workspace", source: "saf-work" }),
-      { localPath: "/data/workspace", agentPath: "/workspace", source: "saf-work" },
+  it("marks an entry read-only where it was declared so, and no other", () => {
+    // A read-only *file* nested inside a read-write *directory*: the container runtime
+    // sorts bind mounts by destination depth, so the file is unwritable while every
+    // sibling operation in the Workspace around it still succeeds.
+    const invocation = invocationFor({
+      mounts: {
+        entries: [
+          ...entries,
+          {
+            containerPath: "/workspace/AGENTS.md",
+            gatewayPath: "/srv/saf/AGENTS.md",
+            readOnly: true,
+          },
+        ],
+      },
+    });
+
+    assert.deepEqual(valuesOf(invocation, "--mount").slice(-1), [
+      "type=bind,source=/srv/saf/AGENTS.md,target=/workspace/AGENTS.md,readonly",
+    ]);
+    assert.equal(
+      valuesOf(invocation, "--mount").filter((value) => value.includes("readonly")).length,
+      1,
     );
   });
 
-  it("takes a named volume as a source, since that is all a named volume ever is here", () => {
-    // ADR-0025: a deployment using one mounts it into the Gateway too, so the Gateway
-    // sees an ordinary directory. Refusing a non-path source would refuse that.
-    const mount = resolveMount({ localPath: "/data/agent", source: "saf-agent-state" });
-    assert.equal(mount.source, "saf-agent-state");
+  it("quotes a value containing a comma, which is what --mount splits its fields on", () => {
+    const invocation = invocationFor({
+      mounts: { entries: [...entries, { containerPath: "/work,space", gatewayPath: "/srv/a,b" }] },
+    });
+
+    assert.deepEqual(valuesOf(invocation, "--mount").slice(-1), [
+      'type=bind,"source=/srv/a,b","target=/work,space"',
+    ]);
   });
 
-  it("refuses a localPath that is not absolute, naming which mount it was", () => {
-    assert.throws(() => resolveMount("./workspace", "workspace"), /workspace.*not absolute/s);
+  it("runs as this process's own user, so bind-mounted files are readable both ways", () => {
+    assert.equal(argumentAfter(invocationFor(), "--user"), ownUser());
+    assert.equal(
+      argumentAfter(invocationFor({ mounts: { entries, user: "1000:1000" } }), "--user"),
+      "1000:1000",
+    );
   });
 
-  it("refuses an agentPath that is not absolute", () => {
+  it("refuses a table with no entries, rather than starting a container that sees nothing", () => {
     assert.throws(
-      () => resolveMount({ localPath: "/local", agentPath: "workspace" }, "workspace"),
-      /agentPath.*absolute/s,
+      () => resolvePiConfiguration({ ...minimal, mounts: { entries: [] } }),
+      /no entries/,
     );
   });
 
-  it("refuses a colon in any of the three, because that is what --volume splits on", () => {
-    for (const mount of [
-      { localPath: "/srv/a:b" },
-      { localPath: "/srv/a", agentPath: "/in:side" },
-      { localPath: "/srv/a", source: "vol:ume" },
-    ]) {
-      assert.throws(() => resolveMount(mount, "workspace"), /colon/);
-    }
+  it("refuses a relative path on either side, naming the path", () => {
+    assert.throws(
+      () =>
+        resolvePiConfiguration({
+          ...minimal,
+          mounts: { entries: [{ containerPath: "workspace", gatewayPath: "/srv/saf/workspace" }] },
+        }),
+      /containerPath "workspace".*absolute/s,
+    );
+    assert.throws(
+      () =>
+        resolvePiConfiguration({
+          ...minimal,
+          mounts: { entries: [{ containerPath: "/workspace", gatewayPath: "./workspace" }] },
+        }),
+      /gatewayPath ".\/workspace".*absolute/s,
+    );
+  });
+
+  it("says where a container path is on the Operator's disk, by longest prefix", () => {
+    const { mounts } = resolvePiConfiguration(minimal);
+
+    assert.equal(mounts.gatewayPathFor("/sessions"), "/srv/saf/sessions");
+    assert.equal(mounts.gatewayPathFor("/sessions/user_42"), "/srv/saf/sessions/user_42");
+    // The deeper entry wins, which is what makes a nested read-only file resolve to
+    // itself rather than to the directory it sits in.
+    const nested = resolvePiConfiguration({
+      ...minimal,
+      mounts: {
+        entries: [
+          ...entries,
+          { containerPath: "/workspace/AGENTS.md", gatewayPath: "/srv/saf/AGENTS.md" },
+        ],
+      },
+    });
+    assert.equal(nested.mounts.gatewayPathFor("/workspace/AGENTS.md"), "/srv/saf/AGENTS.md");
+    // And nothing is invented for a path nobody mounted.
+    assert.equal(mounts.gatewayPathFor("/etc/passwd"), undefined);
+    assert.equal(mounts.gatewayPathFor("/sessionsfoo"), undefined);
   });
 });
 
@@ -178,36 +239,6 @@ describe("the composed invocation", () => {
     assert.ok(!args.includes("--tty") && !args.includes("-t"), "there must be no TTY");
   });
 
-  it("mounts all three directories by source and agent path, and works in the Workspace", () => {
-    const invocation = invocationFor({
-      workspace: { localPath: "/data/workspace", agentPath: "/workspace", source: "/host/work" },
-      agentDir: {
-        localPath: "/data/agent",
-        agentPath: "/home/agent/.pi/agent",
-        source: "saf-agent",
-      },
-      sessionRoot: {
-        localPath: "/data/sessions",
-        agentPath: "/sessions",
-        source: "/host/sessions",
-      },
-    });
-
-    assert.deepEqual(valuesOf(invocation, "--volume"), [
-      "/host/work:/workspace",
-      "saf-agent:/home/agent/.pi/agent",
-      "/host/sessions:/sessions",
-    ]);
-    // The container's working directory is where the agent sees the Workspace, not
-    // where the Gateway does.
-    assert.equal(argumentAfter(invocation, "--workdir"), "/workspace");
-  });
-
-  it("runs as this process's own user, so bind-mounted files are readable both ways", () => {
-    assert.equal(argumentAfter(invocationFor(), "--user"), ownUser());
-    assert.equal(argumentAfter(invocationFor({ user: "1000:1000" }), "--user"), "1000:1000");
-  });
-
   it("joins a network only when one was named", () => {
     assert.equal(argumentAfter(invocationFor({ network: "saf-agent" }), "--network"), "saf-agent");
     assert.ok(!invocationFor().args.includes("--network"));
@@ -219,7 +250,7 @@ describe("the composed invocation", () => {
     const env = valuesOf(invocation, "--env");
     assert.ok(env.includes("ANTHROPIC_API_KEY=sk-test"));
     assert.ok(env.includes("HTTPS_PROXY="), "an empty value is still a variable that is set");
-    assert.ok(env.includes("PI_CODING_AGENT_DIR=/srv/saf/agent"));
+    assert.ok(env.includes("PI_CODING_AGENT_DIR=/home/agent/.pi/agent"));
     assert.ok(env.includes("PI_OFFLINE=1"));
   });
 
@@ -241,7 +272,7 @@ describe("the composed invocation", () => {
 
     assert.deepEqual(
       valuesOf(invocation, "--env").filter((value) => value.startsWith("PI_CODING_AGENT_DIR=")),
-      ["PI_CODING_AGENT_DIR=/srv/saf/agent"],
+      ["PI_CODING_AGENT_DIR=/home/agent/.pi/agent"],
     );
   });
 
@@ -261,7 +292,7 @@ describe("the composed invocation", () => {
       "PI_OFFLINE=1",
       "ANTHROPIC_API_KEY=…",
       "HTTPS_PROXY=",
-      "PI_CODING_AGENT_DIR=/srv/saf/agent",
+      "PI_CODING_AGENT_DIR=/home/agent/.pi/agent",
       "OPENAI_API_KEY=…",
     ]);
     // Nothing else changes, so the two arrays stay comparable.
@@ -287,7 +318,7 @@ describe("the composed invocation", () => {
   it("puts nothing of the container runtime's after the image, and nothing of the agent's before it", () => {
     const invocation = invocationFor({ network: "saf-agent", extraArgs: ["--memory", "2g"] });
 
-    for (const flag of ["run", "--rm", "--volume", "--workdir", "--env", "--memory"]) {
+    for (const flag of ["run", "--rm", "--mount", "--workdir", "--env", "--memory"]) {
       assert.ok(containerArgsOf(invocation).includes(flag), `${flag} is the container runtime's`);
       assert.ok(!agentArgsOf(invocation).includes(flag), `${flag} must not reach the agent`);
     }
@@ -327,21 +358,17 @@ describe("what the agent is told", () => {
   });
 
   it("gives the Session a directory of its own under the Session root", () => {
-    const invocation = invocationFor({
-      sessionRoot: { localPath: "/data/sessions", agentPath: "/sessions" },
-    });
+    const invocation = invocationFor();
 
     assert.equal(argumentAfter(invocation, "--session-dir"), "/sessions/user_42");
-    assert.equal(invocation.sessionDirectory, "/data/sessions/user_42");
+    // The same directory as the Gateway sees it, which only the Mount Table can say and
+    // which the adapter's debug line is the sole consumer of.
+    assert.equal(invocation.sessionDirectory, "/srv/saf/sessions/user_42");
   });
 
   it("appends the instructions file the Gateway wrote into the agent's directory", () => {
-    const invocation = invocationFor({
-      agentDir: { localPath: "/data/agent", agentPath: "/home/agent/.pi/agent" },
-    });
-
     assert.equal(
-      argumentAfter(invocation, "--append-system-prompt"),
+      argumentAfter(invocationFor(), "--append-system-prompt"),
       `/home/agent/.pi/agent/${instructionsFileName}`,
     );
   });
@@ -400,7 +427,7 @@ describe("the Session a Prompt runs in", () => {
     // exactly this case, since the Runtime Adapter's outcome carries nothing back.
     assert.equal(invocation.session, `run_${runId}`);
     assert.equal(argumentAfter(invocation, "--session-id"), `run_${runId}`);
-    assert.equal(argumentAfter(invocation, "--session-dir"), `/srv/saf/sessions/run_${runId}`);
+    assert.equal(argumentAfter(invocation, "--session-dir"), `/sessions/run_${runId}`);
     // Not an ephemeral Session: the file survives for debugging (ADR-0025).
     assert.ok(!invocation.args.includes("--no-session"));
   });
@@ -416,17 +443,20 @@ describe("the Session a Prompt runs in", () => {
     // `--rm` container, so a name climbing out of the mounted Session root lands in
     // the container's own filesystem and dies with it, touching nothing on the host
     // (ADR-0025). The Gateway creates none of these.
-    for (const [session, sessionDirectory] of [
-      ["../escape", "/srv/saf/escape"],
-      ["user:42", "/srv/saf/sessions/user:42"],
-      ["a/b", "/srv/saf/sessions/a/b"],
-      ["", "/srv/saf/sessions"],
+    for (const [session, sessionDirectory, onDisk] of [
+      // A name that climbs out of the Session root has no Gateway-side path at all, and
+      // the Mount Table says so rather than inventing one.
+      ["../escape", "/escape", undefined],
+      ["user:42", "/sessions/user:42", "/srv/saf/sessions/user:42"],
+      ["a/b", "/sessions/a/b", "/srv/saf/sessions/a/b"],
+      ["", "/sessions", "/srv/saf/sessions"],
     ] as const) {
       const invocation = invocationFor({}, { session, text: "hi" });
 
       assert.equal(invocation.session, session);
       assert.equal(argumentAfter(invocation, "--session-id"), session);
       assert.equal(argumentAfter(invocation, "--session-dir"), sessionDirectory);
+      assert.equal(invocation.sessionDirectory, onDisk);
     }
   });
 });
@@ -435,11 +465,36 @@ describe("a configuration that cannot work", () => {
   it("is refused at resolution rather than at the first Run", () => {
     assert.throws(() => resolvePiConfiguration({ ...minimal, image: "" }), /image/);
     assert.throws(() => resolvePiConfiguration({ ...minimal, model: "" }), /model/);
-    assert.throws(() => resolvePiConfiguration({ ...minimal, workspace: "relative" }), /workspace/);
-    assert.throws(() => resolvePiConfiguration({ ...minimal, agentDir: "relative" }), /agentDir/);
     assert.throws(
-      () => resolvePiConfiguration({ ...minimal, sessionRoot: "relative" }),
-      /sessionRoot/,
+      () => resolvePiConfiguration({ ...minimal, workspacePath: "relative" }),
+      /workspacePath/,
+    );
+    assert.throws(
+      () => resolvePiConfiguration({ ...minimal, agentDirPath: "relative" }),
+      /agentDirPath/,
+    );
+    assert.throws(
+      () => resolvePiConfiguration({ ...minimal, sessionRootPath: "relative" }),
+      /sessionRootPath/,
+    );
+  });
+
+  it("refuses an agent directory no entry of the Mount Table covers", () => {
+    // While the framework still writes the agent's configuration before every Run, that
+    // directory has to be one this process can reach. Refused at resolution rather than
+    // at the write, because a Run that fails is never retried (ADR-0017).
+    assert.throws(
+      () => resolvePiConfiguration({ ...minimal, agentDirPath: "/somewhere/unmounted" }),
+      /agentDirPath "\/somewhere\/unmounted" is not covered/,
+    );
+    // And the other two are not required to be mounted at all: a container path nobody
+    // mounted is a directory in the container's own writable layer.
+    assert.doesNotThrow(() =>
+      resolvePiConfiguration({
+        ...minimal,
+        workspacePath: "/scratch",
+        sessionRootPath: "/scratch/sessions",
+      }),
     );
   });
 

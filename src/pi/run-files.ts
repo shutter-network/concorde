@@ -43,7 +43,12 @@ import { instructionsFileName } from "./invocation.ts";
  */
 export async function writeRunConfiguration(config: PiConfiguration): Promise<void> {
   const resolved = resolvePiConfiguration(config);
-  const agentDir = resolved.agentDir.localPath;
+  // The last thing in the framework that needs a path on the Operator's own disk, and it
+  // cannot name one itself: the adapter holds container paths, and the Mount Table is
+  // what turns one back into a directory this process can open. Resolution settles it,
+  // so an agent directory nobody mounted is refused at construction rather than here
+  // (ADR-0017, ADR-0028).
+  const agentDir = resolved.agentDirGatewayPath;
 
   await Promise.all([
     writeJson(path.join(agentDir, "settings.json"), resolved.settings),

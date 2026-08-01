@@ -214,9 +214,10 @@ and `port` you passed to `agentServer.listen`, and the `agentServerUrl` you pass
 ### The agent's container runs as *your* uid
 
 With bind mounts, files the agent writes are owned by whoever the container runs as. So
-the adapter defaults `user` to the Gateway process's own `uid:gid` — otherwise your
-Signal Handlers cannot read what the agent left in the Workspace, and the agent cannot
-read what they left for it.
+the Mount Table defaults its `user` to the Gateway process's own `uid:gid` — otherwise
+your Signal Handlers cannot read what the agent left in the Workspace, and the agent
+cannot read what they left for it. It sits beside the entries because it is the other
+half of the same fact: what is shared, and who shares it.
 
 The consequence: **the mounted directories must be writable by that uid.** In the
 reference deployment they are, trivially, because the Gateway runs as you on your own
@@ -230,7 +231,7 @@ boot, so an unwritable directory is something the agent meets during a Run.
 ### The line you need to diagnose a mount or a network is off by default
 
 The Runtime Adapter logs the whole composed container invocation — every flag, every
-`--volume`, the image, the network, and `pi`'s own arguments — so that diagnosing a mount
+`--mount`, the image, the network, and `pi`'s own arguments — so that diagnosing a mount
 or a network problem never means reading framework source. It logs it at **`debug`**, and
 the logger every part falls back to when you supply none runs at `info`. So by default you
 do not see it.
@@ -472,14 +473,11 @@ Running on the host also makes the file-ownership story true by construction: th
 container runs as the Gateway process's uid, and the directories under `example/state/`
 belong to that user already.
 
-If you do containerise it, the framework has the one thing you need for it. A mount is
-three values, not one: where the directory is **as this process sees it**, where it
-appears **to the agent**, and what the **container runtime** should resolve. The reference
-deployment sets the first two; the third defaults to the first and exists precisely for
-the case where the Gateway is itself in a container and the daemon resolves paths on the
-host. Get it wrong and the daemon silently creates an empty directory rather than
-refusing, and nothing tells you: the framework checks no mount, so the first sign is an
-agent that reads an empty Workspace or a Session that never remembers anything.
+A Mount Table entry is two values — where a directory or file appears **to the agent**,
+and where it is **as this process sees it** — and the second is what the container
+runtime's daemon resolves, **on the host**. Those are the same string only while the
+Gateway runs on the host, which is the case this deployment is. Translating them for a
+containerised Gateway is not something the framework does yet.
 
 ## No agent image is published
 

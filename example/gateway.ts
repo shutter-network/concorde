@@ -53,9 +53,9 @@ const agentServerUrl = `http://host.docker.internal:${agentPort}`;
 // Three directories, all of them this process's own, all bind-mounted into the agent's
 // container, and all three created here. The framework creates none of them (ADR-0028):
 // a directory a mount points at is the Operator's. Creating them is not a courtesy —
-// the daemon resolves a bind source on the host and invents a missing one as a
-// `root`-owned directory, which the agent's container then cannot write inside. Each
-// Session's own directory, inside the third, is made by `pi` inside the container.
+// every entry of the Mount Table below is emitted as `--mount type=bind`, and the daemon
+// refuses a bind source that is not there, naming it. Each Session's own directory,
+// inside the third, is made by `pi` inside the container.
 const state = path.join(import.meta.dirname, "state");
 const workspace = path.join(state, "workspace");
 const agentDir = path.join(state, "agent");
@@ -90,14 +90,24 @@ const runtime = createPiAdapter({
   // usefully talk to. PostgreSQL is on another one, so the Store is not reachable by
   // service name from inside a Run.
   network: "saf_agent",
-  // Each mount says where the directory is *here* and where it appears *to the agent*.
-  // Both halves, rather than the one-string form, because the one-string form makes the
-  // agent's working directory this machine's own absolute path — which works and reads
-  // like a leak. A third value exists for when the container runtime resolves the source
-  // somewhere else again, which is what a containerised Gateway needs.
-  workspace: { localPath: workspace, agentPath: "/workspace" },
-  agentDir: { localPath: agentDir, agentPath: "/home/agent/.pi/agent" },
-  sessionRoot: { localPath: sessionRoot, agentPath: "/sessions" },
+  // Three paths *inside the container*, and that is all the adapter knows about the
+  // filesystem: a working directory, where `pi` keeps its own state, and the directory
+  // it puts one Session directory per Session under.
+  workspacePath: "/workspace",
+  agentDirPath: "/home/agent/.pi/agent",
+  sessionRootPath: "/sessions",
+  // The Mount Table: where each of those comes from on this machine, and who the
+  // container runs as — defaulted here to this process's own uid and gid, which is what
+  // makes a file the agent writes in the Workspace one a Signal Handler can read. It is
+  // an ordinary list, so a fourth directory is a fourth entry rather than a framework
+  // change, and an entry may name a single file and may be `readOnly`.
+  mounts: {
+    entries: [
+      { containerPath: "/workspace", gatewayPath: workspace },
+      { containerPath: "/home/agent/.pi/agent", gatewayPath: agentDir },
+      { containerPath: "/sessions", gatewayPath: sessionRoot },
+    ],
+  },
   agentServerUrl,
   instructions: "You are the shared agent of several people. Be brief and be careful.",
 });

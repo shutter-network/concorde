@@ -59,14 +59,15 @@ export type PiAdapterOptions = PiConfiguration & {
  * reach the agent is not a question this process asks
  * ([ADR-0028](../../docs/adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)).
  *
- * What settles it instead is the container runtime refusing a bind source that is not
- * there — which needs `--mount type=bind`, and is *not* yet true here: `composeInvocation`
- * still emits `-v`, under which the daemon invents a missing source as a `root`-owned
- * directory. Until that changes, a wrong path is neither caught nor refused.
+ * What settles that is the container runtime, at the first Run: every entry is emitted
+ * as `--mount type=bind`, and the daemon refuses a bind source that is not there, naming
+ * the path. So a typo costs one permanently dead Signal with a readable message, rather
+ * than a `root`-owned empty directory the agent reads happily.
  *
- * The configuration is refused here rather than at the first Signal because a Run that
- * fails is never retried (ADR-0017): a deployment with a relative mount path would
- * otherwise turn every Signal it ever receives into a permanently failed Run.
+ * What *is* refused here is a configuration that cannot mean what it says — a relative
+ * path, an empty Mount Table — and it is refused here rather than at the first Signal
+ * because a Run that fails is never retried (ADR-0017): otherwise every Signal the
+ * deployment ever receives becomes a permanently failed Run.
  */
 export function createPiAdapter(options: PiAdapterOptions): RuntimeAdapter {
   const log = options.logger ?? defaultLogger();

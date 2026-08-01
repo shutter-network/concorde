@@ -8,55 +8,18 @@
  * have entirely different ones. What the framework does not do is *interpret* them —
  * `settings` and `models` are written out as given ([ADR-0025](../../docs/adr/0025-the-pi-adapter-spawns-one-confined-process-per-run.md)).
  *
+ * Nothing here is a mount. The three paths below are paths **inside the container**, and
+ * where they come from on the Operator's own disk is the [Mount
+ * Table](../../docs/adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)'s
+ * to say. That is the whole of the adapter's filesystem knowledge: it never learns
+ * whether a path is a bind mount, and it performs no filesystem I/O of its own.
+ *
  * One escape hatch, `extraArgs`, for container flags the framework does not model, so
  * an unanticipated requirement never forces a fork of the adapter.
  */
 
 import path from "node:path";
-
-/**
- * A directory the agent's container needs, in the up-to-three places it is named.
- *
- * A bare string is the shorthand for all three coinciding, which is the case when the
- * Gateway runs on the host and the Operator is content with matching paths.
- */
-export type Mount =
-  | string
-  | {
-      /** Where the Gateway process itself reads and writes it. */
-      readonly localPath: string;
-      /** Where it appears inside the agent's container. Defaults to `localPath`. */
-      readonly agentPath?: string;
-      /**
-       * What the container runtime resolves. Defaults to `localPath`.
-       *
-       * The daemon resolves this **on the host, not inside the calling container**, so
-       * a containerised Gateway must state a host path or a named volume here. Get it
-       * wrong and Docker silently creates an empty directory: the agent sees an empty
-       * Workspace and nothing errors anywhere. Nothing checks that, here or anywhere —
-       * the cost [ADR-0028](../../docs/adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)
-       * accepts, and the case it defers to a translation table stated once.
-       */
-      readonly source?: string;
-    };
-
-/** A mount with all three names filled in. */
-export type ResolvedMount = {
-  readonly localPath: string;
-  readonly agentPath: string;
-  readonly source: string;
-};
-
-/**
- * The three directories the agent's container needs, under the names they are
- * configured and reported by.
- *
- * A union rather than a string, because every part of the adapter that says which
- * mount it means — the `--volume` arguments, the failure message that names one — has
- * to agree with the others about the set, and a typo in any of them would otherwise be
- * a mount silently left out.
- */
-export type MountRole = "workspace" | "agentDir" | "sessionRoot";
+import { type MountTable, type ResolvedMountTable, resolveMountTable } from "../container/index.ts";
 
 /** Arbitrary JSON the framework writes out without reading (ADR-0016). */
 export type OpaqueJson = Readonly<Record<string, unknown>>;
@@ -72,20 +35,24 @@ export type PiConfiguration = {
   readonly model: string;
   /** The provider, when the model is not already qualified with one. */
   readonly provider?: string;
-  /** The Workspace: shared with Signal Handlers, and the container's working directory. */
-  readonly workspace: Mount;
   /**
-   * The agent's own directory — `~/.pi/agent`'s contents.
+   * Where the Workspace is **in the container**, which is the agent's working directory.
    *
-   * Holds what persists between Runs and belongs to the agent: `auth.json` with OAuth
-   * tokens that refresh mid-Run, `trust.json`, installed tooling under `bin/`. The
-   * framework writes its own three files in here before every Run and touches nothing
-   * else, so whatever a future `pi` version keeps here comes along without us knowing
-   * about it.
+   * The Workspace is shared with Signal Handlers, but only the Mount Table knows that:
+   * from here it is a string that becomes `--workdir`.
    */
-  readonly agentDir: Mount;
+  readonly workspacePath: string;
   /**
-   * The directory the Agent Runtime creates Session directories under, one per Session.
+   * Where the agent's own directory is **in the container**, which becomes
+   * `PI_CODING_AGENT_DIR`.
+   *
+   * It holds what persists between Runs and belongs to the agent: `auth.json` with OAuth
+   * tokens that refresh mid-Run, `trust.json`, installed tooling under `bin/`.
+   */
+  readonly agentDirPath: string;
+  /**
+   * Where the Session root is **in the container**: the directory `--session-dir` names
+   * one directory per Session under.
    *
    * Per Session rather than one flat directory because resolving a Session by id
    * parses every Session file in its directory, whole message text included — so a
@@ -93,11 +60,21 @@ export type PiConfiguration = {
    * accumulated, on the hot path (ADR-0025).
    *
    * The framework creates nothing here, neither this root nor a Session's own
-   * directory inside it. The Operator creates the root
+   * directory inside it. The Operator creates whatever their mounts point at
    * ([ADR-0028](../../docs/adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md));
    * the Agent Runtime creates each Session's directory from inside the container.
    */
-  readonly sessionRoot: Mount;
+  readonly sessionRootPath: string;
+  /**
+   * What the agent's container sees on disk, and which user it runs as.
+   *
+   * The Workspace and the Session root are not required to be in here: a container path
+   * nobody mounted is a directory in the container's own writable layer, which is a
+   * legitimate if unusual thing to want and is discarded with the container either way.
+   * `agentDirPath` **is** required to be, and only while the framework still writes the
+   * agent's configuration into it before every Run — see `agentDirGatewayPath`.
+   */
+  readonly mounts: MountTable;
   /**
    * The base URL the agent's container reaches the Agent server at. Write it with no
    * trailing slash: `/signals` and `/runs` are appended to it as written.
@@ -156,14 +133,6 @@ export type PiConfiguration = {
    */
   readonly network?: string;
   /**
-   * The user the container runs as, `uid:gid`. Defaults to this process's own.
-   *
-   * With bind mounts the files the agent writes are owned by the container's user, so
-   * a mismatch leaves Signal Handlers unable to read what the agent wrote in the
-   * shared Workspace, and the agent unable to read theirs.
-   */
-  readonly user?: string;
-  /**
    * Container flags the framework does not model, placed last so they also override
    * the ones it does. The single escape hatch ADR-0025 provides instead of a fork.
    */
@@ -172,90 +141,37 @@ export type PiConfiguration = {
   readonly containerCommand?: readonly string[];
 };
 
-/** A configuration whose mounts and defaults have been settled and checked. */
+/** A configuration whose defaults have been settled and checked. */
 export type ResolvedPiConfiguration = {
   readonly image: string;
   readonly model: string;
   readonly provider: string | undefined;
-  readonly workspace: ResolvedMount;
-  readonly agentDir: ResolvedMount;
-  readonly sessionRoot: ResolvedMount;
+  readonly workspacePath: string;
+  readonly agentDirPath: string;
+  readonly sessionRootPath: string;
+  readonly mounts: ResolvedMountTable;
+  /**
+   * Where the agent's directory is on the Gateway's own disk, from the Mount Table.
+   *
+   * Transitional, and the only path on this side the adapter holds: it exists because
+   * the framework still writes the agent's configuration into that directory before
+   * every Run. It is settled here rather than at the write so that an `agentDirPath` no
+   * entry covers is refused where the Operator wrote it — a Run that fails is never
+   * retried (ADR-0017), so leaving it to the write would turn every Signal the
+   * deployment ever receives into a permanently failed Run. It goes when `run-files.ts`
+   * does, and then nothing but the debug line asks the Mount Table for a path at all.
+   */
+  readonly agentDirGatewayPath: string;
   readonly agentServerUrl: string;
   readonly instructions: string | undefined;
   readonly settings: OpaqueJson;
   readonly models: OpaqueJson;
   readonly env: Readonly<Record<string, string>>;
   readonly network: string | undefined;
-  readonly user: string | undefined;
   readonly extraArgs: readonly string[];
   /** The program and its own arguments, never empty — checked at resolution. */
   readonly containerCommand: readonly [string, ...string[]];
 };
-
-/**
- * The three mounts in the order they are mounted, each under its role.
- *
- * One place that knows the set, so that a fourth mount is one edit and not four. It
- * had a second reason — keeping the `--volume` arguments and the startup check's own
- * mounting from disagreeing — and that one went with the check (ADR-0028).
- */
-export function mountsOf(
-  config: ResolvedPiConfiguration,
-): readonly { readonly role: MountRole; readonly mount: ResolvedMount }[] {
-  return [
-    { role: "workspace", mount: config.workspace },
-    { role: "agentDir", mount: config.agentDir },
-    { role: "sessionRoot", mount: config.sessionRoot },
-  ];
-}
-
-/**
- * Fills in a mount's three names and refuses one that cannot mean what it says.
- *
- * `role` names the mount in a failure message, since "not an absolute path" is
- * useless when a deployment has three of them.
- *
- * `source` is deliberately *not* required to be a path: a deployment using a named
- * volume mounts it into the Gateway too, so the Gateway sees an ordinary directory and
- * the volume is only ever a value for `source` (ADR-0025). What a wrong `source`
- * produces — an empty directory and no error — is caught by nothing at all: no pattern
- * here could tell, and the container that used to check is gone (ADR-0028).
- */
-export function resolveMount(mount: Mount, role = "mount"): ResolvedMount {
-  const given = typeof mount === "string" ? { localPath: mount } : mount;
-  const resolved: ResolvedMount = {
-    localPath: given.localPath,
-    agentPath: given.agentPath ?? given.localPath,
-    source: given.source ?? given.localPath,
-  };
-
-  if (resolved.localPath === "") {
-    throw new Error(`the ${role} mount has no localPath`);
-  }
-  if (!path.isAbsolute(resolved.localPath)) {
-    throw new Error(
-      `the ${role} mount's localPath ${JSON.stringify(resolved.localPath)} is not absolute, so where the Gateway reads it would depend on the working directory it was started from`,
-    );
-  }
-  if (!resolved.agentPath.startsWith("/")) {
-    throw new Error(
-      `the ${role} mount's agentPath ${JSON.stringify(resolved.agentPath)} is not absolute; it is a path inside the agent's container, which the container runtime requires to be absolute`,
-    );
-  }
-  if (resolved.source === "") {
-    throw new Error(`the ${role} mount has an empty source`);
-  }
-  for (const [name, value] of Object.entries(resolved)) {
-    // A colon is what separates the three fields of a `--volume` argument, so one
-    // inside a value silently makes the argument mean something else.
-    if (value.includes(":")) {
-      throw new Error(
-        `the ${role} mount's ${name} ${JSON.stringify(value)} contains a colon, which is what separates the parts of a --volume argument`,
-      );
-    }
-  }
-  return resolved;
-}
 
 /**
  * Settles a configuration, or refuses it.
@@ -271,13 +187,18 @@ export function resolvePiConfiguration(config: PiConfiguration): ResolvedPiConfi
   if (config.image === "") throw new Error("the pi adapter needs an image to run");
   if (config.model === "") throw new Error("the pi adapter needs a model");
 
+  const mounts = resolveMountTable(config.mounts);
+  const agentDirPath = containerPath(config.agentDirPath, "agentDirPath");
+
   return {
     image: config.image,
     model: config.model,
     provider: config.provider,
-    workspace: resolveMount(config.workspace, "workspace"),
-    agentDir: resolveMount(config.agentDir, "agentDir"),
-    sessionRoot: resolveMount(config.sessionRoot, "sessionRoot"),
+    workspacePath: containerPath(config.workspacePath, "workspacePath"),
+    agentDirPath,
+    sessionRootPath: containerPath(config.sessionRootPath, "sessionRootPath"),
+    mounts,
+    agentDirGatewayPath: agentDirOnDisk(mounts, agentDirPath),
     // Untouched: resolution settles paths and fills defaults, and a string the Operator
     // supplied is neither. See the field's own documentation for why nothing checks it.
     agentServerUrl: config.agentServerUrl,
@@ -286,10 +207,42 @@ export function resolvePiConfiguration(config: PiConfiguration): ResolvedPiConfi
     models: config.models ?? {},
     env: config.env ?? {},
     network: config.network,
-    user: config.user ?? ownUser(),
     extraArgs: config.extraArgs ?? [],
     containerCommand: containerCommandOf(config.containerCommand),
   };
+}
+
+/**
+ * The agent's directory as this process can reach it, or a refusal.
+ *
+ * The one thing resolution asks of the Mount Table, and it asks only because the
+ * framework still writes three files into that directory before every Run. Nothing
+ * equivalent is asked about the Workspace or the Session root, which the framework never
+ * opens.
+ */
+function agentDirOnDisk(mounts: ResolvedMountTable, agentDirPath: string): string {
+  const onDisk = mounts.gatewayPathFor(agentDirPath);
+  if (onDisk === undefined) {
+    throw new Error(
+      `agentDirPath ${JSON.stringify(agentDirPath)} is not covered by any entry of the Mount Table, so the agent's configuration written before each Run would have nowhere on this side to be written to`,
+    );
+  }
+  return onDisk;
+}
+
+/**
+ * A path inside the agent's container, or a refusal naming which one it was.
+ *
+ * `startsWith("/")` rather than `path.isAbsolute`, because this is a path in the
+ * container and always POSIX however the Gateway's own platform spells one.
+ */
+function containerPath(given: string, name: string): string {
+  if (!given.startsWith("/")) {
+    throw new Error(
+      `${name} ${JSON.stringify(given)} is not absolute; it is a path inside the agent's container, which the container runtime requires to be absolute`,
+    );
+  }
+  return given;
 }
 
 /**
@@ -328,32 +281,17 @@ export function sessionFor(session: string | null, runId: string): string {
 
 /**
  * Where a Session's own directory will sit, on both sides of the mount. Neither side is
- * created from here: `--session-dir` is given the agent's, and the Gateway's is for the
- * log line that says where the transcript landed on the Operator's own disk.
+ * created from here: `--session-dir` is given the container's, and the Gateway's is for
+ * the log line that says where the transcript landed on the Operator's own disk.
  *
- * Both at once and from one place, because the two are joined differently: the agent's
- * is a path inside the container and always POSIX, and the Gateway's is whatever this
- * platform separates paths with. Computing them apart is how they come to disagree.
+ * The Gateway's side comes back from the Mount Table and can be `undefined`, which is
+ * honest rather than unfortunate: a Session root nobody mounted has no Gateway-side path
+ * to name, and so does a Session name that climbs out of the one that was mounted.
  */
 export function sessionDirectoryFor(
-  sessionRoot: ResolvedMount,
+  config: ResolvedPiConfiguration,
   session: string,
-): { readonly localPath: string; readonly agentPath: string } {
-  return {
-    localPath: path.join(sessionRoot.localPath, session),
-    agentPath: path.posix.join(sessionRoot.agentPath, session),
-  };
-}
-
-/**
- * This process's `uid:gid`, or nothing where the platform has no such thing.
- *
- * The default rather than a documented step, because the failure a mismatch produces
- * is a Signal Handler that cannot read a file the agent definitely wrote.
- */
-function ownUser(): string | undefined {
-  if (typeof process.getuid !== "function" || typeof process.getgid !== "function") {
-    return undefined;
-  }
-  return `${process.getuid()}:${process.getgid()}`;
+): { readonly containerPath: string; readonly gatewayPath: string | undefined } {
+  const inContainer = path.posix.join(config.sessionRootPath, session);
+  return { containerPath: inContainer, gatewayPath: config.mounts.gatewayPathFor(inContainer) };
 }

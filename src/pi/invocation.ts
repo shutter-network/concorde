@@ -12,7 +12,6 @@
 
 import type { Prompt } from "../core/handlers.ts";
 import {
-  mountsOf,
   type PiConfiguration,
   type ResolvedPiConfiguration,
   resolvePiConfiguration,
@@ -60,9 +59,10 @@ export type PiInvocation = {
    * Session root. This is here **for the adapter's debug line alone**. "Where is this
    * Session's transcript on my disk" is the question asked while diagnosing the
    * forgetful-agent failure ADR-0025 describes, and the container path in the logged
-   * argv does not answer it.
+   * argv does not answer it. The Mount Table answers it, and `undefined` is its honest
+   * answer where the Session root is not something the Operator mounted.
    */
-  readonly sessionDirectory: string;
+  readonly sessionDirectory: string | undefined;
 };
 
 /** Where the framework's instructions file lands inside the agent's directory. */
@@ -104,7 +104,7 @@ export function composeInvocation(
     redactedArgs: redact(args),
     stdin: prompt.text,
     session,
-    sessionDirectory: sessionDirectoryFor(resolved.sessionRoot, session).localPath,
+    sessionDirectory: sessionDirectoryFor(resolved, session).gatewayPath,
   };
 }
 
@@ -143,14 +143,15 @@ function containerArgs(config: ResolvedPiConfiguration): string[] {
     // `--tty`: a TTY would make `pi` decide it is being used interactively.
     "--interactive",
     "--workdir",
-    config.workspace.agentPath,
+    config.workspacePath,
   ];
-  if (config.user !== undefined) args.push("--user", config.user);
+  // The whole of what the container sees on disk, and who it runs as: `--mount
+  // type=bind` per entry and one `--user`, composed by the Mount Table and never by
+  // anything here. `-v` appears nowhere, which is what makes the daemon refuse a source
+  // that is not there instead of inventing it as `root` (ADR-0028).
+  args.push(...config.mounts.containerArguments());
   if (config.network !== undefined) args.push("--network", config.network);
 
-  for (const { mount } of mountsOf(config)) {
-    args.push("--volume", `${mount.source}:${mount.agentPath}`);
-  }
   for (const [name, value] of Object.entries(environment(config))) {
     args.push("--env", `${name}=${value}`);
   }
@@ -177,9 +178,9 @@ function agentArgs(config: ResolvedPiConfiguration, session: string): string[] {
     "--session-id",
     session,
     "--session-dir",
-    sessionDirectoryFor(config.sessionRoot, session).agentPath,
+    sessionDirectoryFor(config, session).containerPath,
     "--append-system-prompt",
-    `${config.agentDir.agentPath}/${instructionsFileName}`,
+    `${config.agentDirPath}/${instructionsFileName}`,
     // Project-local `.pi` settings and extensions are ignored, and that is load-bearing
     // rather than tidy: the Workspace is writable by the agent, and a saved trust
     // decision in the persisted `trust.json` would otherwise let one Run arrange for
@@ -206,6 +207,6 @@ function environment(config: ResolvedPiConfiguration): Record<string, string> {
   return {
     PI_OFFLINE: "1",
     ...config.env,
-    PI_CODING_AGENT_DIR: config.agentDir.agentPath,
+    PI_CODING_AGENT_DIR: config.agentDirPath,
   };
 }

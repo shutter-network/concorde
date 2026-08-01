@@ -16,6 +16,13 @@
  *  - a **Session name `pi` refuses** fails that Run and no other, with `pi`'s own
  *    message in the Run's `error` — the framework carries no copy of that grammar and
  *    checks nothing, so this is the only place the claim can be tested at all
+ *  - a **mount source that is not there is refused by the daemon**, naming the path, and
+ *    nothing is invented on the Operator's disk. This is what the deleted startup mount
+ *    check was replaced by, so it is the one claim in ADR-0028 with nothing else behind
+ *    it (`--mount type=bind`, never `-v`)
+ *  - a **read-only file entry nested inside a read-write directory entry** is genuinely
+ *    unwritable from inside the container while the directory around it still writes,
+ *    which is what lets a file the agent must not change be one it cannot change
  *
  * What is real here and what is not, exactly: the container, the `pi` binary in it, the
  * three mounts, the Prompt on a pipe, the JSONL that comes back, the Agent server, the
@@ -35,12 +42,13 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { after, before, describe, it } from "node:test";
+import { after, before, describe, it, type TestContext } from "node:test";
 import { eq } from "drizzle-orm";
 import Fastify from "fastify";
+import type { Mount } from "../container/index.ts";
 import { createCore } from "../core/core.ts";
 import type { SignalHandler } from "../core/handlers.ts";
 import { coreMigrations } from "../core/migrations.ts";
@@ -78,6 +86,16 @@ const asking: SignalHandler<Ask> = {
 const handlerNote = "handler-note.txt";
 /** The file the agent writes in the Workspace for the Gateway to read. */
 const agentNote = "agent-note.txt";
+/** The file an Operator mounts read-only: the agent may read it and may not change it. */
+const guardedName = "AGENTS.md";
+/**
+ * A Run id of the shape the Core hands the adapter.
+ *
+ * Only the two cases that drive the adapter directly need one. They have no Core because
+ * they have no need of one: what they are about is what the container runtime does with
+ * a Mount Table, and a Signal on a queue would add a database and prove nothing more.
+ */
+const runId = "6f1a3c7e-0000-4000-8000-000000000001";
 
 let image: string;
 let database: TestDatabase;
@@ -120,19 +138,57 @@ type Paths = {
   readonly sessionRoot: string;
 };
 
+/** Three fresh directory names under a temporary root, cleaned up with the test. */
+async function temporaryPaths(t: TestContext): Promise<Paths> {
+  const root = await mkdtemp(path.join(tmpdir(), "saf-container-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  return {
+    workspace: path.join(root, "workspace"),
+    agentDir: path.join(root, "agent"),
+    sessionRoot: path.join(root, "sessions"),
+  };
+}
+
+/** The scripted model, as `models.json` describes a provider to `pi`. */
+function mockProvider(baseUrl: string): Record<string, unknown> {
+  return {
+    providers: {
+      mock: {
+        baseUrl,
+        api: "openai-completions",
+        apiKey: "not-a-real-key",
+        compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
+        models: [{ id: "mock-model", name: "Mock", contextWindow: 128_000, maxTokens: 4096 }],
+      },
+    },
+  };
+}
+
 /** The adapter under test, however a case wants its mounts and its model pointed. */
 function adapterOn(
   paths: Paths,
   agentServerUrl: string,
   models: Record<string, unknown>,
+  extraEntries: readonly Mount[] = [],
 ): RuntimeAdapter {
   return createPiAdapter({
     image,
     model: "mock-model",
     provider: "mock",
-    workspace: { localPath: paths.workspace, agentPath: "/workspace" },
-    agentDir: { localPath: paths.agentDir, agentPath: "/home/agent/.pi/agent" },
-    sessionRoot: { localPath: paths.sessionRoot, agentPath: "/sessions" },
+    // Container paths, and the Mount Table says where each comes from. The extra entries
+    // go last only for readability: the container runtime sorts bind mounts by
+    // destination depth itself, which is what makes a nested entry work at all.
+    workspacePath: "/workspace",
+    agentDirPath: "/home/agent/.pi/agent",
+    sessionRootPath: "/sessions",
+    mounts: {
+      entries: [
+        { containerPath: "/workspace", gatewayPath: paths.workspace },
+        { containerPath: "/home/agent/.pi/agent", gatewayPath: paths.agentDir },
+        { containerPath: "/sessions", gatewayPath: paths.sessionRoot },
+        ...extraEntries,
+      ],
+    },
     agentServerUrl,
     instructions: "You are the shared agent of a test.",
     models,
@@ -147,18 +203,14 @@ function adapterOn(
  * with the Core's routes on it, and the scripted model.
  */
 async function withGateway(
+  t: TestContext,
   reply: (request: ModelRequest, at: number) => ModelReply,
   body: (rig: Rig) => Promise<void>,
 ): Promise<void> {
-  const root = await mkdtemp(path.join(tmpdir(), "saf-container-"));
-  const paths: Paths = {
-    workspace: path.join(root, "workspace"),
-    agentDir: path.join(root, "agent"),
-    sessionRoot: path.join(root, "sessions"),
-  };
+  const paths = await temporaryPaths(t);
   // All three, as an Operator's entry point does it, because the framework creates no
-  // directory anywhere (ADR-0028) and the daemon would otherwise invent each missing
-  // bind source as a `root`-owned directory the container cannot write in.
+  // directory anywhere (ADR-0028) and the daemon refuses a bind source that is not there
+  // rather than inventing one — which is the case the test below this one walks into.
   await Promise.all(Object.values(paths).map((directory) => mkdir(directory, { recursive: true })));
 
   // The port before the server, because `agentServerUrl` is a construction argument of
@@ -170,17 +222,7 @@ async function withGateway(
   const agentServer = Fastify();
   const model = await startMockModel(reply);
 
-  const runtime = adapterOn(paths, agentServerUrl, {
-    providers: {
-      mock: {
-        baseUrl: model.baseUrl,
-        api: "openai-completions",
-        apiKey: "not-a-real-key",
-        compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
-        models: [{ id: "mock-model", name: "Mock", contextWindow: 128_000, maxTokens: 4096 }],
-      },
-    },
-  });
+  const runtime = adapterOn(paths, agentServerUrl, mockProvider(model.baseUrl));
 
   const core = createCore({ store, runtime });
   // Nothing registers the Core's routes for you, and Fastify refuses a registration
@@ -226,7 +268,6 @@ async function withGateway(
     await core.stop();
     await agentServer.close();
     await model.close();
-    await rm(root, { recursive: true, force: true });
   }
 }
 
@@ -285,8 +326,8 @@ function scripted(request: ModelRequest): ModelReply {
 }
 
 describe("pi in a real container", { skip }, () => {
-  it("runs the agent, which reads prior Signals and shares the Workspace, and resumes a Session", async () => {
-    await withGateway(scripted, async (rig) => {
+  it("runs the agent, which reads prior Signals and shares the Workspace, and resumes a Session", async (t) => {
+    await withGateway(t, scripted, async (rig) => {
       // Nothing has run yet, and nothing of the framework's is in the directory the
       // Operator's Handlers share: no startup step wrote there and none ever will.
       assert.deepEqual(await readdir(rig.workspace), []);
@@ -406,5 +447,93 @@ describe("pi in a real container", { skip }, () => {
         "a Session pi refused should have left no directory behind",
       );
     });
+  });
+
+  it("is refused by the daemon when a mount source is not there, which names the path", async (t) => {
+    // The claim the deleted startup mount check was traded for, and the only place it can
+    // be made: `--mount type=bind` refuses a missing source, where `-v` would invent it
+    // as a `root`-owned directory and let the Run succeed against an empty Workspace
+    // (ADR-0028). No Core and no Agent server here — the container never starts.
+    const paths = await temporaryPaths(t);
+    // Everything but the Workspace, which is the typo this is about.
+    await mkdir(paths.agentDir, { recursive: true });
+    await mkdir(paths.sessionRoot, { recursive: true });
+    const runtime = adapterOn(paths, `http://${hostFromContainer}:1`, {});
+
+    const outcome = await runtime.run({ session: "user_42", text: "This will not start." }, runId);
+
+    assert.equal(outcome.ok, false);
+    const error = outcome.ok ? "" : outcome.error;
+    assert.match(error, /bind source path does not exist/);
+    assert.ok(
+      error.includes(paths.workspace),
+      `the daemon's refusal should name the path it could not find: ${error}`,
+    );
+    // And nothing was created behind the Operator's back, which is the other half of
+    // what `-v` did and the reason a wrong path used to be silent.
+    await assert.rejects(() => stat(paths.workspace), /ENOENT/);
+  });
+
+  it("gives the agent a read-only file inside a directory it can still write", async (t) => {
+    // What replaces rewriting the agent's configuration before every Run: a file the
+    // agent must not change becomes one it *cannot* change, by construction and for free
+    // (ADR-0028). The nesting is the part worth proving — a read-only directory would
+    // hold the same property and break every sibling operation `pi` needs.
+    const paths = await temporaryPaths(t);
+    await Promise.all(
+      Object.values(paths).map((directory) => mkdir(directory, { recursive: true })),
+    );
+    const guarded = path.join(paths.workspace, guardedName);
+    await writeFile(guarded, "the Operator's own words", "utf8");
+
+    const model = await startMockModel((request) =>
+      assistantMessages(request) === 0
+        ? {
+            bash: [
+              `cat /workspace/${guardedName}`,
+              `(printf 'overwritten by the agent' > /workspace/${guardedName}) 2>&1 || true`,
+              `printf 'written by the agent' > /workspace/${agentNote}`,
+              // The lock directory `pi` needs beside a settings file even to read one:
+              // a sibling of the read-only file, in the read-write directory around it.
+              `mkdir /workspace/${guardedName}.lock && echo made-the-lock-directory`,
+            ].join("; "),
+          }
+        : { say: "I could read it and I could not write it." },
+    );
+    try {
+      const runtime = adapterOn(
+        paths,
+        `http://${hostFromContainer}:1`,
+        mockProvider(model.baseUrl),
+        [{ containerPath: `/workspace/${guardedName}`, gatewayPath: guarded, readOnly: true }],
+      );
+
+      const outcome = await runtime.run({ session: "readonly", text: "Try to write it." }, runId);
+      assert.deepEqual(outcome, { ok: true }, "being denied a write must not fail the Run");
+
+      const seen = model.requests.flatMap((request) => request.texts);
+      assert.ok(
+        seen.some((text) => text.includes("the Operator's own words")),
+        `the agent should have read the Gateway's content: ${seen.join(" | ")}`,
+      );
+      assert.ok(
+        seen.some((text) => /Read-only file system/i.test(text)),
+        `the agent's write should have been denied by the kernel: ${seen.join(" | ")}`,
+      );
+      assert.ok(
+        seen.some((text) => text.includes("made-the-lock-directory")),
+        `a sibling of the read-only file should still be creatable: ${seen.join(" | ")}`,
+      );
+      // The two claims as this process sees them: the guarded file is untouched, and the
+      // directory around it took the agent's writes.
+      assert.equal(await readFile(guarded, "utf8"), "the Operator's own words");
+      assert.equal(
+        await readFile(path.join(paths.workspace, agentNote), "utf8"),
+        "written by the agent",
+      );
+      await stat(path.join(paths.workspace, `${guardedName}.lock`));
+    } finally {
+      await model.close();
+    }
   });
 });

@@ -101,9 +101,16 @@ async function adapterOn(
   const config: PiConfiguration = {
     image: "saf/pi:latest",
     model: "anthropic/claude-sonnet-4-5",
-    workspace: { localPath: workspace, agentPath: "/workspace" },
-    agentDir: { localPath: agentDir, agentPath: "/home/agent/.pi/agent" },
-    sessionRoot: { localPath: sessionRoot, agentPath: "/sessions" },
+    workspacePath: "/workspace",
+    agentDirPath: "/home/agent/.pi/agent",
+    sessionRootPath: "/sessions",
+    mounts: {
+      entries: [
+        { containerPath: "/workspace", gatewayPath: workspace },
+        { containerPath: "/home/agent/.pi/agent", gatewayPath: agentDir },
+        { containerPath: "/sessions", gatewayPath: sessionRoot },
+      ],
+    },
     agentServerUrl: "http://host.docker.internal:7411",
     containerCommand: fakeContainerCommand({
       ...script,
@@ -131,11 +138,25 @@ async function adapterOn(
 describe("the pi adapter", () => {
   it("refuses a configuration that cannot work, where the Operator wrote it", async () => {
     // Not at the first Signal: a Run that fails is never retried (ADR-0017), so a
-    // relative mount path would turn every Signal the deployment ever gets into a
+    // relative container path would turn every Signal the deployment ever gets into a
     // permanently failed Run.
     const { config } = await adapterOn();
-    assert.throws(() => createPiAdapter({ ...config, workspace: "relative" }), /workspace/);
+    assert.throws(() => createPiAdapter({ ...config, workspacePath: "relative" }), /workspacePath/);
     assert.throws(() => createPiAdapter({ ...config, image: "" }), /image/);
+    // Including a Mount Table that cannot be resolved: the adapter resolves it at
+    // construction precisely so this is not discovered by a container (ADR-0028).
+    assert.throws(
+      () => createPiAdapter({ ...config, mounts: { entries: [] } }),
+      /Mount Table has no entries/,
+    );
+    assert.throws(
+      () =>
+        createPiAdapter({
+          ...config,
+          mounts: { entries: [{ containerPath: "/workspace", gatewayPath: "relative" }] },
+        }),
+      /gatewayPath.*absolute/s,
+    );
   });
 
   it("writes the Prompt to the container's stdin and closes it", async () => {
@@ -164,7 +185,7 @@ describe("the pi adapter", () => {
     assert.deepEqual(report.args.slice(0, 2), ["run", "--rm"]);
     const image = report.args.indexOf("saf/pi:latest");
     assert.notEqual(image, -1, "the image should be in the arguments");
-    assert.ok(report.args.slice(0, image).includes("--volume"));
+    assert.ok(report.args.slice(0, image).includes("--mount"));
     assert.deepEqual(report.args.slice(image + 1, image + 3), ["--mode", "json"]);
     assert.equal(report.args.at(-1), "--no-approve");
     // Write, *then* start: the agent reads its configuration and its instructions as it
@@ -257,7 +278,11 @@ describe("the pi adapter", () => {
     assert.match(logged, /ANTHROPIC_API_KEY=…/);
     // The two values a mount problem is diagnosed from are both still there.
     assert.match(logged, /PI_CODING_AGENT_DIR=\/home\/agent\/\.pi\/agent/);
-    assert.match(logged, /--volume/);
+    assert.match(logged, /--mount/);
+    // And the Session's transcript as this process sees it, which is the question
+    // ADR-0025 says the forgetful-agent failure is diagnosed with and the only thing
+    // left that asks the Mount Table for a path on the Operator's own disk.
+    assert.equal(started.fields.sessionDirectory, path.join(adapter.sessionRoot, "user_42"));
     assert.equal(started.fields.runId, runId);
     assert.equal(started.fields.session, "user_42");
   });

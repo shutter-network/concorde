@@ -23,6 +23,7 @@ import { writeRunConfiguration } from "./run-files.ts";
 
 type Directories = {
   readonly config: PiConfiguration;
+  readonly workspace: string;
   readonly agentDir: string;
   readonly sessionRoot: string;
 };
@@ -34,20 +35,29 @@ async function directories(
 ): Promise<Directories> {
   const root = await mkdtemp(path.join(tmpdir(), "saf-pi-"));
   t.after(() => rm(root, { recursive: true, force: true }));
+  const workspace = path.join(root, "workspace");
   const agentDir = path.join(root, "agent");
   const sessionRoot = path.join(root, "sessions");
   // The Operator's job now, not the framework's (ADR-0028). Only this one: the
   // assertions below are that nothing here conjures the Workspace or the Session root.
   await mkdir(agentDir, { recursive: true });
   return {
+    workspace,
     agentDir,
     sessionRoot,
     config: {
       image: "saf/pi:latest",
       model: "anthropic/claude-sonnet-4-5",
-      workspace: path.join(root, "workspace"),
-      agentDir: { localPath: agentDir, agentPath: "/home/agent/.pi/agent" },
-      sessionRoot: { localPath: sessionRoot, agentPath: "/sessions" },
+      workspacePath: "/workspace",
+      agentDirPath: "/home/agent/.pi/agent",
+      sessionRootPath: "/sessions",
+      mounts: {
+        entries: [
+          { containerPath: "/workspace", gatewayPath: workspace },
+          { containerPath: "/home/agent/.pi/agent", gatewayPath: agentDir },
+          { containerPath: "/sessions", gatewayPath: sessionRoot },
+        ],
+      },
       agentServerUrl: "http://host.docker.internal:7411",
       ...extra,
     },
@@ -154,13 +164,13 @@ describe("the configuration written before a Run", () => {
   });
 
   it("does not create the Workspace, which is the Operator's", async (t) => {
-    const { config } = await directories(t);
+    const { config, workspace } = await directories(t);
 
     await writeRunConfiguration(config);
 
     // The Workspace is the Operator's, and so now is every other directory a mount
     // points at: the framework creates none of them (ADR-0028).
-    await assert.rejects(() => stat(String(config.workspace)), /ENOENT/);
+    await assert.rejects(() => stat(workspace), /ENOENT/);
   });
 });
 
