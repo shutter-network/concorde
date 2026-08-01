@@ -8,9 +8,9 @@
  *  - `dist` mirrors `src`, which is what makes a migration folder reached from
  *    `import.meta.url` the same folder in the repository and in the package.
  *  - the tarball installs into a fresh project.
- *  - the root and `/pi` subpaths resolve there, both to the type checker and to
- *    Node at runtime.
- *  - a shipped migration folder **applies to a real database from inside the
+ *  - the root, `/pi` and `/users` subpaths resolve there, both to the type checker
+ *    and to Node at runtime.
+ *  - the shipped migration folders **apply to a real database from inside the
  *    installed package**, with a working directory that holds no `migrations`
  *    folder of its own. Resolving against `process.cwd()` passes every test in
  *    this repository and breaks for every consumer, so this is the one place the
@@ -42,10 +42,11 @@ import { createTestDatabase } from "../src/test-support/database.ts";
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const migrationsRoot = path.join(repoRoot, "migrations");
 
-/** The consumer's imports, spelled once: the type checker and Node see the same two. */
+/** The consumer's imports, spelled once: the type checker and Node see the same three. */
 const consumerImports = [
   'import { coreMigrations, createCore, defaultLogger, openStore, resolveMountTable, templateHandler } from "shared-agent-framework";',
   'import { composeInvocation, createPiAdapter, interpretPiOutput, resolvePiConfiguration } from "shared-agent-framework/pi";',
+  'import { createUsers, usersMigrations } from "shared-agent-framework/users";',
 ];
 
 function run(command: string, args: string[], cwd: string): string {
@@ -138,6 +139,18 @@ try {
     // (ADR-0021), so the consumer brings the instance and registers this on it.
     "dist/core/routes.js",
     "dist/core/routes.d.ts",
+    // The User Directory, under its own subpath and with its own migration
+    // descriptor: `dist/users/migrations.js` resolves `../../migrations/users` from
+    // its own module, so its position in `dist` is what makes that folder reachable
+    // (ADR-0029).
+    "dist/users/index.js",
+    "dist/users/index.d.ts",
+    "dist/users/migrations.js",
+    "dist/users/routes.js",
+    "dist/users/routes.d.ts",
+    "dist/users/schema.js",
+    "dist/users/users.js",
+    "dist/users/users.d.ts",
     // The template Handler is public surface of its own, and the only module that
     // reaches for `handlebars` — so a missing `dependencies` entry surfaces when the
     // scratch project imports it below rather than at an Operator's first Signal.
@@ -316,6 +329,9 @@ try {
       "  PiInvocation,",
       "  ResolvedPiConfiguration,",
       '} from "shared-agent-framework/pi";',
+      // The User Directory's own types, from its own subpath, for the same reason:
+      // a deployment with no identity in it imports nothing from there (ADR-0029).
+      'import type { UserRecord, Users, UsersOptions } from "shared-agent-framework/users";',
       'import { pgSchema, text } from "drizzle-orm/pg-core";',
       // Fastify is public API (ADR-0021) and the consumer's own dependency: the
       // framework constructs no server, so the instance comes from this call.
@@ -371,6 +387,14 @@ try {
       "// Operator registers — and not registering it is how an endpoint group is",
       "// switched off (ADR-0010, ADR-0021).",
       "const coreRoutes: FastifyPluginAsync = core.agentRoutes;",
+      "",
+      "// The User Directory: constructed from the same Store, contributing one more",
+      "// migration descriptor to the one call and one more plugin to the Agent server,",
+      "// under a prefix the Operator chooses (ADR-0029).",
+      "const usersOptions: UsersOptions = { store };",
+      "export const users: Users = createUsers(usersOptions);",
+      "export const usersDescriptor: MigrationDescriptor = usersMigrations;",
+      "const userRoutes: FastifyPluginAsync = users.agentRoutes;",
       "",
       "// An Operator's own routes, on Fastify's mechanism and no contract of ours.",
       "const ownRoutes: FastifyPluginAsync = async (fastify) => {",
@@ -499,7 +523,7 @@ try {
       "};",
       "",
       "export async function useEverything(): Promise<void> {",
-      "  await store.migrate(descriptor);",
+      "  await store.migrate(descriptor, usersDescriptor);",
       "  await write(store.handle({ notes }));",
       "  await store.tx(async (tx: Transaction) => write(tx));",
       '  const listening: Listening = store.listen("consumer_channel", watcher);',
@@ -515,7 +539,14 @@ try {
       '    shipped.info({ signalId: id }, "emitted");',
       "  });",
       "  await agentServer.register(coreRoutes);",
+      '  await agentServer.register(userRoutes, { prefix: "/users" });',
       '  await publicServer.register(ownRoutes, { prefix: "/ops" });',
+      "  // A User admitted from trusted code, in a transaction of the consumer's own:",
+      "  // the write takes it first, and the reads take none (ADR-0023).",
+      "  const admitted: UserRecord = await store.tx((tx: Transaction) => users.create(tx));",
+      "  const sameUser: UserRecord | undefined = await users.get(admitted.id);",
+      "  const everyone: UserRecord[] = await users.list({ limit: 10 });",
+      '  shipped.info({ admitted, sameUser, everyone: everyone.length }, "a User exists");',
       "  // Both bind addresses stated by the consumer, because no default of ours is",
       "  // behind either: every interface for the Public server, loopback for the",
       "  // unauthenticated Agent server (ADR-0004, ADR-0010).",
@@ -574,6 +605,11 @@ try {
         // configuration it cannot work with at construction, so this also proves the
         // check inside it runs from the installed package rather than only here.
         "const adapter = createPiAdapter(piConfig);",
+        // The User Directory, constructed as an Operator constructs it. `openStore`
+        // connects lazily, so this reaches the database not at all: what it proves is
+        // that the subpath resolves at runtime and that construction is free of side
+        // effects, like every other part's.
+        "const directory = createUsers({ store: openStore('postgres://nobody@example.invalid/none') });",
         "const encoder = new TextEncoder();",
         "const settled = await interpretPiOutput((async function* () {",
         "  yield encoder.encode(JSON.stringify({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop' } }) + '\\n');",
@@ -583,7 +619,7 @@ try {
         // because the module that used to hold one is gone from the package, and the
         // composed invocation names no file for the agent to read either — the Operator's
         // `AGENTS.md` above is a mount and `pi` discovers it (ADR-0025).
-        "const built = [typeof openStore, typeof templateHandler, invocation.command, invocation.session, String(settled.ok), resolvedMounts.containerArguments()[1], resolvedMounts.gatewayPathFor('/sessions/user_42'), resolvePiConfiguration(piConfig).containerCommand.join(' '), String(invocation.args.includes('--append-system-prompt')), typeof adapter.run, String(Object.keys(adapter))];",
+        "const built = [typeof openStore, typeof templateHandler, invocation.command, invocation.session, String(settled.ok), resolvedMounts.containerArguments()[1], resolvedMounts.gatewayPathFor('/sessions/user_42'), resolvePiConfiguration(piConfig).containerCommand.join(' '), String(invocation.args.includes('--append-system-prompt')), typeof adapter.run, String(Object.keys(adapter)), usersMigrations.schema, String(Object.keys(directory).sort())];",
         "process.stdout.write(built.join(':'));",
       ].join("\n"),
     ],
@@ -591,8 +627,8 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker:run_r1:true:type=bind,source=/srv/saf/workspace,target=/workspace:/srv/saf/sessions/user_42:docker:false:function:run",
-    "both subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount and answer where a container path is on the Operator's disk, and the pi adapter should construct as a plain Runtime Adapter — `run` and nothing else — settle its defaults, compose an invocation that passes no system-prompt flag, and read an outcome",
+    "function:function:docker:run_r1:true:type=bind,source=/srv/saf/workspace,target=/workspace:/srv/saf/sessions/user_42:docker:false:function:run:saf_users:agentRoutes,create,get,list",
+    "all three subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount and answer where a container path is on the Operator's disk, the pi adapter should construct as a plain Runtime Adapter — `run` and nothing else — settle its defaults, compose an invocation that passes no system-prompt flag, and read an outcome, and the User Directory should construct into its own schema with its routes and its three operations",
   );
 
   step("applying a shipped migration folder from inside the installed package");
@@ -610,16 +646,23 @@ try {
     path.join(consumer, "migrate.ts"),
     [
       'import { coreMigrations, createCore, openStore } from "shared-agent-framework";',
+      'import { createUsers, usersMigrations } from "shared-agent-framework/users";',
       "",
       "const store = openStore(process.argv[2]);",
       "const core = createCore({ store, runtime: { run: async () => ({ ok: true }) } });",
+      "const users = createUsers({ store });",
       "try {",
-      "  await store.migrate(coreMigrations);",
-      "  // Emitting is what proves the folder resolved and its statements actually",
-      "  // ran: the Signal has nowhere to go otherwise. The worker is never started,",
-      "  // so nothing processes it.",
+      "  await store.migrate(coreMigrations, usersMigrations);",
+      "  // Emitting and admitting are what prove both folders resolved and their",
+      "  // statements actually ran: neither row has anywhere to go otherwise. The",
+      "  // worker is never started, so nothing processes the Signal.",
       '  const id = await store.tx((tx) => core.emit(tx, { kind: "probe", payload: {} }));',
-      '  process.stdout.write(id.length === 36 ? "applied" : "unexpected Signal id " + id);',
+      "  const user = await store.tx((tx) => users.create(tx));",
+      "  const applied =",
+      "    id.length === 36 &&",
+      "    user.id.length === 36 &&",
+      '    JSON.stringify(user.attributes) === "{}";',
+      '  process.stdout.write(applied ? "applied" : "unexpected " + id + " " + JSON.stringify(user));',
       "} finally {",
       "  await store.close();",
       "}",

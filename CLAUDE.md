@@ -52,10 +52,16 @@ rather than warning.
 
 `npm run migrations:generate` regenerates a part's migration folder from its
 schema with `drizzle-kit`, and its output is committed — Operators never run a
-schema generation tool. It reads `drizzle.config.ts`, which covers the Core; a
-second part gets its own config file and `--config`, because `out` is one folder
-and each part owns its own. Read that file before running it: a generated first
-migration needs one line removed by hand.
+schema generation tool. Each part has a config file of its own and passes it with
+`--config`, because `out` is one folder and each part owns its own:
+
+```sh
+npm run migrations:generate                                        # the Core
+npm run migrations:generate -- --config drizzle.users.config.ts    # the User Directory
+```
+
+Read the config before running either: a generated first migration needs one line
+removed by hand.
 
 Conventions the build depends on:
 

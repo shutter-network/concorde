@@ -39,9 +39,10 @@
       "shared-agent-framework/pi": ["./src/pi/index.ts"]
     }
   },
-  // `drizzle.config.ts` is included but not built: it is how `migrations/core` is
-  // generated, so a mistake in it should fail the typecheck rather than the next
-  // person to run the generator. `example` is included for the same reason — it is
-  // the reference deployment, and one that does not compile is worse than none.
-  "include": ["src", "scripts", "drizzle.config.ts", "example"]
+  // The `drizzle.*.config.ts` files are included but not built: they are how the
+  // migration folders are generated, one per part, so a mistake in one should fail
+  // the typecheck rather than the next person to run the generator. `example` is
+  // included for the same reason — it is the reference deployment, and one that does
+  // not compile is worse than none.
+  "include": ["src", "scripts", "drizzle.config.ts", "drizzle.users.config.ts", "example"]
 }

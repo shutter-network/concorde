@@ -19,6 +19,10 @@
       "types": "./dist/pi/index.d.ts",
       "default": "./dist/pi/index.js"
     },
+    "./users": {
+      "types": "./dist/users/index.d.ts",
+      "default": "./dist/users/index.js"
+    },
     "./messenger": null
   },
   "files": [
