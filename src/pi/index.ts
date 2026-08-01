@@ -6,7 +6,11 @@
  * nothing about `pi`, and swapping the Agent Runtime is a change to one import and one
  * configuration object (ADR-0016, ADR-0026).
  *
- * What is here is everything the adapter does *around* starting a container:
+ * `createPiAdapter` is the whole of it for an Operator: hand it the agent's
+ * configuration, call `verifyMounts()` before starting the Core, and pass it as the
+ * Core's `runtime`. Everything below is what it is made of, exported because each is
+ * useful on its own and because that is what makes the adapter's own order — compose,
+ * write, start, interpret — inspectable rather than a claim:
  *
  *  - `resolvePiConfiguration` settles and checks a configuration, so a deployment with
  *    a relative mount path or an unusable Agent server URL is refused at startup
@@ -19,10 +23,12 @@
  *    the exit code says nothing, the terminal record is `agent_settled` and not
  *    `agent_end`, and the framing is LF-only.
  *
- * Starting the container is not here yet. These are pure functions and file writes, so
- * every one of them is exercised in CI with no Docker, no credentials, and no network.
+ * Everything but `createPiAdapter` is a pure function or a file write, and is exercised
+ * in CI with no Docker, no credentials and no network.
  */
 
+export type { PiAdapterOptions, PiRuntime } from "./adapter.ts";
+export { createPiAdapter } from "./adapter.ts";
 export type {
   Mount,
   OpaqueJson,

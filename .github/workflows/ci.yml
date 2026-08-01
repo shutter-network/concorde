@@ -50,3 +50,16 @@ jobs:
       # needs the same PostgreSQL server: it applies a shipped migration folder
       # from inside the installed package.
       - run: npm run check:package
+
+      # The one end-to-end test: a real container running a real `pi` against the
+      # real Agent server. Opt-in and therefore skipped by `npm run check`, which
+      # is the inner loop — it builds an image over the network and takes about ten
+      # seconds, and every other property of the adapter is a fast test. Run here so
+      # that "skipped by default" does not become "never run at all".
+      #
+      # It needs this job's PostgreSQL and this runner's Docker. The container
+      # reaches the Agent server through `host.docker.internal`, which under a plain
+      # Linux daemon exists only because the test passes
+      # `--add-host=host.docker.internal:host-gateway` and binds the server beyond
+      # loopback.
+      - run: npm run test:container

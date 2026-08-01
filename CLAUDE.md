@@ -28,6 +28,17 @@ migration folder to a real database from inside the installed package. It needs
 the network and the same PostgreSQL server, so it stays out of the inner loop. CI
 runs it as its own step.
 
+`npm run test:container` is the other separate one: the single end-to-end test
+that starts a **real container** running a real `pi` against the real Agent
+server. It builds its own image from `src/test-support/pi-image/Dockerfile`, so it
+needs Docker and the network, and it takes about ten seconds. `npm run check`
+skips it — the variable `SAF_CONTAINER_TESTS` is what opts in, and the skip
+reason says so — because everything else about the `pi` adapter is a fast test and
+the inner loop should stay one. CI runs it as its own step, so "skipped by
+default" does not become "never run". It needs no model credentials: the model is
+a scripted OpenAI-compatible server on localhost, and everything else about the
+Run is real.
+
 `npm run format` applies Biome's fixes; `npm run check` fails on unformatted code
 rather than warning.
 

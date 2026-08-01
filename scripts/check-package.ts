@@ -45,7 +45,7 @@ const migrationsRoot = path.join(repoRoot, "migrations");
 /** The consumer's imports, spelled once: the type checker and Node see the same two. */
 const consumerImports = [
   'import { coreMigrations, createAgentServer, createCore, createPublicServer, defaultLogger, openStore, templateHandler } from "shared-agent-framework";',
-  'import { composeInvocation, instructionsFileName, interpretPiOutput, resolveMount, resolvePiConfiguration, writeRunConfiguration } from "shared-agent-framework/pi";',
+  'import { composeInvocation, createPiAdapter, instructionsFileName, interpretPiOutput, resolveMount, resolvePiConfiguration, writeRunConfiguration } from "shared-agent-framework/pi";',
 ];
 
 function run(command: string, args: string[], cwd: string): string {
@@ -112,9 +112,12 @@ try {
     // The `pi` adapter's own modules. `dist/pi/` mirroring `src/pi/` is what makes the
     // subpath resolve to the same relative imports in the repository and in the
     // package, and the fixtures beside them must not come along.
+    "dist/pi/adapter.js",
     "dist/pi/configuration.js",
     "dist/pi/invocation.js",
+    "dist/pi/mount-check.js",
     "dist/pi/output.js",
+    "dist/pi/process.js",
     "dist/pi/run-files.js",
     // `dist` mirrors `src`, so `src/store/store.ts` becomes `dist/store/store.js`
     // and a folder reached from `import.meta.url` is the same relative path in
@@ -298,8 +301,10 @@ try {
       "import type {",
       "  Mount,",
       "  OpaqueJson,",
+      "  PiAdapterOptions,",
       "  PiConfiguration,",
       "  PiInvocation,",
+      "  PiRuntime,",
       "  ResolvedMount,",
       "  ResolvedPiConfiguration,",
       '} from "shared-agent-framework/pi";',
@@ -456,6 +461,14 @@ try {
       ");",
       "export const piInstructions: string = instructionsFileName;",
       "",
+      "// The adapter itself, which is what an Operator actually passes to the Core: a",
+      "// Runtime Adapter with one extra call, the startup check that proves the agent's",
+      "// container really sees the mounts (ADR-0025). Annotated as a RuntimeAdapter too,",
+      "// because that is the seam the Core is given and it has to satisfy it.",
+      "const piAdapterOptions: PiAdapterOptions = { ...piConfig, logger: log };",
+      "export const piAdapter: PiRuntime = createPiAdapter(piAdapterOptions);",
+      "export const piAsRuntime: RuntimeAdapter = piAdapter;",
+      "",
       "// A Runtime Adapter an Operator could write out of the pieces the subpath ships:",
       "// write the configuration, start the container, read the outcome out of the JSONL.",
       "// The spawning is theirs here, which is what proves these compose.",
@@ -481,6 +494,9 @@ try {
       "",
       "export async function useEverything(): Promise<void> {",
       "  await store.migrate(descriptor);",
+      "  // Before the worker starts, and not part of constructing the adapter: it starts",
+      "  // a throwaway container, and ordering is the Operator's (ADR-0021, ADR-0025).",
+      "  await piAdapter.verifyMounts();",
       "  await write(store.handle({ notes }));",
       "  await store.tx(async (tx: Transaction) => write(tx));",
       '  const listening: Listening = store.listen("consumer_channel", watcher);',
@@ -541,12 +557,20 @@ try {
         "  agentDir: '/srv/saf/agent', sessionRoot: '/srv/saf/sessions',",
         "  agentServerUrl: agentServer.reachableAt,",
         "}, { session: null, text: 'what happened?' }, 'r1');",
+        // And the adapter itself, constructed as an Operator constructs it. It refuses a
+        // configuration it cannot work with at construction, so this also proves the
+        // check inside it runs from the installed package rather than only here.
+        "const adapter = createPiAdapter({",
+        "  image: 'saf/pi:latest', model: 'sonnet', workspace: '/srv/saf/workspace',",
+        "  agentDir: '/srv/saf/agent', sessionRoot: '/srv/saf/sessions',",
+        "  agentServerUrl: agentServer.reachableAt,",
+        "});",
         "const encoder = new TextEncoder();",
         "const settled = await interpretPiOutput((async function* () {",
         "  yield encoder.encode(JSON.stringify({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop' } }) + '\\n');",
         "  yield encoder.encode(JSON.stringify({ type: 'agent_settled' }) + '\\n');",
         "})());",
-        "const built = [typeof openStore, typeof templateHandler, invocation.command, invocation.session, String(settled.ok), typeof resolveMount, typeof resolvePiConfiguration, typeof writeRunConfiguration, instructionsFileName, agentServer.reachableAt, typeof publicServer.fastify.register];",
+        "const built = [typeof openStore, typeof templateHandler, invocation.command, invocation.session, String(settled.ok), typeof resolveMount, typeof resolvePiConfiguration, typeof writeRunConfiguration, instructionsFileName, agentServer.reachableAt, typeof publicServer.fastify.register, typeof adapter.run, typeof adapter.verifyMounts];",
         "process.stdout.write(built.join(':'));",
       ].join("\n"),
     ],
@@ -554,8 +578,8 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker:run_r1:true:function:function:function:gateway-instructions.md:http://host.docker.internal:7411:function",
-    "both subpaths should resolve at runtime, the template Handler and the servers should load handlebars and fastify, and the pi adapter should compose an invocation and read an outcome",
+    "function:function:docker:run_r1:true:function:function:function:gateway-instructions.md:http://host.docker.internal:7411:function:function:function",
+    "both subpaths should resolve at runtime, the template Handler and the servers should load handlebars and fastify, and the pi adapter should construct, compose an invocation and read an outcome",
   );
 
   step("applying a shipped migration folder from inside the installed package");

@@ -47,6 +47,17 @@ export type ResolvedMount = {
   readonly source: string;
 };
 
+/**
+ * The three directories the agent's container needs, under the names they are
+ * configured and reported by.
+ *
+ * A union rather than a string, because every part of the adapter that says which
+ * mount it means — the `--volume` arguments, the startup check's per-mount report,
+ * the failure message that names one — has to agree with the others about the set,
+ * and a typo in any of them would otherwise be a mount silently left out.
+ */
+export type MountRole = "workspace" | "agentDir" | "sessionRoot";
+
 /** Arbitrary JSON the framework writes out without reading (ADR-0016). */
 export type OpaqueJson = Readonly<Record<string, unknown>>;
 
@@ -155,8 +166,26 @@ export type ResolvedPiConfiguration = {
   readonly network: string | undefined;
   readonly user: string | undefined;
   readonly extraArgs: readonly string[];
-  readonly containerCommand: readonly string[];
+  /** The program and its own arguments, never empty — checked at resolution. */
+  readonly containerCommand: readonly [string, ...string[]];
 };
+
+/**
+ * The three mounts in the order they are mounted and checked, each under its role.
+ *
+ * One place that knows the set, so composing the `--volume` arguments and verifying
+ * the mounts at startup cannot come to disagree about it, and so a fourth mount is
+ * one edit and not four.
+ */
+export function mountsOf(
+  config: ResolvedPiConfiguration,
+): readonly { readonly role: MountRole; readonly mount: ResolvedMount }[] {
+  return [
+    { role: "workspace", mount: config.workspace },
+    { role: "agentDir", mount: config.agentDir },
+    { role: "sessionRoot", mount: config.sessionRoot },
+  ];
+}
 
 /**
  * Fills in a mount's three names and refuses one that cannot mean what it says.
@@ -235,8 +264,26 @@ export function resolvePiConfiguration(config: PiConfiguration): ResolvedPiConfi
     network: config.network,
     user: config.user ?? ownUser(),
     extraArgs: config.extraArgs ?? [],
-    containerCommand: config.containerCommand ?? ["docker"],
+    containerCommand: containerCommandOf(config.containerCommand),
   };
+}
+
+/**
+ * The container runtime and any arguments of its own, as a list with a first element.
+ *
+ * Checked here rather than where a process is started, so that every caller has a
+ * command to run rather than each one guarding again — and so an empty list is refused
+ * at startup like every other unusable configuration.
+ */
+function containerCommandOf(given: readonly string[] | undefined): readonly [string, ...string[]] {
+  if (given === undefined) return ["docker"];
+  const [command, ...rest] = given;
+  if (command === undefined || command === "") {
+    throw new Error(
+      'containerCommand is empty, so there is nothing to run the agent\'s container with. It defaults to ["docker"]; ["podman"] and ["sudo", "docker"] are the other shapes it takes.',
+    );
+  }
+  return [command, ...rest];
 }
 
 /**

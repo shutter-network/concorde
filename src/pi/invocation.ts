@@ -12,6 +12,7 @@
 
 import type { Prompt } from "../core/handlers.ts";
 import {
+  mountsOf,
   type PiConfiguration,
   type ResolvedPiConfiguration,
   resolvePiConfiguration,
@@ -82,10 +83,6 @@ export function composeInvocation(
   }
 
   const [command, ...runtimeArgs] = resolved.containerCommand;
-  if (command === undefined) {
-    throw new Error("containerCommand is empty, so there is nothing to run the container with");
-  }
-
   const args = [
     ...runtimeArgs,
     ...containerArgs(resolved),
@@ -143,7 +140,7 @@ function containerArgs(config: ResolvedPiConfiguration): string[] {
   if (config.user !== undefined) args.push("--user", config.user);
   if (config.network !== undefined) args.push("--network", config.network);
 
-  for (const mount of [config.workspace, config.agentDir, config.sessionRoot]) {
+  for (const { mount } of mountsOf(config)) {
     args.push("--volume", `${mount.source}:${mount.agentPath}`);
   }
   for (const [name, value] of Object.entries(environment(config))) {

@@ -426,6 +426,19 @@ describe("a configuration that cannot work", () => {
     );
   });
 
+  it("refuses a container command with nothing to run", () => {
+    // Checked at resolution rather than where a process is started, so that everything
+    // holding a resolved configuration has a command rather than each caller guarding.
+    assert.throws(
+      () => resolvePiConfiguration({ ...minimal, containerCommand: [] }),
+      /containerCommand is empty/,
+    );
+    assert.throws(
+      () => resolvePiConfiguration({ ...minimal, containerCommand: [""] }),
+      /containerCommand is empty/,
+    );
+  });
+
   it("refuses an Agent server URL the agent could not put in front of a path", () => {
     for (const agentServerUrl of ["", "host.docker.internal:7411", "/signals", "ftp://host:21"]) {
       assert.throws(
