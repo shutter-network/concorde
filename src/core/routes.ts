@@ -23,8 +23,13 @@
  * There is no Session parameter and no User parameter, on any of them, and an unknown
  * query parameter is a 400 rather than a request answered with everything — so a
  * deployment that believed it was scoping something finds out at the first request
- * instead of never. Lists are envelopes rather than bare arrays, so a later cursor or
- * count has somewhere to go.
+ * instead of never. That refusal, the pattern-validated ids, the capped limit and the
+ * envelope, and the 404 body are the conventions in `route-conventions.ts`, which
+ * every part's routes share; only the sentence the refusal ends with is the Core's.
+ * The limit's cap has a consequence worth stating here: with no cursor and no offset,
+ * the records past it are reachable only by narrowing with `kind` or `signalId`.
+ * ADR-0011 says the agent may read every Signal, and it is not being refused any of
+ * them — there is simply no paging yet, because no Run has had a use for it.
  *
  * Nothing here writes. The agent's writes belong to the parts that own what is
  * written — the Messenger for Messages, the Scheduler for schedules — and the Core
@@ -33,7 +38,14 @@
  */
 
 import { desc, eq } from "drizzle-orm";
-import type { FastifyPluginAsync, FastifyReply } from "fastify";
+import type { FastifyPluginAsync } from "fastify";
+import {
+  idParams,
+  idSchema,
+  limitSchema,
+  notFound,
+  unknownQueryRefusal,
+} from "../route-conventions.ts";
 import type { Db } from "../store/index.ts";
 import { type coreTables, type RunState, runs, type SignalState, signals } from "./schema.ts";
 
@@ -79,44 +91,17 @@ export type RunRecord = {
 };
 
 /**
- * How many records a list answers with by default, and the most it will.
+ * The refusal these routes answer an unknown query parameter with.
  *
- * A cap rather than a cursor, and the limit that follows is worth stating plainly:
- * with no cursor and no offset, **the records past `maxLimit` are unreachable** except
- * by narrowing with `kind` or `signalId`. ADR-0011 says the agent may read every
- * Signal, and it is not being refused any of them — there is simply no paging yet,
- * because no Run has had a use for it. When one does, the cursor goes in the envelope
- * alongside the list, which is why the list is an envelope.
+ * The convention and its reasoning are in `route-conventions.ts`; what is the Core's
+ * own is the sentence the message ends with. `?session=user_a` quietly returning every
+ * Session's Signals is the exact mistake ADR-0011 forbids designing for, so the
+ * refusal says outright that there is no such parameter — a deployment that believed
+ * it was scoping something finds out at the first request instead of never.
  */
-const defaultLimit = 50;
-const maxLimit = 200;
-
-const limitSchema = {
-  type: "integer",
-  minimum: 1,
-  maximum: maxLimit,
-  default: defaultLimit,
-} as const;
-
-/**
- * The shape of an id in a path or a query.
- *
- * Validated rather than passed through, because PostgreSQL refuses to cast a
- * malformed uuid and the agent would get a 500 out of a mistyped path instead of the
- * 400 it earned. Spelled as a pattern rather than `format: "uuid"`, which needs an
- * ajv plugin Fastify does not bundle.
- */
-const idSchema = {
-  type: "string",
-  pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-} as const;
-
-const idParams = {
-  type: "object",
-  properties: { id: idSchema },
-  required: ["id"],
-  additionalProperties: false,
-} as const;
+const rejectUnknownQuery = unknownQueryRefusal(
+  "Reads are not scoped by Session or by User, so there is no such parameter to pass.",
+);
 
 /**
  * The Core's read routes, over a handle to the Core's own tables.
@@ -214,49 +199,6 @@ export function agentReadRoutes(db: CoreDb): FastifyPluginAsync {
       },
     );
   };
-}
-
-/**
- * Refuses a query parameter this route does not have, before validation strips it.
- *
- * A hook rather than the schema, because Fastify's ajv is configured with
- * `removeAdditional`, so `additionalProperties: false` deletes an unknown parameter
- * and answers the request as though it had never been written. That default is wrong
- * for this surface twice over: `?limt=5` quietly returning fifty records is a misread
- * nobody sees, and `?session=user_a` quietly returning every Session's Signals is the
- * exact mistake ADR-0011 forbids designing for. The schema keeps
- * `additionalProperties: false` anyway — it is what documents the parameter list, and
- * this hook is what makes it a refusal.
- */
-function rejectUnknownQuery(...allowed: readonly string[]) {
-  // `query` is `unknown` rather than a record, because a route with no `Querystring`
-  // type is exactly where this hook matters most and Fastify types its query that
-  // way. Narrowed rather than asserted: there is no shape to promise here.
-  return async (
-    request: { readonly query: unknown },
-    reply: FastifyReply,
-  ): Promise<FastifyReply | undefined> => {
-    const written =
-      typeof request.query === "object" && request.query !== null ? Object.keys(request.query) : [];
-    const unexpected = written.filter((parameter) => !allowed.includes(parameter));
-    if (unexpected.length === 0) return undefined;
-    const takes = allowed.length === 0 ? "no parameters" : allowed.join(", ");
-    return reply.code(400).send({
-      statusCode: 400,
-      error: "Bad Request",
-      message: `${unexpected.map((parameter) => JSON.stringify(parameter)).join(", ")} is not a parameter of this route, which takes ${takes}. Reads are not scoped by Session or by User, so there is no such parameter to pass.`,
-    });
-  };
-}
-
-/**
- * The 404 body, in the shape Fastify's own errors use, so the surface answers one
- * error shape rather than two.
- */
-function notFound(reply: FastifyReply, what: string, id: string): FastifyReply {
-  return reply
-    .code(404)
-    .send({ statusCode: 404, error: "Not Found", message: `no ${what} ${id} exists` });
 }
 
 function asSignalRecord(row: typeof signals.$inferSelect): SignalRecord {
