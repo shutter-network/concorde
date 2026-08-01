@@ -9,7 +9,7 @@ reasoning, and every one of them is optional.
 What you will end up with is a **Gateway**: one process that owns a queue of things that
 arrived from outside, turns each of them into a Prompt, and runs an AI agent against
 that Prompt inside a container. The vocabulary is in [`../CONTEXT.md`](../CONTEXT.md);
-the four words you need before you start are:
+the five words you need before you start are:
 
 | Word | Meaning |
 | --- | --- |
@@ -17,6 +17,7 @@ the four words you need before you start are:
 | **Signal Handler** | your code, which turns a Signal into zero, one, or many Prompts |
 | **Run** | one execution of the agent: one Prompt, in one Session |
 | **Workspace** | a directory your Handlers and the agent both read and write |
+| **Mount Table** | your list of what the agent's container can see on disk, and who it runs as |
 
 ## Before you start
 
@@ -117,21 +118,128 @@ example/state/agent/                the agent's own directory: credentials, trus
 example/state/sessions/user_42/     one directory per Session, holding its transcript
 ```
 
+Those three directories are **the entry point's**, `mkdir`ed by `gateway.ts` itself a few
+lines before it opens the Store. The framework creates no directory anywhere, so creating
+what your mounts point at is the deployment's job rather than a courtesy —
+[a wrong path costs you a Signal](#a-wrong-path-costs-you-a-signal) is what happens when
+one is missing. What ends up inside them is the agent's, written as your own uid.
+
 Ask a second question in the same Session and the agent will remember the first: the
 Session directory is how, and it is why Sessions get a directory each.
 
+One thing in there is not what it looks like. After the first Run you will find an **empty
+`example/state/workspace/AGENTS.md`**, and it is not the file the agent read. A mount's
+*target* is created by the daemon when it is not already there, and the real file is
+`example/AGENTS.md`, mounted over that path read-only on every Run. Editing the empty one
+changes nothing and deleting it changes nothing; the file to edit is the committed one.
+
+## Telling the agent about the Agent server
+
+The framework does not tell the agent anything. It writes no file, passes no system
+prompt, and holds no text about itself — so an agent nobody tells about the Agent server
+never calls it. Telling it is yours, and **this section is what you copy from.**
+
+The mechanism is `pi`'s own: it looks for `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md` or
+`CLAUDE.MD` in its working directory and that directory's ancestors, and its working
+directory is your `workspacePath`. So you put a file in the Workspace and it is found. The
+reference deployment commits [`../example/AGENTS.md`](../example/AGENTS.md) and mounts it
+there, **read-only**, as the fourth entry of its Mount Table:
+
+```ts
+{
+  containerPath: "/workspace/AGENTS.md",
+  gatewayPath: path.join(import.meta.dirname, "AGENTS.md"),
+  readOnly: true,
+}
+```
+
+Read-only, and a single **file** entry rather than a directory, is the whole shape. The
+Workspace around it stays writable, so `pi`'s own tooling and your Handlers are
+unaffected, while a Run that is talked into rewriting the agent's instructions gets
+`EROFS` instead. That property used to be held by the framework rewriting the file before
+every single Run; the container runtime holds it by construction now, and holds it even
+for a Run that never finishes.
+
+### The routes
+
+All `GET`, all JSON, all on the Agent server, and **all unscoped**:
+
+| Route | Answers |
+| --- | --- |
+| `/signals?limit=&kind=` | `{ "signals": [ … ] }`, newest first |
+| `/signals/<id>` | one Signal, or 404 |
+| `/runs?limit=&signalId=` | `{ "runs": [ … ] }`, newest first |
+| `/runs/<id>` | one Run, or 404 |
+
+A **Signal** is `{ id, kind, payload, emittedAt, state, error }`. `payload` is arbitrary
+JSON, exactly as the Producer wrote it. `emittedAt` is an ISO 8601 string, because JSON
+has no date. `state` is one of `pending`, `processing`, `done`, `failed`, and `error` is a
+string or `null`.
+
+A **Run** is `{ id, signalId, session, prompt, state, error, startedAt, endedAt }`.
+`session` is a plain name, or `null` where the Prompt asked for a fresh Session. `state`
+is one of `pending`, `running`, `done`, `failed`. The timings are ISO 8601 strings, or
+`null` for a Run that has not reached that point. The Run executing right now is in there,
+and so is its Signal.
+
+Four facts about the surface that an agent's instructions should carry, because each of
+them is a request that would otherwise be written and quietly misunderstood:
+
+- **There is no credential.** Reaching the port is access. Nothing to send, nothing to
+  obtain, nothing to rotate.
+- **Reads are not scoped.** Every Signal and every Run, whatever Session the Run asking
+  is in. There is no `session` parameter and no `user` parameter on any route, and an
+  unknown query parameter is a **400** rather than a request answered with everything —
+  so a deployment that believed it was scoping something finds out at once.
+- **`limit` defaults to 50 and caps at 200.** Asking for more is refused rather than
+  quietly reduced. There is no cursor and no offset, so records past the cap are reached
+  by narrowing with `kind` or `signalId` and not by paging.
+- **Nothing here writes.** The Core has nothing an agent may change: a Signal is immutable
+  but for the state the worker gives it, and a Run is the worker's record of its own work.
+
+`pi` ships no HTTP client, so the agent calls this with its shell tool and `curl` — which
+is why `curl` is one of the four things the agent's image needs:
+
+```sh
+curl -s "http://host.docker.internal:7411/signals?limit=5"
+```
+
+That host name is the reference deployment's, and it is
+[not derivable from where the server binds](#where-the-agent-reaches-you-is-not-derivable-from-where-the-server-binds).
+
+### This copy can go stale
+
+The routes and the field shapes above are the framework's; the file in your Workspace is a
+**copy** of them, made by hand. Nothing keeps the two in sync — the framework does not
+write that file, does not read it, and cannot see that it has drifted. So check it against
+this page when you upgrade.
+
+The failure mode is worth knowing because it is quiet: a stale copy does not produce an
+error, it produces an agent that asks for something that is not there, gets a 400 or a
+404, and stops asking. That reads as a model being unhelpful rather than as a deployment
+being out of date.
+
 ## What the entry point actually does
 
-Read [`../example/gateway.ts`](../example/gateway.ts) — fifty-six lines of code under a
-hundred and sixty with the comments, and the best documentation this project has. Thirty-four
-of those lines are the assembly itself; the rest are five lines of imports, the
-configuration literals, the three directories it creates, and the shutdown handler the
-framework does not ship. Nothing in the framework represents the Gateway:
+Read [`../example/gateway.ts`](../example/gateway.ts) — sixty-five lines of code under a
+hundred and ninety with the comments, and the best documentation this project has.
+Forty-three of those lines are the assembly itself; the rest are five lines of imports,
+the configuration literals, the three directories it creates, and the two things at the
+bottom the framework does not ship. Nothing in the framework represents the Gateway:
 there is no object to construct, no registry to add parts to, no lifecycle to implement,
 and no plugin system. The file *is* the Gateway, and every line of it is a part being
 constructed and handed to another part.
 
-Which means **the ordering is yours**, and it is the one thing about that file that is
+Two things in it are the framework's to describe and **yours to do**, and both are near
+the top. It `mkdir`s `state/workspace`, `state/agent` and `state/sessions`, because it is
+about to declare all three as mounts and nothing else will create them. And an `AGENTS.md`
+sits committed beside it — not written by anything at runtime, just a file in the
+repository — which the Mount Table's fourth entry mounts into the Workspace read-only, and
+which is the only thing that tells the agent the Agent server exists. The framework
+creates no directory and writes no file, ever
+([ADR-0028](./adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)).
+
+Then **the ordering is yours**, and it is the one thing about that file that is
 not arbitrary:
 
 1. **Open the Store.** One PostgreSQL URL. Nothing touches the network yet.
@@ -141,7 +249,9 @@ not arbitrary:
    server, so `Fastify()` is what you call and everything Fastify offers is yours without
    asking — then the Runtime Adapter and the Core, handing each what it needs, and then
    the Core's own routes onto the Agent one. Nothing constructed here has a side effect;
-   the registration is the only one.
+   the registration is the only one. The adapter takes the Mount Table and settles it on
+   the spot, as a pure function of what you wrote: a relative path, or an entry no
+   `hostPaths` prefix covers, is refused **at this line** rather than at the first Signal.
 4. **Start the Core with its Handlers.** The Handler map is a parameter of `start`, so a
    Gateway running with no Handlers registered is not something you can express by
    accident.
@@ -182,13 +292,13 @@ default, so a `listen` that says nothing about `host` is already on loopback; th
 reference deployment states it anyway, because the most consequential value in a
 deployment should not be one you have to know a library's defaults to find.
 
-### `agentServerUrl` is not derivable from where the server binds
+### Where the agent reaches you is not derivable from where the server binds
 
 Where the Agent server's socket **binds** and how the agent's container **reaches** it
-are two separate values, and nothing can compute either from the other. The second one is
-`agentServerUrl`, a field of the Runtime Adapter's configuration: an absolute base URL,
-no default, and nothing validates it — it is written into the agent's instructions file
-byte for byte as you wrote it, a trailing slash included.
+are two separate values, and nothing can compute either from the other. The framework
+holds neither. The first is the `host` and `port` you pass to `agentServer.listen`; the
+second is a **string in your own `AGENTS.md`**, and there is nowhere else for it to be —
+the adapter has no field for it, has never read it, and never sees that address at all.
 
 The reference deployment uses `http://host.docker.internal:7411` with a loopback bind,
 and that works **on Docker Desktop**, which routes that name to the host including its
@@ -203,13 +313,15 @@ loopback interface.
   ["the Agent server is unauthenticated"](#the-agent-server-is-unauthenticated) now
   applies to you.
 
-On a shared Compose network where the Gateway is itself a service, neither is needed:
-`agentServerUrl` is `http://<service-name>:7411` and the bind stays inside the network.
+On a shared Compose network where the Gateway is itself a service, neither is needed: the
+address is `http://<service-name>:7411` and the bind stays inside the network.
 
-If you get this wrong the symptom is clear at least: the agent says it cannot reach the
-URL it was given. Both values are in your own entry point, a few lines apart — the `host`
-and `port` you passed to `agentServer.listen`, and the `agentServerUrl` you passed to
-`createPiAdapter`. Read them together; nothing else has to be consulted.
+If you get this wrong the symptom is at least legible: the agent's `curl` fails and the
+agent says so. The two values are in two files that sit next to each other — the `listen`
+call at the bottom of `gateway.ts`, and the URL in `AGENTS.md` beside it. Read them
+together; nothing else has to be consulted, and changing one always means changing the
+other, which is why the reference deployment's `AGENTS.md` says so in its own last
+section.
 
 ### The agent's container runs as *your* uid
 
@@ -217,7 +329,8 @@ With bind mounts, files the agent writes are owned by whoever the container runs
 the Mount Table defaults its `user` to the Gateway process's own `uid:gid` — otherwise
 your Signal Handlers cannot read what the agent left in the Workspace, and the agent
 cannot read what they left for it. It sits beside the entries because it is the other
-half of the same fact: what is shared, and who shares it.
+half of the same fact: what is shared, and who shares it. Write `user: "1000:1000"` on the
+table to override it; it is a default and not a rule.
 
 The consequence: **the mounted directories must be writable by that uid.** In the
 reference deployment they are, trivially, because the Gateway runs as you on your own
@@ -226,15 +339,49 @@ directories come from somewhere else — a volume, a provisioned path, another
 container — making them writable by that uid is your job.
 
 Nothing checks it for you. The framework verifies no mount and starts no container at
-boot, so an unwritable directory is something the agent meets during a Run.
+boot, so an unwritable directory is something the agent meets during a Run — with the
+consequence in the next section.
+
+### A wrong path costs you a Signal
+
+Nothing verifies your mounts. There is no startup check, no throwaway container, and not
+even a `stat` of the paths you declared: the Mount Table performs no I/O at all, on
+purpose ([ADR-0028](./adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)).
+Resolving it catches what is wrong with what you *wrote* — a relative path, an entry your
+`hostPaths` does not cover — and nothing at all about what is on your disk.
+
+What catches the rest is the container runtime, and it does catch it. Every entry is
+emitted as `--mount type=bind`, never `-v`, and the difference is the point: `-v` invents
+a missing source as a `root`-owned **directory**, even where you meant a file, and the
+agent then reads an empty Workspace perfectly happily. `--mount` refuses, naming the path:
+
+```
+docker: Error response from daemon: invalid mount config for type "bind":
+bind source path does not exist: /srv/saf/wokspace
+```
+
+**The bill is that this arrives at the first Run, not at boot.** A failed Run is never
+retried ([ADR-0017](./adr/0017-failed-runs-are-not-retried.md)), so the Signal that found
+your typo is dead permanently: fixing the path and restarting does not bring it back, and
+if that Signal was a user's question, the user is owed a new one. This is the one real
+cost of nothing being checked, and it is worth knowing before you meet it rather than
+after.
+
+Two things soften it. The daemon's message is in the Run's `error` column, verbatim, with
+the exit code beside it — so the first place you look is the place it is. And there is
+nothing timing-dependent about which Runs fail: a mount that is wrong is wrong for every
+Run, so the first Signal after a deploy tells you, and it tells you the same thing the
+hundredth would.
 
 ### The line you need to diagnose a mount or a network is off by default
 
 The Runtime Adapter logs the whole composed container invocation — every flag, every
 `--mount`, the image, the network, and `pi`'s own arguments — so that diagnosing a mount
-or a network problem never means reading framework source. It logs it at **`debug`**, and
-the logger every part falls back to when you supply none runs at `info`. So by default you
-do not see it.
+or a network problem never means reading framework source. Since nothing is verified any
+more, this line is the whole of what the framework offers for that, which makes it worth
+turning on before you need it rather than after. It logs at **`debug`**, and the logger
+every part falls back to when you supply none runs at `info`. So by default you do not see
+it.
 
 Supply your own logger to get it. Every part takes one, and the seam is structural — four
 methods, `debug`/`info`/`warn`/`error`, each taking fields then a message — so anything
@@ -249,6 +396,13 @@ const core = createCore({ store, runtime, logger });
 Safe to keep in a log file: the argument list on that line has environment **values**
 stripped out, because the real one carries your provider API key. The two values a mount
 problem is diagnosed from are kept.
+
+The same line carries one field the argv cannot: `sessionDirectory`, the Session's own
+directory **as this process sees it**, rather than as the container does. That is the
+answer to "the agent has forgotten everything" — go and look at whether the transcript is
+where you think it is. The Mount Table works the container path back through your entries
+to produce it, and reports nothing at all where the Session root is not something you
+mounted, which is itself the answer in that case.
 
 ### The agent's network isolates less than it looks like
 
@@ -380,7 +534,7 @@ You never run a schema generation tool. The SQL ships inside the package.
 
 ## Making it yours
 
-Four things you will want, in the order you will want them.
+Five things you will want, in the order you will want them.
 
 **Your own Signal Handler.** A Handler is a plain object with a `handle` that takes a
 Signal and returns Prompts. There is no base class, no context object, and no registration
@@ -427,6 +581,19 @@ the same call the framework's own parts use, and `store.tx(cb)` a transaction yo
 into `core.emit`. No privileged access and no special case. Give your part its own
 PostgreSQL schema and its own migration tracking table.
 
+**Your own mount.** One more thing for the agent to see is one more entry in
+`mounts.entries`, and that is the whole of it — no framework change, no new field, and no
+privileged position for the Workspace, which is an ordinary entry like the rest:
+
+```ts
+{ containerPath: "/reference", gatewayPath: "/srv/handbook", readOnly: true }
+```
+
+Both paths are absolute, and `containerPath` is POSIX however your own platform spells a
+path. An entry may name a directory or a single file, and the declaration does not say
+which, because nothing in the Mount Table looks. Create the source yourself before the
+first Run — nothing else will, and the daemon refuses what is not there.
+
 ## No key, or a different provider
 
 The reference deployment names Anthropic in two places — `model`/`provider` in the
@@ -436,18 +603,29 @@ environment: this process's own is deliberately **not** inherited, which is much
 reason the agent runs in a container at all. The adapter adds exactly two variables of its
 own — one turning off `pi`'s startup network calls, which you can override, and one
 pointing `pi` at the mounted agent directory, which you cannot, because an agent pointed
-anywhere else finds none of the configuration written for its Run.
+anywhere else finds nothing you put there.
 
 For another provider, change the model, the provider, and the variable name. For a local
-OpenAI-compatible server, leave `provider` off and describe it in `models`, which is
-written to the agent's `models.json` untouched.
+OpenAI-compatible server, leave `provider` off and put a `models.json` describing it in
+the agent's directory yourself. The framework will not carry it for you: it has no
+`models` field and no `settings` field, because writing out JSON it never reads is
+pass-through with a file write attached. Anything `pi` should read on disk is yours to
+place in a directory you mount, and the framework has never heard of any of it.
 
 There is a second way in, worth knowing because it survives restarts: the agent's own
 directory persists between Runs, so an `auth.json` you put there is picked up, and `pi`'s
-own documentation says a credential there takes priority over the environment. Credentials the agent refreshes mid-Run persist the same
-way. What does *not* persist is the agent's **settings** — those are rewritten from your
-entry point before every single Run, on purpose, so that nothing the agent was talked into
-doing to its own configuration outlives the Run it happened in.
+own documentation says a credential there takes priority over the environment. Credentials
+the agent refreshes mid-Run persist the same way — which is the point of that directory,
+and the reason nothing of ours writes into it.
+
+Everything in there persists, including whatever the agent did to its own settings. If you
+want a file the agent cannot durably change, the answer is a **read-only single-file
+entry** in the Mount Table, the same shape `AGENTS.md` uses; the framework no longer holds
+that property by rewriting anything. Two facts about doing it to `settings.json` in
+particular, both checked against `pi@0.83.0` rather than assumed: it must be the **file**
+that is read-only and not the directory, because `pi` takes a lock beside that file even
+to read it, and a write it is refused is recorded rather than thrown, so the Run survives
+being denied.
 
 Without a usable key the Gateway still starts, the container still runs, and the Run is
 recorded as **failed** carrying the provider's own message — which is worth seeing once,
@@ -473,11 +651,58 @@ Running on the host also makes the file-ownership story true by construction: th
 container runs as the Gateway process's uid, and the directories under `example/state/`
 belong to that user already.
 
+### If you containerise it anyway: `hostPaths`
+
 A Mount Table entry is two values — where a directory or file appears **to the agent**,
 and where it is **as this process sees it** — and the second is what the container
-runtime's daemon resolves, **on the host**. Those are the same string only while the
-Gateway runs on the host, which is the case this deployment is. Translating them for a
-containerised Gateway is not something the framework does yet.
+runtime's daemon resolves, **on the host**. Three processes are naming the same directory
+and only two of the names are in that entry. They are the same string while the Gateway
+runs on the host, which is the case this deployment is, so the third name never comes up.
+
+It comes up the moment the Gateway is itself in a container, and then it is **one fact
+about your deployment** rather than a property of each mount. State it once, on the table:
+
+```ts
+mounts: {
+  entries: [
+    { containerPath: "/workspace", gatewayPath: "/srv/state/workspace" },
+    { containerPath: "/sessions", gatewayPath: "/srv/state/sessions" },
+  ],
+  // this container's /srv/state is the host's /var/lib/saf
+  hostPaths: { "/srv/state": "/var/lib/saf" },
+}
+```
+
+Keys are matched **longest prefix first**, so a general mapping and a specific exception
+coexist. Leave `hostPaths` out and every entry is its own source, which is what every
+example on this page has been doing.
+
+Once you write one it is **exhaustive**. An entry whose `gatewayPath` falls under no key
+is refused when you construct the adapter, with a message naming the path and listing the
+prefixes you declared. It deliberately does not fall back to identity: a fallback is what
+turns forgetting the third of three mappings into a deployment that starts, serves, and
+has one silently empty directory in it. And because resolution is a pure function of what
+you wrote, you find out with no daemon, no image and no container.
+
+A key matched **exactly** contributes its value whole, with nothing appended, and that is
+how a named volume is expressed — no runtime will mount a *subpath* of one, so a composed
+source would look right and be wrong. The value is handed to the daemon unread; nothing
+here knows what a volume is, and a volume stays a value rather than becoming a framework
+concept. One sharp edge follows from mounts being emitted as `type=bind`, whose source a
+daemon resolves as a path: under Docker the value has to be **where the volume lives on
+the host**, `/var/lib/docker/volumes/saf-workspace/_data` and not `saf-workspace`, which
+is refused as a non-absolute source.
+
+**Nothing discovers this mapping for you, and that is a deferral rather than an
+omission.** Two mechanisms would work — `/proc/self/mountinfo`, and `docker inspect` on
+the Gateway's own container — and
+[ADR-0028](./adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md) records
+both, along with the constraint on whoever adds one: it must be an **exact** mechanism and
+not a heuristic. A heuristic used to be affordable because a round trip at startup would
+have caught a bad guess, and that round trip is exactly what has been removed.
+`mountinfo` returns a confident wrong path whenever the directory sits on a separate
+filesystem, a btrfs subvolume, or a Docker Desktop VM; a confident wrong path is worse
+than no path at all, because the wrong one is not refused.
 
 ## No agent image is published
 
@@ -493,9 +718,12 @@ you substitute:
 4. **No dependence on a passwd entry** — the container runs as a uid the image has never
    heard of, so nothing may need `/etc/passwd` or `$HOME` to name it.
 
-The model, the key, the Workspace, and the instructions are deliberately not in the image.
-All four are the Gateway's, passed or written per Run, so changing any of them is an edit
-to your entry point rather than an image rebuild.
+The model, the key, the Workspace, and the agent's instructions are deliberately not in
+the image. The first two are passed in per Run and the last two are mounted, so changing
+any of them is an edit to your entry point, or to a file beside it, rather than an image
+rebuild. Nothing is *written* into the image or into a mount by the framework; the reason
+the instructions are mounted rather than baked in is that a mount can be read-only and can
+change without a rebuild.
 
 ## Tearing it down
 
@@ -518,6 +746,10 @@ So you do not go looking:
   above.
 - **Authentication on the Agent server.** Refused, with the consequences spelled out
   above.
+- **Any check on what you mounted.** Refused, with the cost spelled out above. The
+  container runtime refuses a source that is not there, and that is the whole of it.
+- **Any file the framework writes.** It writes none, anywhere, ever — not the agent's
+  settings, not its instructions, not a directory to put them in.
 - **Shutdown handling.** Yours.
 - **Any Agent Runtime but `pi`.** The adapter's contract is narrow enough that another is
   possible; none is written.

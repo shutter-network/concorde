@@ -17,9 +17,11 @@
 #     pointed at the mounted agent directory by an environment variable the adapter
 #     sets, which is where it keeps everything it writes.
 #
-# Deliberately not here: the model, the API key, the Workspace, the instructions. All
-# four are the Gateway's, written or passed in per Run, so a change to any of them is
-# an edit to the entry point rather than an image rebuild.
+# Deliberately not here: the model, the API key, the Workspace, the instructions. The
+# first two are passed in per Run and the last two are mounted, so a change to any of
+# them is an edit to the entry point, or to a file beside it, rather than an image
+# rebuild. Nothing writes into this image or into a mount; a mount is how the
+# instructions can be read-only and can change without a rebuild.
 FROM node:24-alpine
 
 RUN apk add --no-cache curl
