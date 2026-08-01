@@ -133,7 +133,7 @@ try {
     // both. Migration folders resolve because of this and nothing else.
     "dist/db/db.js",
     "dist/db/db.d.ts",
-    // The Signal Worker's descriptor resolves `../../migrations/core` from its own
+    // The Signal Worker's descriptor resolves `../../migrations/signals` from its own
     // module, so its position in `dist` is what makes the shipped folder reachable.
     "dist/signals/migrations.js",
     "dist/signals/worker.js",

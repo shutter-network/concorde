@@ -68,7 +68,7 @@ describe("the Signal Worker's migrations", () => {
     const rejection = await db
       .handle({})
       .execute(
-        sql`insert into "saf_core"."signals" ("kind", "payload", "state") values ('x', '{}', 'timed_out')`,
+        sql`insert into "saf_signals"."signals" ("kind", "payload", "state") values ('x', '{}', 'timed_out')`,
       )
       .then(
         () => undefined,

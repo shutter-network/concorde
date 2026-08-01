@@ -1,5 +1,5 @@
 /**
- * How `migrations/core` is generated. Run `npm run migrations:generate` after
+ * How `migrations/signals` is generated. Run `npm run migrations:generate` after
  * changing `src/signals/schema.ts`, then commit what it wrote: the SQL ships inside
  * the package and an Operator never runs a schema generation tool (ADR-0022).
  *
@@ -11,7 +11,7 @@
  * **Two things must be checked by hand after generating**, neither of which
  * `drizzle-kit` can know:
  *
- *  - A generated first migration begins `CREATE SCHEMA "saf_core";`, which has to
+ *  - A generated first migration begins `CREATE SCHEMA "saf_signals";`, which has to
  *    go. `db.migrate` creates the descriptor's schema before applying the
  *    folder, because the tracking table lives in it — so the generated line
  *    always fails on a schema that already exists.
@@ -28,5 +28,5 @@ import { defineConfig } from "drizzle-kit";
 export default defineConfig({
   dialect: "postgresql",
   schema: "./src/signals/schema.ts",
-  out: "./migrations/core",
+  out: "./migrations/signals",
 });

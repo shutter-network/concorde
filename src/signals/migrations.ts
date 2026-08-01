@@ -5,7 +5,7 @@ import { workerSchema } from "./schema.ts";
  * The Signal Worker's migration descriptor: inert data the Operator's entry point
  * hands to `db.migrate` alongside every other part's (ADR-0021, ADR-0022).
  *
- * The relative `../../migrations/core` is what makes `dist` mirroring `src`
+ * The relative `../../migrations/signals` is what makes `dist` mirroring `src`
  * load-bearing — the same relative path has to reach the same folder from
  * `src/signals/migrations.ts` and from `dist/signals/migrations.js`. It is a `URL` and
  * not a path so that resolution is against this module rather than the working
@@ -16,7 +16,7 @@ import { workerSchema } from "./schema.ts";
  * never run a schema generation tool.
  */
 export const signalsMigrations: MigrationDescriptor = {
-  folder: new URL("../../migrations/core", import.meta.url),
+  folder: new URL("../../migrations/signals", import.meta.url),
   // Taken from the schema object rather than spelled again: the tables are
   // compiled against that name, so a descriptor naming another would migrate one
   // place and read another, and every query would fail on a missing relation.

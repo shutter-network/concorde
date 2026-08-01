@@ -145,7 +145,7 @@ export type SignalWorker = {
  * nothing an Operator gains by choosing the name. Exported for the tests, which send
  * spurious notifications on it, and not from the package.
  */
-export const signalChannel = "saf_core_signal";
+export const signalChannel = "saf_signals_signal";
 
 /** How long a Signal can sit unnoticed if its notification was lost. */
 const defaultSweepIntervalMs = 5_000;

@@ -1,12 +1,12 @@
 {
-  "id": "44e349b5-c985-45db-b6ea-e5cf86f1e214",
+  "id": "67a8ae18-8f14-4d92-9011-140795c3cd4d",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "saf_core.runs": {
+    "saf_signals.runs": {
       "name": "runs",
-      "schema": "saf_core",
+      "schema": "saf_signals",
       "columns": {
         "id": {
           "name": "id",
@@ -81,7 +81,7 @@
           "name": "runs_signal_id_signals_id_fk",
           "tableFrom": "runs",
           "tableTo": "signals",
-          "schemaTo": "saf_core",
+          "schemaTo": "saf_signals",
           "columnsFrom": ["signal_id"],
           "columnsTo": ["id"],
           "onDelete": "no action",
@@ -94,14 +94,14 @@
       "checkConstraints": {
         "runs_state_known": {
           "name": "runs_state_known",
-          "value": "\"saf_core\".\"runs\".\"state\" in ('pending', 'running', 'done', 'failed')"
+          "value": "\"saf_signals\".\"runs\".\"state\" in ('pending', 'running', 'done', 'failed')"
         }
       },
       "isRLSEnabled": false
     },
-    "saf_core.signals": {
+    "saf_signals.signals": {
       "name": "signals",
-      "schema": "saf_core",
+      "schema": "saf_signals",
       "columns": {
         "id": {
           "name": "id",
@@ -173,7 +173,7 @@
       "checkConstraints": {
         "signals_state_known": {
           "name": "signals_state_known",
-          "value": "\"saf_core\".\"signals\".\"state\" in ('pending', 'processing', 'done', 'failed')"
+          "value": "\"saf_signals\".\"signals\".\"state\" in ('pending', 'processing', 'done', 'failed')"
         }
       },
       "isRLSEnabled": false
@@ -181,7 +181,7 @@
   },
   "enums": {},
   "schemas": {
-    "saf_core": "saf_core"
+    "saf_signals": "saf_signals"
   },
   "sequences": {},
   "roles": {},

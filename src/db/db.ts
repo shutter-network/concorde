@@ -42,7 +42,7 @@ export type MigrationDescriptor = {
   /**
    * The folder holding the generated `.sql` files and `meta/_journal.json`.
    *
-   * A `URL` and not a path, so that `new URL("../../migrations/core",
+   * A `URL` and not a path, so that `new URL("../../migrations/signals",
    * import.meta.url)` is the only natural spelling and a working-directory
    * relative path cannot be written by accident. That distinction is invisible
    * in this repository and fatal outside it: the folder ships inside the

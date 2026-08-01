@@ -8,7 +8,7 @@
  * tables gets them through `db.handle(theirOwnSchema)`, the same call the
  * framework's parts use (ADR-0021, ADR-0022).
  *
- * `drizzle-kit` reads this file to generate `migrations/core`, so keep it to the
+ * `drizzle-kit` reads this file to generate `migrations/signals`, so keep it to the
  * tables and the values they are defined in terms of. The descriptor that ships
  * those migrations lives in `migrations.ts` for that reason.
  */
@@ -26,13 +26,17 @@ import {
 } from "drizzle-orm/pg-core";
 
 /**
- * The Signal Worker's schema. Prefixed because the framework is installed into a
- * database it does not own: an unprefixed `core` is a plausible name for a schema an
- * Operator already has, and this name is not theirs to change — the tables below
- * are compiled against it, so a descriptor naming a different schema would migrate
- * one place and read another.
+ * The Signal Worker's schema. Named for its subject rather than for the component
+ * that owns it, matching `saf_users`: component names have proven the less stable of
+ * the two, this part having been the Core until recently, and a schema rename is the
+ * one rename with a database in it.
+ *
+ * Prefixed because the framework is installed into a database it does not own: an
+ * unprefixed `signals` is a plausible name for a schema an Operator already has, and
+ * this name is not theirs to change — the tables below are compiled against it, so a
+ * descriptor naming a different schema would migrate one place and read another.
  */
-export const workerSchema = pgSchema("saf_core");
+export const workerSchema = pgSchema("saf_signals");
 
 /**
  * A Signal's processing state. One-way: nothing returns to `pending`, and a
