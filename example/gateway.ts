@@ -14,12 +14,9 @@
  *   3. **construct, and register routes** — two Fastify instances, the Runtime Adapter,
  *      the Core, and the Core's own routes onto the Agent one. None of it has a side
  *      effect beyond that registration
- *   4. **verify the mounts** — one throwaway container, which refuses the deploy if the
- *      agent cannot see the directories this process thinks it mounted. A step of its own
- *      rather than part of constructing the adapter, for the reason migrating is one
- *   5. **start the Core with its Handlers** — passing them in, because a Core started
+ *   4. **start the Core with its Handlers** — passing them in, because a Core started
  *      with none registered should not be expressible
- *   6. **listen** — last, because Fastify refuses a route registration after that
+ *   5. **listen** — last, because Fastify refuses a route registration after that
  *
  * Two things this file is deliberately on the hook for, because the framework ships
  * neither: **shutdown** (the `SIGINT` handler at the bottom, whose ordering matters) and
@@ -54,14 +51,18 @@ const agentPort = 7411;
 const agentServerUrl = `http://host.docker.internal:${agentPort}`;
 
 // Three directories, all of them this process's own, all bind-mounted into the agent's
-// container. The Workspace is created here because the framework refuses to create it: it
-// is shared with the Signal Handlers, and a Gateway that conjured a missing one would
-// hide a wrong path instead of failing on it. The other two the framework makes itself,
-// in the startup check below — and each Session's own directory is made by `pi`, inside
-// the container.
+// container, and all three created here. The framework creates none of them (ADR-0028):
+// a directory a mount points at is the Operator's. Creating them is not a courtesy —
+// the daemon resolves a bind source on the host and invents a missing one as a
+// `root`-owned directory, which the agent's container then cannot write inside. Each
+// Session's own directory, inside the third, is made by `pi` inside the container.
 const state = path.join(import.meta.dirname, "state");
 const workspace = path.join(state, "workspace");
-await mkdir(workspace, { recursive: true });
+const agentDir = path.join(state, "agent");
+const sessionRoot = path.join(state, "sessions");
+await Promise.all(
+  [workspace, agentDir, sessionRoot].map((directory) => mkdir(directory, { recursive: true })),
+);
 
 const store = openStore(process.env.DATABASE_URL ?? "postgres://saf:saf@localhost:5433/saf");
 await store.migrate(coreMigrations);
@@ -95,8 +96,8 @@ const runtime = createPiAdapter({
   // like a leak. A third value exists for when the container runtime resolves the source
   // somewhere else again, which is what a containerised Gateway needs.
   workspace: { localPath: workspace, agentPath: "/workspace" },
-  agentDir: { localPath: path.join(state, "agent"), agentPath: "/home/agent/.pi/agent" },
-  sessionRoot: { localPath: path.join(state, "sessions"), agentPath: "/sessions" },
+  agentDir: { localPath: agentDir, agentPath: "/home/agent/.pi/agent" },
+  sessionRoot: { localPath: sessionRoot, agentPath: "/sessions" },
   agentServerUrl,
   instructions: "You are the shared agent of several people. Be brief and be careful.",
 });
@@ -104,12 +105,6 @@ const core = createCore({ store, runtime });
 // Nothing does this for you. Not registering a route group is how you switch it off, and
 // this one is read-only and unscoped: the agent sees every Signal and every Run.
 await agentServer.register(core.agentRoutes);
-
-// One throwaway container, before anything serves: it writes a token into each of the
-// three mounts, has the container read it back and write its own, and reads that. It
-// refuses the deploy naming the mount when it cannot, which is worth a container start at
-// boot — two of the three failures it catches are otherwise completely silent.
-await runtime.verifyMounts();
 
 // The primary extension point, and the only one that needs learning. A Handler is a
 // plain object with a `handle` — this one is shipped, renders a Handlebars file per Run,

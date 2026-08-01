@@ -7,8 +7,8 @@
 #  - `pi` is the **entry point**, because the adapter appends `pi`'s own flags after
 #    the image name. An image whose entry point is something else needs
 #    `--entrypoint pi` in `extraArgs`.
-#  - a POSIX shell, which the agent's `bash` tool needs and which the startup mount
-#    check runs with `--entrypoint sh`.
+#  - a POSIX shell, which the agent's own `bash` tool needs. Nothing of the Gateway's
+#    does: it starts no container but the Run's.
 #  - `curl`, because `pi` ships no HTTP client and reaching the Agent server is the
 #    agent's own `bash` plus `curl` (ADR-0010).
 #  - nothing about a user: the container is run with `--user <the Gateway's uid:gid>`,

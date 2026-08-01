@@ -15,7 +15,7 @@
  * whatever it installed under `bin/`.
  */
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   type OpaqueJson,
@@ -32,19 +32,18 @@ import { instructionsFileName } from "./invocation.ts";
  * is gone rather than merged forward from last time — the same reason the files are
  * written at all.
  *
- * Nothing about a Session is prepared here. The Agent Runtime creates each Session's
+ * No directory is created here, or anywhere else in the framework: every directory a
+ * mount points at is the Operator's to create
+ * ([ADR-0028](../../docs/adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)),
+ * and this write is one of the places a missing one surfaces, as `ENOENT` on the file.
+ * Nothing about a Session is prepared either — the Agent Runtime creates each Session's
  * own directory itself, inside the container and into the mounted Session root, as the
- * Gateway's own uid ([ADR-0025](../../docs/adr/0025-the-pi-adapter-spawns-one-confined-process-per-run.md)).
+ * Gateway's own uid
+ * ([ADR-0025](../../docs/adr/0025-the-pi-adapter-spawns-one-confined-process-per-run.md)).
  */
 export async function writeRunConfiguration(config: PiConfiguration): Promise<void> {
   const resolved = resolvePiConfiguration(config);
   const agentDir = resolved.agentDir.localPath;
-
-  // Ours to create, because the three files below go in it. The Workspace is not — it
-  // is the Operator's, shared with their Handlers, and a Gateway that conjured it would
-  // hide a wrong mount instead of failing on it. Nor is the Session root, which the
-  // startup check creates once so that the daemon never invents it as `root`.
-  await mkdir(agentDir, { recursive: true });
 
   await Promise.all([
     writeJson(path.join(agentDir, "settings.json"), resolved.settings),

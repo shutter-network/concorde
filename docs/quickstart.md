@@ -44,7 +44,6 @@ The last command starts the Gateway *and* emits one Signal, so a Run happens
 immediately. You should see roughly this, one JSON line at a time:
 
 ```
-the agent's container reads and writes every mount, as this process's own user
 Signal claimed                              {"kind":"ask", ...}
 Run started                                 {"session":"user_42", ...}
 Run finished                                {"session":"user_42", ...}
@@ -53,8 +52,8 @@ Signal finished                             {"state":"done", ...}
 
 Nothing announces that either server started, because the framework starts neither: the
 `listen` calls are yours, in your entry point, and so is any line you want about them.
-The mount check runs before both of them, so the first line above is still the sign that
-the process got up.
+Nothing announces startup at all, in fact — the first line above is the Signal the last
+line of the entry point emits, and it is the first sign the process got up.
 
 `Ctrl-C` stops it — after the Run in flight has finished, which is not instant and is
 [the part of shutdown nothing can fix for you](#shutdown-handling-is-yours-to-write). It
@@ -123,10 +122,11 @@ Session directory is how, and it is why Sessions get a directory each.
 
 ## What the entry point actually does
 
-Read [`../example/gateway.ts`](../example/gateway.ts) — fifty-three lines of code under a
-hundred and seventy with the comments, and the best documentation this project has. Thirty-four
+Read [`../example/gateway.ts`](../example/gateway.ts) — fifty-six lines of code under a
+hundred and sixty with the comments, and the best documentation this project has. Thirty-four
 of those lines are the assembly itself; the rest are five lines of imports, the
-configuration literals, and the shutdown handler the framework does not ship. Nothing in the framework represents the Gateway:
+configuration literals, the three directories it creates, and the shutdown handler the
+framework does not ship. Nothing in the framework represents the Gateway:
 there is no object to construct, no registry to add parts to, no lifecycle to implement,
 and no plugin system. The file *is* the Gateway, and every line of it is a part being
 constructed and handed to another part.
@@ -142,13 +142,10 @@ not arbitrary:
    asking — then the Runtime Adapter and the Core, handing each what it needs, and then
    the Core's own routes onto the Agent one. Nothing constructed here has a side effect;
    the registration is the only one.
-4. **Verify the mounts.** One throwaway container that proves the agent can really see
-   the three directories, and refuses the deploy if it cannot. A step of its own rather
-   than something constructing the adapter does, for the same reason migrating is.
-5. **Start the Core with its Handlers.** The Handler map is a parameter of `start`, so a
+4. **Start the Core with its Handlers.** The Handler map is a parameter of `start`, so a
    Gateway running with no Handlers registered is not something you can express by
    accident.
-6. **Listen.** Last, because Fastify refuses a route registration after a server is
+5. **Listen.** Last, because Fastify refuses a route registration after a server is
    listening. Both bind addresses are stated here, next to each other, and there is no
    framework default behind either — see
    ["Where each server binds is yours to state"](#where-each-server-binds-is-yours-to-state).
@@ -227,23 +224,8 @@ machine and the directories are under `example/state/`. In a deployment where th
 directories come from somewhere else — a volume, a provisioned path, another
 container — making them writable by that uid is your job.
 
-You will be told if you get it wrong. `runtime.verifyMounts()` starts one throwaway
-container at boot, writes a token into each of the three mounts, has the container read
-it back and write its own, reads that, edits it, and checks who owns it. A failure
-**refuses startup and names the mount**, with all three of its paths printed.
-
-Two limits on the ownership half of that, both deliberate. Only the **uid** is compared,
-not the gid: a file created in a `setgid` directory takes the directory's group on both
-sides equally, so refusing over a differing gid would refuse deployments that work — the
-gid is reported when the uid is wrong, because it is the next thing to look at. And
-**Docker Desktop remaps bind-mount ownership to the host user**, so on macOS the ownership
-comparison passes whatever happens; it is exact only under a real bind mount on a Linux
-daemon. The read-and-write round trip either side of it holds on both, and that is the
-part that actually matters — it is what "each side can use what the other wrote" means. That container start
-is worth its cost, because two of the three failures it catches are otherwise completely
-silent: an agent directory that did not mount leaves the agent running happily knowing
-nothing about the Agent server, and a Session root that did not mount makes every
-Session start empty, which reads as a forgetful model rather than a broken deployment.
+Nothing checks it for you. The framework verifies no mount and starts no container at
+boot, so an unwritable directory is something the agent meets during a Run.
 
 ### The line you need to diagnose a mount or a network is off by default
 
@@ -496,7 +478,8 @@ appears **to the agent**, and what the **container runtime** should resolve. The
 deployment sets the first two; the third defaults to the first and exists precisely for
 the case where the Gateway is itself in a container and the daemon resolves paths on the
 host. Get it wrong and the daemon silently creates an empty directory rather than
-refusing — which is the failure `verifyMounts()` exists to turn into a startup error.
+refusing, and nothing tells you: the framework checks no mount, so the first sign is an
+agent that reads an empty Workspace or a Session that never remembers anything.
 
 ## No agent image is published
 
@@ -506,7 +489,7 @@ four instructions under a page of comments. Four things the adapter needs of any
 you substitute:
 
 1. **`pi` as the `ENTRYPOINT`** — the adapter appends `pi`'s flags after the image name.
-2. **A POSIX shell** — the agent's shell tool needs one, and so does the mount check.
+2. **A POSIX shell** — the agent's own shell tool needs one.
 3. **`curl`** — `pi` ships no HTTP client, so the agent reaching the Agent server is its
    shell plus `curl`.
 4. **No dependence on a passwd entry** — the container runs as a uid the image has never

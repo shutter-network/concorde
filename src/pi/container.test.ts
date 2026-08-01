@@ -44,6 +44,7 @@ import Fastify from "fastify";
 import { createCore } from "../core/core.ts";
 import type { SignalHandler } from "../core/handlers.ts";
 import { coreMigrations } from "../core/migrations.ts";
+import type { RuntimeAdapter } from "../core/runtime.ts";
 import { runs } from "../core/schema.ts";
 import type { Store } from "../store/index.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
@@ -62,8 +63,7 @@ import {
   startMockModel,
 } from "../test-support/mock-model.ts";
 import { waitUntil } from "../test-support/wait.ts";
-import { createPiAdapter, type PiRuntime } from "./adapter.ts";
-import type { PiConfiguration } from "./configuration.ts";
+import { createPiAdapter } from "./adapter.ts";
 
 const skip = await skipContainerTests();
 
@@ -98,7 +98,7 @@ after(async () => {
 
 /** Everything one test needs standing up around the adapter. */
 type Rig = {
-  readonly runtime: PiRuntime;
+  readonly runtime: RuntimeAdapter;
   readonly model: MockModel;
   /** Where the agent's container was told to reach the Agent server. */
   readonly agentServerUrl: string;
@@ -120,39 +120,12 @@ type Paths = {
   readonly sessionRoot: string;
 };
 
-/**
- * Three real directories and an adapter over them, and nothing else.
- *
- * What the startup check needs and no more: no Core, no database, no Agent server and
- * no model, because none of them is reachable at the moment an Operator's entry point
- * refuses to start.
- */
-async function withMounts(
-  body: (runtime: PiRuntime, paths: Paths) => Promise<void>,
-  mounts: (paths: Paths) => Partial<PiConfiguration> = () => ({}),
-): Promise<void> {
-  const root = await mkdtemp(path.join(tmpdir(), "saf-container-"));
-  const paths: Paths = {
-    workspace: path.join(root, "workspace"),
-    agentDir: path.join(root, "agent"),
-    sessionRoot: path.join(root, "sessions"),
-  };
-  // The Workspace is the Operator's; the other two the framework creates itself.
-  await mkdir(paths.workspace, { recursive: true });
-  try {
-    await body(adapterOn(paths, "http://host.docker.internal:7411", {}, mounts(paths)), paths);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-}
-
 /** The adapter under test, however a case wants its mounts and its model pointed. */
 function adapterOn(
   paths: Paths,
   agentServerUrl: string,
   models: Record<string, unknown>,
-  overrides: Partial<PiConfiguration>,
-): PiRuntime {
+): RuntimeAdapter {
   return createPiAdapter({
     image,
     model: "mock-model",
@@ -164,7 +137,6 @@ function adapterOn(
     instructions: "You are the shared agent of a test.",
     models,
     extraArgs: [addHostToGateway],
-    ...overrides,
   });
 }
 
@@ -172,8 +144,7 @@ function adapterOn(
  * Stands up a whole Gateway around one `pi` adapter and hands it to `body`.
  *
  * One end-to-end path, so this is used once: a Core, a real database, the Agent server
- * with the Core's routes on it, and the scripted model. What is actually expensive — the
- * image and the database — is shared with the other case.
+ * with the Core's routes on it, and the scripted model.
  */
 async function withGateway(
   reply: (request: ModelRequest, at: number) => ModelReply,
@@ -185,7 +156,10 @@ async function withGateway(
     agentDir: path.join(root, "agent"),
     sessionRoot: path.join(root, "sessions"),
   };
-  await mkdir(paths.workspace, { recursive: true });
+  // All three, as an Operator's entry point does it, because the framework creates no
+  // directory anywhere (ADR-0028) and the daemon would otherwise invent each missing
+  // bind source as a `root`-owned directory the container cannot write in.
+  await Promise.all(Object.values(paths).map((directory) => mkdir(directory, { recursive: true })));
 
   // The port before the server, because `agentServerUrl` is a construction argument of
   // the adapter and has to name the port the agent's container will connect to.
@@ -196,22 +170,17 @@ async function withGateway(
   const agentServer = Fastify();
   const model = await startMockModel(reply);
 
-  const runtime = adapterOn(
-    paths,
-    agentServerUrl,
-    {
-      providers: {
-        mock: {
-          baseUrl: model.baseUrl,
-          api: "openai-completions",
-          apiKey: "not-a-real-key",
-          compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
-          models: [{ id: "mock-model", name: "Mock", contextWindow: 128_000, maxTokens: 4096 }],
-        },
+  const runtime = adapterOn(paths, agentServerUrl, {
+    providers: {
+      mock: {
+        baseUrl: model.baseUrl,
+        api: "openai-completions",
+        apiKey: "not-a-real-key",
+        compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
+        models: [{ id: "mock-model", name: "Mock", contextWindow: 128_000, maxTokens: 4096 }],
       },
     },
-    {},
-  );
+  });
 
   const core = createCore({ store, runtime });
   // Nothing registers the Core's routes for you, and Fastify refuses a registration
@@ -318,11 +287,8 @@ function scripted(request: ModelRequest): ModelReply {
 describe("pi in a real container", { skip }, () => {
   it("runs the agent, which reads prior Signals and shares the Workspace, and resumes a Session", async () => {
     await withGateway(scripted, async (rig) => {
-      // First, as an entry point does it: the startup check, which is the only thing
-      // that can say the mounts really resolve and that the container's writes belong to
-      // this process. No exception is the assertion.
-      await rig.runtime.verifyMounts();
-      // And it left nothing behind in the directory the Operator's Handlers share.
+      // Nothing has run yet, and nothing of the framework's is in the directory the
+      // Operator's Handlers share: no startup step wrote there and none ever will.
       assert.deepEqual(await readdir(rig.workspace), []);
 
       await writeFile(path.join(rig.workspace, handlerNote), "written by a Signal Handler", "utf8");
@@ -387,8 +353,8 @@ describe("pi in a real container", { skip }, () => {
       assert.ok(resumed !== undefined, "the second Run should carry the first Run's conversation");
 
       // One directory per Session, and a fresh Session gets its own — every one of them
-      // created by `pi` inside its container, since the Gateway creates only the root
-      // and does that in the startup check above (ADR-0025).
+      // created by `pi` inside its container. The framework created neither these nor
+      // the root they sit in; the root is the Operator's (ADR-0025, ADR-0028).
       const sessions = (await readdir(rig.sessionRoot)).sort();
       assert.ok(sessions.includes("user_42"), `the named Session: ${sessions.join(", ")}`);
       assert.equal(sessions.length, 2, `one directory per Session: ${sessions.join(", ")}`);
@@ -440,37 +406,5 @@ describe("pi in a real container", { skip }, () => {
         "a Session pi refused should have left no directory behind",
       );
     });
-  });
-
-  it("refuses startup naming the mount whose source the container runtime resolved elsewhere", async () => {
-    // The failure the startup check exists for: the daemon resolves `source` on the
-    // host, and one it cannot find is silently created as an empty directory. Not part
-    // of the end-to-end path above and deliberately much cheaper than it — a refusal
-    // happens before there is a Core, a database or a server to have.
-    //
-    // Both mounts are tried, because a wrong agentDir is the worse of the two: `pi`
-    // falls back to using the *path* of a missing instructions file as the instructions,
-    // so that one cannot fail on its own at all.
-    for (const role of ["workspace", "agentDir"] as const) {
-      await withMounts(
-        async (runtime) => {
-          await assert.rejects(runtime.verifyMounts(), (error: Error) => {
-            assert.match(error.message, new RegExp(`^the ${role} mount does not reach`));
-            assert.match(error.message, /could not read the token/);
-            assert.match(error.message, /silently created as an empty directory/);
-            return true;
-          });
-        },
-        (paths) => ({
-          [role]: {
-            localPath: paths[role],
-            agentPath: role === "workspace" ? "/workspace" : "/home/agent/.pi/agent",
-            // A path the daemon has never heard of, which it makes an empty directory of
-            // rather than refusing.
-            source: path.join(paths[role], "..", `not-where-it-lives-${role}`),
-          },
-        }),
-      );
-    }
   });
 });

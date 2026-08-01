@@ -36,6 +36,9 @@ async function directories(
   t.after(() => rm(root, { recursive: true, force: true }));
   const agentDir = path.join(root, "agent");
   const sessionRoot = path.join(root, "sessions");
+  // The Operator's job now, not the framework's (ADR-0028). Only this one: the
+  // assertions below are that nothing here conjures the Workspace or the Session root.
+  await mkdir(agentDir, { recursive: true });
   return {
     agentDir,
     sessionRoot,
@@ -53,10 +56,6 @@ async function directories(
 
 async function readJson(file: string): Promise<unknown> {
   return JSON.parse(await readFile(file, "utf8"));
-}
-
-async function isDirectory(at: string): Promise<boolean> {
-  return (await stat(at)).isDirectory();
 }
 
 describe("the configuration written before a Run", () => {
@@ -87,17 +86,18 @@ describe("the configuration written before a Run", () => {
     assert.deepEqual(await readJson(path.join(agentDir, "models.json")), {});
   });
 
-  it("creates the agent's directory if it is not there yet", async (t) => {
+  it("creates no directory, so a missing agent directory fails rather than appearing", async (t) => {
+    // The framework creates nothing on disk (ADR-0028). An Operator who declared a
+    // directory they never made meets that here rather than in an empty mount.
     const { config, agentDir } = await directories(t);
+    await rm(agentDir, { recursive: true, force: true });
 
-    await writeRunConfiguration(config);
-
-    assert.ok(await isDirectory(agentDir));
+    await assert.rejects(() => writeRunConfiguration(config), /ENOENT/);
+    await assert.rejects(() => stat(agentDir), /ENOENT/);
   });
 
   it("replaces what is already there rather than merging into it", async (t) => {
     const { config, agentDir } = await directories(t, { settings: { theme: "dark" } });
-    await mkdir(agentDir, { recursive: true });
     // What the agent left behind: a `/model` switch it made last Run, and a provider it
     // added to the models file.
     await writeFile(
@@ -158,8 +158,8 @@ describe("the configuration written before a Run", () => {
 
     await writeRunConfiguration(config);
 
-    // A Gateway that conjured the Workspace would hide a wrong mount rather than let
-    // the startup check find it (ADR-0025).
+    // The Workspace is the Operator's, and so now is every other directory a mount
+    // points at: the framework creates none of them (ADR-0028).
     await assert.rejects(() => stat(String(config.workspace)), /ENOENT/);
   });
 });
@@ -170,10 +170,10 @@ describe("the Session's directory", () => {
 
     await writeRunConfiguration(config);
 
-    // Not the Session root either, which is the startup check's and is made once
-    // (ADR-0025). Asserting on the root rather than on the Session's own directory
-    // inside it, because a `recursive` mkdir of the second is what used to create the
-    // first, and that side effect is the part worth being sure has gone.
+    // Not the Session root either, which is the Operator's to create (ADR-0028).
+    // Asserting on the root rather than on the Session's own directory inside it,
+    // because a `recursive` mkdir of the second is what used to create the first, and
+    // that side effect is the part worth being sure has gone.
     await assert.rejects(() => stat(sessionRoot), /ENOENT/);
   });
 });

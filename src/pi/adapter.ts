@@ -32,7 +32,6 @@ import type { RunOutcome, RuntimeAdapter } from "../core/runtime.ts";
 import { defaultLogger, type Logger } from "../logging.ts";
 import { type PiConfiguration, resolvePiConfiguration } from "./configuration.ts";
 import { composeInvocation } from "./invocation.ts";
-import { verifyMounts } from "./mount-check.ts";
 import { interpretPiOutput } from "./output.ts";
 import { runContainer } from "./process.ts";
 import { writeRunConfiguration } from "./run-files.ts";
@@ -52,45 +51,34 @@ export type PiAdapterOptions = PiConfiguration & {
 };
 
 /**
- * A Runtime Adapter, plus the one thing an Operator has to call before starting.
- *
- * `verifyMounts` is a separate call and not part of construction, for the reason
- * migrations are: it starts a container, and a side effect that big does not belong in
- * a constructor. Ordering is the Operator's (ADR-0021) — the entry point verifies,
- * then starts the Core.
- */
-export type PiRuntime = RuntimeAdapter & {
-  /**
-   * Proves the agent's container really sees the Workspace, the agent directory and
-   * the Session root, as this process's own user — and throws naming the mount when
-   * it does not.
-   *
-   * Worth the container start it costs at boot, because the failure it prevents has
-   * no error message, no failed Run and no log line anywhere. Call it before
-   * `core.start`, and let it refuse the deploy.
-   */
-  verifyMounts(): Promise<void>;
-};
-
-/**
  * Builds the adapter, refusing a configuration that cannot work.
  *
- * Refused here rather than at the first Signal because a Run that fails is never
- * retried (ADR-0017): a deployment with a relative mount path would otherwise turn
- * every Signal it ever receives into a permanently failed Run.
+ * A plain Runtime Adapter and nothing more: there is no second call to remember and no
+ * adapter-specific type to hold it in. Nothing here touches a filesystem or starts a
+ * container before a Run does, so whether the directories an Operator declared really
+ * reach the agent is not a question this process asks
+ * ([ADR-0028](../../docs/adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)).
+ *
+ * What settles it instead is the container runtime refusing a bind source that is not
+ * there — which needs `--mount type=bind`, and is *not* yet true here: `composeInvocation`
+ * still emits `-v`, under which the daemon invents a missing source as a `root`-owned
+ * directory. Until that changes, a wrong path is neither caught nor refused.
+ *
+ * The configuration is refused here rather than at the first Signal because a Run that
+ * fails is never retried (ADR-0017): a deployment with a relative mount path would
+ * otherwise turn every Signal it ever receives into a permanently failed Run.
  */
-export function createPiAdapter(options: PiAdapterOptions): PiRuntime {
+export function createPiAdapter(options: PiAdapterOptions): RuntimeAdapter {
   const log = options.logger ?? defaultLogger();
-  // Once, at construction, so a bad deployment is refused where the Operator wrote
-  // it. Composing a Run's invocation resolves it again — it is pure and a handful of
-  // string checks, and repeating it is what keeps the two from disagreeing.
-  const resolved = resolvePiConfiguration(options);
+  // Called for its throwing, and the resolved value deliberately dropped: nothing here
+  // holds one, because composing a Run's invocation resolves the options again. That
+  // repetition is the point — it is pure and a handful of string checks, and one
+  // resolution kept in a closure beside another computed per Run is how the two come to
+  // disagree. What this call buys is the *when*: a bad deployment refused where the
+  // Operator wrote it rather than at its first Signal.
+  resolvePiConfiguration(options);
 
   return {
-    verifyMounts() {
-      return verifyMounts(resolved, log);
-    },
-
     async run(prompt: Prompt, runId: string): Promise<RunOutcome> {
       const invocation = composeInvocation(options, prompt, runId);
       await writeRunConfiguration(options);

@@ -1,12 +1,11 @@
 /**
  * Starting a container and reading what it wrote.
  *
- * The one place in the `pi` adapter that spawns anything, shared by the two things
- * that need to: a Run, whose stdout is the Agent Runtime's JSONL event stream, and
- * the startup mount check, whose stdout is a handful of lines from a shell. Both
- * want the same four things — write stdin and close it, read stdout to the end,
- * collect stderr without letting it fill, and wait for the process to be gone — and
- * getting any of them wrong produces a hang rather than a failure.
+ * The one place in the `pi` adapter that spawns anything, and it spawns one thing: a
+ * Run, whose stdout is the Agent Runtime's JSONL event stream. Four things have to be
+ * right — write stdin and close it, read stdout to the end, collect stderr without
+ * letting it fill, and wait for the process to be gone — and getting any of them wrong
+ * produces a hang rather than a failure.
  *
  * Three of those are less obvious than they look:
  *
@@ -124,21 +123,6 @@ export async function runContainer<T>(
   }
   const { code, signal } = await exited;
   return { value, exitCode: code, signal, stderr: await stderr };
-}
-
-/**
- * Reads the whole of a stdout as text — a reader for `runContainer`, for a container
- * whose output is a few lines rather than an event stream.
- *
- * Beside `runContainer` because reassembling a character split across two chunks is the
- * thing every reader here has to get right, and there is now one place that does it
- * without an interpretation attached.
- */
-export async function readAllText(source: AsyncIterable<Uint8Array>): Promise<string> {
-  const decoder = new TextDecoder("utf-8");
-  let text = "";
-  for await (const chunk of source) text += decoder.decode(chunk, { stream: true });
-  return text + decoder.decode();
 }
 
 /** Reads a stream as text, keeping at most `stderrLimit` characters of it. */

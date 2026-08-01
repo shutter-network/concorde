@@ -17,10 +17,11 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
+import type { RuntimeAdapter } from "../core/runtime.ts";
 import type { LogFields, Logger } from "../logging.ts";
 import {
   type FakeContainerReport,
@@ -28,7 +29,7 @@ import {
   fakeContainerCommand,
   fakeContainerReport,
 } from "../test-support/fake-container.ts";
-import { createPiAdapter, type PiRuntime } from "./adapter.ts";
+import { createPiAdapter } from "./adapter.ts";
 import type { PiConfiguration } from "./configuration.ts";
 import { instructionsFileName } from "./invocation.ts";
 
@@ -63,12 +64,11 @@ async function fixture(name: string): Promise<string> {
 }
 
 type Adapter = {
-  readonly runtime: PiRuntime;
+  readonly runtime: RuntimeAdapter;
   readonly config: PiConfiguration;
   readonly lines: Logged[];
   /** Where the stub container runtime wrote down what it was given. */
   report(): FakeContainerReport;
-  readonly workspace: string;
   readonly agentDir: string;
   readonly sessionRoot: string;
 };
@@ -77,9 +77,9 @@ type Adapter = {
  * An adapter over real directories, whose container runtime is the stub running
  * `script`.
  *
- * The three directories are real because the adapter writes into one of them before it
- * starts anything, and because which of the other two are there when the container
- * starts — neither, as it happens — is itself a decision worth having a test walk into.
+ * The directories are real because the adapter writes into one of them before it starts
+ * anything, and because which of them are there when the container starts is itself a
+ * decision worth having a test walk into.
  */
 async function adapterOn(
   script: Omit<FakeContainerScript, "reportTo"> = {},
@@ -90,10 +90,11 @@ async function adapterOn(
   const workspace = path.join(root, "workspace");
   const agentDir = path.join(root, "agent");
   const sessionRoot = path.join(root, "sessions");
-  // Only the Workspace. The agent directory is the framework's to create and a test
-  // that made it itself would hide that; the Session root is the startup check's, which
-  // is not what these tests exercise, so it stays missing here on purpose.
+  // The Operator's job now, not the framework's (ADR-0028). The Session root is left
+  // missing on purpose: `pi` creates each Session's own directory from inside the
+  // container, so a Gateway starting one that is not there yet is the ordinary case.
   await mkdir(workspace, { recursive: true });
+  await mkdir(agentDir, { recursive: true });
 
   const reportTo = path.join(root, "report.json");
   const { lines, logger } = capturingLogger();
@@ -122,7 +123,6 @@ async function adapterOn(
     config,
     lines,
     report: () => fakeContainerReport(reportTo),
-    workspace,
     agentDir,
     sessionRoot,
   };
@@ -260,47 +260,5 @@ describe("the pi adapter", () => {
     assert.match(logged, /--volume/);
     assert.equal(started.fields.runId, runId);
     assert.equal(started.fields.session, "user_42");
-  });
-});
-
-describe("verifying the mounts", () => {
-  it("refuses startup naming the mount the container could not read", async () => {
-    // The stub answers as a container whose Workspace source resolved to an empty
-    // directory — the failure that has no error message anywhere, which is why this
-    // check exists. The real thing is in container.test.ts; what is pinned here is
-    // that the refusal names the mount and the value to look at.
-    const adapter = await adapterOn({ stdout: "user=1000:1000\nunreadable=workspace\n" });
-
-    await assert.rejects(adapter.runtime.verifyMounts(), (error: Error) => {
-      assert.match(error.message, /workspace mount does not reach the agent's container/);
-      assert.match(error.message, /could not read the token/);
-      assert.match(error.message, /source/);
-      assert.match(
-        error.message,
-        new RegExp(adapter.workspace.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")),
-      );
-      return true;
-    });
-  });
-
-  it("refuses startup when the check itself could not run in the image", async () => {
-    // An image with no shell, or one that cannot start at all. Reported as itself
-    // rather than as a mount problem, so nobody goes looking at their volumes.
-    const adapter = await adapterOn({ stderr: "sh: not found\n", exitCode: 127 });
-
-    await assert.rejects(
-      adapter.runtime.verifyMounts(),
-      /mount check could not be run.*sh: not found/s,
-    );
-  });
-
-  it("leaves nothing of its own behind in the Workspace", async () => {
-    const adapter = await adapterOn({ stdout: "user=1000:1000\nunreadable=workspace\n" });
-
-    await adapter.runtime.verifyMounts().catch(() => undefined);
-
-    // The Workspace is shared with the Operator's Signal Handlers, so the tokens the
-    // check writes are removed whether it passed or failed.
-    assert.deepEqual(await readdir(adapter.workspace), []);
   });
 });

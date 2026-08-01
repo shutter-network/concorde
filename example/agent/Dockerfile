@@ -6,8 +6,8 @@
 #  1. **`pi` is the entry point.** The Runtime Adapter appends `pi`'s own flags after
 #     the image name, so an image whose entry point is something else needs
 #     `--entrypoint pi` in the adapter's `extraArgs`.
-#  2. **A POSIX shell.** The agent's own shell tool needs one, and so does the
-#     Gateway's startup mount check, which runs this image with `--entrypoint sh`.
+#  2. **A POSIX shell.** The agent's own shell tool needs one. Nothing of the
+#     Gateway's does: it starts no container but the Run's.
 #  3. **`curl`.** `pi` ships no HTTP client, so the agent reaching the Gateway's Agent
 #     server is its shell tool plus `curl`. Without it the agent is told about an API
 #     it cannot call.

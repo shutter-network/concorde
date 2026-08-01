@@ -7,10 +7,11 @@
  * object (ADR-0016, ADR-0026).
  *
  * `createPiAdapter` is the whole of it for an Operator: hand it the agent's
- * configuration, call `verifyMounts()` before starting the Core, and pass it as the
- * Core's `runtime`. Everything below is what it is made of, exported because each is
- * useful on its own and because that is what makes the adapter's own order — compose,
- * write, start, interpret — inspectable rather than a claim:
+ * configuration and pass what comes back as the Core's `runtime`. It is a plain
+ * Runtime Adapter, with nothing to call before starting. Everything below is what it
+ * is made of, exported because each is useful on its own and because that is what
+ * makes the adapter's own order — compose, write, start, interpret — inspectable
+ * rather than a claim:
  *
  *  - `resolvePiConfiguration` settles and checks a configuration, so a deployment with
  *    a relative mount path is refused at startup rather than at its first Signal. What
@@ -28,7 +29,7 @@
  * in CI with no Docker, no credentials and no network.
  */
 
-export type { PiAdapterOptions, PiRuntime } from "./adapter.ts";
+export type { PiAdapterOptions } from "./adapter.ts";
 export { createPiAdapter } from "./adapter.ts";
 export type {
   Mount,

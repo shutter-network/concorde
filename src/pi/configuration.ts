@@ -33,8 +33,9 @@ export type Mount =
        * The daemon resolves this **on the host, not inside the calling container**, so
        * a containerised Gateway must state a host path or a named volume here. Get it
        * wrong and Docker silently creates an empty directory: the agent sees an empty
-       * Workspace and nothing errors anywhere. Nothing can check that from here, which
-       * is why the adapter verifies it with a real container at startup instead.
+       * Workspace and nothing errors anywhere. Nothing checks that, here or anywhere —
+       * the cost [ADR-0028](../../docs/adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)
+       * accepts, and the case it defers to a translation table stated once.
        */
       readonly source?: string;
     };
@@ -51,9 +52,9 @@ export type ResolvedMount = {
  * configured and reported by.
  *
  * A union rather than a string, because every part of the adapter that says which
- * mount it means — the `--volume` arguments, the startup check's per-mount report,
- * the failure message that names one — has to agree with the others about the set,
- * and a typo in any of them would otherwise be a mount silently left out.
+ * mount it means — the `--volume` arguments, the failure message that names one — has
+ * to agree with the others about the set, and a typo in any of them would otherwise be
+ * a mount silently left out.
  */
 export type MountRole = "workspace" | "agentDir" | "sessionRoot";
 
@@ -91,9 +92,10 @@ export type PiConfiguration = {
    * flat directory makes every Run scan every Session the deployment ever
    * accumulated, on the hot path (ADR-0025).
    *
-   * The framework never creates a directory in here. It creates this root, once, in
-   * the startup check: a bind-mount source the daemon has to invent is created as
-   * `root`, and the agent's container then cannot write inside it.
+   * The framework creates nothing here, neither this root nor a Session's own
+   * directory inside it. The Operator creates the root
+   * ([ADR-0028](../../docs/adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md));
+   * the Agent Runtime creates each Session's directory from inside the container.
    */
   readonly sessionRoot: Mount;
   /**
@@ -191,11 +193,11 @@ export type ResolvedPiConfiguration = {
 };
 
 /**
- * The three mounts in the order they are mounted and checked, each under its role.
+ * The three mounts in the order they are mounted, each under its role.
  *
- * One place that knows the set, so composing the `--volume` arguments and verifying
- * the mounts at startup cannot come to disagree about it, and so a fourth mount is
- * one edit and not four.
+ * One place that knows the set, so that a fourth mount is one edit and not four. It
+ * had a second reason — keeping the `--volume` arguments and the startup check's own
+ * mounting from disagreeing — and that one went with the check (ADR-0028).
  */
 export function mountsOf(
   config: ResolvedPiConfiguration,
@@ -216,8 +218,8 @@ export function mountsOf(
  * `source` is deliberately *not* required to be a path: a deployment using a named
  * volume mounts it into the Gateway too, so the Gateway sees an ordinary directory and
  * the volume is only ever a value for `source` (ADR-0025). What a wrong `source`
- * produces — an empty directory and no error — is caught by starting a container and
- * checking, not by a pattern here.
+ * produces — an empty directory and no error — is caught by nothing at all: no pattern
+ * here could tell, and the container that used to check is gone (ADR-0028).
  */
 export function resolveMount(mount: Mount, role = "mount"): ResolvedMount {
   const given = typeof mount === "string" ? { localPath: mount } : mount;
