@@ -26,7 +26,7 @@
     "migrations"
   ],
   "scripts": {
-    "build": "tsc --build tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "biome check .",
     "format": "biome check --write .",
@@ -37,6 +37,14 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.6",
     "@types/node": "24.13.3",
+    "@types/pg": "8.20.2",
+    "drizzle-orm": "0.45.2",
     "typescript": "7.0.2"
+  },
+  "dependencies": {
+    "pg": "^8.22.0"
+  },
+  "peerDependencies": {
+    "drizzle-orm": "^0.45.2"
   }
 }

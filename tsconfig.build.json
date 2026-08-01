@@ -2,15 +2,21 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
-    "composite": true,
     "declaration": true,
     // No source maps: `src` is not shipped, so maps in the tarball would dangle.
     // Adding both together is a deliberate decision, not a default.
     "rootDir": "src",
-    "outDir": "dist",
-    // Outside `dist`, which is shipped verbatim via `files`.
-    "tsBuildInfoFile": "node_modules/.cache/tsconfig.build.tsbuildinfo"
+    "outDir": "dist"
+    // No `composite`, and so no build-info file: this is one project with no
+    // references, so incremental mode bought nothing and cost the guarantee that
+    // matters. `tsc --build` trusted a build info whose outputs had been deleted
+    // and emitted a partial `dist`, which `npm run check` reports as green
+    // because nothing in it reads `dist`. A full emit every time is under a
+    // second and cannot lie about what it produced.
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts"]
+  // Tests and their fixtures sit beside the code they exercise and must not
+  // ship. `src/test-support` holds the migration folders the migration tests
+  // run, which would otherwise land in `dist` beside the real ones.
+  "exclude": ["src/**/*.test.ts", "src/test-support/**"]
 }

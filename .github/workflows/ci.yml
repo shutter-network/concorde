@@ -13,6 +13,28 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+
+    # PostgreSQL is real in every test (ADR-0022); nothing about the Store is
+    # mocked. Test files create and drop a database each on this server, so the
+    # database named below is only ever connected to in order to manage those.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        # Without this the first test can arrive before the server accepts
+        # connections, which reads as a flaky Store rather than a race.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+
     steps:
       - uses: actions/checkout@v7
 
@@ -24,5 +46,7 @@ jobs:
       # The one command. Whatever this runs is what the project is measured by.
       - run: npm run check
 
-      # Separate because it packs, installs from the registry, and is slow.
+      # Separate because it packs, installs from the registry, and is slow. It
+      # needs the same PostgreSQL server: it applies a shipped migration folder
+      # from inside the installed package.
       - run: npm run check:package

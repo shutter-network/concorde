@@ -29,5 +29,24 @@
       "quoteStyle": "double",
       "semicolons": "always"
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["**", "!src/store/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "pg": "The pool is the Store's alone: obtain a handle with store.handle(schema) instead. Fastify and Drizzle are public API; pg is not (ADR-0022)."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }
