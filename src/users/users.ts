@@ -30,6 +30,7 @@ import {
   agentUserRoutes,
   type Credentials,
   type IssuedToken,
+  type PasswordChange,
   publicUserRoutes,
   requireUser,
   type UserRecord,
@@ -138,6 +139,26 @@ export type Users = {
   create<TSchema extends Record<string, unknown>>(tx: Db<TSchema>): Promise<UserRecord>;
 
   /**
+   * Revokes every Token of one User, so that none of them works again.
+   *
+   * The same thing `DELETE /tokens` does, reachable without HTTP: an Operator who
+   * learns from their own systems that somebody's credential has leaked revokes it
+   * from the code that learned, rather than logging in as them to do it. Since nothing
+   * removes a User (ADR-0029), this is also the closest thing to shutting one out that
+   * exists — they keep their password, and it will mint a new Token the moment they
+   * use it, so an Operator locking somebody out revokes *and* replaces the password.
+   *
+   * A write, so it takes the caller's transaction first (ADR-0023): revoking and
+   * recording why in the Operator's own tables commit together or not at all. It is
+   * idempotent and answers nothing, including a count — a Token is gone afterwards
+   * whether or not this call is what removed it, and a User with none is not an error.
+   *
+   * The rows are **deleted rather than marked**, which is the only compaction anything
+   * has over that table: nothing reaps expired Tokens either (ADR-0030).
+   */
+  revoke<TSchema extends Record<string, unknown>>(tx: Db<TSchema>, user: string): Promise<void>;
+
+  /**
    * One User by id, or `undefined`.
    *
    * A read, so it takes no transaction and **cannot see the caller's own uncommitted
@@ -179,13 +200,23 @@ export function createUsers(options: UsersOptions): Users {
     }),
 
     publicRoutes: publicUserRoutes(
-      { logIn: (credentials) => logIn(db, credentials, { dummy, tokenTtl }) },
+      {
+        logIn: (credentials) => logIn(db, credentials, { dummy, tokenTtl }),
+        // The route's revocations run on the part's own handle, for the reason its
+        // create does: one statement is atomic by itself, and a request that revokes
+        // has nothing else to keep it with. The method below is where a caller with
+        // something to keep it with reaches the same statement.
+        revokeToken: (token) => deleteToken(db, token),
+        revokeTokens: (user) => deleteTokens(db, user),
+        changePassword: (change) => changePassword(db, change, parameters),
+      },
       presentedUser,
     ),
 
     requireUser: presentedUser,
 
     create: (tx) => insertUser(tx, undefined, parameters),
+    revoke: (tx, user) => deleteTokens(tx, user),
     get: (id) => selectUser(db, id),
     list: (asked) => selectUsers(db, asked?.limit ?? limitSchema.default),
   };
@@ -259,6 +290,72 @@ async function logIn(
     expiresAt: issued.expiresAt.toISOString(),
     user: asUserRecord(row),
   };
+}
+
+/**
+ * Drops one Token: the one whose plaintext this is, and no other.
+ *
+ * By the hash and not by the User, so logging out of one device leaves every other
+ * session working — the unique index finds the row, exactly as verification does, and
+ * a Token nobody holds matches nothing and deletes nothing.
+ *
+ * The row is **removed**, not flagged. There is no revoked column to add and no read
+ * that would have to start consulting one: a Token that is not in the table is
+ * refused by the same lookup that refuses one that never existed, which is why a
+ * revoked Token and an unknown one answer identically without either being made to.
+ */
+async function deleteToken(db: UsersDb, token: string): Promise<void> {
+  await db.delete(tokens).where(eq(tokens.tokenHash, hashToken(token)));
+}
+
+/**
+ * Drops every Token of one User, over whichever handle the caller reached it by.
+ *
+ * The `tokens_user_idx` index exists for this statement, which is the reason it is not
+ * redundant with the two PostgreSQL makes for us: it indexes the primary key and the
+ * unique `token_hash`, and neither of them is the referencing side this reads.
+ *
+ * The query-builder form, not the relational one, so it works on a transaction
+ * carrying any part's schema (ADR-0023) — that is what lets the public `revoke` and
+ * the route share one statement rather than have one each.
+ */
+async function deleteTokens<TSchema extends Record<string, unknown>>(
+  db: Db<TSchema>,
+  user: string,
+): Promise<void> {
+  await db.delete(tokens).where(eq(tokens.userId, user));
+}
+
+/**
+ * A password replaced by somebody who proved they know the current one, or `false`.
+ *
+ * The proof is the whole point: it is what makes this self-service rather than account
+ * recovery, which is the thing this framework declined to build (ADR-0014, ADR-0030).
+ * A User whose `password_hash` is null therefore cannot change it here — there is
+ * nothing for them to prove — and the OIDC path this leaves them on is deliberate.
+ *
+ * Unlike `logIn`, this derives **nothing** when there is nothing to verify against.
+ * There is no enumeration to close: the caller already presented a Token naming this
+ * User, so a timing signal here would tell them only what they proved on the way in.
+ *
+ * It revokes nothing, and that is a decision rather than an omission (ADR-0030): a
+ * User who changed their password because they feared a leak is served by revoking,
+ * which is a request of its own, and taking every other session down with a routine
+ * rotation is a surprise nobody asked for.
+ */
+async function changePassword(
+  db: UsersDb,
+  change: PasswordChange,
+  parameters: ScryptParameters,
+): Promise<boolean> {
+  const [row] = await db.select().from(users).where(eq(users.id, change.user));
+  const stored = row?.passwordHash ?? undefined;
+  if (stored === undefined) return false;
+  if (!(await verifyPassword(stored, change.currentPassword))) return false;
+
+  const passwordHash = await hashPassword(change.newPassword, parameters);
+  await db.update(users).set({ passwordHash }).where(eq(users.id, change.user));
+  return true;
 }
 
 /**

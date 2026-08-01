@@ -25,6 +25,17 @@
  * | --- | --- |
  * | `POST /tokens` | an `IssuedToken` (the Token, its expiry, the User), or 401 |
  * | `GET /me` | the presented User, or 401 |
+ * | `DELETE /tokens/current` | 204, having revoked the Token that was presented |
+ * | `DELETE /tokens` | 204, having revoked every Token of the presented User |
+ * | `PUT /password` | 204, or the same 401 if the current password is wrong |
+ *
+ * The three that revoke and change are smaller than they look and matter more than
+ * they look. Nothing removes a User (ADR-0029), so there is no delete to cascade from
+ * and no flag to flip: **these are the only mechanism anywhere in the system by which
+ * a credential stops working before it expires**, and `DELETE /tokens` is the whole of
+ * the answer to "I think I have been compromised". It is also the only compaction a
+ * User has over their own row count, since nothing reaps expired Tokens either
+ * (ADR-0030).
  *
  * **Creating a User accepts a password and no Attributes, and that is the security
  * boundary of the whole part.** Attributes are where grouping and therefore
@@ -114,16 +125,42 @@ export type IssuedToken = {
 };
 
 /**
- * What the Public routes need of the User Directory: one operation, answering
- * `undefined` for **every** kind of failure.
+ * What a User changing their own password states: who they are, what they know, and
+ * what it becomes.
  *
- * That the failures are not distinguished here rather than at the route is the point.
- * There is no reason code to accidentally answer with, so a wrong password, an
- * unknown User and a User with no password reach the route as the same value and
- * leave it as the same response (ADR-0030).
+ * `currentPassword` is required and there is no shape of this type without it. That is
+ * the line between self-service and account recovery: recovery means proving identity
+ * *without* the credential, which ADR-0014 declined to build and ADR-0030 reaffirms,
+ * so the only replacement that does not prove possession is trusted code's
+ * (ADR-0029). `user` is not read from the body — the route fills it from the presented
+ * Token, so a caller cannot name somebody else.
+ */
+export type PasswordChange = {
+  readonly user: string;
+  readonly currentPassword: string;
+  readonly newPassword: string;
+};
+
+/**
+ * What the Public routes need of the User Directory: a login, the two revocations, and
+ * a password change.
+ *
+ * `logIn` answers `undefined` for **every** kind of failure and `changePassword`
+ * answers `false` for every kind of its own, and that they are not distinguished here
+ * rather than at the route is the point. There is no reason code to accidentally
+ * answer with, so a wrong password, an unknown User and a User with no password reach
+ * the route as the same value and leave it as the same response (ADR-0030).
+ *
+ * Both revocations answer nothing at all, including how many Tokens there were. A
+ * count is a number a client could learn about sessions it does not hold, and the
+ * request succeeded either way: revoking is idempotent because the row is gone
+ * afterwards, whether or not this call is what removed it.
  */
 export type CredentialOperations = {
   logIn(credentials: Credentials): Promise<IssuedToken | undefined>;
+  revokeToken(token: string): Promise<void>;
+  revokeTokens(user: string): Promise<void>;
+  changePassword(change: PasswordChange): Promise<boolean>;
 };
 
 /**
@@ -241,6 +278,22 @@ const credentialsSchema = {
   type: "object",
   properties: { user: idSchema, password: passwordSchema },
   required: ["user", "password"],
+  additionalProperties: false,
+} as const;
+
+/**
+ * The body of `PUT /password`: what the caller knows, and what they want instead.
+ *
+ * There is **no `user` field**, and its absence is the same kind of decision the
+ * missing `attributes` on `POST /users` is: the User is the presented one, read from
+ * the Token, so there is no parameter through which one User could change another's
+ * password and therefore no check that could be got wrong. Both passwords carry the
+ * same bound, because both are read by scrypt.
+ */
+const passwordChangeSchema = {
+  type: "object",
+  properties: { currentPassword: passwordSchema, newPassword: passwordSchema },
+  required: ["currentPassword", "newPassword"],
   additionalProperties: false,
 } as const;
 
@@ -382,6 +435,66 @@ export function publicUserRoutes(
       "/me",
       { preHandler: presentedUser, preValidation: rejectPublicQuery() },
       async (request) => request.safUser,
+    );
+
+    // Logging out: the presented Token stops working and no other one does, which is
+    // what makes a Token on a device the User no longer trusts droppable without
+    // ending the session they are sitting in (User story 19).
+    fastify.delete(
+      "/tokens/current",
+      { preHandler: presentedUser, preValidation: rejectPublicQuery() },
+      async (request, reply) => {
+        // The Token is re-read from the header rather than carried on the request.
+        // `requireUser` has already run, so this is the same parse of the same string
+        // and it cannot answer differently; the alternative is a second public
+        // property beside `safUser`, which would put a plaintext credential on every
+        // request in every deployment for the sake of this one line.
+        const presented = presentedToken(request.headers.authorization);
+        // Unreachable behind the preHandler, and the refusal is the same one it would
+        // have given: there is no second thing this route can say.
+        if (presented === undefined) return unauthorized(reply);
+        await directory.revokeToken(presented);
+        // 204: there is nothing to answer with. The Token's plaintext existed once, in
+        // the response that issued it, and this response is about its absence.
+        return reply.code(204).send();
+      },
+    );
+
+    // The answer to "I think I have been compromised", and the only one there is:
+    // nothing removes a User (ADR-0029), so every credential that will stop working
+    // before it expires stops working here (User story 20).
+    fastify.delete(
+      "/tokens",
+      { preHandler: presentedUser, preValidation: rejectPublicQuery() },
+      async (request, reply) => {
+        // The presented User's, from the presented Token, and not an id from anywhere
+        // a caller could write one: the route has no parameter naming a User.
+        await directory.revokeTokens(request.safUser.id);
+        return reply.code(204).send();
+      },
+    );
+
+    // Rotating a credential without an Operator (User story 22). Note what it
+    // deliberately does **not** do: a changed password revokes nothing, because a User
+    // who changed theirs out of fear is served by `DELETE /tokens`, which exists and is
+    // one request away. Bundling the two would take that choice away from them.
+    fastify.put<{ Body: { currentPassword: string; newPassword: string } }>(
+      "/password",
+      {
+        schema: { body: passwordChangeSchema },
+        preHandler: presentedUser,
+        preValidation: rejectPublicQuery(),
+      },
+      async (request, reply) => {
+        const changed = await directory.changePassword({
+          user: request.safUser.id,
+          currentPassword: request.body.currentPassword,
+          newPassword: request.body.newPassword,
+        });
+        // The same 401 a wrong password at the login route gets, because it is the
+        // same failure: a credential was presented and it was not right.
+        return changed ? reply.code(204).send() : unauthorized(reply);
+      },
     );
   };
 }

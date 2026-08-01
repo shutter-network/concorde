@@ -573,6 +573,10 @@ try {
       "  const admitted: UserRecord = await store.tx((tx: Transaction) => users.create(tx));",
       "  const sameUser: UserRecord | undefined = await users.get(admitted.id);",
       "  const everyone: UserRecord[] = await users.list({ limit: 10 });",
+      "  // Revoking is a write too, so it takes the transaction first — and it is the",
+      "  // only mechanism by which a credential stops working before it expires, since",
+      "  // nothing removes a User (ADR-0029).",
+      "  await store.tx((tx: Transaction) => users.revoke(tx, admitted.id));",
       '  shipped.info({ admitted, sameUser, everyone: everyone.length }, "a User exists");',
       "  // Both bind addresses stated by the consumer, because no default of ours is",
       "  // behind either: every interface for the Public server, loopback for the",
@@ -654,8 +658,8 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker:run_r1:true:type=bind,source=/srv/saf/workspace,target=/workspace:/srv/saf/sessions/user_42:docker:false:function:run:saf_users:agentRoutes,create,get,list,publicRoutes,requireUser",
-    "all three subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount and answer where a container path is on the Operator's disk, the pi adapter should construct as a plain Runtime Adapter — `run` and nothing else — settle its defaults, compose an invocation that passes no system-prompt flag, and read an outcome, and the User Directory should construct into its own schema with its routes, its preHandler and its three operations",
+    "function:function:docker:run_r1:true:type=bind,source=/srv/saf/workspace,target=/workspace:/srv/saf/sessions/user_42:docker:false:function:run:saf_users:agentRoutes,create,get,list,publicRoutes,requireUser,revoke",
+    "all three subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount and answer where a container path is on the Operator's disk, the pi adapter should construct as a plain Runtime Adapter — `run` and nothing else — settle its defaults, compose an invocation that passes no system-prompt flag, and read an outcome, and the User Directory should construct into its own schema with its routes, its preHandler and its four operations",
   );
 
   step("applying a shipped migration folder from inside the installed package");
@@ -703,6 +707,12 @@ try {
       "  // User on the request for `GET /me` to answer with.",
       '  const me = await publicServer.inject({ method: "GET", url: "/auth/me", headers: { authorization: "Bearer " + issued.json().token } });',
       '  const anonymous = await publicServer.inject({ method: "GET", url: "/auth/me" });',
+      "  // And the Token revoked, which is the only mechanism by which a credential",
+      "  // stops working before it expires: nothing removes a User (ADR-0029). The row",
+      "  // is deleted, so the statement reaching the shipped table is what makes the",
+      "  // next `GET /me` a 401.",
+      '  const out = await publicServer.inject({ method: "DELETE", url: "/auth/tokens/current", headers: { authorization: "Bearer " + issued.json().token } });',
+      '  const afterwards = await publicServer.inject({ method: "GET", url: "/auth/me", headers: { authorization: "Bearer " + issued.json().token } });',
       "  const applied =",
       "    id.length === 36 &&",
       "    user.id.length === 36 &&",
@@ -714,8 +724,10 @@ try {
       "    refused.statusCode === 401 &&",
       "    me.statusCode === 200 &&",
       "    me.json().id === admitted.json().id &&",
-      "    anonymous.statusCode === 401;",
-      '  process.stdout.write(applied ? "applied" : "unexpected " + id + " " + JSON.stringify(user) + " " + issued.statusCode + " " + issued.body + " " + refused.statusCode + " " + me.statusCode + " " + me.body + " " + anonymous.statusCode);',
+      "    anonymous.statusCode === 401 &&",
+      "    out.statusCode === 204 &&",
+      "    afterwards.statusCode === 401;",
+      '  process.stdout.write(applied ? "applied" : "unexpected " + id + " " + JSON.stringify(user) + " " + issued.statusCode + " " + issued.body + " " + refused.statusCode + " " + me.statusCode + " " + me.body + " " + anonymous.statusCode + " " + out.statusCode + " " + afterwards.statusCode);',
       "} finally {",
       "  await store.close();",
       "}",
