@@ -221,12 +221,13 @@ try {
   // of a Node-only ESM package has it; asserting that here keeps the requirement
   // from being discovered by an Operator.
   //
-  // `fastify` too, and declared by the consumer rather than relied on through
-  // ours: Fastify is public API (ADR-0021), so an Operator writing a plugin
-  // imports its types themselves, and this is the arrangement they will have —
-  // their own dependency, deduplicated with ours because both ranges are `^5`.
-  // What it proves is that the two agree; two *major* versions in one tree is the
-  // breaking change ADR-0026 already accepts, and is not what this checks.
+  // `fastify` too, installed here rather than arriving through us: the package
+  // declares it as a *peer* dependency, so the instance the framework types
+  // against is the one the consumer chose. Fastify is public API (ADR-0021), and
+  // this is the arrangement an Operator will have: their own `fastify`, ours a
+  // `^5` range they satisfy rather than a copy we bring. What it proves is that
+  // the two agree; two *major* versions in one tree is the breaking change
+  // ADR-0026 already accepts, and is not what this checks.
   run("npm", ["install", "--no-audit", "--no-fund", tarball, "@types/node", "fastify"], consumer);
 
   step("type-checking the scratch project against the installed package");

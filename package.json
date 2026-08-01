@@ -42,15 +42,16 @@
     "@types/pg": "8.20.2",
     "drizzle-kit": "0.31.10",
     "drizzle-orm": "0.45.2",
+    "fastify": "5.11.0",
     "typescript": "7.0.2"
   },
   "dependencies": {
-    "fastify": "^5.11.0",
     "handlebars": "^4.7.9",
     "pg": "^8.22.0",
     "pino": "^10.3.1"
   },
   "peerDependencies": {
-    "drizzle-orm": "^0.45.2"
+    "drizzle-orm": "^0.45.2",
+    "fastify": "^5.11.0"
   }
 }
