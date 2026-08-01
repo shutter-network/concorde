@@ -45,7 +45,7 @@ const migrationsRoot = path.join(repoRoot, "migrations");
 /** The consumer's imports, spelled once: the type checker and Node see the same two. */
 const consumerImports = [
   'import { coreMigrations, createAgentServer, createCore, createPublicServer, defaultLogger, openStore, templateHandler } from "shared-agent-framework";',
-  'import { piScaffoldCheck } from "shared-agent-framework/pi";',
+  'import { composeInvocation, instructionsFileName, interpretPiOutput, resolveMount, resolvePiConfiguration, writeRunConfiguration } from "shared-agent-framework/pi";',
 ];
 
 function run(command: string, args: string[], cwd: string): string {
@@ -109,6 +109,13 @@ try {
     "dist/index.d.ts",
     "dist/pi/index.js",
     "dist/pi/index.d.ts",
+    // The `pi` adapter's own modules. `dist/pi/` mirroring `src/pi/` is what makes the
+    // subpath resolve to the same relative imports in the repository and in the
+    // package, and the fixtures beside them must not come along.
+    "dist/pi/configuration.js",
+    "dist/pi/invocation.js",
+    "dist/pi/output.js",
+    "dist/pi/run-files.js",
     // `dist` mirrors `src`, so `src/store/store.ts` becomes `dist/store/store.js`
     // and a folder reached from `import.meta.url` is the same relative path in
     // both. Migration folders resolve because of this and nothing else.
@@ -139,6 +146,13 @@ try {
   assert.ok(
     ![...entries].some((entry) => entry.startsWith("dist/test-support/")),
     "test fixtures should not ship",
+  );
+
+  // Neither do the captured Agent Runtime streams beside the `pi` adapter, which are
+  // a test's input and not part of anything an Operator installs.
+  assert.ok(
+    ![...entries].some((entry) => entry.endsWith(".jsonl")),
+    "the captured output fixtures should not ship",
   );
 
   // Nothing ships that no longer exists. `tsc` writes into `outDir` and never
@@ -278,6 +292,17 @@ try {
       "  TemplateHandlerOptions,",
       "  Transaction,",
       '} from "shared-agent-framework";',
+      // The `pi` adapter's own types, from its own subpath. Named separately because
+      // that is the point of the subpath: what a deployment depends on is legible from
+      // its imports, and nothing `pi`-shaped is reachable from the package root.
+      "import type {",
+      "  Mount,",
+      "  OpaqueJson,",
+      "  PiConfiguration,",
+      "  PiInvocation,",
+      "  ResolvedMount,",
+      "  ResolvedPiConfiguration,",
+      '} from "shared-agent-framework/pi";',
       'import { pgSchema, text } from "drizzle-orm/pg-core";',
       // Fastify is public API (ADR-0021), so a consumer names its types directly.
       // Importing them here is also what proves they resolve from the installed
@@ -286,7 +311,6 @@ try {
       'import type { FastifyInstance, FastifyPluginAsync } from "fastify";',
       "",
       "// Annotated throughout, so a declaration that resolved to `any` fails here.",
-      'export const fromPi: "ok" = piScaffoldCheck();',
       "export const descriptor: MigrationDescriptor = coreMigrations;",
       'export const store: Store = openStore("postgres://nobody@example.invalid/none");',
       "",
@@ -396,6 +420,56 @@ try {
       "};",
       "const fromTemplate: SignalHandler<{ userId: string }> = templateHandler(promptOptions);",
       "",
+      "// The `pi` Runtime Adapter's configuration, every field of it, so a field that",
+      "// went missing from the declaration fails here rather than being ignored at the",
+      "// Operator's first Run. `agentServerUrl` is the Agent server's own reachable-from",
+      "// address: how the agent reaches the Gateway is stated, never derived (ADR-0010).",
+      "const workspace: Mount = {",
+      '  localPath: "/srv/saf/workspace",',
+      '  agentPath: "/workspace",',
+      '  source: "/srv/saf/workspace",',
+      "};",
+      'const settings: OpaqueJson = { defaultProjectTrust: "never" };',
+      "const piConfig: PiConfiguration = {",
+      '  image: "saf/pi:latest",',
+      '  model: "claude-sonnet-4-5",',
+      '  provider: "anthropic",',
+      "  workspace,",
+      '  agentDir: "/srv/saf/agent",',
+      '  sessionRoot: { localPath: "/srv/saf/sessions", agentPath: "/sessions" },',
+      "  agentServerUrl: agentServer.reachableAt,",
+      '  instructions: "You are the shared assistant of a book club.",',
+      "  settings,",
+      "  models: {},",
+      '  env: { ANTHROPIC_API_KEY: "sk-not-a-key" },',
+      '  network: "saf-agent",',
+      '  user: "1000:1000",',
+      '  extraArgs: ["--memory", "2g"],',
+      '  containerCommand: ["docker"],',
+      "};",
+      'export const piWorkspace: ResolvedMount = resolveMount(workspace, "workspace");',
+      "export const piResolved: ResolvedPiConfiguration = resolvePiConfiguration(piConfig);",
+      "export const piInvocation: PiInvocation = composeInvocation(",
+      "  piConfig,",
+      '  { session: "user_42", text: "what happened?" },',
+      '  "6f1d2c3b-4a59-4e6f-8a1b-2c3d4e5f6a7b",',
+      ");",
+      "export const piInstructions: string = instructionsFileName;",
+      "",
+      "// A Runtime Adapter an Operator could write out of the pieces the subpath ships:",
+      "// write the configuration, start the container, read the outcome out of the JSONL.",
+      "// The spawning is theirs here, which is what proves these compose.",
+      "export const piRuntime: RuntimeAdapter = {",
+      "  async run(prompt: Prompt, id: string): Promise<RunOutcome> {",
+      "    const invocation: PiInvocation = composeInvocation(piConfig, prompt, id);",
+      "    await writeRunConfiguration(piConfig, invocation);",
+      "    const stdout: AsyncIterable<Uint8Array> = (async function* () {",
+      '      yield new TextEncoder().encode(invocation.redactedArgs.join(" "));',
+      "    })();",
+      "    return interpretPiOutput(stdout);",
+      "  },",
+      "};",
+      "",
       "// A Producer of the Operator's own, told when something arrives on a channel",
       "// it shares with whoever notifies it. The connection is the Store's, so `pg`",
       "// is not an import an Operator ever needs.",
@@ -458,7 +532,21 @@ try {
         // `node_modules` would hide that in every other check.
         "const agentServer = createAgentServer({ port: 0, reachableAt: 'http://host.docker.internal:7411/' });",
         "const publicServer = createPublicServer({ port: 0 });",
-        "const built = [typeof openStore, typeof templateHandler, piScaffoldCheck(), agentServer.reachableAt, typeof publicServer.fastify.register];",
+        // The `/pi` subpath, actually run rather than only resolved: `composeInvocation`
+        // reaches for `../core/handlers.ts` to check the Session name, so this is what
+        // proves a relative `.ts` import *inside* the subpath survives being compiled
+        // and installed — the thing the deleted placeholder used to stand for.
+        "const invocation = composeInvocation({",
+        "  image: 'saf/pi:latest', model: 'sonnet', workspace: '/srv/saf/workspace',",
+        "  agentDir: '/srv/saf/agent', sessionRoot: '/srv/saf/sessions',",
+        "  agentServerUrl: agentServer.reachableAt,",
+        "}, { session: null, text: 'what happened?' }, 'r1');",
+        "const encoder = new TextEncoder();",
+        "const settled = await interpretPiOutput((async function* () {",
+        "  yield encoder.encode(JSON.stringify({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop' } }) + '\\n');",
+        "  yield encoder.encode(JSON.stringify({ type: 'agent_settled' }) + '\\n');",
+        "})());",
+        "const built = [typeof openStore, typeof templateHandler, invocation.command, invocation.session, String(settled.ok), typeof resolveMount, typeof resolvePiConfiguration, typeof writeRunConfiguration, instructionsFileName, agentServer.reachableAt, typeof publicServer.fastify.register];",
         "process.stdout.write(built.join(':'));",
       ].join("\n"),
     ],
@@ -466,8 +554,8 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:ok:http://host.docker.internal:7411:function",
-    "both subpaths should resolve at runtime, and the template Handler and the servers should load handlebars and fastify",
+    "function:function:docker:run_r1:true:function:function:function:gateway-instructions.md:http://host.docker.internal:7411:function",
+    "both subpaths should resolve at runtime, the template Handler and the servers should load handlebars and fastify, and the pi adapter should compose an invocation and read an outcome",
   );
 
   step("applying a shipped migration folder from inside the installed package");
