@@ -135,7 +135,6 @@ describe("the pi adapter", () => {
     const { config } = await adapterOn();
     assert.throws(() => createPiAdapter({ ...config, workspace: "relative" }), /workspace/);
     assert.throws(() => createPiAdapter({ ...config, image: "" }), /image/);
-    assert.throws(() => createPiAdapter({ ...config, agentServerUrl: "nope" }), /agentServerUrl/);
   });
 
   it("writes the Prompt to the container's stdin and closes it", async () => {

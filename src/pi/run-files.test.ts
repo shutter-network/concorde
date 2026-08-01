@@ -228,7 +228,7 @@ describe("the instructions file", () => {
   });
 
   it("describes the Agent server's read API against the URL the agent can reach", async (t) => {
-    const text = await instructions(t, { agentServerUrl: "http://gateway:7411/" });
+    const text = await instructions(t, { agentServerUrl: "http://gateway:7411" });
 
     for (const line of [
       "GET http://gateway:7411/signals",
@@ -240,7 +240,31 @@ describe("the instructions file", () => {
         `the instructions should describe ${line}; they were:\n${text}`,
       );
     }
-    assert.ok(!text.includes("7411//"), "the base URL should have had its trailing slash dropped");
+  });
+
+  it("writes that URL byte for byte, trailing slash and all", async (t) => {
+    // Deliberately not normalised. The framework does not interpret the agent's
+    // configuration (ADR-0016), and this value is configuration like any other, so it
+    // reaches the agent exactly as the Operator wrote it. The cost is accepted and worth
+    // stating: a trailing slash produces the double-slashed paths asserted here, which
+    // the router will not match, so the agent's reads 404 and — since nothing is retried
+    // (ADR-0017) — each affected Run fails permanently. What the Operator sees is the
+    // agent saying it cannot reach the Gateway, which points at the value they wrote.
+    const text = await instructions(t, { agentServerUrl: "http://gateway:7411/" });
+
+    // Every occurrence, not one: the base is interpolated into the prose, the four table
+    // rows and the worked example, and a normalisation anywhere is a normalisation.
+    assert.ok(
+      !text.includes("http://gateway:7411/signals") && !text.includes("http://gateway:7411/runs"),
+      `no occurrence should have lost the trailing slash; the instructions were:\n${text}`,
+    );
+    for (const line of [
+      "GET http://gateway:7411//signals",
+      "GET http://gateway:7411//runs",
+      'curl -s "http://gateway:7411//signals?limit=5"',
+    ]) {
+      assert.ok(text.includes(line), `the trailing slash should survive into ${line}`);
+    }
   });
 
   it("says the read is unauthenticated and unscoped, which are both true and both surprising", async (t) => {

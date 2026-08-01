@@ -94,11 +94,28 @@ export type PiConfiguration = {
    */
   readonly sessionRoot: Mount;
   /**
-   * How the Agent server is reachable from inside the agent's container: pass
-   * `agentServer.reachableAt`.
+   * The base URL the agent's container reaches the Agent server at. Write it with no
+   * trailing slash: `/signals` and `/runs` are appended to it as written.
    *
-   * Required, because the agent has no other way to read prior Signals and Runs and
-   * [ADR-0010](../../docs/adr/0010-the-agent-reaches-the-gateway-over-http.md) says
+   * Nothing can derive it, which is why it is required and why it is stated rather than
+   * inferred from where that server binds: the two are separate values, and neither
+   * follows from the other. `http://host.docker.internal:7411` under Docker Desktop,
+   * `http://<compose service>:7411` on a shared network, the bridge address under a
+   * plain Linux daemon.
+   *
+   * It reaches the instructions file **verbatim**: unparsed, unchecked, and unrewritten,
+   * because the framework does not interpret the agent's configuration
+   * ([ADR-0016](../../docs/adr/0016-agent-configuration-is-opaque-to-the-framework.md))
+   * and this is configuration like any other. What a parser would have caught is a
+   * typo'd scheme, which nobody types by accident, and not a typo'd hostname, which is
+   * the mistake this value actually attracts. So a trailing slash survives too, and the
+   * double-slashed paths it produces match no route: the agent's reads 404 and the Run
+   * fails, permanently, since nothing is retried
+   * ([ADR-0017](../../docs/adr/0017-failed-runs-are-not-retried.md)). Either way the
+   * symptom is the agent saying it cannot reach the Gateway, which points back here.
+   *
+   * Required at all because the agent has no other way to read prior Signals and Runs,
+   * and [ADR-0010](../../docs/adr/0010-the-agent-reaches-the-gateway-over-http.md) says
    * the shape of that API has to be described to the agent in its own configuration —
    * which is what the instructions file written before each Run does.
    */
@@ -256,7 +273,9 @@ export function resolvePiConfiguration(config: PiConfiguration): ResolvedPiConfi
     workspace: resolveMount(config.workspace, "workspace"),
     agentDir: resolveMount(config.agentDir, "agentDir"),
     sessionRoot: resolveMount(config.sessionRoot, "sessionRoot"),
-    agentServerUrl: normalizeAgentServerUrl(config.agentServerUrl),
+    // Untouched: resolution settles paths and fills defaults, and a string the Operator
+    // supplied is neither. See the field's own documentation for why nothing checks it.
+    agentServerUrl: config.agentServerUrl,
     instructions: config.instructions,
     settings: config.settings ?? {},
     models: config.models ?? {},
@@ -322,27 +341,6 @@ export function sessionDirectoryFor(
     localPath: path.join(sessionRoot.localPath, session),
     agentPath: path.posix.join(sessionRoot.agentPath, session),
   };
-}
-
-/**
- * Checks the Agent server's base URL and drops any trailing slash, so the agent is
- * told to fetch `${base}/signals` and not `${base}//signals`.
- */
-function normalizeAgentServerUrl(url: string): string {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error(agentServerUrlProblem(url, "it is not an absolute URL"));
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error(agentServerUrlProblem(url, `${parsed.protocol} is not http or https`));
-  }
-  return url.replace(/\/+$/, "");
-}
-
-function agentServerUrlProblem(url: string, problem: string): string {
-  return `agentServerUrl ${JSON.stringify(url)} is not usable as a base URL: ${problem}. It is how the Agent server is reachable from inside the agent's container — pass agentServer.reachableAt, which is that value already checked.`;
 }
 
 /**

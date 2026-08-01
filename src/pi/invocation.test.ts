@@ -438,21 +438,28 @@ describe("a configuration that cannot work", () => {
       /containerCommand is empty/,
     );
   });
+});
 
-  it("refuses an Agent server URL the agent could not put in front of a path", () => {
-    for (const agentServerUrl of ["", "host.docker.internal:7411", "/signals", "ftp://host:21"]) {
-      assert.throws(
-        () => resolvePiConfiguration({ ...minimal, agentServerUrl }),
-        /agentServerUrl/,
-        `${JSON.stringify(agentServerUrl)} should be refused`,
+describe("the Agent server URL", () => {
+  it("comes back from resolution exactly as supplied, whatever it is", () => {
+    // Resolution settles paths and fills defaults; it does not rewrite a string the
+    // Operator handed it, because a value that comes back different from how it went in
+    // is the kind of thing nobody thinks to check. Nothing judges it either: what a
+    // parser catches is a typo'd scheme, which nobody makes, and not a typo'd hostname,
+    // which is the mistake Operators actually make. See the field's own documentation.
+    for (const agentServerUrl of [
+      "http://gateway:7411",
+      "http://gateway:7411/",
+      "host.docker.internal:7411",
+      "/signals",
+      "ftp://host:21",
+      "",
+    ]) {
+      assert.equal(
+        resolvePiConfiguration({ ...minimal, agentServerUrl }).agentServerUrl,
+        agentServerUrl,
+        `${JSON.stringify(agentServerUrl)} should come back unchanged`,
       );
     }
-  });
-
-  it("drops a trailing slash from the Agent server URL, so a path can be appended to it", () => {
-    assert.equal(
-      resolvePiConfiguration({ ...minimal, agentServerUrl: "http://gateway:7411/" }).agentServerUrl,
-      "http://gateway:7411",
-    );
   });
 });

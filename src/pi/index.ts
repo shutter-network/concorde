@@ -13,8 +13,8 @@
  * write, start, interpret — inspectable rather than a claim:
  *
  *  - `resolvePiConfiguration` settles and checks a configuration, so a deployment with
- *    a relative mount path or an unusable Agent server URL is refused at startup
- *    rather than at its first Signal.
+ *    a relative mount path is refused at startup rather than at its first Signal. What
+ *    it settles it does not rewrite: `agentServerUrl` comes back exactly as supplied.
  *  - `composeInvocation` builds the container invocation for one Run.
  *  - `writeRunConfiguration` writes the agent's configuration files, fresh, and makes
  *    the Session its own directory.
