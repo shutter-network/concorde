@@ -29,10 +29,12 @@
 
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import type { FastifyPluginAsync } from "fastify";
+import type { FastifyInstance, FastifyPluginAsync } from "fastify";
+import type { Component } from "../components.ts";
 import type { Db, Handle, Listening } from "../db/index.ts";
 import { defaultLogger, type Logger } from "../logging.ts";
 import type { Prompt, Signal, SignalHandlers } from "./handlers.ts";
+import { signalsMigrations } from "./migrations.ts";
 import { agentReadRoutes } from "./routes.ts";
 import type { RunOutcome, RuntimeAdapter } from "./runtime.ts";
 import { runs, signals, workerTables } from "./schema.ts";
@@ -54,6 +56,39 @@ export type SignalWorkerOptions = {
   readonly db: Db;
   /** Drives the Agent Runtime. One Run at a time; never called concurrently. */
   readonly runtime: RuntimeAdapter;
+  /**
+   * The `kind`-to-Handler map: what this Gateway can act on, and the whole of it.
+   *
+   * A construction option rather than an argument to `start`, so a Signal Worker with
+   * no Handlers is *unconstructable* rather than merely unstartable — which matters
+   * because a Signal whose `kind` has no Handler fails permanently and is never
+   * retried (ADR-0017, ADR-0021).
+   *
+   * A plain map and not a callback handed the Worker, and that is the one thing this
+   * shape costs: a Handler can no longer close over the Signal Worker it runs under
+   * (ADR-0024). Nothing in this repository did. A Handler that emits is a `let` in the
+   * entry point assigned after construction, which is where ADR-0024 already puts
+   * Handler construction.
+   */
+  readonly handlers: SignalHandlers;
+  /**
+   * The Agent server, if the agent is to read prior Signals and Runs.
+   *
+   * Given one, the constructor registers `agentRoutes` on the Fastify instance it
+   * carries **at no prefix** — `/signals`, `/signals/:id`, `/runs`, `/runs/:id`, the
+   * layout `example/AGENTS.md` already hard-codes into the agent's own instructions
+   * (ADR-0032). Omitted, nothing is registered anywhere, and that omission is how the
+   * group is switched off (ADR-0010).
+   *
+   * Structural, and asks for nothing but the Fastify instance: what satisfies it is
+   * what `serverComponent` returns, and the `name`, `start` and `stop` beside it are
+   * the Operator's list's business rather than ours. A server built with
+   * `withTypeProvider` or with a logger of its own satisfies it too; one built on
+   * http2 does not, and takes the plugin below instead.
+   */
+  readonly agentServer?: {
+    readonly fastify: FastifyInstance;
+  };
   /** Defaults to a `pino` instance on stdout. */
   readonly logger?: Logger;
   /**
@@ -69,19 +104,18 @@ export type SignalWorkerOptions = {
   readonly sweepIntervalMs?: number;
 };
 
-export type SignalWorker = {
+export type SignalWorker = Component & {
   /**
    * The Signal Worker's Agent server routes — reading prior Signals and Runs — as a
-   * Fastify plugin: `agentServer.register(worker.agentRoutes)`, on the Fastify
-   * instance the Operator constructed.
+   * Fastify plugin, for an Operator who wants them somewhere other than where the
+   * `agentServer` option puts them.
    *
-   * A plugin the Operator registers rather than something the Signal Worker does to a
-   * server it was handed, for three reasons that all point the same way. Switching an
-   * endpoint group off is then *not registering it*, which is what ADR-0010 says
-   * turning one off means. The prefix and everything else Fastify offers stay the
-   * Operator's, since Fastify's plugin system is the extension mechanism and we have
-   * no other (ADR-0021). And construction stays free of side effects, like migrations
-   * before it.
+   * Passing the server is the easy path and the plugin is the door out (ADR-0032):
+   * hold it and you can register the routes under a prefix of your own, inside your
+   * own encapsulated plugin, or behind a hook you share with your own routes — which
+   * is Fastify's plugin system being the extension mechanism, and the reason ADR-0021
+   * chose Fastify rather than inventing one. Passing no server and never registering
+   * this is still how the group is switched off (ADR-0010).
    *
    * The routes are the Signal Worker's own: they read its tables, and no other part's.
    * The whole surface is read-only and deliberately **unscoped** — every Signal and
@@ -109,20 +143,15 @@ export type SignalWorker = {
   ): Promise<string>;
 
   /**
-   * Starts the worker with the `kind`-to-Handler map.
+   * Starts looking for Signals, with the Handlers this Worker was constructed with.
    *
-   * The map is a parameter and not a registration call, so a Signal Worker started
-   * with no Handlers is unrepresentable — which matters because an unhandled Signal
-   * fails permanently and is never retried (ADR-0017, ADR-0021). A Handler may close
-   * over this Signal Worker: it is constructed, then Handlers are built against it,
-   * then it is started with them (ADR-0024).
-   *
-   * Returns immediately, and the first thing the worker does is **fail whatever a
-   * previous worker left `processing`** (ADR-0017). Synchronous because nothing an
-   * Operator does next depends on it: a Signal emitted in the meantime is a row in a
-   * queue, and it is drained when recovery is done.
+   * Resolves immediately, and the first thing the worker goes on to do is **fail
+   * whatever a previous worker left `processing`** (ADR-0017). Nothing an Operator
+   * does next depends on that finishing: a Signal emitted in the meantime is a row in
+   * a queue, and it is drained once recovery is done. It resolves rather than returns
+   * only because a Component's `start` is asynchronous (ADR-0031).
    */
-  start(handlers: SignalHandlers): void;
+  start(): Promise<void>;
 
   /**
    * Stops looking for Signals and waits for the one in flight to finish.
@@ -166,13 +195,25 @@ type WakeupReason = "start" | "notification" | "listening" | "sweep";
 export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   const log = options.logger ?? defaultLogger();
   const runtime = options.runtime;
+  const handlers = options.handlers;
   const sweepIntervalMs = options.sweepIntervalMs ?? defaultSweepIntervalMs;
 
   // The Signal Worker's own handle, typed to its own schema. `pg` never leaves the
   // Db (ADR-0022).
   const handle = options.db.handle(workerTables);
 
-  let handlers: SignalHandlers | undefined;
+  // The two acts of wiring, both of them here so that an Operator's entry point does
+  // neither (ADR-0032). Registering the descriptor is bookkeeping the Db does nothing
+  // with until `migrate` or `start`, and it is the identical descriptor
+  // `example/migrate.ts` registers, which is one registration and not two.
+  options.db.registerMigrations(signalsMigrations);
+  const agentRoutes = agentReadRoutes(handle);
+  // At no prefix, and not awaited: Fastify defers a plugin until the server is ready,
+  // so this is a registration made at construction and loaded at `listen` — which is
+  // also why a server that is already listening refuses one.
+  options.agentServer?.fastify.register(agentRoutes);
+
+  let started = false;
   let ticker: NodeJS.Timeout | undefined;
   let listening: Listening | undefined;
   /** The worker, while it is awake. One at a time, or the queue is not serial. */
@@ -234,7 +275,7 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
     };
     log.info({ signalId: signal.id, kind: signal.kind }, "Signal claimed");
 
-    const handler = handlers?.[signal.kind];
+    const handler = handlers[signal.kind];
     if (handler === undefined) {
       // A typo in a `kind` is visible rather than silent, and permanent: there is
       // no Handler to run a post phase on, and nothing re-runs it (ADR-0017).
@@ -452,7 +493,11 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   }
 
   return {
-    agentRoutes: agentReadRoutes(handle),
+    // Read only where a Component is named in an error, and there is one worker: a
+    // second draining the same queue is what ADR-0012 rules out.
+    name: "signal worker",
+
+    agentRoutes,
 
     async emit(tx, signal) {
       // The query-builder form, not the relational one: it generates SQL from the
@@ -482,13 +527,13 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
       return inserted.id;
     },
 
-    start(registered) {
-      if (handlers !== undefined) {
+    async start() {
+      if (started) {
         throw new Error(
           "worker.start has already been called. One Signal Worker drains one queue, because Runs are serial globally (ADR-0012); construct a second Signal Worker if a second queue is really what you want.",
         );
       }
-      handlers = registered;
+      started = true;
 
       // The connection carrying the notifications is the Db's to hold — a
       // `LISTEN` registration cannot live on a pooled connection, and `pg` does not

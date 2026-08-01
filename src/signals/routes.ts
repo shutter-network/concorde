@@ -4,10 +4,11 @@
  * A **Fastify plugin**, and not a monolithic API object handed the whole Gateway.
  * Whichever part owns the concern contributes the routes, through Fastify's own
  * plugin mechanism, because there is no plugin contract of ours for it to satisfy
- * (ADR-0021). Two consequences follow from that and are the reason it is shaped this
- * way rather than registered by the Worker on a server it was constructed with:
- * switching an endpoint group off is *not registering the plugin* (ADR-0010), and the
- * prefix, the ordering, and anything else Fastify offers stay the Operator's.
+ * (ADR-0021). The Signal Worker registers this on the Agent server it is constructed
+ * with, at no prefix, and both halves of that are reversible by the Operator: passing
+ * no server is how the endpoint group is switched off (ADR-0010), and holding the
+ * plugin — it stays on `worker.agentRoutes` — is how the prefix, the encapsulation and
+ * anything else Fastify offers stay theirs (ADR-0032).
  *
  * The surface, all `GET`, all JSON, and all deliberately **unscoped** — the agent may
  * read every Signal and every Run whatever Session its Run is executing in

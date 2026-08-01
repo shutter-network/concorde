@@ -16,6 +16,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { inArray } from "drizzle-orm";
 import Fastify, { type FastifyInstance } from "fastify";
+import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
@@ -29,8 +30,11 @@ import { createSignalWorker, type SignalWorker } from "./worker.ts";
 let database: TestDatabase;
 let db: Db;
 let worker: SignalWorker;
-/** The Agent server: a bare Fastify instance, exactly as an Operator constructs one. */
-let agentServer: FastifyInstance;
+/**
+ * The Agent server: a bare Fastify instance an Operator constructed, given a place in
+ * the start order — and the thing the Signal Worker is handed to wire itself to.
+ */
+let agentServer: Component & { readonly fastify: FastifyInstance };
 /** Where the Agent server bound, for the one test that goes over a real socket. */
 let address: string;
 
@@ -71,8 +75,9 @@ before(async () => {
   await db.migrate();
 
   // The framework constructs no server: this is a bare Fastify instance, the same call
-  // an Operator's entry point makes, with the Worker's plugin registered on it below.
-  agentServer = Fastify();
+  // an Operator's entry point makes. `serverComponent` adds only where it listens, and
+  // it is what the Signal Worker below is given to register its routes on.
+  agentServer = serverComponent("agent server", Fastify(), { port: 0, host: "127.0.0.1" });
 
   const runtime = fakeRuntime(async (prompt) => {
     if (prompt.text === "doomed") {
@@ -89,16 +94,22 @@ before(async () => {
     return { ok: true };
   });
 
-  worker = createSignalWorker({ db, runtime, sweepIntervalMs: 50 });
-  // The Signal Worker contributes its own routes rather than handing them to a
-  // monolithic API object: this plugin is the Signal and Run surface, and an Operator
-  // registers it on the Agent server (ADR-0021).
-  await agentServer.register(worker.agentRoutes);
+  // Handed the Agent server, so the Signal and Run surface is registered on it at no
+  // prefix by the constructor: nothing here registers a plugin, and nothing here could
+  // forget to (ADR-0032).
+  worker = createSignalWorker({
+    db,
+    runtime,
+    handlers: { alpha: scripted, beta: scripted },
+    agentServer,
+    sweepIntervalMs: 50,
+  });
   // An explicit loopback host and an ephemeral port, both this test's to state — the
-  // framework supplies no default for either. Fastify resolves to the address it bound,
+  // framework supplies no default for either. Fastify reports the address it bound,
   // which is what the one test over a real socket fetches.
-  address = await agentServer.listen({ port: 0, host: "127.0.0.1" });
-  worker.start({ alpha: scripted, beta: scripted });
+  await agentServer.start();
+  address = agentServer.fastify.listeningOrigin;
+  await worker.start();
 
   // Arrival order matters to every ordering assertion below, so each Signal is
   // emitted in its own transaction and awaited.
@@ -123,7 +134,7 @@ before(async () => {
 
 after(async () => {
   await worker.stop();
-  await agentServer.close();
+  await agentServer.stop();
   await database.drop();
 });
 
@@ -139,7 +150,7 @@ async function emit(label: string, kind: string, prompts: readonly Prompt[]): Pr
  * The one case that does go over the wire is `answers over HTTP` below.
  */
 function read(path: string) {
-  return agentServer.inject({ method: "GET", url: path });
+  return agentServer.fastify.inject({ method: "GET", url: path });
 }
 
 async function readSignals(path = "/signals"): Promise<SignalRecord[]> {

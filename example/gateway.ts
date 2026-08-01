@@ -10,12 +10,13 @@
  * arbitrary:
  *
  *   1. **open the Db** — a connection URL, and nothing happens on the wire yet
- *   2. **migrate** — explicitly, so it can also be a deploy step of its own
- *   3. **construct, and register routes** — two Fastify instances, the Runtime Adapter,
- *      the Signal Worker, and its own routes onto the Agent one. None of it has a side
- *      effect beyond that registration
- *   4. **start the Signal Worker with its Handlers** — passing them in, because a
- *      Worker started with none registered should not be expressible
+ *   2. **construct, and register routes** — two Fastify instances, the Runtime Adapter,
+ *      and the Signal Worker with its Handlers, whose routes go onto the Agent one
+ *   3. **migrate** — explicitly, so it can also be a deploy step of its own, and after
+ *      the construction above because constructing a part is what registers the
+ *      migration descriptor `db.migrate()` then applies
+ *   4. **start the Signal Worker** — with no arguments: its Handlers were a construction
+ *      option, because a Worker with none should not be constructible
  *   5. **listen** — last, because Fastify refuses a route registration after that
  *
  * Two things this file is deliberately on the hook for, because the framework ships
@@ -32,12 +33,7 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import Fastify from "fastify";
-import {
-  createSignalWorker,
-  openDb,
-  signalsMigrations,
-  templateHandler,
-} from "shared-agent-framework";
+import { createSignalWorker, openDb, templateHandler } from "shared-agent-framework";
 import { createPiAdapter } from "shared-agent-framework/pi";
 
 // Refused here rather than discovered later: a Run that fails is never retried, so a
@@ -70,12 +66,6 @@ await Promise.all(
 );
 
 const db = openDb(process.env.DATABASE_URL ?? "postgres://saf:saf@localhost:5433/saf");
-// Registered rather than passed: `db.migrate()` applies whatever registered, and
-// `db.start()` refuses to start against a schema that is behind its folder. The same
-// two lines are in migrate.ts, which is the entry point a deploy runs instead of this
-// one, and registering the identical descriptor twice is one registration.
-db.registerMigrations(signalsMigrations);
-await db.migrate();
 
 // Two ordinary Fastify instances, because the framework ships no server: there is nothing
 // of ours between this file and Fastify, and every option, hook and plugin is reachable
@@ -139,24 +129,38 @@ const runtime = createPiAdapter({
     ],
   },
 });
-const worker = createSignalWorker({ db, runtime });
-// Nothing does this for you. Not registering a route group is how you switch it off, and
-// this one is read-only and unscoped: the agent sees every Signal and every Run.
+const worker = createSignalWorker({
+  db,
+  runtime,
+  // The primary extension point, and the only one that needs learning. A Handler is a
+  // plain object with a `handle` — this one is shipped, renders a Handlebars file per
+  // Run, and closes over its template and its Session-naming rule rather than being
+  // handed a context object. A Signal whose `kind` is not a key here fails permanently,
+  // which is why the map is a construction option: a Worker with no Handlers should not
+  // be constructible.
+  handlers: {
+    ask: templateHandler<{ user: string; text: string }>({
+      template: new URL("./prompts/ask.hbs", import.meta.url),
+      // One Session per user: one of the topologies ADR-0006 lists, chosen by this
+      // deployment, and the framework has no opinion about the name it produces.
+      session: (signal) => `user_${signal.payload.user}`,
+      data: (signal) => signal.payload,
+    }),
+  },
+});
+// By hand here, which is the door the exported plugin is: handing the Signal Worker the
+// Agent server does the same registration at construction. Either way, not registering
+// this group at all is how it is switched off — it is read-only and unscoped, so the
+// agent sees every Signal and every Run.
 await agentServer.register(worker.agentRoutes);
 
-// The primary extension point, and the only one that needs learning. A Handler is a
-// plain object with a `handle` — this one is shipped, renders a Handlebars file per Run,
-// and closes over its template and its Session-naming rule rather than being handed a
-// context object. A Signal whose `kind` is not a key here fails permanently.
-worker.start({
-  ask: templateHandler<{ user: string; text: string }>({
-    template: new URL("./prompts/ask.hbs", import.meta.url),
-    // One Session per user: one of the topologies ADR-0006 lists, chosen by this
-    // deployment, and the framework has no opinion about the name it produces.
-    session: (signal) => `user_${signal.payload.user}`,
-    data: (signal) => signal.payload,
-  }),
-});
+// After construction, because the Signal Worker registers its own migration descriptor
+// with the Db and `db.migrate()` applies whatever registered. migrate.ts is the entry
+// point a deploy runs instead of this one, and it registers the same descriptor
+// explicitly — the identical descriptor twice is one registration.
+await db.migrate();
+
+await worker.start();
 
 // The two bind addresses, side by side, because the asymmetry between them is the reason
 // there are two servers and no default of ours hides either one.

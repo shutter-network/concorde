@@ -71,7 +71,7 @@ type WorkerBody = (worker: SignalWorker, entries: readonly LogEntry[]) => Promis
 
 /**
  * A Signal Worker of its own per test, so each brings its own Handler map — which is
- * what `start` taking the map means in practice. Signals from earlier tests are all
+ * what constructing with the map means in practice. Signals from earlier tests are all
  * in a terminal state, so nothing carries over.
  *
  * Every Worker records what it logged, because what woke it is only visible there: a
@@ -87,10 +87,11 @@ async function withWorker(
   const worker = createSignalWorker({
     db,
     runtime,
+    handlers,
     logger: recordingLogger(entries),
     sweepIntervalMs,
   });
-  worker.start(handlers);
+  await worker.start();
   try {
     await body(worker, entries);
   } finally {
@@ -166,8 +167,14 @@ function runsOf(signalId: string): Promise<(typeof runs.$inferSelect)[]> {
 
 describe("worker.emit", () => {
   it("records a Signal as pending", async () => {
-    // No worker started, so what is asserted is what `emit` wrote and nothing else.
-    const worker = createSignalWorker({ db, runtime: fakeRuntime(), logger: recordingLogger([]) });
+    // No worker started, so what is asserted is what `emit` wrote and nothing else —
+    // and a Handler map with nothing in it, because nothing here dispatches.
+    const worker = createSignalWorker({
+      db,
+      runtime: fakeRuntime(),
+      handlers: {},
+      logger: recordingLogger([]),
+    });
     const id = await emit(worker, "recorded.pending", { hello: "world" });
 
     const row = await signalRow(id);
@@ -230,12 +237,13 @@ describe("worker.start", () => {
     const worker = createSignalWorker({
       db,
       runtime: fakeRuntime(),
+      handlers: { started: { handle: () => [] } },
       logger: recordingLogger([]),
       sweepIntervalMs: sweepingMs,
     });
-    worker.start({ started: { handle: () => [] } });
+    await worker.start();
     try {
-      assert.throws(() => worker.start({ started: { handle: () => [] } }), /already been called/);
+      await assert.rejects(() => worker.start(), /already been called/);
     } finally {
       await worker.stop();
     }
@@ -243,14 +251,14 @@ describe("worker.start", () => {
 });
 
 /**
- * The type checker is the assertion: the Handler map is a parameter of `start`, so a
- * Signal Worker started with none registered is unrepresentable (ADR-0021). Never
- * called — if `start` ever grew an optional signature, `@ts-expect-error` would fail
- * the typecheck.
+ * The type checker is the assertion: the Handler map is a construction option, so a
+ * Signal Worker with none is unconstructable rather than merely unstartable
+ * (ADR-0021). Never called — if `handlers` ever became optional, `@ts-expect-error`
+ * would fail the typecheck.
  */
-export function startingWithoutHandlersDoesNotCompile(worker: SignalWorker): void {
-  // @ts-expect-error start takes the kind-to-Handler map
-  worker.start();
+export function constructingWithoutHandlersDoesNotCompile(runtime: RuntimeAdapter): SignalWorker {
+  // @ts-expect-error the kind-to-Handler map is a required option
+  return createSignalWorker({ db, runtime });
 }
 
 describe("the worker", () => {
@@ -789,10 +797,11 @@ describe("wakeup", () => {
     const worker = createSignalWorker({
       db: slowToRegister,
       runtime,
+      handlers: one,
       logger: recordingLogger(entries),
       sweepIntervalMs: sleepingSweepMs,
     });
-    worker.start(one);
+    await worker.start();
     try {
       const id = await emit(worker, "woken");
       // Nothing heard the notification, and the sweep is a minute away, so the only
@@ -889,10 +898,11 @@ describe("logging", () => {
     const worker = createSignalWorker({
       db,
       runtime: fakeRuntime(),
+      handlers: { logged: { handle: () => [{ session: "user_1", text: "hello" }] } },
       logger: recordingLogger(entries),
       sweepIntervalMs: sweepingMs,
     });
-    worker.start({ logged: { handle: () => [{ session: "user_1", text: "hello" }] } });
+    await worker.start();
 
     try {
       const id = await emit(worker, "logged");
@@ -913,16 +923,17 @@ describe("logging", () => {
     const worker = createSignalWorker({
       db,
       runtime: fakeRuntime(),
+      handlers: {
+        "logged.failure": {
+          handle: () => {
+            throw thrown;
+          },
+        },
+      },
       logger: recordingLogger(entries),
       sweepIntervalMs: sweepingMs,
     });
-    worker.start({
-      "logged.failure": {
-        handle: () => {
-          throw thrown;
-        },
-      },
-    });
+    await worker.start();
 
     try {
       const id = await emit(worker, "logged.failure");
@@ -943,10 +954,13 @@ describe("logging", () => {
   it("works with the default logger when the Operator supplies none", async () => {
     // The only test with no `logger`, and the only one whose evidence is partly in
     // the test output: `pino`'s JSON lines on stdout are the default working.
-    const worker = createSignalWorker({ db, runtime: fakeRuntime(), sweepIntervalMs: sweepingMs });
-    worker.start({
-      "default.logger": { handle: () => [{ session: null, text: "logged by pino" }] },
+    const worker = createSignalWorker({
+      db,
+      runtime: fakeRuntime(),
+      handlers: { "default.logger": { handle: () => [{ session: null, text: "logged by pino" }] } },
+      sweepIntervalMs: sweepingMs,
     });
+    await worker.start();
 
     try {
       const id = await emit(worker, "default.logger");

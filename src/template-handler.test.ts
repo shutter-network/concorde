@@ -444,8 +444,8 @@ describe("the template Handler under the worker", () => {
     body: (worker: SignalWorker, runtime: FakeRuntime) => Promise<void>,
   ): Promise<void> {
     const runtime = fakeRuntime();
-    const worker = createSignalWorker({ db, runtime, sweepIntervalMs });
-    worker.start(handlers);
+    const worker = createSignalWorker({ db, runtime, handlers, sweepIntervalMs });
+    await worker.start();
     try {
       await body(worker, runtime);
     } finally {

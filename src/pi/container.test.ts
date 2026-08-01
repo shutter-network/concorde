@@ -301,7 +301,7 @@ async function withGateway(
 
   const runtime = adapterOn(paths, [instructionsEntry(paths)]);
 
-  const worker = createSignalWorker({ db, runtime });
+  const worker = createSignalWorker({ db, runtime, handlers: { ask: asking } });
   // Nothing registers the Signal Worker's routes for you, and Fastify refuses one
   // after a server is listening.
   await agentServer.register(worker.agentRoutes);
@@ -338,7 +338,7 @@ async function withGateway(
     },
   };
 
-  worker.start({ ask: asking });
+  await worker.start();
   try {
     await body(rig);
   } finally {

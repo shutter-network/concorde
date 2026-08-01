@@ -106,8 +106,14 @@ before(async () => {
 
   directory = createUsers({ db, tokenTtl: hour, scrypt: cheap });
   // Constructed and never started: this file emits Signals and reads them back, and a
-  // running worker would take them off the queue and try to handle them.
-  worker = createSignalWorker({ db, runtime: { run: async () => ({ ok: true }) }, logger: silent });
+  // running worker would take them off the queue and try to handle them — so the
+  // Handler map it is constructed with is empty and nothing dispatches.
+  worker = createSignalWorker({
+    db,
+    runtime: { run: async () => ({ ok: true }) },
+    handlers: {},
+    logger: silent,
+  });
 
   agentServer = Fastify();
   await agentServer.register(directory.agentRoutes, { prefix: users });
