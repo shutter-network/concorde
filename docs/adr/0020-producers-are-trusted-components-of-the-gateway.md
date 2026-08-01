@@ -1,5 +1,13 @@
 # Producers are trusted components of the Gateway
 
+> **Amended by [ADR-0029](./0029-users-are-a-part-of-their-own.md).** Users, and the
+> authenticating of them, belong to the **User Directory** — a part of the Gateway that
+> is *not* a Producer, since it emits no Signals. So "Users, Messages, and Outboxes
+> belong to the Messenger" below reads "Messages and Outboxes", and the Messenger reads
+> the already-authenticated User off the request rather than authenticating anyone. The
+> decision this ADR records is untouched: every part inside the Gateway is trusted, and a
+> Signal's attribution is still the Messenger's to write.
+
 The Gateway is a composite. Its **core** holds the Signal queue, Signal Handler dispatch, Run execution, and the agent-facing HTTP API. Around the core sit **Producers**: trusted components that emit Signals into the queue. Two are shipped.
 
 - **Messenger** — owns everything Users touch. It authenticates Users, accepts their submissions, holds Outboxes, and may carry higher-level messaging concepts such as conversations. It emits Signals whose payloads carry the message and the submitting User's id.

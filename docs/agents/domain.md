@@ -8,7 +8,7 @@ root, one `docs/adr/`.
 
 - **`CONTEXT.md`** at the repo root — the glossary of domain terms
 - **`docs/adr/`** — read the ADRs that touch the area you're about to work in.
-  There are currently 27 (`0001`–`0027`), and most `CONTEXT.md` entries link to
+  There are currently 30 (`0001`–`0030`), and most `CONTEXT.md` entries link to
   the ADR that decided them; follow those links rather than reading the whole set.
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence;

@@ -1,6 +1,6 @@
 # Party is not in the data model
 
-A Shared Agent belongs to several parties at once — that premise is the reason this framework exists. Nonetheless the data model contains no Party entity. The Messenger knows Users, and nothing above them; the core knows no identity at all ([ADR-0020](./0020-producers-are-trusted-components-of-the-gateway.md)).
+A Shared Agent belongs to several parties at once — that premise is the reason this framework exists. Nonetheless the data model contains no Party entity. The User Directory knows Users, and nothing above them ([ADR-0029](./0029-users-are-a-part-of-their-own.md); this ADR originally said the Messenger); the core knows no identity at all ([ADR-0020](./0020-producers-are-trusted-components-of-the-gateway.md)).
 
 The reasoning is that ownership confers no rights here. [ADR-0001](./0001-the-gateway-is-trusted.md) puts the agent's configuration in the hands of the Operator and denies every party the ability to change it, so being an owner grants no mechanical privilege. That leaves Party with only two possible jobs — addressing a group, and routing a group to its own Session — and both are grouping rather than ownership. Grouping is expressible as user attributes that a deployment defines and its Signal Handlers read.
 

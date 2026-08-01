@@ -29,7 +29,7 @@ Anything inside the Gateway that emits Signals into the Core's queue. A **role**
 _Avoid_: source, ingress, adapter, connector
 
 **Public server**:
-The HTTP server exposed outside the Gateway. Named for its exposure rather than its audience, because some of its routes serve no authenticated User. Users reach the Messenger through it and reach nothing else.
+The HTTP server exposed outside the Gateway. Named for its exposure rather than its audience, because some of its routes serve no authenticated User. Users reach the User Directory and the Messenger through it, and reach nothing else.
 _Avoid_: user server, external API, frontend
 
 **Agent server**:
@@ -37,12 +37,16 @@ The HTTP server only the Agent Runtime reaches, carrying the Core's Signal and R
 _Avoid_: internal API, private server, control plane
 
 **Store**:
-The Gateway's own persistent state — Signals, Runs, and whatever the Producers keep. The agent cannot touch it directly, only through the Agent server. Contrast the Workspace, which the agent reads and writes as files.
+The Gateway's own persistent state — Signals, Runs, Users, and whatever else each part keeps. The agent cannot touch it directly, only through the Agent server. Contrast the Workspace, which the agent reads and writes as files.
 _Avoid_: database, persistence layer, repository
 
 **Messenger**:
-The Producer that owns everything Users touch — authenticating them, accepting their submissions, holding Outboxes, and any higher-level messaging concepts a deployment needs. Users talk to it and to nothing else.
+The Producer that owns messaging — accepting Users' submissions, holding Outboxes, and any higher-level messaging concepts a deployment needs. Owns neither Users nor their authentication: it is constructed with the User Directory and reads an already-authenticated User off the request. See [ADR-0029](./docs/adr/0029-users-are-a-part-of-their-own.md).
 _Avoid_: message server, chat server, inbox service
+
+**User Directory**:
+The part that owns Users and their credentials — management on the Agent server, authentication on the Public server. Not a Producer: it emits no Signals and holds no reference to the Core. See [ADR-0029](./docs/adr/0029-users-are-a-part-of-their-own.md) and [ADR-0030](./docs/adr/0030-passwords-are-traded-for-bearer-tokens.md).
+_Avoid_: auth service, identity provider, IdP, user store, account system, user module
 
 **Scheduler**:
 The Producer that owns recurrence, cancellation, and next-fire computation, and emits a Signal when a schedule matures. See [ADR-0018](./docs/adr/0018-scheduling-is-a-separate-component.md).
@@ -92,21 +96,25 @@ _Avoid_: turn, job, invocation, task
 The files and data that Signal Handlers and the agent share, as opposed to the Store, which the agent cannot touch directly. Global to a Shared Agent, not per Session.
 _Avoid_: scratch, working directory, shared state
 
-## Messaging
+## Identity
 
-Owned by the Messenger, not the core.
+Owned by the User Directory — not the core, and not the Messenger.
 
 **User**:
-An entity that authenticates against the Messenger, submits messages, and has an Outbox. Named by an opaque Messenger-issued id, never by email or any other scheme. See [ADR-0014](./docs/adr/0014-users-are-opaque-ids-and-authentication-is-pluggable.md).
+An entity that authenticates against the User Directory, and may submit Messages and hold an Outbox. Named by an opaque Gateway-issued id, never by email or any other scheme. Nothing removes one. See [ADR-0014](./docs/adr/0014-users-are-opaque-ids-and-authentication-is-pluggable.md) and [ADR-0029](./docs/adr/0029-users-are-a-part-of-their-own.md).
 _Avoid_: account, member, client, party
 
 **Attributes**:
-Arbitrary JSON carried by a User, defined by the deployment rather than the framework. Where grouping lives, since there is no Party entity.
+Arbitrary JSON carried by a User, defined by the deployment rather than the framework. Where grouping lives, since there is no Party entity — and therefore where authorization lives.
 _Avoid_: metadata, profile, claims, roles
 
-**Authenticator**:
-The replaceable part that verifies a User's credential. Gateway-issued bearer tokens are the default; a deployment may substitute anything.
-_Avoid_: identity provider, auth provider, IdP
+**Token**:
+What a User presents on every request after trading a password for one. Gateway-issued, always expiring, and revocable. The only request credential the framework has. See [ADR-0030](./docs/adr/0030-passwords-are-traded-for-bearer-tokens.md).
+_Avoid_: session, JWT, API key, cookie
+
+## Messaging
+
+Owned by the Messenger, not the core.
 
 **Message**:
 Something exchanged between the agent and exactly one User, in one direction or the other. Carries an arbitrary JSON payload. **Outbound** means agent to User; **inbound** means User to agent. Never involves two Users, and never a group. See [ADR-0007](./docs/adr/0007-messages-carry-arbitrary-json-payloads.md).
@@ -131,6 +139,10 @@ _Avoid_: protected, sandboxed, isolated, secured
 **Component**:
 Rejected as a framework concept. There is no common contract that the Messenger, the Scheduler, an Authenticator and an Operator's own code all satisfy, and inventing one bought nothing that direct interfaces did not. Each part of the Gateway is customised on its own terms; HTTP routes extend through Fastify's plugin system rather than ours. "Part" is the informal word when one is needed. See [ADR-0021](./docs/adr/0021-the-framework-has-no-plugin-system.md).
 _Also rejected as synonyms_: service, plugin, module, extension
+
+**Authenticator**:
+Rejected, having been named in [ADR-0014](./docs/adr/0014-users-are-opaque-ids-and-authentication-is-pluggable.md) as the replaceable part that verifies a credential. Its own motivation was keeping authentication out of the core, and that is satisfied by the User Directory being a separate part: a deployment replaces our authentication by not registering its Public server plugin. Verification was also the wrong seam — an implementation of one still has to answer where the credential lives, so the useful extension point is **token issuance**, which is a public method and not an interface. See [ADR-0030](./docs/adr/0030-passwords-are-traded-for-bearer-tokens.md).
+_Also rejected as synonyms_: identity provider, auth provider, IdP, credential verifier
 
 **Submission**:
 Rejected as a separate entity for what a User sends in. It is an **inbound Message**. A distinct entity would have made the agent's read of the Message log a union of two shapes, which is the one read it exists to serve. The verb "submit" is still the right word for the act.

@@ -1,5 +1,12 @@
 # The core framework stays generic
 
+> **Amended by [ADR-0029](./0029-users-are-a-part-of-their-own.md) and
+> [ADR-0030](./0030-passwords-are-traded-for-bearer-tokens.md).** Users belong to the
+> **User Directory**, not the Messenger, and there is no **Authenticator** — the seam is
+> token issuance. Both substitutions leave this ADR's argument intact: authentication is
+> still outside the core, and it is still an extension point. Only the name and the
+> owner changed.
+
 Where a concern is not intrinsic to mediating a Shared Agent, the framework declines to decide it and pushes it to an extension point. Confidentiality policy, injection defence, runtime confinement, Message payload shapes, authorization, and authentication are all outside the core for this one reason.
 
 This is the shared rationale behind [ADR-0002](./0002-information-flow-between-users-is-the-agents-decision.md), [0003](./0003-prompt-injection-is-an-accepted-risk.md), [0004](./0004-runtime-confinement-is-the-deployments-responsibility.md), [0007](./0007-messages-carry-arbitrary-json-payloads.md), [0009](./0009-signal-handlers-are-arbitrary-code.md) and [0011](./0011-the-agent-has-full-read-access.md), and it should be read as the reason behind any future "the deployment decides that."

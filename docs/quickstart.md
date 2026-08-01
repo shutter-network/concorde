@@ -430,11 +430,13 @@ boundary.
 The entry point constructs a second Fastify instance and puts nothing on it. This is a
 **scope boundary, not an unimplemented feature.**
 
-The Public server is the surface the outside world reaches, and in this framework the
-only thing users talk to is the **Messenger** — the part that authenticates them,
-accepts what they send, and holds their outboxes. The Messenger is designed and
-deliberately not built yet. Until it is, there is nothing for users to reach, so there
-are no routes.
+The Public server is the surface the outside world reaches, and in this framework users
+talk to two parts and no others: the **User Directory**, which authenticates them, and
+the **Messenger**, which accepts what they send and holds their outboxes. The Messenger
+is designed and deliberately not built yet. The User Directory *is* built — this entry
+point simply does not construct it, because a deployment with authentication and no
+messaging is a real thing but not the thing this file demonstrates. Wiring it in is
+["Users and authentication"](#making-it-yours) below, and it is four lines.
 
 It exists in the entry point anyway, for two reasons. It is part of the Gateway's shape:
 what the world can reach and what the agent can reach are different servers, kept apart
@@ -510,6 +512,28 @@ that bypass your host's own.** A `ports:` entry that looks like it is behind `uf
 of some records — the agent-facing surface is the Gateway's whole read side, and anything
 that can reach it can also reach whatever else you mounted there.
 
+### Nothing limits password guessing
+
+If you register the User Directory's Public plugin, `POST /auth/tokens` can be hammered.
+There is no rate limit, no backoff, and no lockout after failed attempts, and none is
+coming from us.
+
+Two reasons, and the second is the load-bearing one. A limiter in this process is the
+wrong layer: its counters live in memory, so a second Gateway process doubles every
+allowance, and it sits behind whatever proxy is already terminating your TLS and already
+able to do this properly. And per-User lockout is worse than nothing — anyone who can
+reach the login route could lock a User out on purpose, which is a cheaper attack than the
+one it prevents.
+
+So this is the deployment's, at the edge, the same way the Agent server's reachability is.
+What we do instead is refuse to help: every failure answers with the same status and the
+same body whether the password was wrong or the User does not exist, and a miss still runs
+the key derivation against a dummy hash so the response time does not answer the question
+either. Guessing is possible; learning who exists is not.
+
+Worth pairing with the cost: password verification is memory-hard *on purpose*, so a flood
+of wrong passwords is also a load problem, not only a security one.
+
 ## Migrations as a separate step
 
 `gateway.ts` migrates at boot. It is idempotent, and for one process on one machine that
@@ -534,7 +558,7 @@ You never run a schema generation tool. The SQL ships inside the package.
 
 ## Making it yours
 
-Five things you will want, in the order you will want them.
+Six things you will want, in the order you will want them.
 
 **Your own Signal Handler.** A Handler is a plain object with a `handle` that takes a
 Signal and returns Prompts. There is no base class, no context object, and no registration
@@ -570,6 +594,52 @@ agent invisibly, and a failed Signal is in the log with a reason.
 **Your own routes.** `server.register(plugin, { prefix })`, on either instance. They are
 plain Fastify instances, so its plugin system is the extension mechanism and there is no
 contract of ours to satisfy. Register before `listen`.
+
+**Users and authentication.** The reference deployment above constructs no Users at all —
+its one Signal carries a `user` that is a made-up string. A deployment with real people in
+it constructs the **User Directory** and registers its two plugins, one per server. Both
+are ordinary Fastify plugins with no prefix of their own, so you supply one; `/auth` and
+`/users` are convention rather than requirement, and nothing breaks if you disagree:
+
+```ts
+const users = createUsers({ store, tokenTtl: 30 * 24 * 60 * 60 * 1000 });
+await store.migrate(coreMigrations, usersMigrations);   // the same one call, one more descriptor
+
+await publicServer.register(users.publicRoutes, { prefix: "/auth" });
+await agentServer.register(users.agentRoutes, { prefix: "/users" });
+```
+
+A User logs in with `POST /auth/tokens` and gets a bearer Token back; every route of yours
+that should require one takes `users.requireUser` as a `preHandler` and reads
+`request.safUser`:
+
+```ts
+publicServer.post("/ask", { preHandler: users.requireUser }, async (request) => {
+  const user = request.safUser;
+  await store.tx((tx) => core.emit(tx, { kind: "ask", payload: { user: user.id, text: "…" } }));
+  return { accepted: true };
+});
+```
+
+That is the whole integration surface, and it is what the Messenger will use too. Four
+things about it are decisions rather than omissions, and are cheaper to learn now than to
+discover:
+
+- **Seeding the first User is yours, and it happens once.** A User has no natural key — no
+  email, no username, nothing to match on — so "create this User if absent" cannot be
+  written. Create one out of band against the Agent server and keep the id it returns:
+  `curl -XPOST localhost:7411/users -H 'content-type: application/json' -d '{"password":"…"}'`.
+  Do not put it in your entry point, where it would run again on every boot.
+- **The agent can create Users but can give them nothing.** `POST /users` on the Agent
+  server takes a password and takes no attributes, so an agent talked into creating a User
+  cannot make it a privileged one. Setting attributes, replacing a password, and issuing a
+  Token are methods on `users` — reachable from your Handlers, which are trusted code, and
+  from no HTTP route the agent can reach.
+- **There is no way to remove a User.** Not a delete, not a deactivate. Revoke their Tokens
+  and that is the whole of it.
+- **Nothing prunes expired Tokens.** The table grows by a row per login, forever. If that
+  matters to you, run this on a schedule of your own:
+  `delete from saf_users.tokens where expires_at < now()`.
 
 **Your own Producer.** Anything that calls `core.emit(tx, { kind, payload })`. A webhook
 route, a poller, a loop. Note the transaction: `emit` takes yours rather than finding one,
@@ -738,9 +808,12 @@ rm -rf example/state                             # the Workspace, the agent's di
 
 So you do not go looking:
 
-- **The Messenger** — users, messages in both directions, outboxes, authentication.
-  Designed, not built. It is why the Public server is empty and why nothing but your entry
-  point emits Signals.
+- **The Messenger** — messages in both directions, and outboxes. Designed, not built. It is
+  why the Public server is empty and why nothing but your entry point emits Signals.
+- **Users in *this* deployment.** The User Directory is built and shipped; this entry point
+  just doesn't construct it. See ["Users and authentication"](#making-it-yours).
+- **Any way to remove a User**, any account-recovery flow, and any limit on password
+  guessing. All three refused, with the reasoning above and in the ADRs.
 - **The Scheduler** — recurrence and future work. Designed, not built.
 - **Timeouts, cancellation, and retry.** Refused, with the consequences spelled out
   above.
