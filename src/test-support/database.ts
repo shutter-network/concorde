@@ -12,7 +12,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import { type Db, openStore, type Store } from "../store/index.ts";
+import { type Handle, openStore, type Store } from "../store/index.ts";
 
 const defaultUrl = "postgres://postgres:postgres@localhost:5432/postgres";
 
@@ -65,7 +65,7 @@ function databaseName(name: string): string {
 }
 
 /** `create database` and `drop database` need a connection to a different database. */
-async function onServer(run: (server: Db) => Promise<void>): Promise<void> {
+async function onServer(run: (server: Handle) => Promise<void>): Promise<void> {
   const server = openStore(serverUrl);
   try {
     await run(server.handle({}));

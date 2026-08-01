@@ -26,7 +26,7 @@ export type { LogFields, Logger } from "./logging.ts";
 export { defaultLogger } from "./logging.ts";
 export type {
   ChannelListener,
-  Db,
+  Handle,
   Listening,
   MigrationDescriptor,
   Store,

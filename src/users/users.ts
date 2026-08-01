@@ -33,7 +33,7 @@
 import { and, desc, eq, gt, sql } from "drizzle-orm";
 import type { FastifyPluginAsync, preHandlerAsyncHookHandler } from "fastify";
 import { limitSchema } from "../route-conventions.ts";
-import type { Db, Store } from "../store/index.ts";
+import type { Handle, Store } from "../store/index.ts";
 import {
   agentUserRoutes,
   type Credentials,
@@ -55,7 +55,7 @@ import {
 } from "./secrets.ts";
 
 /** A handle typed to this part's own tables, and to no other part's (ADR-0022). */
-type UsersDb = Db<typeof usersTables>;
+type UsersHandle = Handle<typeof usersTables>;
 
 export type UsersOptions = {
   readonly store: Store;
@@ -144,7 +144,7 @@ export type Users = {
    * idempotent; an explicit id would only invite a hardcoded uuid into every copy of
    * a deployment's source (ADR-0029). Seeding is the Operator's, out of band, once.
    */
-  create<TSchema extends Record<string, unknown>>(tx: Db<TSchema>): Promise<UserRecord>;
+  create<TSchema extends Record<string, unknown>>(tx: Handle<TSchema>): Promise<UserRecord>;
 
   /**
    * Replaces a User's Attributes, **wholesale**.
@@ -181,7 +181,7 @@ export type Users = {
    * mistyped id would otherwise be an authorization grant that quietly did not happen.
    */
   setAttributes<TSchema extends Record<string, unknown>>(
-    tx: Db<TSchema>,
+    tx: Handle<TSchema>,
     user: string,
     attributes: unknown,
   ): Promise<void>;
@@ -215,7 +215,7 @@ export type Users = {
    * so setting it leaves a User who cannot log in. Recorded rather than guarded against.
    */
   setPassword<TSchema extends Record<string, unknown>>(
-    tx: Db<TSchema>,
+    tx: Handle<TSchema>,
     user: string,
     password: string,
   ): Promise<void>;
@@ -247,7 +247,7 @@ export type Users = {
    * there is no Token it could answer with.
    */
   issueToken<TSchema extends Record<string, unknown>>(
-    tx: Db<TSchema>,
+    tx: Handle<TSchema>,
     user: string,
   ): Promise<IssuedToken>;
 
@@ -269,7 +269,7 @@ export type Users = {
    * The rows are **deleted rather than marked**, which is the only compaction anything
    * has over that table: nothing reaps expired Tokens either (ADR-0030).
    */
-  revoke<TSchema extends Record<string, unknown>>(tx: Db<TSchema>, user: string): Promise<void>;
+  revoke<TSchema extends Record<string, unknown>>(tx: Handle<TSchema>, user: string): Promise<void>;
 
   /**
    * One User by id, or `undefined`.
@@ -293,7 +293,7 @@ export type Users = {
 export function createUsers(options: UsersOptions): Users {
   // The part's own handle, typed to its own tables. `pg` never leaves the Store
   // (ADR-0022).
-  const db = options.store.handle(usersTables);
+  const handle = options.store.handle(usersTables);
   const tokenTtl = checkedTokenTtl(options.tokenTtl);
   const parameters = checkedScryptParameters(options.scrypt ?? defaultScryptParameters);
   const dummy = dummyDigest(parameters);
@@ -301,27 +301,27 @@ export function createUsers(options: UsersOptions): Users {
   // Operator's: the surface the quickstart documents and the surface the Public
   // plugin's own route uses are the same object, not two implementations that could
   // drift.
-  const presentedUser = requireUser({ authenticate: (token) => userForToken(db, token) });
+  const presentedUser = requireUser({ authenticate: (token) => userForToken(handle, token) });
 
   return {
     agentRoutes: agentUserRoutes({
       // The route's create runs on the part's own handle: one insert is atomic by
       // itself, and a request that creates a User has nothing else to keep it with.
-      create: ({ password }) => insertUser(db, password, parameters),
-      get: (id) => selectUser(db, id),
-      list: ({ limit }) => selectUsers(db, limit),
+      create: ({ password }) => insertUser(handle, password, parameters),
+      get: (id) => selectUser(handle, id),
+      list: ({ limit }) => selectUsers(handle, limit),
     }),
 
     publicRoutes: publicUserRoutes(
       {
-        logIn: (credentials) => logIn(db, credentials, { dummy, tokenTtl }),
+        logIn: (credentials) => logIn(handle, credentials, { dummy, tokenTtl }),
         // The route's revocations run on the part's own handle, for the reason its
         // create does: one statement is atomic by itself, and a request that revokes
         // has nothing else to keep it with. The method below is where a caller with
         // something to keep it with reaches the same statement.
-        revokeToken: (token) => deleteToken(db, token),
-        revokeTokens: (user) => deleteTokens(db, user),
-        changePassword: (change) => changePassword(db, change, parameters),
+        revokeToken: (token) => deleteToken(handle, token),
+        revokeTokens: (user) => deleteTokens(handle, user),
+        changePassword: (change) => changePassword(handle, change, parameters),
       },
       presentedUser,
     ),
@@ -334,8 +334,8 @@ export function createUsers(options: UsersOptions): Users {
       updateUser(tx, user, { passwordHash: await hashPassword(password, parameters) }),
     issueToken: (tx, user) => grantToken(tx, user, tokenTtl),
     revoke: (tx, user) => deleteTokens(tx, user),
-    get: (id) => selectUser(db, id),
-    list: (asked) => selectUsers(db, asked?.limit ?? limitSchema.default),
+    get: (id) => selectUser(handle, id),
+    list: (asked) => selectUsers(handle, asked?.limit ?? limitSchema.default),
   };
 }
 
@@ -353,12 +353,12 @@ export function createUsers(options: UsersOptions): Users {
  * a wider window between the two statements the caller wanted kept together.
  */
 async function insertUser<TSchema extends Record<string, unknown>>(
-  db: Db<TSchema>,
+  handle: Handle<TSchema>,
   password: string | undefined,
   parameters: ScryptParameters,
 ): Promise<UserRecord> {
   const passwordHash = password === undefined ? null : await hashPassword(password, parameters);
-  const [inserted] = await db.insert(users).values({ passwordHash }).returning();
+  const [inserted] = await handle.insert(users).values({ passwordHash }).returning();
   if (inserted === undefined) {
     throw new Error("creating a User inserted no row");
   }
@@ -381,11 +381,11 @@ async function insertUser<TSchema extends Record<string, unknown>>(
  * code reading a stack trace and not a stranger probing for who exists.
  */
 async function updateUser<TSchema extends Record<string, unknown>>(
-  db: Db<TSchema>,
+  handle: Handle<TSchema>,
   user: string,
   columns: { readonly attributes: unknown } | { readonly passwordHash: string },
 ): Promise<void> {
-  const updated = await db
+  const updated = await handle
     .update(users)
     .set(columns)
     .where(eq(users.id, user))
@@ -406,15 +406,15 @@ async function updateUser<TSchema extends Record<string, unknown>>(
  * commit it, Attributes and all.
  */
 async function grantToken<TSchema extends Record<string, unknown>>(
-  db: Db<TSchema>,
+  handle: Handle<TSchema>,
   user: string,
   tokenTtl: number,
 ): Promise<IssuedToken> {
-  const [row] = await db.select().from(users).where(eq(users.id, user));
+  const [row] = await handle.select().from(users).where(eq(users.id, user));
   if (row === undefined) {
     throw new Error(`no User ${user} exists`);
   }
-  return insertToken(db, row, tokenTtl);
+  return insertToken(handle, row, tokenTtl);
 }
 
 /**
@@ -426,12 +426,12 @@ async function grantToken<TSchema extends Record<string, unknown>>(
  * apart even if it wanted to.
  */
 async function insertToken<TSchema extends Record<string, unknown>>(
-  db: Db<TSchema>,
+  handle: Handle<TSchema>,
   user: typeof users.$inferSelect,
   tokenTtl: number,
 ): Promise<IssuedToken> {
   const minted = mintToken();
-  const [issued] = await db
+  const [issued] = await handle
     .insert(tokens)
     .values({
       userId: user.id,
@@ -465,18 +465,18 @@ async function insertToken<TSchema extends Record<string, unknown>>(
  * exactly the enumeration this closes, which is why they are not written that way.
  */
 async function logIn(
-  db: UsersDb,
+  handle: UsersHandle,
   credentials: Credentials,
   directory: { readonly dummy: () => Promise<string>; readonly tokenTtl: number },
 ): Promise<IssuedToken | undefined> {
-  const [row] = await db.select().from(users).where(eq(users.id, credentials.user));
+  const [row] = await handle.select().from(users).where(eq(users.id, credentials.user));
   const stored = row?.passwordHash ?? (await directory.dummy());
   const matched = await verifyPassword(stored, credentials.password);
   if (row === undefined || row.passwordHash === null || !matched) return undefined;
 
   // The same statement `issueToken` reaches, so a Token bought with a password and a
   // Token minted by an OIDC callback are one row written one way (ADR-0030).
-  return insertToken(db, row, directory.tokenTtl);
+  return insertToken(handle, row, directory.tokenTtl);
 }
 
 /**
@@ -491,8 +491,8 @@ async function logIn(
  * refused by the same lookup that refuses one that never existed, which is why a
  * revoked Token and an unknown one answer identically without either being made to.
  */
-async function deleteToken(db: UsersDb, token: string): Promise<void> {
-  await db.delete(tokens).where(eq(tokens.tokenHash, hashToken(token)));
+async function deleteToken(handle: UsersHandle, token: string): Promise<void> {
+  await handle.delete(tokens).where(eq(tokens.tokenHash, hashToken(token)));
 }
 
 /**
@@ -507,10 +507,10 @@ async function deleteToken(db: UsersDb, token: string): Promise<void> {
  * the route share one statement rather than have one each.
  */
 async function deleteTokens<TSchema extends Record<string, unknown>>(
-  db: Db<TSchema>,
+  handle: Handle<TSchema>,
   user: string,
 ): Promise<void> {
-  await db.delete(tokens).where(eq(tokens.userId, user));
+  await handle.delete(tokens).where(eq(tokens.userId, user));
 }
 
 /**
@@ -531,17 +531,17 @@ async function deleteTokens<TSchema extends Record<string, unknown>>(
  * rotation is a surprise nobody asked for.
  */
 async function changePassword(
-  db: UsersDb,
+  handle: UsersHandle,
   change: PasswordChange,
   parameters: ScryptParameters,
 ): Promise<boolean> {
-  const [row] = await db.select().from(users).where(eq(users.id, change.user));
+  const [row] = await handle.select().from(users).where(eq(users.id, change.user));
   const stored = row?.passwordHash ?? undefined;
   if (stored === undefined) return false;
   if (!(await verifyPassword(stored, change.currentPassword))) return false;
 
   const passwordHash = await hashPassword(change.newPassword, parameters);
-  await db.update(users).set({ passwordHash }).where(eq(users.id, change.user));
+  await handle.update(users).set({ passwordHash }).where(eq(users.id, change.user));
   return true;
 }
 
@@ -562,8 +562,8 @@ async function changePassword(
  * make the refusal something this code decides rather than something the row says.
  * Nothing reaps the expired rows; they simply stop matching (ADR-0030).
  */
-async function userForToken(db: UsersDb, token: string): Promise<UserRecord | undefined> {
-  const [row] = await db
+async function userForToken(handle: UsersHandle, token: string): Promise<UserRecord | undefined> {
+  const [row] = await handle
     .select()
     .from(tokens)
     .innerJoin(users, eq(users.id, tokens.userId))
@@ -595,13 +595,13 @@ function checkedTokenTtl(tokenTtl: number): number {
   return tokenTtl;
 }
 
-async function selectUser(db: UsersDb, id: string): Promise<UserRecord | undefined> {
-  const [row] = await db.select().from(users).where(eq(users.id, id));
+async function selectUser(handle: UsersHandle, id: string): Promise<UserRecord | undefined> {
+  const [row] = await handle.select().from(users).where(eq(users.id, id));
   return row === undefined ? undefined : asUserRecord(row);
 }
 
-async function selectUsers(db: UsersDb, limit: number): Promise<UserRecord[]> {
-  const rows = await db
+async function selectUsers(handle: UsersHandle, limit: number): Promise<UserRecord[]> {
+  const rows = await handle
     .select()
     .from(users)
     // Newest first, because "who has been admitted" is the question this answers.

@@ -5,7 +5,7 @@ import { cutListeningBackends, listeningBackends } from "../test-support/backend
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { alphaMigrations, widgets } from "../test-support/fixtures.ts";
 import { waitUntil } from "../test-support/wait.ts";
-import type { ChannelListener, Db, Store } from "./index.ts";
+import type { ChannelListener, Handle, Store } from "./index.ts";
 import { openStore } from "./index.ts";
 
 let database: TestDatabase;
@@ -27,10 +27,10 @@ after(() => database.drop());
  * against both; `npm run typecheck` is the assertion.
  */
 async function record<TSchema extends Record<string, unknown>>(
-  db: Db<TSchema>,
+  tx: Handle<TSchema>,
   label: string,
 ): Promise<void> {
-  await db.insert(widgets).values({ label });
+  await tx.insert(widgets).values({ label });
 }
 
 async function labels(): Promise<string[]> {
@@ -137,7 +137,11 @@ describe("store.listen", () => {
     };
   }
 
-  function notify(channel: string, payload: string, on: Db = store.handle({})): Promise<unknown> {
+  function notify(
+    channel: string,
+    payload: string,
+    on: Handle = store.handle({}),
+  ): Promise<unknown> {
     return on.execute(sql`select pg_notify(${channel}, ${payload})`);
   }
 

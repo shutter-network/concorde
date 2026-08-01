@@ -46,11 +46,11 @@ import {
   notFound,
   unknownQueryRefusal,
 } from "../route-conventions.ts";
-import type { Db } from "../store/index.ts";
+import type { Handle } from "../store/index.ts";
 import { type coreTables, type RunState, runs, type SignalState, signals } from "./schema.ts";
 
 /** A handle typed to the Core's own tables, and to no other part's (ADR-0022). */
-export type CoreDb = Db<typeof coreTables>;
+export type CoreHandle = Handle<typeof coreTables>;
 
 /**
  * A Signal as the agent reads it, and the JSON one route answers with.
@@ -109,7 +109,7 @@ const rejectUnknownQuery = unknownQueryRefusal(
  * Takes the handle rather than the Store, so this plugin can read the Core's tables
  * and nothing else.
  */
-export function agentReadRoutes(db: CoreDb): FastifyPluginAsync {
+export function agentReadRoutes(handle: CoreHandle): FastifyPluginAsync {
   return async (fastify) => {
     fastify.get<{ Querystring: { limit: number; kind?: string } }>(
       "/signals",
@@ -124,7 +124,7 @@ export function agentReadRoutes(db: CoreDb): FastifyPluginAsync {
         preValidation: rejectUnknownQuery("limit", "kind"),
       },
       async (request) => {
-        const rows = await db
+        const rows = await handle
           .select()
           .from(signals)
           .where(
@@ -146,7 +146,7 @@ export function agentReadRoutes(db: CoreDb): FastifyPluginAsync {
       // `?session=` that answers 200 reads as though it had been honoured.
       { schema: { params: idParams }, preValidation: rejectUnknownQuery() },
       async (request, reply) => {
-        const [row] = await db.select().from(signals).where(eq(signals.id, request.params.id));
+        const [row] = await handle.select().from(signals).where(eq(signals.id, request.params.id));
         if (row === undefined) return notFound(reply, "Signal", request.params.id);
         return asSignalRecord(row);
       },
@@ -165,7 +165,7 @@ export function agentReadRoutes(db: CoreDb): FastifyPluginAsync {
         preValidation: rejectUnknownQuery("limit", "signalId"),
       },
       async (request) => {
-        const rows = await db
+        const rows = await handle
           .select()
           .from(runs)
           .where(
@@ -193,7 +193,7 @@ export function agentReadRoutes(db: CoreDb): FastifyPluginAsync {
       // `?session=` that answers 200 reads as though it had been honoured.
       { schema: { params: idParams }, preValidation: rejectUnknownQuery() },
       async (request, reply) => {
-        const [row] = await db.select().from(runs).where(eq(runs.id, request.params.id));
+        const [row] = await handle.select().from(runs).where(eq(runs.id, request.params.id));
         if (row === undefined) return notFound(reply, "Run", request.params.id);
         return asRunRecord(row);
       },

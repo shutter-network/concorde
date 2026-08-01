@@ -31,7 +31,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
 import { defaultLogger, type Logger } from "../logging.ts";
-import type { Db, Listening, Store } from "../store/index.ts";
+import type { Handle, Listening, Store } from "../store/index.ts";
 import type { Prompt, Signal, SignalHandlers } from "./handlers.ts";
 import { agentReadRoutes } from "./routes.ts";
 import type { RunOutcome, RuntimeAdapter } from "./runtime.ts";
@@ -104,7 +104,7 @@ export type Core = {
    * the caller.
    */
   emit<TSchema extends Record<string, unknown>>(
-    tx: Db<TSchema>,
+    tx: Handle<TSchema>,
     signal: EmittedSignal,
   ): Promise<string>;
 
@@ -170,7 +170,7 @@ export function createCore(options: CoreOptions): Core {
 
   // The Core's own handle, typed to the Core's own schema. `pg` never leaves the
   // Store (ADR-0022).
-  const db = options.store.handle(coreTables);
+  const handle = options.store.handle(coreTables);
 
   let handlers: SignalHandlers | undefined;
   let ticker: NodeJS.Timeout | undefined;
@@ -192,7 +192,7 @@ export function createCore(options: CoreOptions): Core {
    */
   async function claim(): Promise<typeof signals.$inferSelect | undefined> {
     while (!stopping) {
-      const [next] = await db
+      const [next] = await handle
         .select()
         .from(signals)
         .where(eq(signals.state, "pending"))
@@ -200,7 +200,7 @@ export function createCore(options: CoreOptions): Core {
         .limit(1);
       if (next === undefined) return undefined;
 
-      const [claimed] = await db
+      const [claimed] = await handle
         .update(signals)
         .set({ state: "processing" })
         .where(and(eq(signals.id, next.id), eq(signals.state, "pending")))
@@ -299,7 +299,7 @@ export function createCore(options: CoreOptions): Core {
     // paired with the Prompt it came from without depending on the order a
     // multi-row insert returns.
     const queued = prompts.map((prompt) => ({ id: randomUUID(), prompt }));
-    await db.insert(runs).values(
+    await handle.insert(runs).values(
       queued.map(({ id, prompt }) => ({
         id,
         signalId: signal.id,
@@ -323,7 +323,7 @@ export function createCore(options: CoreOptions): Core {
 
   async function executeRun(signal: Signal, runId: string, prompt: Prompt): Promise<RunOutcome> {
     log.info({ runId, signalId: signal.id, session: prompt.session }, "Run started");
-    await db
+    await handle
       .update(runs)
       .set({ state: "running", startedAt: sql`clock_timestamp()` })
       .where(eq(runs.id, runId));
@@ -336,7 +336,7 @@ export function createCore(options: CoreOptions): Core {
       outcome = { ok: false, error: describe(error) };
     }
 
-    await db
+    await handle
       .update(runs)
       .set({
         state: outcome.ok ? "done" : "failed",
@@ -359,7 +359,7 @@ export function createCore(options: CoreOptions): Core {
   /** The Signal's one and only state write after `processing`. */
   async function settle(signal: Signal, failure: string | undefined): Promise<void> {
     const state = failure === undefined ? "done" : "failed";
-    await db
+    await handle
       .update(signals)
       .set({ state, error: failure ?? null })
       .where(eq(signals.id, signal.id));
@@ -452,7 +452,7 @@ export function createCore(options: CoreOptions): Core {
   }
 
   return {
-    agentRoutes: agentReadRoutes(db),
+    agentRoutes: agentReadRoutes(handle),
 
     async emit(tx, signal) {
       // The query-builder form, not the relational one: it generates SQL from the

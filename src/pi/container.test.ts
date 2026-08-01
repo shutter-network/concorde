@@ -309,7 +309,7 @@ async function withGateway(
   // deployment's alone (ADR-0004).
   await agentServer.listen({ port, host: "0.0.0.0" });
 
-  const db = store.handle({ runs });
+  const handle = store.handle({ runs });
   const rig: Rig = {
     runtime,
     model,
@@ -320,7 +320,7 @@ async function withGateway(
       await waitUntil(
         `the Signal ${id} has been processed`,
         async () => {
-          const [row] = await db.select().from(runs).where(eq(runs.signalId, id));
+          const [row] = await handle.select().from(runs).where(eq(runs.signalId, id));
           return row !== undefined && row.state !== "pending" && row.state !== "running";
         },
         // A container start, an image lookup and two model round trips, on whatever
@@ -331,7 +331,7 @@ async function withGateway(
       return id;
     },
     async runsOf(signalId) {
-      const rows = await db.select().from(runs).where(eq(runs.signalId, signalId));
+      const rows = await handle.select().from(runs).where(eq(runs.signalId, signalId));
       return rows.map((row) => ({ session: row.session, state: row.state, error: row.error }));
     },
   };

@@ -1,6 +1,6 @@
 export type {
   ChannelListener,
-  Db,
+  Handle,
   Listening,
   MigrationDescriptor,
   Store,

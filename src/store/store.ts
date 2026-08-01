@@ -7,22 +7,23 @@ import type { PgDatabase, PgQueryResultHKT, PgTransaction } from "drizzle-orm/pg
 import { Client, Pool } from "pg";
 
 /**
- * A database handle or a transaction, whichever schema it carries.
+ * A handle over the pool, or a handle inside a transaction, whichever schema it
+ * carries.
  *
- * This is the type a function takes when it accepts either — and it must be
- * spelled with `PgDatabase` from the dialect package rather than `typeof db`,
- * because `drizzle()` returns a handle intersected with a client property that a
- * transaction does not have (drizzle-orm issue #3175). A cross-part signature
- * widens `TSchema` rather than naming one part's schema, since a transaction
- * carries the schema of the handle it was started on (ADR-0023).
+ * One type for both, and it must be spelled with `PgDatabase` from the dialect
+ * package rather than `typeof` a handle, because `drizzle()` returns a handle
+ * intersected with a client property that a transaction does not have
+ * (drizzle-orm issue #3175). A cross-part signature widens `TSchema` rather than
+ * naming one part's schema, since a transaction carries the schema of the handle
+ * it was started on (ADR-0023).
  */
-export type Db<TSchema extends Record<string, unknown> = Record<string, never>> = PgDatabase<
+export type Handle<TSchema extends Record<string, unknown> = Record<string, never>> = PgDatabase<
   PgQueryResultHKT,
   TSchema
 >;
 
 /**
- * What `store.tx` hands its callback. A `Db`, plus `rollback()` — which throws
+ * What `store.tx` hands its callback. A `Handle`, plus `rollback()` — which throws
  * `TransactionRollbackError` rather than returning, so anything using it as
  * control flow has to catch and filter (ADR-0023).
  */
@@ -101,7 +102,7 @@ export type Store = {
    * pool is never handed out, so `pg` does not join Fastify and Drizzle as
    * public API.
    */
-  handle<TSchema extends Record<string, unknown>>(schema: TSchema): Db<TSchema>;
+  handle<TSchema extends Record<string, unknown>>(schema: TSchema): Handle<TSchema>;
 
   /**
    * Registers `listen <channel>` on a connection of the Store's own, outside the

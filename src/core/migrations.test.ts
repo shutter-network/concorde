@@ -27,9 +27,9 @@ after(() => database.drop());
 
 describe("the Core's migrations", () => {
   it("creates signals and runs in the Core's own schema", async () => {
-    const db = store.handle({ signals, runs });
+    const handle = store.handle({ signals, runs });
 
-    const [signal] = await db
+    const [signal] = await handle
       .insert(signals)
       .values({ kind: "message.received", payload: { userId: "u1", body: "hello" } })
       .returning();
@@ -42,7 +42,7 @@ describe("the Core's migrations", () => {
     assert.deepEqual(signal.payload, { userId: "u1", body: "hello" });
     assert.ok(signal.emittedAt instanceof Date);
 
-    const [run] = await db
+    const [run] = await handle
       .insert(runs)
       .values({ signalId: signal.id, session: "user_1", prompt: "say hello" })
       .returning();
@@ -54,7 +54,7 @@ describe("the Core's migrations", () => {
     assert.equal(run.endedAt, null);
 
     // A fresh Session is a Prompt naming no Session, so the column is nullable.
-    const [fresh] = await db
+    const [fresh] = await handle
       .insert(runs)
       .values({ signalId: signal.id, session: null, prompt: "start something new" })
       .returning({ session: runs.session });
