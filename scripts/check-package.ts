@@ -47,7 +47,7 @@ const migrationsRoot = path.join(repoRoot, "migrations");
 
 /** The consumer's imports, spelled once: the type checker and Node see the same three. */
 const consumerImports = [
-  'import { createSignalWorker, defaultLogger, openDb, resolveMountTable, signalsMigrations, templateHandler } from "shared-agent-framework";',
+  'import { components, createSignalWorker, defaultLogger, openDb, resolveMountTable, serverComponent, signalsMigrations, templateHandler } from "shared-agent-framework";',
   'import { composeInvocation, createPiAdapter, interpretPiOutput, resolvePiConfiguration } from "shared-agent-framework/pi";',
   'import { createUsers, usersMigrations } from "shared-agent-framework/users";',
 ];
@@ -111,6 +111,12 @@ try {
   for (const file of [
     "dist/index.js",
     "dist/index.d.ts",
+    // The one interface the framework defines, at the package root because every
+    // Gateway is assembled from it (ADR-0031). Named rather than left to the mirror
+    // check below, which only reads the other way: it catches a shipped module whose
+    // source is gone, not a public module that failed to ship.
+    "dist/components.js",
+    "dist/components.d.ts",
     "dist/pi/index.js",
     "dist/pi/index.d.ts",
     // The `pi` adapter's own modules. `dist/pi/` mirroring `src/pi/` is what makes the
@@ -219,6 +225,30 @@ try {
     );
   }
 
+  // `fastify` is a peer dependency, so nothing shipped may *run* an import of it:
+  // types are erased, and a value import would resolve out of a consumer's own tree
+  // or fail there outright. This is the `serverComponent` constraint held in place
+  // (ADR-0031) — a `FastifyListenOptions` written without `import type` would emit
+  // one of these and nothing else would notice, because the consumer below installs
+  // Fastify and it would resolve.
+  step("checking no shipped module imports a value from fastify");
+  const manifest: unknown = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+  assert.ok(
+    !Object.hasOwn((manifest as { dependencies?: object }).dependencies ?? {}, "fastify"),
+    "fastify should stay a peer dependency; a `dependencies` entry brings a second copy into every consumer's tree",
+  );
+  for (const emitted of readdirSync(path.join(repoRoot, "dist"), {
+    recursive: true,
+    withFileTypes: true,
+  })) {
+    if (!emitted.isFile() || !emitted.name.endsWith(".js")) continue;
+    const file = path.join(emitted.parentPath, emitted.name);
+    assert.ok(
+      !/from ["']fastify["']/.test(readFileSync(file, "utf8")),
+      `${path.relative(repoRoot, file)} imports a value from fastify; the framework may name its types and nothing else`,
+    );
+  }
+
   const migrationFolders = readdirSync(migrationsRoot, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name);
@@ -297,10 +327,12 @@ try {
       // altogether, would type-check in this project without it.
       "import type {",
       "  ChannelListener,",
+      "  Component,",
       "  Db,",
       "  EmittedSignal,",
       "  Handle,",
       "  Listening,",
+      "  ListeningServer,",
       "  LogFields,",
       "  Logger,",
       "  MigrationDescriptor,",
@@ -392,6 +424,36 @@ try {
       "// separates them is what gets registered on each and where each one listens.",
       "export const publicServer: FastifyInstance = Fastify({ bodyLimit: 1048576 });",
       "export const agentServer: FastifyInstance = Fastify();",
+      "",
+      "// Each server's place in the start order. `serverComponent` constructs nothing and",
+      "// defaults nothing: the instances above are the consumer's own, only `listen` and",
+      "// `close` come through the framework, and both bind addresses are stated here",
+      "// because no default of ours is behind either — every interface for the Public",
+      "// server, loopback for the unauthenticated Agent server (ADR-0004, ADR-0010,",
+      "// ADR-0031). Annotated with the instance type each was handed, which is what proves",
+      "// the parameter is passed through rather than widened to a bare instance.",
+      "export const publicComponent: Component & { readonly fastify: FastifyInstance } =",
+      '  serverComponent("public server", publicServer, { port: 8080, host: "0.0.0.0" });',
+      "export const agentComponent: Component & { readonly fastify: FastifyInstance } =",
+      '  serverComponent("agent server", agentServer, { port: 7411, host: "localhost" });',
+      "",
+      "// `ListeningServer` is structural, and this is the whole of what the framework asks",
+      "// of a server: a real Fastify instance satisfies it by having the two methods, which",
+      "// is why the package imports no runtime value from `fastify` and it stays a peer",
+      "// dependency (ADR-0031).",
+      "export function serveOn(name: string, server: ListeningServer): Component {",
+      "  return serverComponent(name, server, { port: 0 });",
+      "}",
+      'export const ephemeral: Component = serveOn("a server on any port", publicServer);',
+      "",
+      "// A background loop of the consumer's own, in the same list as the framework's own",
+      "// parts: a Component is two methods and a name, with no base type to extend and",
+      "// nothing to register it with.",
+      "const ownLoop: Component = {",
+      '  name: "own loop",',
+      '  start: async () => log.info({}, "the loop is running"),',
+      '  stop: async () => log.info({}, "the loop has stopped"),',
+      "};",
       "",
       "// The Signal Worker contributes its Signal and Run routes as a Fastify plugin,",
       "// which the Operator registers — and not registering it is how an endpoint group",
@@ -595,17 +657,18 @@ try {
       "  await db.tx((tx: Transaction) => users.revoke(tx, admitted.id));",
       '  shipped.info({ expiresAt: minted.expiresAt, of: minted.user.id }, "a Token was issued");',
       '  shipped.info({ admitted, sameUser, everyone: everyone.length }, "a User exists");',
-      "  // Both bind addresses stated by the consumer, because no default of ours is",
-      "  // behind either: every interface for the Public server, loopback for the",
-      "  // unauthenticated Agent server (ADR-0004, ADR-0010).",
-      '  const publicAddress: string = await publicServer.listen({ port: 8080, host: "0.0.0.0" });',
-      '  const agentAddress: string = await agentServer.listen({ port: 7411, host: "localhost" });',
+      "  // One call that starts every part that has something to run, and one that stops",
+      "  // them in the reverse of the order given. The order is the consumer's own: the",
+      "  // Agent server is before the Public one so that submissions stop being accepted",
+      "  // first, and nothing in the framework can know that (ADR-0031). The Db and the",
+      "  // Signal Worker are still started and stopped by hand below.",
+      "  const gateway = components([agentComponent, publicComponent, ownLoop]);",
+      "  await gateway.start();",
       "  shipped.info(",
-      "    { publicAddress, agentAddress, readSignal, readRun, states },",
+      "    { started: [agentComponent.name, publicComponent.name, ephemeral.name], readSignal, readRun, states },",
       '    "the Gateway is up",',
       "  );",
-      "  await publicServer.close();",
-      "  await agentServer.close();",
+      "  await gateway.stop();",
       "  await worker.stop();",
       "  await db.close();",
       "}",

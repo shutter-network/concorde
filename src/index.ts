@@ -1,3 +1,5 @@
+export type { Component, ListeningServer } from "./components.ts";
+export { components, serverComponent } from "./components.ts";
 export type {
   Mount,
   MountTable,
