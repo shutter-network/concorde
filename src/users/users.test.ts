@@ -57,7 +57,10 @@ before(async () => {
   // own and needs no other part migrated to work.
   await store.migrate(usersMigrations);
 
-  directory = createUsers({ store });
+  // A Token lifetime is required of every construction, and nothing in this file
+  // issues one: logging in is observable on the Public server, which is
+  // `login.test.ts`.
+  directory = createUsers({ store, tokenTtl: 60 * 60 * 1000 });
 
   agentServer = Fastify();
   await agentServer.register(directory.agentRoutes, { prefix });

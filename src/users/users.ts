@@ -22,18 +22,53 @@
  * connection. `create` returns the User, so the read-back has no reason to exist.
  */
 
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
 import { limitSchema } from "../route-conventions.ts";
 import type { Db, Store } from "../store/index.ts";
-import { agentUserRoutes, type UserRecord } from "./routes.ts";
-import { users, usersTables } from "./schema.ts";
+import {
+  agentUserRoutes,
+  type Credentials,
+  type IssuedToken,
+  publicUserRoutes,
+  type UserRecord,
+} from "./routes.ts";
+import { tokens, users, usersTables } from "./schema.ts";
+import {
+  checkedScryptParameters,
+  defaultScryptParameters,
+  hashPassword,
+  mintToken,
+  type ScryptParameters,
+  verifyPassword,
+} from "./secrets.ts";
 
 /** A handle typed to this part's own tables, and to no other part's (ADR-0022). */
 type UsersDb = Db<typeof usersTables>;
 
 export type UsersOptions = {
   readonly store: Store;
+  /**
+   * How long an issued Token lives, in milliseconds.
+   *
+   * No default, because the trade it settles is the deployment's: a long lifetime is
+   * fewer re-authentications and a longer window for a stolen Token, and nothing in
+   * this framework can tell which side of that a Gateway is on. It is not
+   * per-Token either: a Token that never expires is unrepresentable, and one that
+   * expires on a schedule of the caller's would be a second policy to keep straight
+   * (ADR-0030).
+   */
+  readonly tokenTtl: number;
+  /**
+   * What a password derivation costs. Defaults to OWASP's 32 MiB row.
+   *
+   * A construction-time option that old digests **do not** follow: each digest
+   * carries the parameters it was written under and is verified at those, so raising
+   * this leaves every existing password working, and there is deliberately no
+   * rehash-on-login (ADR-0030). Lowering it does the same, which is the only reason a
+   * test can run at a cost a person would not accept.
+   */
+  readonly scrypt?: ScryptParameters;
 };
 
 export type Users = {
@@ -47,6 +82,18 @@ export type Users = {
    * (ADR-0010, ADR-0021).
    */
   readonly agentRoutes: FastifyPluginAsync;
+
+  /**
+   * The Public server routes, the login, as a Fastify plugin:
+   * `publicServer.register(users.publicRoutes, { prefix: "/auth" })`, which is where
+   * `POST /auth/tokens` comes from.
+   *
+   * Registering it is the whole of "the Gateway authenticates with passwords", and
+   * **not** registering it is how a deployment replaces that with its own scheme
+   * while keeping our Tokens: there is no Authenticator interface, because the useful
+   * extension point is issuance rather than verification (ADR-0030).
+   */
+  readonly publicRoutes: FastifyPluginAsync;
 
   /**
    * Creates a User with no Attributes and no password, and returns it.
@@ -91,17 +138,24 @@ export function createUsers(options: UsersOptions): Users {
   // The part's own handle, typed to its own tables. `pg` never leaves the Store
   // (ADR-0022).
   const db = options.store.handle(usersTables);
+  const tokenTtl = checkedTokenTtl(options.tokenTtl);
+  const parameters = checkedScryptParameters(options.scrypt ?? defaultScryptParameters);
+  const dummy = dummyDigest(parameters);
 
   return {
     agentRoutes: agentUserRoutes({
       // The route's create runs on the part's own handle: one insert is atomic by
       // itself, and a request that creates a User has nothing else to keep it with.
-      create: () => insertUser(db),
+      create: ({ password }) => insertUser(db, password, parameters),
       get: (id) => selectUser(db, id),
       list: ({ limit }) => selectUsers(db, limit),
     }),
 
-    create: (tx) => insertUser(tx),
+    publicRoutes: publicUserRoutes({
+      logIn: (credentials) => logIn(db, credentials, { dummy, tokenTtl }),
+    }),
+
+    create: (tx) => insertUser(tx, undefined, parameters),
     get: (id) => selectUser(db, id),
     list: (asked) => selectUsers(db, asked?.limit ?? limitSchema.default),
   };
@@ -110,19 +164,93 @@ export function createUsers(options: UsersOptions): Users {
 /**
  * The insert, over whichever handle the caller reached it by.
  *
- * It takes no values at all, which is the point: every column of a new User is the
- * database's default, so there is no parameter anywhere on this path for an
+ * It takes one value and could take no other: every remaining column of a new User is
+ * the database's default, so there is no parameter anywhere on this path for an
  * attribute to arrive through. The query-builder form, not the relational one, so it
  * works on a transaction carrying any part's schema (ADR-0023).
+ *
+ * The derivation happens before the insert and therefore inside the caller's
+ * transaction, which holds it open for as long as scrypt takes. That is accepted: the
+ * alternative is deriving first and inserting after, which is the same wall clock with
+ * a wider window between the two statements the caller wanted kept together.
  */
 async function insertUser<TSchema extends Record<string, unknown>>(
   db: Db<TSchema>,
+  password: string | undefined,
+  parameters: ScryptParameters,
 ): Promise<UserRecord> {
-  const [inserted] = await db.insert(users).values({}).returning();
+  const passwordHash = password === undefined ? null : await hashPassword(password, parameters);
+  const [inserted] = await db.insert(users).values({ passwordHash }).returning();
   if (inserted === undefined) {
     throw new Error("creating a User inserted no row");
   }
   return asUserRecord(inserted);
+}
+
+/**
+ * A password traded for a Token, or `undefined`, and the same `undefined` for every
+ * way it can fail.
+ *
+ * The shape of this function is the decision, not an accident of style. The
+ * derivation is **unconditional**: a User that does not exist and a User whose
+ * password hash is null are both verified against a fixed dummy digest written at the
+ * same cost, so the response time answers nothing the body refused to (ADR-0030).
+ * Reordering the lines below into an early return for a missing row would restore
+ * exactly the enumeration this closes, which is why they are not written that way.
+ */
+async function logIn(
+  db: UsersDb,
+  credentials: Credentials,
+  directory: { readonly dummy: () => Promise<string>; readonly tokenTtl: number },
+): Promise<IssuedToken | undefined> {
+  const [row] = await db.select().from(users).where(eq(users.id, credentials.user));
+  const stored = row?.passwordHash ?? (await directory.dummy());
+  const matched = await verifyPassword(stored, credentials.password);
+  if (row === undefined || row.passwordHash === null || !matched) return undefined;
+
+  const minted = mintToken();
+  const [issued] = await db
+    .insert(tokens)
+    .values({
+      userId: row.id,
+      tokenHash: minted.hash,
+      // The database's clock and not this process's, because the comparison that
+      // will refuse this Token is made against the database's too. `make_interval`
+      // takes seconds as a float, so a lifetime of a millisecond is expressible and
+      // a test needs no clock to be moved.
+      expiresAt: sql`clock_timestamp() + make_interval(secs => ${directory.tokenTtl / 1000})`,
+    })
+    .returning({ expiresAt: tokens.expiresAt });
+  if (issued === undefined) {
+    throw new Error("issuing a Token inserted no row");
+  }
+  return {
+    token: minted.token,
+    expiresAt: issued.expiresAt.toISOString(),
+    user: asUserRecord(row),
+  };
+}
+
+/**
+ * The digest a login with nothing to verify against is verified against instead.
+ *
+ * Derived once, lazily, and at the Directory's own cost, so that a miss costs what a
+ * hit costs however the Operator constructed it: a dummy fixed in code would make
+ * misses cheaper than hits for any deployment that raised the parameters, which is
+ * the timing signal it exists to remove. The password it is written from is 32 random
+ * bytes of this process's, so nothing verifies against it and nobody can present it.
+ */
+function dummyDigest(parameters: ScryptParameters): () => Promise<string> {
+  let derived: Promise<string> | undefined;
+  return () => (derived ??= hashPassword(mintToken().token, parameters));
+}
+
+/** A lifetime that is not a positive number of milliseconds is a mistake, not a policy. */
+function checkedTokenTtl(tokenTtl: number): number {
+  if (!Number.isFinite(tokenTtl) || tokenTtl <= 0) {
+    throw new Error(`tokenTtl must be a positive number of milliseconds, not ${tokenTtl}`);
+  }
+  return tokenTtl;
 }
 
 async function selectUser(db: UsersDb, id: string): Promise<UserRecord | undefined> {

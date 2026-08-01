@@ -14,7 +14,8 @@
  *    installed package**, with a working directory that holds no `migrations`
  *    folder of its own. Resolving against `process.cwd()` passes every test in
  *    this repository and breaks for every consumer, so this is the one place the
- *    difference shows.
+ *    difference shows. Every folder's *later* migrations count too, so the check
+ *    logs a User in: a Token has nowhere to be written unless the second one ran.
  *  - `/messenger` is reserved: it is declared and deliberately unresolvable,
  *    rather than absent by omission.
  *
@@ -149,6 +150,7 @@ try {
     "dist/users/routes.js",
     "dist/users/routes.d.ts",
     "dist/users/schema.js",
+    "dist/users/secrets.js",
     "dist/users/users.js",
     "dist/users/users.d.ts",
     // The template Handler is public surface of its own, and the only module that
@@ -331,7 +333,12 @@ try {
       '} from "shared-agent-framework/pi";',
       // The User Directory's own types, from its own subpath, for the same reason:
       // a deployment with no identity in it imports nothing from there (ADR-0029).
-      'import type { UserRecord, Users, UsersOptions } from "shared-agent-framework/users";',
+      "import type {",
+      "  ScryptParameters,",
+      "  UserRecord,",
+      "  Users,",
+      "  UsersOptions,",
+      '} from "shared-agent-framework/users";',
       'import { pgSchema, text } from "drizzle-orm/pg-core";',
       // Fastify is public API (ADR-0021) and the consumer's own dependency: the
       // framework constructs no server, so the instance comes from this call.
@@ -391,10 +398,18 @@ try {
       "// The User Directory: constructed from the same Store, contributing one more",
       "// migration descriptor to the one call and one more plugin to the Agent server,",
       "// under a prefix the Operator chooses (ADR-0029).",
-      "const usersOptions: UsersOptions = { store };",
+      "// The cost of a password derivation, named rather than defaulted, because a",
+      "// digest carries the parameters it was written under and this one is only what",
+      "// new ones get.",
+      "const cost: ScryptParameters = { logN: 15, blockSize: 8, parallelism: 3 };",
+      "const usersOptions: UsersOptions = { store, tokenTtl: 30 * 24 * 60 * 60 * 1000, scrypt: cost };",
       "export const users: Users = createUsers(usersOptions);",
       "export const usersDescriptor: MigrationDescriptor = usersMigrations;",
       "const userRoutes: FastifyPluginAsync = users.agentRoutes;",
+      "// And one plugin per server: the Public one is what makes `POST /auth/tokens`",
+      "// exist, and not registering it is how a deployment replaces our authentication",
+      "// with its own (ADR-0030).",
+      "const loginRoutes: FastifyPluginAsync = users.publicRoutes;",
       "",
       "// An Operator's own routes, on Fastify's mechanism and no contract of ours.",
       "const ownRoutes: FastifyPluginAsync = async (fastify) => {",
@@ -540,6 +555,7 @@ try {
       "  });",
       "  await agentServer.register(coreRoutes);",
       '  await agentServer.register(userRoutes, { prefix: "/users" });',
+      '  await publicServer.register(loginRoutes, { prefix: "/auth" });',
       '  await publicServer.register(ownRoutes, { prefix: "/ops" });',
       "  // A User admitted from trusted code, in a transaction of the consumer's own:",
       "  // the write takes it first, and the reads take none (ADR-0023).",
@@ -609,7 +625,7 @@ try {
         // connects lazily, so this reaches the database not at all: what it proves is
         // that the subpath resolves at runtime and that construction is free of side
         // effects, like every other part's.
-        "const directory = createUsers({ store: openStore('postgres://nobody@example.invalid/none') });",
+        "const directory = createUsers({ store: openStore('postgres://nobody@example.invalid/none'), tokenTtl: 60000 });",
         "const encoder = new TextEncoder();",
         "const settled = await interpretPiOutput((async function* () {",
         "  yield encoder.encode(JSON.stringify({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop' } }) + '\\n');",
@@ -627,7 +643,7 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker:run_r1:true:type=bind,source=/srv/saf/workspace,target=/workspace:/srv/saf/sessions/user_42:docker:false:function:run:saf_users:agentRoutes,create,get,list",
+    "function:function:docker:run_r1:true:type=bind,source=/srv/saf/workspace,target=/workspace:/srv/saf/sessions/user_42:docker:false:function:run:saf_users:agentRoutes,create,get,list,publicRoutes",
     "all three subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount and answer where a container path is on the Operator's disk, the pi adapter should construct as a plain Runtime Adapter — `run` and nothing else — settle its defaults, compose an invocation that passes no system-prompt flag, and read an outcome, and the User Directory should construct into its own schema with its routes and its three operations",
   );
 
@@ -647,10 +663,13 @@ try {
     [
       'import { coreMigrations, createCore, openStore } from "shared-agent-framework";',
       'import { createUsers, usersMigrations } from "shared-agent-framework/users";',
+      'import Fastify from "fastify";',
       "",
       "const store = openStore(process.argv[2]);",
       "const core = createCore({ store, runtime: { run: async () => ({ ok: true }) } });",
-      "const users = createUsers({ store });",
+      "// A cost no deployment should use, because this proves the folder applied and",
+      "// not that scrypt is slow.",
+      "const users = createUsers({ store, tokenTtl: 60_000, scrypt: { logN: 12, blockSize: 8, parallelism: 1 } });",
       "try {",
       "  await store.migrate(coreMigrations, usersMigrations);",
       "  // Emitting and admitting are what prove both folders resolved and their",
@@ -658,11 +677,26 @@ try {
       "  // worker is never started, so nothing processes the Signal.",
       '  const id = await store.tx((tx) => core.emit(tx, { kind: "probe", payload: {} }));',
       "  const user = await store.tx((tx) => users.create(tx));",
+      "  // And a login, which is what proves the User Directory's *second* migration",
+      "  // applied: a Token has nowhere to be written otherwise. It goes over the two",
+      "  // plugins on two servers, as an Operator registers them.",
+      "  const agentServer = Fastify();",
+      "  const publicServer = Fastify();",
+      '  await agentServer.register(users.agentRoutes, { prefix: "/users" });',
+      '  await publicServer.register(users.publicRoutes, { prefix: "/auth" });',
+      '  const admitted = await agentServer.inject({ method: "POST", url: "/users", payload: { password: "a long enough password" } });',
+      '  const issued = await publicServer.inject({ method: "POST", url: "/auth/tokens", payload: { user: admitted.json().id, password: "a long enough password" } });',
+      '  const refused = await publicServer.inject({ method: "POST", url: "/auth/tokens", payload: { user: admitted.json().id, password: "not it" } });',
       "  const applied =",
       "    id.length === 36 &&",
       "    user.id.length === 36 &&",
-      '    JSON.stringify(user.attributes) === "{}";',
-      '  process.stdout.write(applied ? "applied" : "unexpected " + id + " " + JSON.stringify(user));',
+      '    JSON.stringify(user.attributes) === "{}" &&',
+      "    admitted.statusCode === 201 &&",
+      "    issued.statusCode === 201 &&",
+      '    issued.json().token.startsWith("saf_") &&',
+      "    Date.parse(issued.json().expiresAt) > Date.now() &&",
+      "    refused.statusCode === 401;",
+      '  process.stdout.write(applied ? "applied" : "unexpected " + id + " " + JSON.stringify(user) + " " + issued.statusCode + " " + issued.body + " " + refused.statusCode);',
       "} finally {",
       "  await store.close();",
       "}",

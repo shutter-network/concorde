@@ -6,12 +6,14 @@
  * package root and know nothing about Users, and a deployment with no identity in it
  * imports nothing from here (ADR-0029).
  *
- * `createUsers` is the whole of it for an Operator: hand it the Store, add
- * `usersMigrations` to the `store.migrate` call already being made, and register
- * `agentRoutes` on the Agent server under a prefix of your choosing.
+ * `createUsers` is the whole of it for an Operator: hand it the Store and a Token
+ * lifetime, add `usersMigrations` to the `store.migrate` call already being made, and
+ * register `agentRoutes` on the Agent server and `publicRoutes` on the Public one,
+ * each under a prefix of your choosing.
  */
 
 export { usersMigrations } from "./migrations.ts";
 export type { UserRecord } from "./routes.ts";
+export type { ScryptParameters } from "./secrets.ts";
 export type { Users, UsersOptions } from "./users.ts";
 export { createUsers } from "./users.ts";
