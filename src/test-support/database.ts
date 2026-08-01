@@ -12,18 +12,18 @@
  */
 
 import { sql } from "drizzle-orm";
-import { type Handle, openStore, type Store } from "../store/index.ts";
+import { type Db, type Handle, openDb } from "../db/index.ts";
 
 const defaultUrl = "postgres://postgres:postgres@localhost:5432/postgres";
 
 export const serverUrl = process.env.DATABASE_URL ?? defaultUrl;
 
 export type TestDatabase = {
-  /** A Store open on the fresh database. */
-  readonly store: Store;
-  /** The fresh database's own URL, for opening a second Store on it. */
+  /** A Db open on the fresh database. */
+  readonly db: Db;
+  /** The fresh database's own URL, for opening a second Db on it. */
   readonly url: string;
-  /** Closes the Store and drops the database. */
+  /** Closes the Db and drops the database. */
   drop(): Promise<void>;
 };
 
@@ -41,13 +41,13 @@ export async function createTestDatabase(name: string): Promise<TestDatabase> {
     await server.execute(sql`create database ${sql.identifier(database)}`);
   });
 
-  const store = openStore(url.href);
+  const db = openDb(url.href);
 
   return {
-    store,
+    db,
     url: url.href,
     async drop() {
-      await store.close();
+      await db.close();
       await onServer(async (server) => {
         await server.execute(sql`drop database if exists ${sql.identifier(database)}`);
       });
@@ -66,7 +66,7 @@ function databaseName(name: string): string {
 
 /** `create database` and `drop database` need a connection to a different database. */
 async function onServer(run: (server: Handle) => Promise<void>): Promise<void> {
-  const server = openStore(serverUrl);
+  const server = openDb(serverUrl);
   try {
     await run(server.handle({}));
   } finally {

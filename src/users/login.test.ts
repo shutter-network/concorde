@@ -29,7 +29,7 @@ import assert from "node:assert/strict";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
-import type { Store } from "../store/index.ts";
+import type { Db } from "../db/index.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { usersMigrations } from "./migrations.ts";
 import type { UserRecord } from "./routes.ts";
@@ -57,7 +57,7 @@ const hour = 60 * minute;
 const cheap: ScryptParameters = { logN: 12, blockSize: 8, parallelism: 1 };
 
 let database: TestDatabase;
-let store: Store;
+let db: Db;
 let directory: Users;
 /** The two servers, exactly as an Operator constructs them: two bare instances. */
 let agentServer: FastifyInstance;
@@ -76,10 +76,10 @@ const alsoAt = "/sign-in";
 
 before(async () => {
   database = await createTestDatabase("users_login");
-  store = database.store;
-  await store.migrate(usersMigrations);
+  db = database.db;
+  await db.migrate(usersMigrations);
 
-  directory = createUsers({ store, tokenTtl: hour, scrypt: cheap });
+  directory = createUsers({ db, tokenTtl: hour, scrypt: cheap });
 
   agentServer = Fastify();
   await agentServer.register(directory.agentRoutes, { prefix: "/users" });
@@ -350,11 +350,11 @@ describe("refusing a login", () => {
 
 describe("the Token's lifetime", () => {
   it("comes from the construction-time option and from nothing else", async () => {
-    // A second Directory over the same Store, differing only in the number an
+    // A second Directory over the same Db, differing only in the number an
     // Operator chose. A lifetime of a millisecond is a Token that is expired by the
     // time the response is read, which is how the refusal of an expired one is
     // reachable without a test waiting for anything.
-    const briefly = createUsers({ store, tokenTtl: 1, scrypt: cheap });
+    const briefly = createUsers({ db, tokenTtl: 1, scrypt: cheap });
     const server = Fastify();
     await server.register(briefly.publicRoutes, { prefix: auth });
     try {
@@ -366,7 +366,7 @@ describe("the Token's lifetime", () => {
         `a Token with a lifetime of a millisecond should not last until ${issued.expiresAt}`,
       );
 
-      // The same Store, the same User, the same password: only the option differs.
+      // The same Db, the same User, the same password: only the option differs.
       const longer = await logIn(user.id, password);
       assert.ok(Date.parse(longer.expiresAt) > Date.now() + hour - minute);
 
@@ -391,7 +391,7 @@ describe("the Token's lifetime", () => {
   it("must be a positive number of milliseconds", async () => {
     for (const tokenTtl of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
       assert.throws(
-        () => createUsers({ store, tokenTtl, scrypt: cheap }),
+        () => createUsers({ db, tokenTtl, scrypt: cheap }),
         /tokenTtl must be a positive number of milliseconds/,
         String(tokenTtl),
       );
@@ -408,7 +408,7 @@ describe("the cost of a password", () => {
     const written = await admit({ password });
 
     const harder = createUsers({
-      store,
+      db,
       tokenTtl: hour,
       scrypt: { logN: 13, blockSize: 8, parallelism: 2 },
     });
@@ -441,7 +441,7 @@ describe("the cost of a password", () => {
     // The shipped parameters, run once. Everything else in this file is deliberately
     // cheap, so without this nothing would ever exercise the numbers an Operator
     // actually deploys, and a memory limit set wrongly for them would ship.
-    const shipped = createUsers({ store, tokenTtl: hour });
+    const shipped = createUsers({ db, tokenTtl: hour });
     const server = Fastify();
     await server.register(shipped.agentRoutes, { prefix: "/users" });
     await server.register(shipped.publicRoutes, { prefix: auth });

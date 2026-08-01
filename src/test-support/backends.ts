@@ -1,8 +1,8 @@
 /**
- * What PostgreSQL says about the connections a Store has open.
+ * What PostgreSQL says about the connections a Db has open.
  *
- * `store.listen` holds a connection outside the pool, and the only place that is
- * observable from is the server: nothing in the Store's own surface hands the
+ * `db.listen` holds a connection outside the pool, and the only place that is
+ * observable from is the server: nothing in the Db's own surface hands the
  * connection out, deliberately. The same view is also the only way to break one
  * the way a network does — `pg_terminate_backend` cuts it from underneath the
  * client, which is what a reconnect has to survive.
@@ -14,8 +14,8 @@
 
 import { and, eq, like, ne, sql } from "drizzle-orm";
 import { integer, pgTable, text } from "drizzle-orm/pg-core";
-import type { Store } from "../store/index.ts";
-import { listenApplicationName } from "../store/store.ts";
+import { listenApplicationName } from "../db/db.ts";
+import type { Db } from "../db/index.ts";
 
 /** Enough of `pg_stat_activity` to find a listening connection in this database. */
 const backends = pgTable("pg_stat_activity", {
@@ -35,9 +35,9 @@ const listeners = and(
   ne(backends.pid, sql`pg_backend_pid()`),
 );
 
-/** Every backend that a `store.listen` opened against the Store's own database. */
-export async function listeningBackends(store: Store): Promise<number> {
-  const rows = await store
+/** Every backend that a `db.listen` opened against the Db's own database. */
+export async function listeningBackends(db: Db): Promise<number> {
+  const rows = await db
     .handle({ backends })
     .select({ pid: backends.pid })
     .from(backends)
@@ -49,8 +49,8 @@ export async function listeningBackends(store: Store): Promise<number> {
  * Has the server terminate every listening connection, as an operator or a network
  * would.
  */
-export async function cutListeningBackends(store: Store): Promise<void> {
-  await store
+export async function cutListeningBackends(db: Db): Promise<void> {
+  await db
     .handle({ backends })
     .select({ terminated: sql<boolean>`pg_terminate_backend(${backends.pid})` })
     .from(backends)

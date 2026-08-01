@@ -41,8 +41,8 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance, type FastifyPluginAsync } from "fastify";
 import { type Core, coreMigrations, createCore } from "../core/index.ts";
+import type { Db } from "../db/index.ts";
 import type { Logger } from "../logging.ts";
-import type { Store } from "../store/index.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { usersMigrations } from "./migrations.ts";
 import type { IssuedToken, UserRecord } from "./routes.ts";
@@ -66,7 +66,7 @@ const users = "/users";
 const ops = "/ops";
 
 let database: TestDatabase;
-let store: Store;
+let db: Db;
 let directory: Users;
 let core: Core;
 let agentServer: FastifyInstance;
@@ -97,16 +97,16 @@ const operatorRoutes: FastifyPluginAsync = async (fastify) => {
 
 before(async () => {
   database = await createTestDatabase("users_trusted");
-  store = database.store;
+  db = database.db;
   // Both descriptors in the one call an Operator already makes, because one test here
   // spans both parts. The Directory needs no other part migrated to work, which
   // `users.test.ts` is what proves.
-  await store.migrate(coreMigrations, usersMigrations);
+  await db.migrate(coreMigrations, usersMigrations);
 
-  directory = createUsers({ store, tokenTtl: hour, scrypt: cheap });
+  directory = createUsers({ db, tokenTtl: hour, scrypt: cheap });
   // Constructed and never started: this file emits Signals and reads them back, and a
   // running worker would take them off the queue and try to handle them.
-  core = createCore({ store, runtime: { run: async () => ({ ok: true }) }, logger: silent });
+  core = createCore({ db, runtime: { run: async () => ({ ok: true }) }, logger: silent });
 
   agentServer = Fastify();
   await agentServer.register(directory.agentRoutes, { prefix: users });
@@ -215,7 +215,7 @@ describe("setting Attributes from trusted code", () => {
     assert.deepEqual(user.attributes, {}, "a created User should have none");
 
     const granted = { role: "operator", groups: ["support", "billing"] };
-    await store.tx((tx) => directory.setAttributes(tx, user.id, granted));
+    await db.tx((tx) => directory.setAttributes(tx, user.id, granted));
 
     // Over the Agent server, so the agent can resolve an id it met in a Signal payload
     // and see the grouping that governs it.
@@ -252,11 +252,11 @@ describe("setting Attributes from trusted code", () => {
     // framework has no business interpreting, Attributes need not be an object for
     // there to be a merge of, and `jsonb ||` merges only the top level.
     const user = await admit();
-    await store.tx((tx) =>
+    await db.tx((tx) =>
       directory.setAttributes(tx, user.id, { role: "operator", tier: { plan: "gold", seats: 5 } }),
     );
 
-    await store.tx((tx) => directory.setAttributes(tx, user.id, { tier: { plan: "silver" } }));
+    await db.tx((tx) => directory.setAttributes(tx, user.id, { tier: { plan: "silver" } }));
     assert.deepEqual(
       (await readBack(user.id)).attributes,
       { tier: { plan: "silver" } },
@@ -265,12 +265,12 @@ describe("setting Attributes from trusted code", () => {
 
     // Which is what makes removal expressible at all: taking everything away is
     // setting the empty object, and there is no sentinel to reach for.
-    await store.tx((tx) => directory.setAttributes(tx, user.id, {}));
+    await db.tx((tx) => directory.setAttributes(tx, user.id, {}));
     assert.deepEqual((await readBack(user.id)).attributes, {});
 
     // And arbitrary JSON really is arbitrary: the Gateway stores Attributes and
     // interprets none of them, so a shape with no merge defined for it is fine here.
-    await store.tx((tx) => directory.setAttributes(tx, user.id, ["support", "billing"]));
+    await db.tx((tx) => directory.setAttributes(tx, user.id, ["support", "billing"]));
     assert.deepEqual((await readBack(user.id)).attributes, ["support", "billing"]);
   });
 
@@ -279,10 +279,10 @@ describe("setting Attributes from trusted code", () => {
     // group and recording in the Operator's own tables who granted it commit together
     // or not at all.
     const user = await admit();
-    await store.tx((tx) => directory.setAttributes(tx, user.id, { role: "reader" }));
+    await db.tx((tx) => directory.setAttributes(tx, user.id, { role: "reader" }));
 
     await assert.rejects(
-      store.tx(async (tx) => {
+      db.tx(async (tx) => {
         await directory.setAttributes(tx, user.id, { role: "admin" });
         throw new Error("the Operator's own write failed");
       }),
@@ -297,7 +297,7 @@ describe("setting Attributes from trusted code", () => {
     // grant's does not, so a mistyped id here would otherwise be a permission that
     // silently never happened.
     await assert.rejects(
-      store.tx((tx) => directory.setAttributes(tx, nobody, { role: "admin" })),
+      db.tx((tx) => directory.setAttributes(tx, nobody, { role: "admin" })),
       new RegExp(`no User ${nobody} exists`),
     );
   });
@@ -308,7 +308,7 @@ describe("replacing a password from trusted code", () => {
     const user = await admit(password);
     const before = await logIn(user.id);
 
-    await store.tx((tx) => directory.setPassword(tx, user.id, "a password the Operator chose"));
+    await db.tx((tx) => directory.setPassword(tx, user.id, "a password the Operator chose"));
 
     // The new one works and the old one does not, which is what "replaced" means from
     // outside — nothing here reads a digest.
@@ -320,7 +320,7 @@ describe("replacing a password from trusted code", () => {
     // `revoke`, in that order, and a method that bundled the two would take that
     // choice away from a routine reset.
     await works(before.token, user, "a Token issued before the password was replaced");
-    await store.tx((tx) => directory.revoke(tx, user.id));
+    await db.tx((tx) => directory.revoke(tx, user.id));
     await refused(before.token, "a Token after the Operator revoked as well");
   });
 
@@ -330,7 +330,7 @@ describe("replacing a password from trusted code", () => {
     const user = await admit();
     assert.equal((await attempt(user.id, password)).statusCode, 401);
 
-    await store.tx((tx) => directory.setPassword(tx, user.id, password));
+    await db.tx((tx) => directory.setPassword(tx, user.id, password));
     assert.deepEqual((await logIn(user.id)).user, user);
   });
 
@@ -338,7 +338,7 @@ describe("replacing a password from trusted code", () => {
     const user = await admit(password);
 
     await assert.rejects(
-      store.tx(async (tx) => {
+      db.tx(async (tx) => {
         await directory.setPassword(tx, user.id, "the Operator changed their mind");
         throw new Error("and their own write failed");
       }),
@@ -351,7 +351,7 @@ describe("replacing a password from trusted code", () => {
 
   it("refuses an id that names nobody", async () => {
     await assert.rejects(
-      store.tx((tx) => directory.setPassword(tx, nobody, password)),
+      db.tx((tx) => directory.setPassword(tx, nobody, password)),
       new RegExp(`no User ${nobody} exists`),
     );
   });
@@ -364,7 +364,7 @@ describe("issuing a Token from trusted code", () => {
     // mints an ordinary Token, and this User has no password for anything to fall back
     // on.
     const user = await admit();
-    await store.tx((tx) => directory.setAttributes(tx, user.id, { via: "oidc" }));
+    await db.tx((tx) => directory.setAttributes(tx, user.id, { via: "oidc" }));
     const withAttributes = { ...user, attributes: { via: "oidc" } };
 
     // First, that they really cannot log in: not with a plausible password, not with
@@ -382,7 +382,7 @@ describe("issuing a Token from trusted code", () => {
 
     // And now the seam: trusted code, having established identity by means the Gateway
     // has never heard of, mints a Token.
-    const issued = await store.tx((tx) => directory.issueToken(tx, user.id));
+    const issued = await db.tx((tx) => directory.issueToken(tx, user.id));
 
     // It answers exactly what a login answers, which is what lets a deployment's own
     // OIDC route reply with this object unchanged.
@@ -406,7 +406,7 @@ describe("issuing a Token from trusted code", () => {
     const oidc = await admit();
     const withPassword = await admit(password);
 
-    const minted = await store.tx((tx) => directory.issueToken(tx, oidc.id));
+    const minted = await db.tx((tx) => directory.issueToken(tx, oidc.id));
     const bought = await logIn(withPassword.id);
     assert.deepEqual(Object.keys(minted).sort(), Object.keys(bought).sort());
 
@@ -419,17 +419,17 @@ describe("issuing a Token from trusted code", () => {
     assert.equal(loggedOut.statusCode, 204, loggedOut.body);
     await refused(minted.token, "a minted Token logged out through the shipped route");
 
-    const second = await store.tx((tx) => directory.issueToken(tx, oidc.id));
+    const second = await db.tx((tx) => directory.issueToken(tx, oidc.id));
     await works(second.token, oidc, "a second minted Token");
-    await store.tx((tx) => directory.revoke(tx, oidc.id));
+    await db.tx((tx) => directory.revoke(tx, oidc.id));
     await refused(second.token, "a minted Token revoked from trusted code");
     await works(bought.token, withPassword, "another User's Token");
 
     // And it expires, because it is written from the same construction-time lifetime
     // and nothing about it says otherwise. A Directory of its own, with a lifetime
     // short enough that no clock has to be moved.
-    const brief = createUsers({ store, tokenTtl: 1, scrypt: cheap });
-    const fleeting = await store.tx((tx) => brief.issueToken(tx, oidc.id));
+    const brief = createUsers({ db, tokenTtl: 1, scrypt: cheap });
+    const fleeting = await db.tx((tx) => brief.issueToken(tx, oidc.id));
     await refused(fleeting.token, "a minted Token past its expiry");
   });
 
@@ -438,7 +438,7 @@ describe("issuing a Token from trusted code", () => {
     // hand them a Token in one transaction. It works because the read is on the
     // caller's own connection, which is the one place a read in this part sees an
     // uncommitted write.
-    const issued = await store.tx(async (tx) => {
+    const issued = await db.tx(async (tx) => {
       const created = await directory.create(tx);
       await directory.setAttributes(tx, created.id, { via: "oidc", firstSeen: true });
       return directory.issueToken(tx, created.id);
@@ -453,7 +453,7 @@ describe("issuing a Token from trusted code", () => {
     let attempted: IssuedToken | undefined;
 
     await assert.rejects(
-      store.tx(async (tx) => {
+      db.tx(async (tx) => {
         attempted = await directory.issueToken(tx, user.id);
         throw new Error("the deployment's own login route failed");
       }),
@@ -468,7 +468,7 @@ describe("issuing a Token from trusted code", () => {
     // There is no Token it could answer with, so this one could not have been silent
     // even if silence were wanted.
     await assert.rejects(
-      store.tx((tx) => directory.issueToken(tx, nobody)),
+      db.tx((tx) => directory.issueToken(tx, nobody)),
       new RegExp(`no User ${nobody} exists`),
     );
   });
@@ -575,7 +575,7 @@ describe("a User and a Signal in one transaction", () => {
     // would put a Run behind one (ADR-0029). A deployment that wants the Signal emits
     // it itself, and this is the pattern — both writes take the caller's transaction
     // (ADR-0023), so there is one.
-    const created = await store.tx(async (tx) => {
+    const created = await db.tx(async (tx) => {
       const user = await directory.create(tx);
       await directory.setAttributes(tx, user.id, { invitedBy: "the Operator" });
       await core.emit(tx, { kind: "user.created", payload: { user: user.id } });
@@ -599,7 +599,7 @@ describe("a User and a Signal in one transaction", () => {
     // is why both calls take the transaction rather than finding one.
     let attempted: UserRecord | undefined;
     await assert.rejects(
-      store.tx(async (tx) => {
+      db.tx(async (tx) => {
         attempted = await directory.create(tx);
         await core.emit(tx, { kind: "user.created", payload: { user: attempted.id } });
         throw new Error("the Operator's own write failed");

@@ -15,8 +15,8 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { asc, eq, sql } from "drizzle-orm";
+import type { Db, Listening } from "../db/index.ts";
 import type { LogFields, Logger } from "../logging.ts";
-import type { Listening, Store } from "../store/index.ts";
 import { cutListeningBackends } from "../test-support/backends.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
@@ -28,12 +28,12 @@ import type { RuntimeAdapter } from "./runtime.ts";
 import { runs, signals } from "./schema.ts";
 
 let database: TestDatabase;
-let store: Store;
+let db: Db;
 
 before(async () => {
   database = await createTestDatabase("core");
-  store = database.store;
-  await store.migrate(coreMigrations);
+  db = database.db;
+  await db.migrate(coreMigrations);
 });
 
 after(() => database.drop());
@@ -84,7 +84,7 @@ async function withCore(
   sweepIntervalMs: number = sweepingMs,
 ): Promise<void> {
   const entries: LogEntry[] = [];
-  const core = createCore({ store, runtime, logger: recordingLogger(entries), sweepIntervalMs });
+  const core = createCore({ db, runtime, logger: recordingLogger(entries), sweepIntervalMs });
   core.start(handlers);
   try {
     await body(core, entries);
@@ -125,16 +125,16 @@ function wakeups(entries: readonly LogEntry[], reason: string): number {
 
 /** A notification for the Core's channel that no Signal is behind. */
 function notifyNothing(): Promise<unknown> {
-  return store.handle({}).execute(sql`select pg_notify(${signalChannel}, '')`);
+  return db.handle({}).execute(sql`select pg_notify(${signalChannel}, '')`);
 }
 
 /** Emitting as a Producer does: inside a transaction the caller owns (ADR-0023). */
 function emit(core: Core, kind: string, payload: unknown = {}): Promise<string> {
-  return store.tx((tx) => core.emit(tx, { kind, payload }));
+  return db.tx((tx) => core.emit(tx, { kind, payload }));
 }
 
 async function signalRow(id: string): Promise<typeof signals.$inferSelect | undefined> {
-  const [row] = await store.handle({ signals }).select().from(signals).where(eq(signals.id, id));
+  const [row] = await db.handle({ signals }).select().from(signals).where(eq(signals.id, id));
   return row;
 }
 
@@ -151,7 +151,7 @@ async function settled(id: string): Promise<typeof signals.$inferSelect> {
 
 /** A Signal's Runs, in the order the worker started them. */
 function runsOf(signalId: string): Promise<(typeof runs.$inferSelect)[]> {
-  return store
+  return db
     .handle({ runs })
     .select()
     .from(runs)
@@ -162,7 +162,7 @@ function runsOf(signalId: string): Promise<(typeof runs.$inferSelect)[]> {
 describe("core.emit", () => {
   it("records a Signal as pending", async () => {
     // No worker started, so what is asserted is what `emit` wrote and nothing else.
-    const core = createCore({ store, runtime: fakeRuntime(), logger: recordingLogger([]) });
+    const core = createCore({ db, runtime: fakeRuntime(), logger: recordingLogger([]) });
     const id = await emit(core, "recorded.pending", { hello: "world" });
 
     const row = await signalRow(id);
@@ -173,7 +173,7 @@ describe("core.emit", () => {
 
     // Nothing would ever claim it, and a later test's Core would fail it as an
     // unhandled kind.
-    await store.handle({ signals }).delete(signals).where(eq(signals.id, id));
+    await db.handle({ signals }).delete(signals).where(eq(signals.id, id));
   });
 
   it("never lets a Signal from a rolled-back transaction be processed", async () => {
@@ -193,7 +193,7 @@ describe("core.emit", () => {
         let rolledBackId: string | undefined;
         await assert.rejects(
           () =>
-            store.tx(async (tx) => {
+            db.tx(async (tx) => {
               rolledBackId = await core.emit(tx, { kind: "rolled-back", payload: {} });
               throw new Error("the Producer changed its mind");
             }),
@@ -223,7 +223,7 @@ describe("core.emit", () => {
 describe("core.start", () => {
   it("refuses a second call, because one Core runs one worker", async () => {
     const core = createCore({
-      store,
+      db,
       runtime: fakeRuntime(),
       logger: recordingLogger([]),
       sweepIntervalMs: sweepingMs,
@@ -559,7 +559,7 @@ describe("the worker", () => {
     // is here because the id is only useful if it names a Run that already exists —
     // this is what the agent sees over the Agent server while its Run is going.
     const runtime = fakeRuntime(async (_prompt, runId) => {
-      const [row] = await store.handle({ runs }).select().from(runs).where(eq(runs.id, runId));
+      const [row] = await db.handle({ runs }).select().from(runs).where(eq(runs.id, runId));
       observed.push({ runId, prompt: row?.prompt, state: row?.state });
       return { ok: true };
     });
@@ -646,7 +646,7 @@ describe("wakeup", () => {
     };
 
     await withNotifiedCore({ burst: numbered }, runtime, async (core, entries) => {
-      const ids = await store.tx(async (tx) => {
+      const ids = await db.tx(async (tx) => {
         const emitted: string[] = [];
         for (const n of [1, 2, 3, 4, 5]) {
           emitted.push(await core.emit(tx, { kind: "burst", payload: { n } }));
@@ -676,7 +676,7 @@ describe("wakeup", () => {
       // notification lost while the listening connection was down, which is the only
       // thing the sweep exists for. Without it this Signal would sit here forever
       // and nothing would say so.
-      const [inserted] = await store
+      const [inserted] = await db
         .handle({ signals })
         .insert(signals)
         .values({ kind: "woken", payload: {} })
@@ -733,7 +733,7 @@ describe("wakeup", () => {
       assert.equal((await settled(before)).state, "done");
 
       // Cut from the server's side, as a restart or an operator would.
-      await cutListeningBackends(store);
+      await cutListeningBackends(db);
       await waitUntil("the Core is listening again", async () => {
         return entries.filter((entry) => entry.message === listeningMessage).length >= 2;
       });
@@ -759,15 +759,15 @@ describe("wakeup", () => {
     // Gateway's first Signal, when someone is watching.
     //
     // The gap is a few milliseconds wide, so it is held open here instead of raced
-    // for: a Store that delays only the registration, and the real one behind it.
+    // for: a Db that delays only the registration, and the real one behind it.
     const held = 300;
-    const slowToRegister: Store = {
-      ...store,
+    const slowToRegister: Db = {
+      ...db,
       listen(channel, listener) {
         let real: Listening | undefined;
         let closed = false;
         const timer = setTimeout(() => {
-          if (!closed) real = store.listen(channel, listener);
+          if (!closed) real = db.listen(channel, listener);
         }, held);
         return {
           async close() {
@@ -782,7 +782,7 @@ describe("wakeup", () => {
     const runtime = fakeRuntime();
     const entries: LogEntry[] = [];
     const core = createCore({
-      store: slowToRegister,
+      db: slowToRegister,
       runtime,
       logger: recordingLogger(entries),
       sweepIntervalMs: sleepingSweepMs,
@@ -806,13 +806,13 @@ describe("restart recovery", () => {
   it("fails a Signal left processing, resolves its Runs, and never re-runs it", async () => {
     // What a worker that died mid-Signal leaves behind: the Signal it had claimed,
     // one Run it had started, and one it had recorded but not begun.
-    const [stranded] = await store
+    const [stranded] = await db
       .handle({ signals })
       .insert(signals)
       .values({ kind: "stranded", payload: { half: "done" }, state: "processing" })
       .returning({ id: signals.id });
     assert.ok(stranded);
-    await store
+    await db
       .handle({ runs })
       .insert(runs)
       .values([
@@ -882,7 +882,7 @@ describe("logging", () => {
   it("logs the Signal claimed, and each Run started and finished", async () => {
     const entries: LogEntry[] = [];
     const core = createCore({
-      store,
+      db,
       runtime: fakeRuntime(),
       logger: recordingLogger(entries),
       sweepIntervalMs: sweepingMs,
@@ -906,7 +906,7 @@ describe("logging", () => {
     const entries: LogEntry[] = [];
     const thrown = new Error("the Handler could not cope");
     const core = createCore({
-      store,
+      db,
       runtime: fakeRuntime(),
       logger: recordingLogger(entries),
       sweepIntervalMs: sweepingMs,
@@ -938,7 +938,7 @@ describe("logging", () => {
   it("works with the default logger when the Operator supplies none", async () => {
     // The only test with no `logger`, and the only one whose evidence is partly in
     // the test output: `pino`'s JSON lines on stdout are the default working.
-    const core = createCore({ store, runtime: fakeRuntime(), sweepIntervalMs: sweepingMs });
+    const core = createCore({ db, runtime: fakeRuntime(), sweepIntervalMs: sweepingMs });
     core.start({ "default.logger": { handle: () => [{ session: null, text: "logged by pino" }] } });
 
     try {

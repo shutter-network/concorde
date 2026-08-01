@@ -4,7 +4,7 @@
  * Their folder timestamps are **deliberately reversed**: `beta`'s single
  * migration is older than either of `alpha`'s. That is the shape that loses
  * migrations silently when two parts share one tracking table, so it is the
- * shape the tests in `store/migrate.test.ts` use.
+ * shape the tests in `db/migrate.test.ts` use.
  *
  * The folders live here rather than under the repository's `migrations/`
  * directory because that directory ships. These are fixtures; `src/test-support`
@@ -12,7 +12,7 @@
  */
 
 import { pgSchema, serial, text } from "drizzle-orm/pg-core";
-import type { MigrationDescriptor } from "../store/index.ts";
+import type { MigrationDescriptor } from "../db/index.ts";
 
 export const alphaMigrations: MigrationDescriptor = {
   folder: new URL("./migrations/alpha", import.meta.url),

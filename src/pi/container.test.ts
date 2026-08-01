@@ -62,7 +62,7 @@ import type { SignalHandler } from "../core/handlers.ts";
 import { coreMigrations } from "../core/migrations.ts";
 import type { RuntimeAdapter } from "../core/runtime.ts";
 import { runs } from "../core/schema.ts";
-import type { Store } from "../store/index.ts";
+import type { Db } from "../db/index.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import {
   addHostToGateway,
@@ -113,14 +113,14 @@ const runId = "6f1a3c7e-0000-4000-8000-000000000001";
 
 let image: string;
 let database: TestDatabase;
-let store: Store;
+let db: Db;
 
 before(async () => {
   if (skip !== false) return;
   image = await buildPiImage();
   database = await createTestDatabase("pi_container");
-  store = database.store;
-  await store.migrate(coreMigrations);
+  db = database.db;
+  await db.migrate(coreMigrations);
 });
 
 after(async () => {
@@ -299,7 +299,7 @@ async function withGateway(
 
   const runtime = adapterOn(paths, [instructionsEntry(paths)]);
 
-  const core = createCore({ store, runtime });
+  const core = createCore({ db, runtime });
   // Nothing registers the Core's routes for you, and Fastify refuses a registration
   // after a server is listening.
   await agentServer.register(core.agentRoutes);
@@ -309,14 +309,14 @@ async function withGateway(
   // deployment's alone (ADR-0004).
   await agentServer.listen({ port, host: "0.0.0.0" });
 
-  const handle = store.handle({ runs });
+  const handle = db.handle({ runs });
   const rig: Rig = {
     runtime,
     model,
     agentServerUrl,
     ...paths,
     async ask(payload) {
-      const id = await store.tx((tx) => core.emit(tx, { kind: "ask", payload }));
+      const id = await db.tx((tx) => core.emit(tx, { kind: "ask", payload }));
       await waitUntil(
         `the Signal ${id} has been processed`,
         async () => {

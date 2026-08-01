@@ -5,7 +5,7 @@
  * Not public API. Every part of the Gateway owns a schema and no part reads
  * another's tables, so these objects are exported for the Core's own modules and
  * are deliberately absent from the package's root export — an Operator who wants
- * tables gets them through `store.handle(theirOwnSchema)`, the same call the
+ * tables gets them through `db.handle(theirOwnSchema)`, the same call the
  * framework's parts use (ADR-0021, ADR-0022).
  *
  * `drizzle-kit` reads this file to generate `migrations/core`, so keep it to the
@@ -136,7 +136,7 @@ export const runs = coreSchema.table(
 );
 
 /**
- * Everything the Core keeps, as `store.handle` wants it: one object, so the worker
+ * Everything the Core keeps, as `db.handle` wants it: one object, so the worker
  * and the Agent server routes ask for the same handle by the same name rather than
  * each assembling its own from the tables above.
  */

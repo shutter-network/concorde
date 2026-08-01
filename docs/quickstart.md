@@ -119,7 +119,7 @@ example/state/sessions/user_42/     one directory per Session, holding its trans
 ```
 
 Those three directories are **the entry point's**, `mkdir`ed by `gateway.ts` itself a few
-lines before it opens the Store. The framework creates no directory anywhere, so creating
+lines before it opens the Db. The framework creates no directory anywhere, so creating
 what your mounts point at is the deployment's job rather than a courtesy —
 [a wrong path costs you a Signal](#a-wrong-path-costs-you-a-signal) is what happens when
 one is missing. What ends up inside them is the agent's, written as your own uid.
@@ -242,7 +242,7 @@ creates no directory and writes no file, ever
 Then **the ordering is yours**, and it is the one thing about that file that is
 not arbitrary:
 
-1. **Open the Store.** One PostgreSQL URL. Nothing touches the network yet.
+1. **Open the Db.** One PostgreSQL URL. Nothing touches the network yet.
 2. **Migrate.** An explicit call, never a side effect of construction — which is what
    lets it also be [a deploy step of its own](#migrations-as-a-separate-step).
 3. **Construct, and register routes.** Two Fastify instances — the framework ships no
@@ -390,7 +390,7 @@ your system already logs through satisfies it without wrapping:
 ```ts
 const logger = pino({ level: "debug" });          // or your own object with those four
 const runtime = createPiAdapter({ /* ... */, logger });
-const core = createCore({ store, runtime, logger });
+const core = createCore({ db, runtime, logger });
 ```
 
 Safe to keep in a log file: the argument list on that line has environment **values**
@@ -406,9 +406,9 @@ mounted, which is itself the answer in that case.
 
 ### The agent's network isolates less than it looks like
 
-`compose.yaml` puts the agent on `saf_agent` and PostgreSQL on `saf_store`, and the
+`compose.yaml` puts the agent on `saf_agent` and PostgreSQL on `saf_db`, and the
 adapter passes `--network saf_agent`. So the agent **cannot resolve `postgres`**, which
-is the point: the Store is the Gateway's own state and the agent is supposed to reach it
+is the point: the Db holds the Gateway's own state and the agent is supposed to reach it
 only through the Agent server's read-only routes.
 
 What that does *not* do, and you should know it before you rely on it: a separate bridge
@@ -416,7 +416,7 @@ network stops **service-name discovery**, not **host access**. The Gateway is on
 and the agent has to be able to reach it, so on Docker Desktop — where
 `host.docker.internal` reaches the host's loopback interface, which is the whole reason
 the Agent server works on `127.0.0.1` — the agent can reach *anything* bound there,
-PostgreSQL on 5433 included. What stands between the agent and the Store on this machine
+PostgreSQL on 5433 included. What stands between the agent and the Db on this machine
 is the password, not the network. (Under a plain Linux daemon a loopback-bound port is
 genuinely out of reach, which is the one way that platform is the stricter of the two.)
 
@@ -460,12 +460,12 @@ entry point is an example, and the ordering in it is the part that matters:
 process.on("SIGINT", async () => {
   await core.stop();                                            // first
   await Promise.all([agentServer.close(), publicServer.close()]);
-  await store.close();                                          // last
+  await db.close();                                             // last
 });
 ```
 
-`core.stop()` **before** `store.close()`. The worker holds a dedicated PostgreSQL
-connection to be woken on, and the Store owns it — so closing the Store first pulls that
+`core.stop()` **before** `db.close()`. The worker holds a dedicated PostgreSQL
+connection to be woken on, and the Db owns it — so closing the Db first pulls that
 connection out from under a running Core, which then logs a dropped connection and
 retries reconnecting forever.
 
@@ -498,7 +498,7 @@ notification and cleanup go.
 ### The Agent server is unauthenticated
 
 There is no credential on it. **Reaching the port is access**, and what it exposes is
-every Signal and every Run in the Store, unscoped by Session or by User.
+every Signal and every Run in the Db, unscoped by Session or by User.
 
 That is deliberate: a credential is no boundary against the agent, which is the only
 party meant to reach it at all. What follows is that keeping the port unreachable is
@@ -539,7 +539,7 @@ of wrong passwords is also a load problem, not only a security one.
 `gateway.ts` migrates at boot. It is idempotent, and for one process on one machine that
 is all you need.
 
-Applying migrations is an **explicit call** rather than something opening the Store does
+Applying migrations is an **explicit call** rather than something opening the Db does
 for you, and the reason is the deployment where those are two steps:
 
 ```sh
@@ -548,7 +548,7 @@ node example/migrate.ts       # against the new schema, before anything serves n
 
 Same call, six lines, no Gateway involved. Each part of the framework exports a
 *migration descriptor* — inert data naming a folder, a PostgreSQL schema, and a tracking
-table — and your entry point hands them all to one `store.migrate(...)`. The Core's is
+table — and your entry point hands them all to one `db.migrate(...)`. The Core's is
 `coreMigrations`; add your own alongside it. Do add them to that one call rather than
 making a second: each part having its own tracking table is not tidiness, it is the only
 thing that stops one part's migrations being silently skipped, and the one call is where
@@ -602,8 +602,8 @@ are ordinary Fastify plugins with no prefix of their own, so you supply one; `/a
 `/users` are convention rather than requirement, and nothing breaks if you disagree:
 
 ```ts
-const users = createUsers({ store, tokenTtl: 30 * 24 * 60 * 60 * 1000 });
-await store.migrate(coreMigrations, usersMigrations);   // the same one call, one more descriptor
+const users = createUsers({ db, tokenTtl: 30 * 24 * 60 * 60 * 1000 });
+await db.migrate(coreMigrations, usersMigrations);   // the same one call, one more descriptor
 
 await publicServer.register(users.publicRoutes, { prefix: "/auth" });
 await agentServer.register(users.agentRoutes, { prefix: "/users" });
@@ -616,7 +616,7 @@ that should require one takes `users.requireUser` as a `preHandler` and reads
 ```ts
 publicServer.post("/ask", { preHandler: users.requireUser }, async (request) => {
   const user = request.safUser;
-  await store.tx((tx) => core.emit(tx, { kind: "ask", payload: { user: user.id, text: "…" } }));
+  await db.tx((tx) => core.emit(tx, { kind: "ask", payload: { user: user.id, text: "…" } }));
   return { accepted: true };
 });
 ```
@@ -646,8 +646,8 @@ route, a poller, a loop. Note the transaction: `emit` takes yours rather than fi
 so recording something in your own tables and telling the agent about it either both
 happen or neither does — and a rollback wakes nobody.
 
-**Your own tables.** `store.handle(yourSchema)` gives you a typed Drizzle handle through
-the same call the framework's own parts use, and `store.tx(cb)` a transaction you can pass
+**Your own tables.** `db.handle(yourSchema)` gives you a typed Drizzle handle through
+the same call the framework's own parts use, and `db.tx(cb)` a transaction you can pass
 into `core.emit`. No privileged access and no special case. Give your part its own
 PostgreSQL schema and its own migration tracking table.
 

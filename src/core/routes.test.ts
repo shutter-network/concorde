@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { inArray } from "drizzle-orm";
 import Fastify, { type FastifyInstance } from "fastify";
-import type { Store } from "../store/index.ts";
+import type { Db } from "../db/index.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
@@ -27,7 +27,7 @@ import type { RunRecord, SignalRecord } from "./routes.ts";
 import { signals } from "./schema.ts";
 
 let database: TestDatabase;
-let store: Store;
+let db: Db;
 let core: Core;
 /** The Agent server: a bare Fastify instance, exactly as an Operator constructs one. */
 let agentServer: FastifyInstance;
@@ -66,8 +66,8 @@ const scripted: SignalHandler<{ readonly prompts: readonly Prompt[] }> = {
 
 before(async () => {
   database = await createTestDatabase("core_routes");
-  store = database.store;
-  await store.migrate(coreMigrations);
+  db = database.db;
+  await db.migrate(coreMigrations);
 
   // The framework constructs no server: this is a bare Fastify instance, the same call
   // an Operator's entry point makes, with the Core's plugin registered on it below.
@@ -88,7 +88,7 @@ before(async () => {
     return { ok: true };
   });
 
-  core = createCore({ store, runtime, sweepIntervalMs: 50 });
+  core = createCore({ db, runtime, sweepIntervalMs: 50 });
   // The Core contributes its own routes rather than handing them to a monolithic API
   // object: this plugin is the Signal and Run surface, and an Operator registers it
   // on the Agent server (ADR-0021).
@@ -111,7 +111,7 @@ before(async () => {
   await emit("a Run that reads", "beta", [{ session: "user_e", text: "reading" }]);
 
   await waitUntil("every emitted Signal has reached a terminal state", async () => {
-    const unsettled = await store
+    const unsettled = await db
       .handle({ signals })
       .select({ state: signals.state })
       .from(signals)
@@ -128,7 +128,7 @@ after(async () => {
 
 /** Emits one Signal of the fixture and remembers its id under `label`. */
 async function emit(label: string, kind: string, prompts: readonly Prompt[]): Promise<void> {
-  const id = await store.tx((tx) => core.emit(tx, { kind, payload: { prompts } }));
+  const id = await db.tx((tx) => core.emit(tx, { kind, payload: { prompts } }));
   emitted.set(label, id);
 }
 

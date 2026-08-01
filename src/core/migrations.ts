@@ -1,9 +1,9 @@
-import type { MigrationDescriptor } from "../store/index.ts";
+import type { MigrationDescriptor } from "../db/index.ts";
 import { coreSchema } from "./schema.ts";
 
 /**
  * The Core's migration descriptor: inert data the Operator's entry point hands to
- * `store.migrate` alongside every other part's (ADR-0021, ADR-0022).
+ * `db.migrate` alongside every other part's (ADR-0021, ADR-0022).
  *
  * The relative `../../migrations/core` is what makes `dist` mirroring `src`
  * load-bearing — the same relative path has to reach the same folder from

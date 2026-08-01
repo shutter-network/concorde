@@ -39,6 +39,7 @@
 
 import { desc, eq } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
+import type { Handle } from "../db/index.ts";
 import {
   idParams,
   idSchema,
@@ -46,7 +47,6 @@ import {
   notFound,
   unknownQueryRefusal,
 } from "../route-conventions.ts";
-import type { Handle } from "../store/index.ts";
 import { type coreTables, type RunState, runs, type SignalState, signals } from "./schema.ts";
 
 /** A handle typed to the Core's own tables, and to no other part's (ADR-0022). */
@@ -106,7 +106,7 @@ const rejectUnknownQuery = unknownQueryRefusal(
 /**
  * The Core's read routes, over a handle to the Core's own tables.
  *
- * Takes the handle rather than the Store, so this plugin can read the Core's tables
+ * Takes the handle rather than the Db, so this plugin can read the Core's tables
  * and nothing else.
  */
 export function agentReadRoutes(handle: CoreHandle): FastifyPluginAsync {

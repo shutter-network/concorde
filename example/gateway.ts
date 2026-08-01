@@ -9,7 +9,7 @@
  * ordering is therefore yours, and it is the one thing about this file that is not
  * arbitrary:
  *
- *   1. **open the Store** — a connection URL, and nothing happens on the wire yet
+ *   1. **open the Db** — a connection URL, and nothing happens on the wire yet
  *   2. **migrate** — explicitly, so it can also be a deploy step of its own
  *   3. **construct, and register routes** — two Fastify instances, the Runtime Adapter,
  *      the Core, and the Core's own routes onto the Agent one. None of it has a side
@@ -32,7 +32,7 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import Fastify from "fastify";
-import { coreMigrations, createCore, openStore, templateHandler } from "shared-agent-framework";
+import { coreMigrations, createCore, openDb, templateHandler } from "shared-agent-framework";
 import { createPiAdapter } from "shared-agent-framework/pi";
 
 // Refused here rather than discovered later: a Run that fails is never retried, so a
@@ -64,8 +64,8 @@ await Promise.all(
   [workspace, agentDir, sessionRoot].map((directory) => mkdir(directory, { recursive: true })),
 );
 
-const store = openStore(process.env.DATABASE_URL ?? "postgres://saf:saf@localhost:5433/saf");
-await store.migrate(coreMigrations);
+const db = openDb(process.env.DATABASE_URL ?? "postgres://saf:saf@localhost:5433/saf");
+await db.migrate(coreMigrations);
 
 // Two ordinary Fastify instances, because the framework ships no server: there is nothing
 // of ours between this file and Fastify, and every option, hook and plugin is reachable
@@ -87,7 +87,7 @@ const runtime = createPiAdapter({
   // its shell tool the parent environment wholesale, and this process holds DATABASE_URL.
   env: { ANTHROPIC_API_KEY: apiKey },
   // The network compose.yaml declares, which holds the agent and nothing else it could
-  // usefully talk to. PostgreSQL is on another one, so the Store is not reachable by
+  // usefully talk to. PostgreSQL is on another one, so the Db is not reachable by
   // service name from inside a Run.
   network: "saf_agent",
   // Three paths *inside the container*, and that is all the adapter knows about the
@@ -129,7 +129,7 @@ const runtime = createPiAdapter({
     ],
   },
 });
-const core = createCore({ store, runtime });
+const core = createCore({ db, runtime });
 // Nothing does this for you. Not registering a route group is how you switch it off, and
 // this one is read-only and unscoped: the agent sees every Signal and every Run.
 await agentServer.register(core.agentRoutes);
@@ -161,21 +161,21 @@ await agentServer.listen({
   port: agentPort,
   // Loopback, which is also Fastify's own default and written out anyway because it is
   // the more consequential of the two: this server has no authentication, so reaching the
-  // port is read-write access to the whole Store, and moving it off loopback should be a
+  // port is read-write access to the whole Db, and moving it off loopback should be a
   // change someone made on purpose (ADR-0010). "localhost" rather than "127.0.0.1"
   // because Fastify expands it to both loopback addresses, IPv4 and IPv6.
   host: "localhost",
 });
 
 // Shutdown, in the order that matters. `core.stop()` first: it waits for the Run in
-// flight and closes the connection the worker listens for wakeups on. Closing the Store
+// flight and closes the connection the worker listens for wakeups on. Closing the Db
 // first instead pulls that connection out from under a running Core, which then logs a
 // dropped connection and retries forever. Nothing here handles a Run that is mid-flight
 // when the signal arrives — that is a situation every Operator meets alone.
 process.on("SIGINT", async () => {
   await core.stop();
   await Promise.all([agentServer.close(), publicServer.close()]);
-  await store.close();
+  await db.close();
 });
 
 // A Producer: something inside the Gateway that puts a Signal in the queue. There is no
@@ -183,4 +183,4 @@ process.on("SIGINT", async () => {
 // finding one — so recording something and telling the agent about it cannot come apart,
 // and a rollback wakes nobody. The Messenger will be one of these; so is this line.
 const asked = process.argv[2] ?? "Say hello, and tell me what has arrived recently.";
-await store.tx((tx) => core.emit(tx, { kind: "ask", payload: { user: "42", text: asked } }));
+await db.tx((tx) => core.emit(tx, { kind: "ask", payload: { user: "42", text: asked } }));

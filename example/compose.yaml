@@ -15,7 +15,7 @@
 name: saf-example
 
 services:
-  # The Store. Published on **5433**, not 5432, so that this deployment and the
+  # The Db. Published on **5433**, not 5432, so that this deployment and the
   # `saf-pg` container CLAUDE.md tells contributors to run for the test suite can be up
   # at the same time. Bound to loopback: the Gateway is the only thing that needs it.
   postgres:
@@ -27,11 +27,11 @@ services:
     ports:
       - "127.0.0.1:5433:5432"
     volumes:
-      - store:/var/lib/postgresql/data
+      - db:/var/lib/postgresql/data
     # Not the agent's network. The agent cannot resolve `postgres` at all, which is the
     # point — read the network note in the quickstart for what that does and does not
     # buy you.
-    networks: [store]
+    networks: [db]
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "saf", "-d", "saf"]
       interval: 3s
@@ -51,9 +51,9 @@ services:
     networks: [agent]
 
 networks:
-  # The Store's network, which the agent is not on.
-  store:
-    name: saf_store
+  # The Db's network, which the agent is not on.
+  db:
+    name: saf_db
   # The agent's own network: only the agent and the Gateway are meant to be reachable
   # across it. Named explicitly rather than left to Compose's `<project>_<network>`
   # prefixing, because the entry point passes this exact string to the Runtime Adapter
@@ -62,4 +62,4 @@ networks:
     name: saf_agent
 
 volumes:
-  store:
+  db:

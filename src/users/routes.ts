@@ -84,7 +84,7 @@ export type UserRecord = {
 
 /**
  * What the agent's routes need of the User Directory, and no more: three operations
- * over the part's own handle, with no Store and no table objects.
+ * over the part's own handle, with no Db and no table objects.
  *
  * `create` takes one thing, an optional initial password, and there is no second
  * parameter waiting to be added: Attributes are what the agent may not supply, and

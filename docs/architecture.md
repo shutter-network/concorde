@@ -12,7 +12,7 @@ The Gateway is one deployable application assembled from parts, several of which
 
 Not every part is a Producer. The **User Directory** owns Users, their Attributes and their Tokens, and contributes routes to both servers, but emits no Signals at all — a Signal per login would put a Run behind every authentication, and the worker is serial ([ADR-0029](./adr/0029-users-are-a-part-of-their-own.md)).
 
-Nothing represents the Gateway itself. There is no plugin system and no registry of parts: the Operator's entry point constructs the Store, the two servers, the Core, and whichever Producers the deployment wants, wiring them by passing them to each other ([ADR-0021](./adr/0021-the-framework-has-no-plugin-system.md)).
+Nothing represents the Gateway itself. There is no plugin system and no registry of parts: the Operator's entry point constructs the Db, the two servers, the Core, and whichever Producers the deployment wants, wiring them by passing them to each other ([ADR-0021](./adr/0021-the-framework-has-no-plugin-system.md)).
 
 Users talk to the User Directory and the Messenger, and to nothing else. They never see a Signal. The Agent Runtime never reaches a User except through the Agent server. That, and nothing more, is what **Shielded** means.
 
@@ -47,7 +47,7 @@ Two kinds of row below, and the distinction matters. **Objects** are things the 
 
 | Part | Kind | Supplied by | Routes it contributes | Notes |
 | --- | --- | --- | --- | --- |
-| Store | object | framework | — | Signals, Runs, and whatever Producers keep |
+| Db | object | framework | — | Signals, Runs, and whatever Producers keep |
 | Public server | object | Operator | — | the one surface exposed outside; a `Fastify()` the entry point constructs and states a bind address for |
 | Agent server | object | Operator | — | reachable only by the Agent Runtime; a second `Fastify()`, bound loopback in the reference deployment |
 | Core | object | framework | agent: read prior Signals, read Runs | owns the serial worker; one Run at a time, globally |

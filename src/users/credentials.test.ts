@@ -35,7 +35,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
-import type { Store } from "../store/index.ts";
+import type { Db } from "../db/index.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { usersMigrations } from "./migrations.ts";
 import type { UserRecord } from "./routes.ts";
@@ -62,17 +62,17 @@ const auth = "/auth";
 const alsoAt = "/sign-in";
 
 let database: TestDatabase;
-let store: Store;
+let db: Db;
 let directory: Users;
 let agentServer: FastifyInstance;
 let publicServer: FastifyInstance;
 
 before(async () => {
   database = await createTestDatabase("users_credentials");
-  store = database.store;
-  await store.migrate(usersMigrations);
+  db = database.db;
+  await db.migrate(usersMigrations);
 
-  directory = createUsers({ store, tokenTtl: hour, scrypt: cheap });
+  directory = createUsers({ db, tokenTtl: hour, scrypt: cheap });
 
   agentServer = Fastify();
   await agentServer.register(directory.agentRoutes, { prefix: "/users" });
@@ -493,7 +493,7 @@ describe("revoking from trusted code", () => {
     const ofMine = await Promise.all([logIn(mine.id), logIn(mine.id)]);
     const ofTheirs = await logIn(theirs.id);
 
-    await store.tx((tx) => directory.revoke(tx, mine.id));
+    await db.tx((tx) => directory.revoke(tx, mine.id));
 
     // Asserted over HTTP, like everything else: the claim is that the Tokens stopped
     // working, and the only way to ask that is to present them.
@@ -510,7 +510,7 @@ describe("revoking from trusted code", () => {
     const issued = await logIn(user.id);
 
     await assert.rejects(
-      store.tx(async (tx) => {
+      db.tx(async (tx) => {
         await directory.revoke(tx, user.id);
         throw new Error("the Operator changed their mind");
       }),
@@ -521,19 +521,19 @@ describe("revoking from trusted code", () => {
 
     // And the same call committed does revoke it, so what the rollback undid was a
     // revocation that would otherwise have happened.
-    await store.tx((tx) => directory.revoke(tx, user.id));
+    await db.tx((tx) => directory.revoke(tx, user.id));
     await refused(issued.token, "a Token whose revocation committed");
   });
 
   it("is idempotent, and a User with no Tokens is not an error", async () => {
     const user = await admit();
-    await store.tx((tx) => directory.revoke(tx, user.id));
-    await store.tx((tx) => directory.revoke(tx, user.id));
+    await db.tx((tx) => directory.revoke(tx, user.id));
+    await db.tx((tx) => directory.revoke(tx, user.id));
 
     // Including a User that does not exist: there is no row to find and nothing to
     // report, and a revocation that answered differently would be an oracle for
     // whether an id names somebody (ADR-0030).
-    await store.tx((tx) => directory.revoke(tx, "2f1b4d54-1c3a-4f2e-9d7b-8e6a5c4b3a21"));
+    await db.tx((tx) => directory.revoke(tx, "2f1b4d54-1c3a-4f2e-9d7b-8e6a5c4b3a21"));
   });
 });
 

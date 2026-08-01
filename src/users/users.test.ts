@@ -22,14 +22,14 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
-import type { Store } from "../store/index.ts";
+import type { Db } from "../db/index.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { usersMigrations } from "./migrations.ts";
 import type { UserRecord } from "./routes.ts";
 import { createUsers, type Users } from "./users.ts";
 
 let database: TestDatabase;
-let store: Store;
+let db: Db;
 let directory: Users;
 /** The Agent server: a bare Fastify instance, exactly as an Operator constructs one. */
 let agentServer: FastifyInstance;
@@ -52,15 +52,15 @@ const fixture: UserRecord[] = [];
 
 before(async () => {
   database = await createTestDatabase("users");
-  store = database.store;
+  db = database.db;
   // The part's own descriptor, alone: it owns a schema and a tracking table of its
   // own and needs no other part migrated to work.
-  await store.migrate(usersMigrations);
+  await db.migrate(usersMigrations);
 
   // A Token lifetime is required of every construction, and nothing in this file
   // issues one: logging in is observable on the Public server, which is
   // `login.test.ts`.
-  directory = createUsers({ store, tokenTtl: 60 * 60 * 1000 });
+  directory = createUsers({ db, tokenTtl: 60 * 60 * 1000 });
 
   agentServer = Fastify();
   await agentServer.register(directory.agentRoutes, { prefix });
@@ -69,7 +69,7 @@ before(async () => {
   // Sequential and awaited, because `created_at` is what the list is ordered by.
   fixture.push(await created());
   fixture.push(await created());
-  fixture.push(await store.tx((tx) => directory.create(tx)));
+  fixture.push(await db.tx((tx) => directory.create(tx)));
 });
 
 after(async () => {
@@ -236,7 +236,7 @@ describe("creating a User from the Operator's own code", () => {
     // apart. Proved from the outside: the User is not there afterwards.
     let attempted: UserRecord | undefined;
     await assert.rejects(
-      store.tx(async (tx) => {
+      db.tx(async (tx) => {
         attempted = await directory.create(tx);
         throw new Error("the Operator's own write failed");
       }),
@@ -250,7 +250,7 @@ describe("creating a User from the Operator's own code", () => {
     // The consequence of writes taking a transaction and reads not: the read is on
     // another connection, so it cannot see the caller's own uncommitted write.
     // `create` returns the User, which is why the read-back has no reason to exist.
-    const user = await store.tx(async (tx) => {
+    const user = await db.tx(async (tx) => {
       const created = await directory.create(tx);
       assert.equal(
         (await read(`/${created.id}`)).statusCode,
@@ -280,7 +280,7 @@ describe("the Agent server plugin", () => {
     const user = await created(undefined, alsoAt);
     assert.deepEqual((await read(`/${user.id}`, alsoAt)).json(), user);
     // And the same User through the other registration, because both are the same
-    // Directory over the same Store.
+    // Directory over the same Db.
     assert.deepEqual(await readBack(user.id), user);
 
     // Nothing answers where the plugin was not put, including at the root, which is

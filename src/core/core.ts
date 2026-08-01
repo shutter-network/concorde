@@ -30,8 +30,8 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
+import type { Db, Handle, Listening } from "../db/index.ts";
 import { defaultLogger, type Logger } from "../logging.ts";
-import type { Handle, Listening, Store } from "../store/index.ts";
 import type { Prompt, Signal, SignalHandlers } from "./handlers.ts";
 import { agentReadRoutes } from "./routes.ts";
 import type { RunOutcome, RuntimeAdapter } from "./runtime.ts";
@@ -51,7 +51,7 @@ export type EmittedSignal = {
 };
 
 export type CoreOptions = {
-  readonly store: Store;
+  readonly db: Db;
   /** Drives the Agent Runtime. One Run at a time; never called concurrently. */
   readonly runtime: RuntimeAdapter;
   /** Defaults to a `pino` instance on stdout. */
@@ -169,8 +169,8 @@ export function createCore(options: CoreOptions): Core {
   const sweepIntervalMs = options.sweepIntervalMs ?? defaultSweepIntervalMs;
 
   // The Core's own handle, typed to the Core's own schema. `pg` never leaves the
-  // Store (ADR-0022).
-  const handle = options.store.handle(coreTables);
+  // Db (ADR-0022).
+  const handle = options.db.handle(coreTables);
 
   let handlers: SignalHandlers | undefined;
   let ticker: NodeJS.Timeout | undefined;
@@ -381,12 +381,12 @@ export function createCore(options: CoreOptions): Core {
    * assumes it is the only worker on this database, which ADR-0012 already requires —
    * two Gateways sharing a queue break the serial guarantee before they get here.
    *
-   * A crash is not the only way in. So is a Store error inside a drain, which is
+   * A crash is not the only way in. So is a Db error inside a drain, which is
    * exactly the case that convinced us this cannot be startup-only forever; for now
    * the next start resolves it, and the row says why.
    */
   async function recover(): Promise<void> {
-    const stranded = await options.store.tx(async (tx) => {
+    const stranded = await options.db.tx(async (tx) => {
       const failed = await tx
         .update(signals)
         .set({ state: "failed", error: strandedSignal })
@@ -440,7 +440,7 @@ export function createCore(options: CoreOptions): Core {
           await drain();
         }
       } catch (error) {
-        // Only the Store can get here: Handler and adapter failures are handled per
+        // Only the Db can get here: Handler and adapter failures are handled per
         // Signal. Whatever was claimed stays `processing` for the next start to
         // resolve, `woken` is still set, and the worker tries again on the next
         // wakeup rather than dying quietly.
@@ -490,10 +490,10 @@ export function createCore(options: CoreOptions): Core {
       }
       handlers = registered;
 
-      // The connection carrying the notifications is the Store's to hold — a
+      // The connection carrying the notifications is the Db's to hold — a
       // `LISTEN` registration cannot live on a pooled connection, and `pg` does not
-      // leave the Store to get one (ADR-0022).
-      listening = options.store.listen(signalChannel, {
+      // leave the Db to get one (ADR-0022).
+      listening = options.db.listen(signalChannel, {
         notified: () => wakeup("notification"),
         connected: () => {
           log.debug({ channel: signalChannel }, "listening for Signal notifications");

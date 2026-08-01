@@ -9,25 +9,25 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
-import type { Store } from "../store/index.ts";
+import type { Db } from "../db/index.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { coreMigrations } from "./migrations.ts";
 import { runs, signals } from "./schema.ts";
 
 let database: TestDatabase;
-let store: Store;
+let db: Db;
 
 before(async () => {
   database = await createTestDatabase("core_migrations");
-  store = database.store;
-  await store.migrate(coreMigrations);
+  db = database.db;
+  await db.migrate(coreMigrations);
 });
 
 after(() => database.drop());
 
 describe("the Core's migrations", () => {
   it("creates signals and runs in the Core's own schema", async () => {
-    const handle = store.handle({ signals, runs });
+    const handle = db.handle({ signals, runs });
 
     const [signal] = await handle
       .insert(signals)
@@ -65,7 +65,7 @@ describe("the Core's migrations", () => {
     // There is no `timed_out`, because there are no timeouts (ADR-0017). The
     // constraint is what keeps that a fact about the database rather than a claim
     // in a document.
-    const rejection = await store
+    const rejection = await db
       .handle({})
       .execute(
         sql`insert into "saf_core"."signals" ("kind", "payload", "state") values ('x', '{}', 'timed_out')`,
@@ -85,7 +85,7 @@ describe("the Core's migrations", () => {
 describe("every shipped migration folder", () => {
   /**
    * `drizzle-kit` writes `CREATE SCHEMA` into a part's first migration and it has
-   * to be removed by hand, because `store.migrate` creates the descriptor's schema
+   * to be removed by hand, because `db.migrate` creates the descriptor's schema
    * itself — the tracking table lives in it. Left in, it fails the very first
    * migration of a new deployment and nothing earlier catches it. A comment in the
    * generator's config would not survive the next part; this does.
@@ -104,7 +104,7 @@ describe("every shipped migration folder", () => {
         .join("\n");
       assert.ok(
         !/create\s+schema/i.test(statements),
-        `${path.relative(root, file)} contains CREATE SCHEMA; store.migrate creates the descriptor's schema, so remove the line drizzle-kit generated`,
+        `${path.relative(root, file)} contains CREATE SCHEMA; db.migrate creates the descriptor's schema, so remove the line drizzle-kit generated`,
       );
     }
   });

@@ -1,9 +1,9 @@
-import type { MigrationDescriptor } from "../store/index.ts";
+import type { MigrationDescriptor } from "../db/index.ts";
 import { usersSchema } from "./schema.ts";
 
 /**
  * The User Directory's migration descriptor: inert data the Operator's entry point
- * hands to `store.migrate` alongside the Core's, in the one call they already make
+ * hands to `db.migrate` alongside the Core's, in the one call they already make
  * (ADR-0021, ADR-0022).
  *
  * Its own schema and its own tracking table, and both are mandatory rather than

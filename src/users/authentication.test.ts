@@ -31,7 +31,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance, type FastifyPluginAsync } from "fastify";
-import type { Store } from "../store/index.ts";
+import type { Db } from "../db/index.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { usersMigrations } from "./migrations.ts";
 import type { UserRecord } from "./routes.ts";
@@ -59,7 +59,7 @@ const alsoAt = "/sign-in";
 const ops = "/ops";
 
 let database: TestDatabase;
-let store: Store;
+let db: Db;
 let directory: Users;
 let agentServer: FastifyInstance;
 let publicServer: FastifyInstance;
@@ -100,10 +100,10 @@ const operatorRoutes: FastifyPluginAsync = async (fastify) => {
 
 before(async () => {
   database = await createTestDatabase("users_authentication");
-  store = database.store;
-  await store.migrate(usersMigrations);
+  db = database.db;
+  await db.migrate(usersMigrations);
 
-  directory = createUsers({ store, tokenTtl: hour, scrypt: cheap });
+  directory = createUsers({ db, tokenTtl: hour, scrypt: cheap });
 
   agentServer = Fastify();
   await agentServer.register(directory.agentRoutes, { prefix: "/users" });
@@ -204,10 +204,10 @@ describe("refusing a request", () => {
     const issued = await logIn(user.id);
 
     // A Token from a Directory whose Tokens last a millisecond: expired by the time
-    // the response is read, over the same Store, so the row is there and only its
+    // the response is read, over the same Db, so the row is there and only its
     // `expires_at` is in the past. This is how the refusal of an expired Token is
     // reachable without a test waiting for anything.
-    const briefly = createUsers({ store, tokenTtl: 1, scrypt: cheap });
+    const briefly = createUsers({ db, tokenTtl: 1, scrypt: cheap });
     const brieflyServer = Fastify();
     await brieflyServer.register(briefly.publicRoutes, { prefix: auth });
     let expired: string;
@@ -282,7 +282,7 @@ describe("refusing a request", () => {
     // Tokens, it is that an expired Token is refused. `expires_at` is written from the
     // database's clock and compared against the database's clock, so this is the row
     // saying no rather than this process deciding.
-    const briefly = createUsers({ store, tokenTtl: 1, scrypt: cheap });
+    const briefly = createUsers({ db, tokenTtl: 1, scrypt: cheap });
     const server = Fastify();
     await server.register(briefly.publicRoutes, { prefix: auth });
     try {

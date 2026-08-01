@@ -23,7 +23,7 @@ export type Handle<TSchema extends Record<string, unknown> = Record<string, neve
 >;
 
 /**
- * What `store.tx` hands its callback. A `Handle`, plus `rollback()` — which throws
+ * What `db.tx` hands its callback. A `Handle`, plus `rollback()` — which throws
  * `TransactionRollbackError` rather than returning, so anything using it as
  * control flow has to catch and filter (ADR-0023).
  */
@@ -36,7 +36,7 @@ export type Transaction = PgTransaction<
 /**
  * Where one part's migrations live and how they are tracked. Inert data: each
  * part of the Gateway exports one, and the Operator's entry point passes them
- * all to a single `store.migrate` call rather than any part applying its own.
+ * all to a single `db.migrate` call rather than any part applying its own.
  */
 export type MigrationDescriptor = {
   /**
@@ -67,7 +67,7 @@ export type MigrationDescriptor = {
 };
 
 /**
- * What `store.listen` reports.
+ * What `db.listen` reports.
  *
  * `notified` is the point of it. The other two are about the connection
  * underneath, which a caller has to care about because **PostgreSQL queues
@@ -87,7 +87,7 @@ export type ChannelListener = {
   lost?(error: unknown): void;
 };
 
-/** A registration made by `store.listen`. */
+/** A registration made by `db.listen`. */
 export type Listening = {
   /**
    * Stops listening and closes the connection. Idempotent, and safe to call while a
@@ -96,7 +96,16 @@ export type Listening = {
   close(): Promise<void>;
 };
 
-export type Store = {
+/**
+ * The Gateway's PostgreSQL client: the pool, the schema-typed handle each part
+ * queries on, transactions, `LISTEN` registrations, and migrations.
+ *
+ * Named for the client and not for the state it holds. "Store" named the
+ * persistent state, and persistent state has nothing to open and nothing to
+ * close — while every connection below is one somebody has to hand back
+ * (ADR-0022).
+ */
+export type Db = {
   /**
    * A handle over the shared pool, typed to `schema`. Keeps `pg` internal: the
    * pool is never handed out, so `pg` does not join Fastify and Drizzle as
@@ -105,14 +114,14 @@ export type Store = {
   handle<TSchema extends Record<string, unknown>>(schema: TSchema): Handle<TSchema>;
 
   /**
-   * Registers `listen <channel>` on a connection of the Store's own, outside the
+   * Registers `listen <channel>` on a connection of the Db's own, outside the
    * pool, and reports what arrives on it.
    *
    * It cannot be a pooled connection: a `LISTEN` registration belongs to a session,
    * and a pooled connection goes back to the pool as soon as the query using it
    * resolves — so there is nothing left holding the session, and no way to ask for
-   * that one back. This is therefore the one place the Store keeps a connection open
-   * on a caller's behalf, and it is still the Store that owns it, which is what
+   * that one back. This is therefore the one place the Db keeps a connection open
+   * on a caller's behalf, and it is still the Db that owns it, which is what
    * keeps `pg` out of the public API (ADR-0022).
    *
    * Returns without waiting for the connection, and never rejects. A caller that
@@ -125,7 +134,7 @@ export type Store = {
 
   /**
    * Applies each descriptor into its own schema with its own tracker, in the
-   * order given. An explicit call and never a side effect of opening the Store,
+   * order given. An explicit call and never a side effect of opening the Db,
    * so it can run from a separate entry point before a deploy.
    */
   migrate(...descriptors: MigrationDescriptor[]): Promise<void>;
@@ -137,7 +146,7 @@ export type Store = {
    * Closes the pool and every connection `listen` opened. Nothing in the framework
    * calls this; shutdown is the Operator's.
    *
-   * Listening connections are included because they are the Store's, and one left
+   * Listening connections are included because they are the Db's, and one left
    * connected keeps the process alive and its database undroppable — a leak whose
    * symptom is a deploy that never exits rather than an error anyone can read.
    */
@@ -145,13 +154,13 @@ export type Store = {
 };
 
 /**
- * Opens the Store on a PostgreSQL connection URL.
+ * Opens the Db on a PostgreSQL connection URL.
  *
  * Synchronous, and connects lazily: the pool opens its first connection when
  * something is asked of it, so a bad URL surfaces at the first call — in
  * practice `migrate`, which the entry point makes before it starts serving.
  */
-export function openStore(url: string): Store {
+export function openDb(url: string): Db {
   const pool = new Pool({ connectionString: url });
 
   // One schema-less handle for everything that does not belong to a part:
@@ -202,7 +211,7 @@ export function openStore(url: string): Store {
  * How a listening connection names itself in `pg_stat_activity`.
  *
  * Not decoration: it is a connection an Operator did not ask for and cannot see in
- * the Store's surface, so it says what it is where they will look for it. The tests
+ * the Db's surface, so it says what it is where they will look for it. The tests
  * find and cut it by the same name.
  */
 export const listenApplicationName = "saf listen";

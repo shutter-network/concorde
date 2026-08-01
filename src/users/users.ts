@@ -32,8 +32,8 @@
 
 import { and, desc, eq, gt, sql } from "drizzle-orm";
 import type { FastifyPluginAsync, preHandlerAsyncHookHandler } from "fastify";
+import type { Db, Handle } from "../db/index.ts";
 import { limitSchema } from "../route-conventions.ts";
-import type { Handle, Store } from "../store/index.ts";
 import {
   agentUserRoutes,
   type Credentials,
@@ -58,7 +58,7 @@ import {
 type UsersHandle = Handle<typeof usersTables>;
 
 export type UsersOptions = {
-  readonly store: Store;
+  readonly db: Db;
   /**
    * How long an issued Token lives, in milliseconds.
    *
@@ -291,9 +291,9 @@ export type Users = {
 };
 
 export function createUsers(options: UsersOptions): Users {
-  // The part's own handle, typed to its own tables. `pg` never leaves the Store
+  // The part's own handle, typed to its own tables. `pg` never leaves the Db
   // (ADR-0022).
-  const handle = options.store.handle(usersTables);
+  const handle = options.db.handle(usersTables);
   const tokenTtl = checkedTokenTtl(options.tokenTtl);
   const parameters = checkedScryptParameters(options.scrypt ?? defaultScryptParameters);
   const dummy = dummyDigest(parameters);

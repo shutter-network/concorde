@@ -47,7 +47,7 @@ const migrationsRoot = path.join(repoRoot, "migrations");
 
 /** The consumer's imports, spelled once: the type checker and Node see the same three. */
 const consumerImports = [
-  'import { coreMigrations, createCore, defaultLogger, openStore, resolveMountTable, templateHandler } from "shared-agent-framework";',
+  'import { coreMigrations, createCore, defaultLogger, openDb, resolveMountTable, templateHandler } from "shared-agent-framework";',
   'import { composeInvocation, createPiAdapter, interpretPiOutput, resolvePiConfiguration } from "shared-agent-framework/pi";',
   'import { createUsers, usersMigrations } from "shared-agent-framework/users";',
 ];
@@ -128,11 +128,11 @@ try {
     "dist/container/index.d.ts",
     "dist/container/mount-table.js",
     "dist/container/mount-table.d.ts",
-    // `dist` mirrors `src`, so `src/store/store.ts` becomes `dist/store/store.js`
+    // `dist` mirrors `src`, so `src/db/db.ts` becomes `dist/db/db.js`
     // and a folder reached from `import.meta.url` is the same relative path in
     // both. Migration folders resolve because of this and nothing else.
-    "dist/store/store.js",
-    "dist/store/store.d.ts",
+    "dist/db/db.js",
+    "dist/db/db.d.ts",
     // The Core's descriptor resolves `../../migrations/core` from its own module,
     // so its position in `dist` is what makes the shipped folder reachable.
     "dist/core/migrations.js",
@@ -201,7 +201,7 @@ try {
     );
   }
 
-  // `pg` is the Store's alone (ADR-0022), so no shipped declaration may name it.
+  // `pg` is the Db's alone (ADR-0022), so no shipped declaration may name it.
   // The Biome override catches an import in our sources; this catches the subtler
   // case, where a `pg` type reaches the public API through an inferred return
   // type and `tsc` writes the import into a `.d.ts` we never read. It would only
@@ -299,6 +299,7 @@ try {
       "  ChannelListener,",
       "  Core,",
       "  CoreOptions,",
+      "  Db,",
       "  EmittedSignal,",
       "  Handle,",
       "  Listening,",
@@ -320,7 +321,6 @@ try {
       "  SignalHandlers,",
       "  SignalRecord,",
       "  SignalState,",
-      "  Store,",
       "  TemplateHandlerOptions,",
       "  Transaction,",
       '} from "shared-agent-framework";',
@@ -353,7 +353,7 @@ try {
       "",
       "// Annotated throughout, so a declaration that resolved to `any` fails here.",
       "export const descriptor: MigrationDescriptor = coreMigrations;",
-      'export const store: Store = openStore("postgres://nobody@example.invalid/none");',
+      'export const db: Db = openDb("postgres://nobody@example.invalid/none");',
       "",
       "// An Operator's own schema and tables, kept through the same call the",
       "// framework's own parts use.",
@@ -384,7 +384,7 @@ try {
       "};",
       "export const shipped: Logger = defaultLogger();",
       "",
-      "const options: CoreOptions = { store, runtime, logger: log, sweepIntervalMs: 500 };",
+      "const options: CoreOptions = { db, runtime, logger: log, sweepIntervalMs: 500 };",
       "export const core: Core = createCore(options);",
       "",
       "// The two servers: two bare Fastify instances the consumer constructs, because",
@@ -398,14 +398,14 @@ try {
       "// switched off (ADR-0010, ADR-0021).",
       "const coreRoutes: FastifyPluginAsync = core.agentRoutes;",
       "",
-      "// The User Directory: constructed from the same Store, contributing one more",
+      "// The User Directory: constructed from the same Db, contributing one more",
       "// migration descriptor to the one call and one more plugin to the Agent server,",
       "// under a prefix the Operator chooses (ADR-0029).",
       "// The cost of a password derivation, named rather than defaulted, because a",
       "// digest carries the parameters it was written under and this one is only what",
       "// new ones get.",
       "const cost: ScryptParameters = { logN: 15, blockSize: 8, parallelism: 3 };",
-      "const usersOptions: UsersOptions = { store, tokenTtl: 30 * 24 * 60 * 60 * 1000, scrypt: cost };",
+      "const usersOptions: UsersOptions = { db, tokenTtl: 30 * 24 * 60 * 60 * 1000, scrypt: cost };",
       "export const users: Users = createUsers(usersOptions);",
       "export const usersDescriptor: MigrationDescriptor = usersMigrations;",
       "const userRoutes: FastifyPluginAsync = users.agentRoutes;",
@@ -541,7 +541,7 @@ try {
       "};",
       "",
       "// A Producer of the Operator's own, told when something arrives on a channel",
-      "// it shares with whoever notifies it. The connection is the Store's, so `pg`",
+      "// it shares with whoever notifies it. The connection is the Db's, so `pg`",
       "// is not an import an Operator ever needs.",
       "const watcher: ChannelListener = {",
       '  notified: (payload: string) => log.debug({ payload }, "notified"),',
@@ -550,17 +550,17 @@ try {
       "};",
       "",
       "export async function useEverything(): Promise<void> {",
-      "  await store.migrate(descriptor, usersDescriptor);",
-      "  await write(store.handle({ notes }));",
-      "  await store.tx(async (tx: Transaction) => write(tx));",
-      '  const listening: Listening = store.listen("consumer_channel", watcher);',
+      "  await db.migrate(descriptor, usersDescriptor);",
+      "  await write(db.handle({ notes }));",
+      "  await db.tx(async (tx: Transaction) => write(tx));",
+      '  const listening: Listening = db.listen("consumer_channel", watcher);',
       "  await listening.close();",
       "  const handlers: SignalHandlers = {",
       '    "message.received": greeter("hello"),',
       '    "prompt.render": fromTemplate,',
       "  };",
       "  core.start(handlers);",
-      "  await store.tx(async (tx: Transaction) => {",
+      "  await db.tx(async (tx: Transaction) => {",
       '    const emitted: EmittedSignal = { kind: "message.received", payload: { userId: "u1" } };',
       "    const id: string = await core.emit(tx, emitted);",
       '    shipped.info({ signalId: id }, "emitted");',
@@ -571,7 +571,7 @@ try {
       '  await publicServer.register(ownRoutes, { prefix: "/ops" });',
       "  // A User admitted from trusted code, in a transaction of the consumer's own:",
       "  // the write takes it first, and the reads take none (ADR-0023).",
-      "  const admitted: UserRecord = await store.tx((tx: Transaction) => users.create(tx));",
+      "  const admitted: UserRecord = await db.tx((tx: Transaction) => users.create(tx));",
       "  const sameUser: UserRecord | undefined = await users.get(admitted.id);",
       "  const everyone: UserRecord[] = await users.list({ limit: 10 });",
       "  // The three capabilities the agent is denied. They are methods and not routes,",
@@ -579,20 +579,20 @@ try {
       "  // (ADR-0009, ADR-0020) — and from nothing an injected prompt can call (ADR-0029).",
       "  // Each takes the transaction first, so a grant and whatever the consumer records",
       "  // about it commit together or not at all.",
-      "  await store.tx(async (tx: Transaction) => {",
+      "  await db.tx(async (tx: Transaction) => {",
       '    await users.setAttributes(tx, admitted.id, { role: "operator", groups: ["support"] });',
       '    await users.setPassword(tx, admitted.id, "chosen by the Operator, proving nothing");',
       "  });",
       "  // Issuance is the extension point that replaced the Authenticator: a consumer's",
       "  // own OIDC route establishes identity however it likes and answers with exactly",
       "  // this object, which is what `POST /auth/tokens` answers with too (ADR-0030).",
-      "  const minted: IssuedToken = await store.tx((tx: Transaction) =>",
+      "  const minted: IssuedToken = await db.tx((tx: Transaction) =>",
       "    users.issueToken(tx, admitted.id),",
       "  );",
       "  // Revoking is a write too, so it takes the transaction first — and it is the",
       "  // only mechanism by which a credential stops working before it expires, since",
       "  // nothing removes a User (ADR-0029).",
-      "  await store.tx((tx: Transaction) => users.revoke(tx, admitted.id));",
+      "  await db.tx((tx: Transaction) => users.revoke(tx, admitted.id));",
       '  shipped.info({ expiresAt: minted.expiresAt, of: minted.user.id }, "a Token was issued");',
       '  shipped.info({ admitted, sameUser, everyone: everyone.length }, "a User exists");',
       "  // Both bind addresses stated by the consumer, because no default of ours is",
@@ -607,7 +607,7 @@ try {
       "  await publicServer.close();",
       "  await agentServer.close();",
       "  await core.stop();",
-      "  await store.close();",
+      "  await db.close();",
       "}",
       "",
     ].join("\n"),
@@ -653,11 +653,11 @@ try {
         // configuration it cannot work with at construction, so this also proves the
         // check inside it runs from the installed package rather than only here.
         "const adapter = createPiAdapter(piConfig);",
-        // The User Directory, constructed as an Operator constructs it. `openStore`
+        // The User Directory, constructed as an Operator constructs it. `openDb`
         // connects lazily, so this reaches the database not at all: what it proves is
         // that the subpath resolves at runtime and that construction is free of side
         // effects, like every other part's.
-        "const directory = createUsers({ store: openStore('postgres://nobody@example.invalid/none'), tokenTtl: 60000 });",
+        "const directory = createUsers({ db: openDb('postgres://nobody@example.invalid/none'), tokenTtl: 60000 });",
         "const encoder = new TextEncoder();",
         "const settled = await interpretPiOutput((async function* () {",
         "  yield encoder.encode(JSON.stringify({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop' } }) + '\\n');",
@@ -667,7 +667,7 @@ try {
         // because the module that used to hold one is gone from the package, and the
         // composed invocation names no file for the agent to read either — the Operator's
         // `AGENTS.md` above is a mount and `pi` discovers it (ADR-0025).
-        "const built = [typeof openStore, typeof templateHandler, invocation.command, invocation.session, String(settled.ok), resolvedMounts.containerArguments()[1], resolvedMounts.gatewayPathFor('/sessions/user_42'), resolvePiConfiguration(piConfig).containerCommand.join(' '), String(invocation.args.includes('--append-system-prompt')), typeof adapter.run, String(Object.keys(adapter)), usersMigrations.schema, String(Object.keys(directory).sort())];",
+        "const built = [typeof openDb, typeof templateHandler, invocation.command, invocation.session, String(settled.ok), resolvedMounts.containerArguments()[1], resolvedMounts.gatewayPathFor('/sessions/user_42'), resolvePiConfiguration(piConfig).containerCommand.join(' '), String(invocation.args.includes('--append-system-prompt')), typeof adapter.run, String(Object.keys(adapter)), usersMigrations.schema, String(Object.keys(directory).sort())];",
         "process.stdout.write(built.join(':'));",
       ].join("\n"),
     ],
@@ -693,22 +693,22 @@ try {
   writeFileSync(
     path.join(consumer, "migrate.ts"),
     [
-      'import { coreMigrations, createCore, openStore } from "shared-agent-framework";',
+      'import { coreMigrations, createCore, openDb } from "shared-agent-framework";',
       'import { createUsers, usersMigrations } from "shared-agent-framework/users";',
       'import Fastify from "fastify";',
       "",
-      "const store = openStore(process.argv[2]);",
-      "const core = createCore({ store, runtime: { run: async () => ({ ok: true }) } });",
+      "const db = openDb(process.argv[2]);",
+      "const core = createCore({ db, runtime: { run: async () => ({ ok: true }) } });",
       "// A cost no deployment should use, because this proves the folder applied and",
       "// not that scrypt is slow.",
-      "const users = createUsers({ store, tokenTtl: 60_000, scrypt: { logN: 12, blockSize: 8, parallelism: 1 } });",
+      "const users = createUsers({ db, tokenTtl: 60_000, scrypt: { logN: 12, blockSize: 8, parallelism: 1 } });",
       "try {",
-      "  await store.migrate(coreMigrations, usersMigrations);",
+      "  await db.migrate(coreMigrations, usersMigrations);",
       "  // Emitting and admitting are what prove both folders resolved and their",
       "  // statements actually ran: neither row has anywhere to go otherwise. The",
       "  // worker is never started, so nothing processes the Signal.",
-      '  const id = await store.tx((tx) => core.emit(tx, { kind: "probe", payload: {} }));',
-      "  const user = await store.tx((tx) => users.create(tx));",
+      '  const id = await db.tx((tx) => core.emit(tx, { kind: "probe", payload: {} }));',
+      "  const user = await db.tx((tx) => users.create(tx));",
       "  // And a login, which is what proves the User Directory's *second* migration",
       "  // applied: a Token has nowhere to be written otherwise. It goes over the two",
       "  // plugins on two servers, as an Operator registers them.",
@@ -735,10 +735,10 @@ try {
       "  // all is refused every login, and a Token minted for them by trusted code",
       "  // authenticates a request anyway. Their Attributes come from trusted code too,",
       "  // which is the one thing the Agent server has no route for.",
-      "  const oidcUser = await store.tx((tx) => users.create(tx));",
-      '  await store.tx((tx) => users.setAttributes(tx, oidcUser.id, { via: "oidc" }));',
+      "  const oidcUser = await db.tx((tx) => users.create(tx));",
+      '  await db.tx((tx) => users.setAttributes(tx, oidcUser.id, { via: "oidc" }));',
       '  const noPassword = await publicServer.inject({ method: "POST", url: "/auth/tokens", payload: { user: oidcUser.id, password: "anything at all" } });',
-      "  const minted = await store.tx((tx) => users.issueToken(tx, oidcUser.id));",
+      "  const minted = await db.tx((tx) => users.issueToken(tx, oidcUser.id));",
       '  const asOidc = await publicServer.inject({ method: "GET", url: "/auth/me", headers: { authorization: "Bearer " + minted.token } });',
       "  const applied =",
       "    id.length === 36 &&",
@@ -761,7 +761,7 @@ try {
       '    JSON.stringify(asOidc.json().attributes) === JSON.stringify({ via: "oidc" });',
       '  process.stdout.write(applied ? "applied" : "unexpected " + id + " " + JSON.stringify(user) + " " + issued.statusCode + " " + issued.body + " " + refused.statusCode + " " + me.statusCode + " " + me.body + " " + anonymous.statusCode + " " + out.statusCode + " " + afterwards.statusCode + " " + noPassword.statusCode + " " + asOidc.statusCode + " " + asOidc.body);',
       "} finally {",
-      "  await store.close();",
+      "  await db.close();",
       "}",
       "",
     ].join("\n"),

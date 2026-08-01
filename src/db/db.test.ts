@@ -5,16 +5,16 @@ import { cutListeningBackends, listeningBackends } from "../test-support/backend
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { alphaMigrations, widgets } from "../test-support/fixtures.ts";
 import { waitUntil } from "../test-support/wait.ts";
-import type { ChannelListener, Handle, Store } from "./index.ts";
-import { openStore } from "./index.ts";
+import type { ChannelListener, Db, Handle } from "./index.ts";
+import { openDb } from "./index.ts";
 
 let database: TestDatabase;
-let store: Store;
+let db: Db;
 
 before(async () => {
-  database = await createTestDatabase("store");
-  store = database.store;
-  await store.migrate(alphaMigrations);
+  database = await createTestDatabase("db");
+  db = database.db;
+  await db.migrate(alphaMigrations);
 });
 
 after(() => database.drop());
@@ -34,13 +34,13 @@ async function record<TSchema extends Record<string, unknown>>(
 }
 
 async function labels(): Promise<string[]> {
-  const rows = await store.handle({ widgets }).select({ label: widgets.label }).from(widgets);
+  const rows = await db.handle({ widgets }).select({ label: widgets.label }).from(widgets);
   return rows.map((row) => row.label).sort();
 }
 
-describe("store.handle", () => {
+describe("db.handle", () => {
   it("returns a handle scoped to the schema it was given", async () => {
-    const alpha = store.handle({ widgets });
+    const alpha = db.handle({ widgets });
     await alpha.insert(widgets).values({ label: "handle-typed" });
 
     // The relational form is only available on a handle carrying the schema, so
@@ -55,9 +55,9 @@ describe("store.handle", () => {
   });
 });
 
-describe("store.tx", () => {
+describe("db.tx", () => {
   it("commits when the callback returns, and returns its value", async () => {
-    const returned = await store.tx(async (tx) => {
+    const returned = await db.tx(async (tx) => {
       await record(tx, "committed");
       return "value";
     });
@@ -69,7 +69,7 @@ describe("store.tx", () => {
   it("rolls back when the callback throws, and rethrows", async () => {
     await assert.rejects(
       () =>
-        store.tx(async (tx) => {
+        db.tx(async (tx) => {
           await record(tx, "rolled-back");
           throw new Error("deliberate");
         }),
@@ -81,13 +81,13 @@ describe("store.tx", () => {
 
   it("makes a function taking a handle or a transaction join the caller's transaction", async () => {
     // The same function, called with a plain handle, writes immediately.
-    await record(store.handle({ widgets }), "via-handle");
+    await record(db.handle({ widgets }), "via-handle");
     assert.ok((await labels()).includes("via-handle"));
 
     // Called with the transaction, its write is undone with everything else.
     await assert.rejects(
       () =>
-        store.tx(async (tx) => {
+        db.tx(async (tx) => {
           await record(tx, "via-transaction");
           // Visible inside the transaction before it is abandoned.
           const inside = await tx.select({ label: widgets.label }).from(widgets);
@@ -102,13 +102,13 @@ describe("store.tx", () => {
 });
 
 /**
- * Everything a caller of `store.listen` can see: what arrives, what does not, and
- * that the connection carrying it is the Store's own rather than a pooled one.
+ * Everything a caller of `db.listen` can see: what arrives, what does not, and
+ * that the connection carrying it is the Db's own rather than a pooled one.
  *
  * `pg_notify` rather than `NOTIFY` throughout, here and in the Core: `NOTIFY` is a
  * utility statement, so its channel and payload cannot be bind parameters.
  */
-describe("store.listen", () => {
+describe("db.listen", () => {
   /** Records everything a listener is told, so a test can assert on absence too. */
   function recording(): {
     readonly payloads: string[];
@@ -137,11 +137,7 @@ describe("store.listen", () => {
     };
   }
 
-  function notify(
-    channel: string,
-    payload: string,
-    on: Handle = store.handle({}),
-  ): Promise<unknown> {
+  function notify(channel: string, payload: string, on: Handle = db.handle({})): Promise<unknown> {
     return on.execute(sql`select pg_notify(${channel}, ${payload})`);
   }
 
@@ -157,7 +153,7 @@ describe("store.listen", () => {
 
   it("delivers what was notified on its channel, with its payload", async () => {
     const recorded = recording();
-    const listening = store.listen("first_channel", recorded.listener);
+    const listening = db.listen("first_channel", recorded.listener);
     try {
       await connected(recorded.connections);
 
@@ -174,13 +170,13 @@ describe("store.listen", () => {
 
   it("never delivers a notification from a transaction that rolled back", async () => {
     const recorded = recording();
-    const listening = store.listen("transactional", recorded.listener);
+    const listening = db.listen("transactional", recorded.listener);
     try {
       await connected(recorded.connections);
 
       await assert.rejects(
         () =>
-          store.tx(async (tx) => {
+          db.tx(async (tx) => {
             await notify("transactional", "abandoned", tx);
             throw new Error("deliberate");
           }),
@@ -189,7 +185,7 @@ describe("store.listen", () => {
 
       // The marker is what makes the absence above a fact rather than a race this
       // test won: it went through the same channel afterwards and did arrive.
-      await store.tx((tx) => notify("transactional", "committed", tx));
+      await db.tx((tx) => notify("transactional", "committed", tx));
       await waitUntil("the committed notification arrives", async () => {
         return recorded.payloads.length > 0;
       });
@@ -202,22 +198,18 @@ describe("store.listen", () => {
 
   it("keeps its connection outside the pool, so a saturated pool cannot deafen it", async () => {
     const recorded = recording();
-    const listening = store.listen("saturated", recorded.listener);
-    // A second Store on the same database, because sending the notification through
+    const listening = db.listen("saturated", recorded.listener);
+    // A second Db on the same database, because sending the notification through
     // the saturated pool would only queue behind the sleeps.
-    const sender = openStore(database.url);
+    const sender = openDb(database.url);
     try {
       await connected(recorded.connections);
-      assert.equal(
-        await listeningBackends(store),
-        1,
-        "the listener should have a backend of its own",
-      );
+      assert.equal(await listeningBackends(db), 1, "the listener should have a backend of its own");
 
       // More concurrent queries than the pool holds, so every pooled connection is
       // busy and two callers are queued for one.
       const saturating = Array.from({ length: 12 }, () =>
-        store.handle({}).execute(sql`select pg_sleep(0.3)`),
+        db.handle({}).execute(sql`select pg_sleep(0.3)`),
       );
       await notify("saturated", "while busy", sender.handle({}));
       await waitUntil("the notification arrives while the pool is busy", async () => {
@@ -234,10 +226,10 @@ describe("store.listen", () => {
 
   it("reconnects when its connection is cut, and reports the loss", async () => {
     const recorded = recording();
-    const listening = store.listen("cut", recorded.listener);
+    const listening = db.listen("cut", recorded.listener);
     try {
       await connected(recorded.connections);
-      await cutListeningBackends(store);
+      await cutListeningBackends(db);
 
       await connected(recorded.connections, 2);
       assert.ok(recorded.losses.length > 0, "the loss should have been reported");
@@ -255,32 +247,32 @@ describe("store.listen", () => {
 
   it("releases its connection and stops delivering when closed", async () => {
     const recorded = recording();
-    const listening = store.listen("closed", recorded.listener);
+    const listening = db.listen("closed", recorded.listener);
     await connected(recorded.connections);
     await listening.close();
     // Twice, because a caller stopping a Core that is already stopped should not be
     // the caller's problem to avoid.
     await listening.close();
 
-    assert.equal(await listeningBackends(store), 0, "the connection should be gone");
+    assert.equal(await listeningBackends(db), 0, "the connection should be gone");
 
     await notify("closed", "too late");
     await new Promise((resume) => setTimeout(resume, 50));
     assert.deepEqual(recorded.payloads, []);
   });
 
-  it("closes what listening opened when the Store closes", async () => {
-    // Its own Store: closing this file's would take the rest of the tests with it.
-    const other = openStore(database.url);
+  it("closes what listening opened when the Db closes", async () => {
+    // Its own Db: closing this file's would take the rest of the tests with it.
+    const other = openDb(database.url);
     const recorded = recording();
     other.listen("orphan", recorded.listener);
     await connected(recorded.connections);
-    assert.equal(await listeningBackends(store), 1);
+    assert.equal(await listeningBackends(db), 1);
 
     // A listening connection nobody closed keeps the process alive and the database
-    // undroppable, so the Store closing what it opened is the difference between a
+    // undroppable, so the Db closing what it opened is the difference between a
     // clean exit and a hang.
     await other.close();
-    assert.equal(await listeningBackends(store), 0);
+    assert.equal(await listeningBackends(db), 0);
   });
 });

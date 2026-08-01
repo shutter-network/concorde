@@ -32,7 +32,7 @@
   },
   "overrides": [
     {
-      "includes": ["**", "!src/store/**"],
+      "includes": ["**", "!src/db/**"],
       "linter": {
         "rules": {
           "style": {
@@ -40,7 +40,7 @@
               "level": "error",
               "options": {
                 "paths": {
-                  "pg": "The pool is the Store's alone: obtain a handle with store.handle(schema) instead. Fastify and Drizzle are public API; pg is not (ADR-0022)."
+                  "pg": "The pool is the Db's alone: obtain a handle with db.handle(schema) instead. Fastify and Drizzle are public API; pg is not (ADR-0022)."
                 }
               }
             }

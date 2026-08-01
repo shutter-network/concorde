@@ -32,8 +32,9 @@ belonging to this conversation. `limit` has a default and a maximum, and asking 
 than the maximum is refused rather than quietly reduced. An unknown query parameter is
 refused too — there is no parameter that narrows a read to one Session or one user.
 
-You can read this API and nothing else of the Gateway's. You cannot reach the Store —
-the Gateway's own persistent state — and there is no route here that writes anything.
+You can read this API and nothing else of the Gateway's. You cannot reach the Db —
+where the Gateway keeps its own persistent state — and there is no route here that
+writes anything.
 
 For example, to see what has arrived recently:
 

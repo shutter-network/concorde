@@ -25,7 +25,7 @@ import { type Core, createCore } from "./core/core.ts";
 import type { Prompt, Signal, SignalHandler, SignalHandlers } from "./core/handlers.ts";
 import { coreMigrations } from "./core/migrations.ts";
 import { signals } from "./core/schema.ts";
-import type { Store } from "./store/index.ts";
+import type { Db } from "./db/index.ts";
 import { templateHandler } from "./template-handler.ts";
 import { createTestDatabase, type TestDatabase } from "./test-support/database.ts";
 import { type FakeRuntime, fakeRuntime } from "./test-support/fake-runtime.ts";
@@ -403,12 +403,12 @@ describe("a Handler's Handlebars environment", () => {
  */
 describe("the template Handler under the worker", () => {
   let database: TestDatabase;
-  let store: Store;
+  let db: Db;
 
   before(async () => {
     database = await createTestDatabase("template_handler");
-    store = database.store;
-    await store.migrate(coreMigrations);
+    db = database.db;
+    await db.migrate(coreMigrations);
   });
 
   after(() => database.drop());
@@ -417,7 +417,7 @@ describe("the template Handler under the worker", () => {
   const sweepIntervalMs = 5;
 
   async function stateOf(signalId: string): Promise<{ state: string; error: string | null }> {
-    const [row] = await store
+    const [row] = await db
       .handle({ signals })
       .select({ state: signals.state, error: signals.error })
       .from(signals)
@@ -435,7 +435,7 @@ describe("the template Handler under the worker", () => {
   }
 
   async function emit(core: Core, kind: string): Promise<string> {
-    return store.tx((tx) => core.emit(tx, { kind, payload: {} }));
+    return db.tx((tx) => core.emit(tx, { kind, payload: {} }));
   }
 
   async function withWorker(
@@ -443,7 +443,7 @@ describe("the template Handler under the worker", () => {
     body: (core: Core, runtime: FakeRuntime) => Promise<void>,
   ): Promise<void> {
     const runtime = fakeRuntime();
-    const core = createCore({ store, runtime, sweepIntervalMs });
+    const core = createCore({ db, runtime, sweepIntervalMs });
     core.start(handlers);
     try {
       await body(core, runtime);

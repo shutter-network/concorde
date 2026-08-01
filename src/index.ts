@@ -22,16 +22,16 @@ export type {
   SignalState,
 } from "./core/index.ts";
 export { coreMigrations, createCore } from "./core/index.ts";
-export type { LogFields, Logger } from "./logging.ts";
-export { defaultLogger } from "./logging.ts";
 export type {
   ChannelListener,
+  Db,
   Handle,
   Listening,
   MigrationDescriptor,
-  Store,
   Transaction,
-} from "./store/index.ts";
-export { openStore } from "./store/index.ts";
+} from "./db/index.ts";
+export { openDb } from "./db/index.ts";
+export type { LogFields, Logger } from "./logging.ts";
+export { defaultLogger } from "./logging.ts";
 export type { TemplateHandlerOptions } from "./template-handler.ts";
 export { templateHandler } from "./template-handler.ts";

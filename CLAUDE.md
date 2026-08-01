@@ -17,7 +17,7 @@ npm run check   # typecheck, build, lint, test: the one command, and what CI run
 ```
 
 `npm run check` needs a PostgreSQL server. PostgreSQL is real in every test and
-nothing about the Store is mocked ([ADR-0022](./docs/adr/0022-the-store-is-postgresql-through-drizzle.md)),
+nothing about the Db is mocked ([ADR-0022](./docs/adr/0022-the-store-is-postgresql-through-drizzle.md)),
 so a container is a prerequisite rather than an optional extra:
 
 ```sh
@@ -69,7 +69,7 @@ Conventions the build depends on:
   stripping types, and `tsc` rewrites the extension to `.js` when it emits.
 - **`dist/` mirrors `src/` exactly**, so a path built from `import.meta.url` is
   the same relative path in both. That is what lets shipped migration folders
-  resolve from `src/store/…` and `dist/store/…` alike. `build` empties `dist`
+  resolve from `src/db/…` and `dist/db/…` alike. `build` empties `dist`
   first, because `tsc` never prunes its own output and a deleted module would
   otherwise keep shipping; `npm run check:package` fails on a shipped file whose
   source is gone.
@@ -91,15 +91,15 @@ Conventions the build depends on:
 - **Tests and their fixtures live beside the code they exercise and never ship.**
   `src/**/*.test.ts` and `src/test-support/` are excluded from
   `tsconfig.build.json`, which the tarball check asserts.
-- **A shipped migration folder contains no `CREATE SCHEMA`.** `store.migrate`
+- **A shipped migration folder contains no `CREATE SCHEMA`.** `db.migrate`
   creates the descriptor's schema, and the tracking table lives in it, so a
   generated `CREATE SCHEMA` line must be removed after `drizzle-kit` writes it.
   `src/core/migrations.test.ts` scans every shipped folder and fails on one left
   in.
-- **Nothing outside `src/store/` imports `pg`.** Enforced by a Biome override:
-  parts obtain a handle with `store.handle(schema)`, and the one thing that needs a
-  connection of its own — a `LISTEN` registration — with `store.listen(channel,
-  listener)`, which keeps that connection inside the Store too.
+- **Nothing outside `src/db/` imports `pg`.** Enforced by a Biome override:
+  parts obtain a handle with `db.handle(schema)`, and the one thing that needs a
+  connection of its own — a `LISTEN` registration — with `db.listen(channel,
+  listener)`, which keeps that connection inside the Db too.
 
 ## Agent skills
 

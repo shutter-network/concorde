@@ -1,9 +1,9 @@
 export type {
   ChannelListener,
+  Db,
   Handle,
   Listening,
   MigrationDescriptor,
-  Store,
   Transaction,
-} from "./store.ts";
-export { openStore } from "./store.ts";
+} from "./db.ts";
+export { openDb } from "./db.ts";

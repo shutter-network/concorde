@@ -12,7 +12,7 @@
  * `drizzle-kit` can know:
  *
  *  - A generated first migration begins `CREATE SCHEMA "saf_core";`, which has to
- *    go. `store.migrate` creates the descriptor's schema before applying the
+ *    go. `db.migrate` creates the descriptor's schema before applying the
  *    folder, because the tracking table lives in it — so the generated line
  *    always fails on a schema that already exists.
  *    `src/core/migrations.test.ts` scans every shipped folder and fails on one

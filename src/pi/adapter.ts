@@ -14,7 +14,7 @@
  * would hold the Gateway's `DATABASE_URL` and could write to every table directly.
  * That would make [ADR-0010](../../docs/adr/0010-the-agent-reaches-the-gateway-over-http.md)
  * decorative and widen [ADR-0011](../../docs/adr/0011-the-agent-has-full-read-access.md)'s
- * blast radius from "what the read API exposes" to the whole Store, read and write.
+ * blast radius from "what the read API exposes" to the whole Db, read and write.
  * Only what `env` names reaches the agent's container.
  *
  * Two things this module refuses to read as an outcome, both of which look like the

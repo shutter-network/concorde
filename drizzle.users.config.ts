@@ -18,7 +18,7 @@
  * they apply to every part:
  *
  *  - A generated first migration begins `CREATE SCHEMA "saf_users";`, which has to
- *    go. `store.migrate` creates the descriptor's schema before applying the folder,
+ *    go. `db.migrate` creates the descriptor's schema before applying the folder,
  *    because the tracking table lives in it, so the generated line always arrives at
  *    a schema that already exists. `src/core/migrations.test.ts` scans every shipped
  *    folder and fails on one left in.

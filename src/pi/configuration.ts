@@ -86,7 +86,7 @@ export type PiConfiguration = {
    * Only what is named here reaches the agent. Nothing of the Gateway's own
    * environment does, which is the whole reason the agent runs in a container rather
    * than in this process: `pi`'s shell tool hands its child `{ ...process.env }`, so
-   * an in-process agent would hold the Store's `DATABASE_URL` (ADR-0025).
+   * an in-process agent would hold the Db's `DATABASE_URL` (ADR-0025).
    *
    * `PI_CODING_AGENT_DIR` and `PI_OFFLINE` are the framework's and win over anything
    * set here: the first is `agentDirPath`, and an agent pointed at a different directory
@@ -95,7 +95,7 @@ export type PiConfiguration = {
   readonly env?: Readonly<Record<string, string>>;
   /**
    * The container network. A network containing only the agent and the Gateway is the
-   * intended shape, so that the Store is not even reachable by service name.
+   * intended shape, so that the Db is not even reachable by service name.
    */
   readonly network?: string;
   /**

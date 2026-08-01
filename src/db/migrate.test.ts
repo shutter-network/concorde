@@ -14,12 +14,12 @@ import assert from "node:assert/strict";
 import { describe, it, type TestContext } from "node:test";
 import { createTestDatabase } from "../test-support/database.ts";
 import { alphaMigrations, betaMigrations, gadgets, widgets } from "../test-support/fixtures.ts";
-import type { Store } from "./index.ts";
+import type { Db } from "./index.ts";
 
-async function freshStore(t: TestContext, label: string): Promise<Store> {
-  const database = await createTestDatabase(`store_migrate_${label}`);
+async function freshDb(t: TestContext, label: string): Promise<Db> {
+  const database = await createTestDatabase(`db_migrate_${label}`);
   t.after(() => database.drop());
-  return database.store;
+  return database.db;
 }
 
 /**
@@ -28,58 +28,58 @@ async function freshStore(t: TestContext, label: string): Promise<Store> {
  * accept a row without it. The insert also proves nothing but `migrate` had to
  * create the schema.
  */
-async function assertAlphaFullyApplied(store: Store): Promise<void> {
-  const alpha = store.handle({ widgets });
+async function assertAlphaFullyApplied(db: Db): Promise<void> {
+  const alpha = db.handle({ widgets });
   await alpha.insert(widgets).values({ label: "alpha", note: "added by 0001" });
   assert.deepEqual(await alpha.select({ label: widgets.label, note: widgets.note }).from(widgets), [
     { label: "alpha", note: "added by 0001" },
   ]);
 }
 
-async function assertBetaFullyApplied(store: Store): Promise<void> {
-  const beta = store.handle({ gadgets });
+async function assertBetaFullyApplied(db: Db): Promise<void> {
+  const beta = db.handle({ gadgets });
   await beta.insert(gadgets).values({ label: "beta" });
   assert.deepEqual(await beta.select({ label: gadgets.label }).from(gadgets), [{ label: "beta" }]);
 }
 
-async function assertBothPartsFullyApplied(store: Store): Promise<void> {
-  await assertAlphaFullyApplied(store);
-  await assertBetaFullyApplied(store);
+async function assertBothPartsFullyApplied(db: Db): Promise<void> {
+  await assertAlphaFullyApplied(db);
+  await assertBetaFullyApplied(db);
 }
 
-describe("store.migrate", () => {
+describe("db.migrate", () => {
   it("creates the descriptor's schema and applies its migrations", async (t) => {
-    const store = await freshStore(t, "applies");
-    await store.migrate(alphaMigrations);
-    await assertAlphaFullyApplied(store);
+    const db = await freshDb(t, "applies");
+    await db.migrate(alphaMigrations);
+    await assertAlphaFullyApplied(db);
   });
 
   it("applies both descriptors fully, newest folder first", async (t) => {
-    const store = await freshStore(t, "newest_first");
-    await store.migrate(alphaMigrations, betaMigrations);
-    await assertBothPartsFullyApplied(store);
+    const db = await freshDb(t, "newest_first");
+    await db.migrate(alphaMigrations, betaMigrations);
+    await assertBothPartsFullyApplied(db);
   });
 
   it("applies both descriptors fully, oldest folder first", async (t) => {
-    const store = await freshStore(t, "oldest_first");
-    await store.migrate(betaMigrations, alphaMigrations);
-    await assertBothPartsFullyApplied(store);
+    const db = await freshDb(t, "oldest_first");
+    await db.migrate(betaMigrations, alphaMigrations);
+    await assertBothPartsFullyApplied(db);
   });
 
   it("is idempotent when re-run with the same descriptors", async (t) => {
-    const store = await freshStore(t, "idempotent");
-    await store.migrate(alphaMigrations, betaMigrations);
-    await store.migrate(alphaMigrations, betaMigrations);
-    await store.migrate(alphaMigrations, betaMigrations);
+    const db = await freshDb(t, "idempotent");
+    await db.migrate(alphaMigrations, betaMigrations);
+    await db.migrate(alphaMigrations, betaMigrations);
+    await db.migrate(alphaMigrations, betaMigrations);
 
     // A re-applied migration would have thrown on `create table`.
-    await assertBothPartsFullyApplied(store);
+    await assertBothPartsFullyApplied(db);
   });
 
   it("refuses two descriptors that would share one tracking table", async (t) => {
-    const store = await freshStore(t, "shared_tracker");
+    const db = await freshDb(t, "shared_tracker");
     await assert.rejects(
-      () => store.migrate(alphaMigrations, { ...betaMigrations, schema: alphaMigrations.schema }),
+      () => db.migrate(alphaMigrations, { ...betaMigrations, schema: alphaMigrations.schema }),
       /tracking table/,
     );
   });

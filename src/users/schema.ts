@@ -6,7 +6,7 @@
  * Gateway owns a schema and no part reads another's tables, so these objects are
  * exported for this part's own modules and are deliberately absent from the
  * package's `/users` subpath — an Operator who wants tables gets them through
- * `store.handle(theirOwnSchema)`, the same call the framework's parts use
+ * `db.handle(theirOwnSchema)`, the same call the framework's parts use
  * (ADR-0021, ADR-0022).
  *
  * `drizzle-kit` reads this file to generate `migrations/users`, through a config
@@ -122,7 +122,7 @@ export const tokens = usersSchema.table(
 );
 
 /**
- * Everything the User Directory keeps, as `store.handle` wants it: one object, so
+ * Everything the User Directory keeps, as `db.handle` wants it: one object, so
  * every module of this part asks for the same handle by the same name.
  */
 export const usersTables = { users, tokens };
