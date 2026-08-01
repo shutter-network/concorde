@@ -22,8 +22,8 @@
  * connection. `create` returns the User, so the read-back has no reason to exist.
  */
 
-import { desc, eq, sql } from "drizzle-orm";
-import type { FastifyPluginAsync } from "fastify";
+import { and, desc, eq, gt, sql } from "drizzle-orm";
+import type { FastifyPluginAsync, preHandlerAsyncHookHandler } from "fastify";
 import { limitSchema } from "../route-conventions.ts";
 import type { Db, Store } from "../store/index.ts";
 import {
@@ -31,6 +31,7 @@ import {
   type Credentials,
   type IssuedToken,
   publicUserRoutes,
+  requireUser,
   type UserRecord,
 } from "./routes.ts";
 import { tokens, users, usersTables } from "./schema.ts";
@@ -38,6 +39,7 @@ import {
   checkedScryptParameters,
   defaultScryptParameters,
   hashPassword,
+  hashToken,
   mintToken,
   type ScryptParameters,
   verifyPassword,
@@ -96,6 +98,26 @@ export type Users = {
   readonly publicRoutes: FastifyPluginAsync;
 
   /**
+   * The preHandler that requires a Token, as one option on any route:
+   * `publicServer.post("/ask", { preHandler: users.requireUser }, handler)`.
+   *
+   * It reads the `Authorization: Bearer …` header, and either assigns the User it
+   * names to `request.safUser` or answers the single 401 — the same status and the
+   * same body a wrong password gets, for a missing header, a header in another
+   * scheme, an unknown Token and an expired one alike (ADR-0030).
+   *
+   * This is the whole integration surface, and it is deliberately a hook rather than
+   * a plugin: it works on either server, inside any plugin of the Operator's, at any
+   * depth, with nothing of ours to register first. The Messenger will use exactly
+   * this and will authenticate nobody itself.
+   *
+   * A route that does not take it reads `request.safUser` as `undefined` despite the
+   * type, because the augmentation cannot express "set only after this ran". Nothing
+   * anywhere is protected by default.
+   */
+  readonly requireUser: preHandlerAsyncHookHandler;
+
+  /**
    * Creates a User with no Attributes and no password, and returns it.
    *
    * Takes the caller's transaction rather than finding one (ADR-0023), so admitting
@@ -141,6 +163,11 @@ export function createUsers(options: UsersOptions): Users {
   const tokenTtl = checkedTokenTtl(options.tokenTtl);
   const parameters = checkedScryptParameters(options.scrypt ?? defaultScryptParameters);
   const dummy = dummyDigest(parameters);
+  // One hook, built once and shared by `GET /me` and by every route of the
+  // Operator's: the surface the quickstart documents and the surface the Public
+  // plugin's own route uses are the same object, not two implementations that could
+  // drift.
+  const presentedUser = requireUser({ authenticate: (token) => userForToken(db, token) });
 
   return {
     agentRoutes: agentUserRoutes({
@@ -151,9 +178,12 @@ export function createUsers(options: UsersOptions): Users {
       list: ({ limit }) => selectUsers(db, limit),
     }),
 
-    publicRoutes: publicUserRoutes({
-      logIn: (credentials) => logIn(db, credentials, { dummy, tokenTtl }),
-    }),
+    publicRoutes: publicUserRoutes(
+      { logIn: (credentials) => logIn(db, credentials, { dummy, tokenTtl }) },
+      presentedUser,
+    ),
+
+    requireUser: presentedUser,
 
     create: (tx) => insertUser(tx, undefined, parameters),
     get: (id) => selectUser(db, id),
@@ -229,6 +259,34 @@ async function logIn(
     expiresAt: issued.expiresAt.toISOString(),
     user: asUserRecord(row),
   };
+}
+
+/**
+ * The User a presented Token names, or `undefined` — for an unknown Token and an
+ * expired one alike.
+ *
+ * One statement, and every part of it is a decision. The lookup is **by the hash**, so
+ * the unique index does the comparison: there is no scan, no per-row loop and no
+ * constant-time compare, because a Token carries full entropy and a hash of it is not
+ * a guessable thing (ADR-0030). The join is what makes this one round trip rather than
+ * two, and it is within this part's own schema, which is the only place ADR-0022
+ * allows one.
+ *
+ * The expiry is compared against **the database's clock**, which is the clock the
+ * `expires_at` was written from. Reading it into this process and comparing it here
+ * would make a Token's lifetime depend on the drift between two machines, and would
+ * make the refusal something this code decides rather than something the row says.
+ * Nothing reaps the expired rows; they simply stop matching (ADR-0030).
+ */
+async function userForToken(db: UsersDb, token: string): Promise<UserRecord | undefined> {
+  const [row] = await db
+    .select()
+    .from(tokens)
+    .innerJoin(users, eq(users.id, tokens.userId))
+    .where(
+      and(eq(tokens.tokenHash, hashToken(token)), gt(tokens.expiresAt, sql`clock_timestamp()`)),
+    );
+  return row === undefined ? undefined : asUserRecord(row.users);
 }
 
 /**

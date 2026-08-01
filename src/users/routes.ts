@@ -24,6 +24,7 @@
  * | Public server | Answers |
  * | --- | --- |
  * | `POST /tokens` | an `IssuedToken` (the Token, its expiry, the User), or 401 |
+ * | `GET /me` | the presented User, or 401 |
  *
  * **Creating a User accepts a password and no Attributes, and that is the security
  * boundary of the whole part.** Attributes are where grouping and therefore
@@ -46,7 +47,7 @@
  * ends with is this part's.
  */
 
-import type { FastifyPluginAsync, FastifyReply } from "fastify";
+import type { FastifyPluginAsync, FastifyReply, preHandlerAsyncHookHandler } from "fastify";
 import {
   idParams,
   idSchema,
@@ -262,6 +263,91 @@ export function unauthorized(reply: FastifyReply): FastifyReply {
 }
 
 /**
+ * What the preHandler needs of the User Directory: a Token in, a User or nothing out.
+ *
+ * `undefined` for every way it can fail, for the reason `CredentialOperations` answers
+ * `undefined` for every way a login can: an unknown Token and an expired one arrive
+ * here as the same value, so there is no reason code for a route to leak by accident.
+ */
+export type TokenOperations = {
+  authenticate(token: string): Promise<UserRecord | undefined>;
+};
+
+/**
+ * The authenticated User, on the request, typed for every deployment.
+ *
+ * This augmentation is **global**: it is shipped in the package, so a
+ * `FastifyRequest` anywhere in a program that imports this subpath has the field,
+ * whether or not that program constructs the Directory. That is the cost of typing a
+ * request property at all, and it is accepted in ADR-0030; the name is namespaced
+ * because an unqualified `user` is what `@fastify/jwt` claims, and a collision between
+ * two Fastify decorators is a boot failure rather than a runtime one.
+ *
+ * It is **not optional**, though at runtime it is absent until `requireUser` has run.
+ * The type cannot express "set only after this hook ran", and the alternative —
+ * `safUser?: UserRecord` — would make every authenticated handler narrow a value the
+ * hook guarantees, to guard against a mistake the type could not catch either way. So
+ * a route that forgets the preHandler still type-checks and reads `undefined` at
+ * runtime; what that does is pinned by a test rather than assumed.
+ */
+declare module "fastify" {
+  interface FastifyRequest {
+    /**
+     * The User the presented Token belongs to, assigned by `users.requireUser`.
+     *
+     * Present only on a route that took that preHandler. Reading it anywhere else is
+     * reading `undefined` with a type that says otherwise.
+     */
+    safUser: UserRecord;
+  }
+}
+
+/**
+ * `Authorization: Bearer <token>`, or nothing.
+ *
+ * The scheme is matched case-insensitively because RFC 7235 says it is
+ * case-insensitive, and a client that sends `bearer` is not a client to refuse over
+ * spelling. Everything else is exact: one scheme, one space or more, and a credential
+ * with no whitespace in it, which every Token this framework mints satisfies.
+ */
+function presentedToken(authorization: string | undefined): string | undefined {
+  return /^Bearer +(\S+)$/i.exec(authorization ?? "")?.[1];
+}
+
+/**
+ * Builds the preHandler: the whole integration surface, and one option on a route.
+ *
+ * It is an ordinary Fastify hook and not a plugin, so an Operator adds it to a route
+ * of their own — on either server, inside any plugin, at any depth — without
+ * registering anything of ours, and the Messenger will do exactly the same.
+ *
+ * The User is **assigned by a plain property write** rather than declared with
+ * `decorateRequest`, and that is the design and not a shortcut (ADR-0030). A
+ * decoration is scoped to the plugin instance that made it, so making it visible to a
+ * *sibling* plugin — which is what an Operator's routes and the Messenger's both are —
+ * would mean marking our plugins `skip-override` through `fastify-plugin`, and a
+ * `skip-override` plugin has the `prefix` passed to `register` **silently ignored**.
+ * That was measured during design, not recalled. The price of assigning instead is one
+ * hidden-class transition per authenticated request, and what it buys is that both
+ * route plugins stay ordinary and prefixable.
+ *
+ * Every refusal is `unauthorized` and nothing else: a missing header, a header in
+ * another scheme, a Token that was never issued and one that has expired are one
+ * status and one message, the same one a wrong password gets.
+ */
+export function requireUser(directory: TokenOperations): preHandlerAsyncHookHandler {
+  return async (request, reply) => {
+    const presented = presentedToken(request.headers.authorization);
+    const user = presented === undefined ? undefined : await directory.authenticate(presented);
+    // Returning the reply is how an async hook says the lifecycle is over; without it
+    // Fastify would carry on to the handler after the 401 had been sent.
+    if (user === undefined) return unauthorized(reply);
+    request.safUser = user;
+    return undefined;
+  };
+}
+
+/**
  * The Public server's routes: the login, and nothing that is not about a credential.
  *
  * Not registering this plugin is how a deployment replaces our authentication with
@@ -270,7 +356,10 @@ export function unauthorized(reply: FastifyReply): FastifyReply {
  * the substitution. That is why there is no Authenticator interface to implement
  * (ADR-0030).
  */
-export function publicUserRoutes(directory: CredentialOperations): FastifyPluginAsync {
+export function publicUserRoutes(
+  directory: CredentialOperations,
+  presentedUser: preHandlerAsyncHookHandler,
+): FastifyPluginAsync {
   return async (fastify) => {
     fastify.post<{ Body: Credentials }>(
       "/tokens",
@@ -281,6 +370,18 @@ export function publicUserRoutes(directory: CredentialOperations): FastifyPlugin
         // time its plaintext exists anywhere (invariant 7 in `data-model.md`).
         return issued === undefined ? unauthorized(reply) : reply.code(201).send(issued);
       },
+    );
+
+    // The smallest possible consumer of the preHandler, and the same one an Operator
+    // takes: the hook answers everything, and the handler is a property read. It
+    // answers the `UserRecord` the login answered with, so a client resuming after a
+    // restart recovers exactly what it was told when it logged in — including the
+    // Attributes governing its authorization, which are not hidden from the User they
+    // are about.
+    fastify.get(
+      "/me",
+      { preHandler: presentedUser, preValidation: rejectPublicQuery() },
+      async (request) => request.safUser,
     );
   };
 }

@@ -134,6 +134,22 @@ async function logIn(
 }
 
 /**
+ * `GET /me` with a Token, which is what "the Token works" means from outside.
+ *
+ * The route belongs to the same Public plugin, so a file about issuing Tokens can
+ * settle its own claims — that two logins yield two *working* Tokens, and that an
+ * expired one is refused — without reading a row. What the preHandler does in general
+ * is `authentication.test.ts`.
+ */
+function present(token: string, at = auth, server = () => publicServer) {
+  return server().inject({
+    method: "GET",
+    url: `${at}/me`,
+    headers: { authorization: `Bearer ${token}` },
+  });
+}
+
+/**
  * The password every User in this file is created with, unless a test needs two.
  *
  * Long and dull on purpose: nothing here has an opinion about password strength, and
@@ -201,11 +217,19 @@ describe("trading a password for a Token", () => {
     const second = await logIn(user.id, password);
 
     // Two credentials, and the second login neither returned the first nor said
-    // anything about it. Presenting either is the surface the preHandler adds; what
-    // is observable here is that a browser and a script get one each.
+    // anything about it.
     assert.notEqual(first.token, second.token);
     assert.match(second.token, /^saf_[A-Za-z0-9_-]{43}$/);
     assert.deepEqual(second.user, first.user);
+
+    // And **both work**, which is the half of this claim that had nowhere to be made
+    // until a Token could be presented: a browser and a script get one each, and
+    // neither displaces the other (User story 21).
+    for (const issued of [first, second]) {
+      const me = await present(issued.token);
+      assert.equal(me.statusCode, 200, me.body);
+      assert.deepEqual(me.json(), user);
+    }
   });
 
   it("takes an initial password on the Agent server, and still no Attributes", async () => {
@@ -345,6 +369,20 @@ describe("the Token's lifetime", () => {
       // The same Store, the same User, the same password: only the option differs.
       const longer = await logIn(user.id, password);
       assert.ok(Date.parse(longer.expiresAt) > Date.now() + hour - minute);
+
+      // And the lifetime means something, which is what an expiry is for and what
+      // could not be asserted until a Token could be presented: the brief one is
+      // refused where it was issued, the longer one is not, and the refusal is the
+      // single 401 (User story 24). The comparison is the database's clock against
+      // the value the database wrote, so no clock anywhere had to be moved.
+      const refused = await present(issued.token, auth, () => server);
+      assert.equal(refused.statusCode, 401, refused.body);
+      assert.deepEqual(refused.json(), {
+        statusCode: 401,
+        error: "Unauthorized",
+        message: "authentication failed",
+      });
+      assert.equal((await present(longer.token)).statusCode, 200);
     } finally {
       await server.close();
     }

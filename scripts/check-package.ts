@@ -15,7 +15,9 @@
  *    folder of its own. Resolving against `process.cwd()` passes every test in
  *    this repository and breaks for every consumer, so this is the one place the
  *    difference shows. Every folder's *later* migrations count too, so the check
- *    logs a User in: a Token has nowhere to be written unless the second one ran.
+ *    logs a User in and then presents the Token: a Token has nowhere to be written
+ *    unless the second one ran, and `request.safUser` only carries a User if the
+ *    shipped preHandler runs from the installed package.
  *  - `/messenger` is reserved: it is declared and deliberately unresolvable,
  *    rather than absent by omission.
  *
@@ -411,9 +413,18 @@ try {
       "// with its own (ADR-0030).",
       "const loginRoutes: FastifyPluginAsync = users.publicRoutes;",
       "",
-      "// An Operator's own routes, on Fastify's mechanism and no contract of ours.",
+      "// An Operator's own routes, on Fastify's mechanism and no contract of ours —",
+      "// including one that requires a User. This is the whole integration surface and",
+      "// the reason the augmentation is shipped: `request.safUser` is read with **no",
+      "// cast** here, in a consumer project that declares nothing of its own, which is",
+      '// what proves the `declare module "fastify"` block reaches an installed',
+      "// consumer rather than only this repository (ADR-0030).",
       "const ownRoutes: FastifyPluginAsync = async (fastify) => {",
       '  fastify.get("/healthz", async () => ({ ok: true }));',
+      '  fastify.post<{ Body: { text: string } }>("/ask", { preHandler: users.requireUser }, async (request) => {',
+      "    const who: UserRecord = request.safUser;",
+      "    return { by: who.id, attributes: who.attributes, said: request.body.text };",
+      "  });",
       "};",
       "",
       "// What the Agent server answers with, annotated so a field that went missing",
@@ -643,8 +654,8 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker:run_r1:true:type=bind,source=/srv/saf/workspace,target=/workspace:/srv/saf/sessions/user_42:docker:false:function:run:saf_users:agentRoutes,create,get,list,publicRoutes",
-    "all three subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount and answer where a container path is on the Operator's disk, the pi adapter should construct as a plain Runtime Adapter — `run` and nothing else — settle its defaults, compose an invocation that passes no system-prompt flag, and read an outcome, and the User Directory should construct into its own schema with its routes and its three operations",
+    "function:function:docker:run_r1:true:type=bind,source=/srv/saf/workspace,target=/workspace:/srv/saf/sessions/user_42:docker:false:function:run:saf_users:agentRoutes,create,get,list,publicRoutes,requireUser",
+    "all three subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount and answer where a container path is on the Operator's disk, the pi adapter should construct as a plain Runtime Adapter — `run` and nothing else — settle its defaults, compose an invocation that passes no system-prompt flag, and read an outcome, and the User Directory should construct into its own schema with its routes, its preHandler and its three operations",
   );
 
   step("applying a shipped migration folder from inside the installed package");
@@ -687,6 +698,11 @@ try {
       '  const admitted = await agentServer.inject({ method: "POST", url: "/users", payload: { password: "a long enough password" } });',
       '  const issued = await publicServer.inject({ method: "POST", url: "/auth/tokens", payload: { user: admitted.json().id, password: "a long enough password" } });',
       '  const refused = await publicServer.inject({ method: "POST", url: "/auth/tokens", payload: { user: admitted.json().id, password: "not it" } });',
+      "  // And the Token presented back, which is the shipped preHandler running from",
+      "  // the installed package: it reads the header, looks the Token up, and puts the",
+      "  // User on the request for `GET /me` to answer with.",
+      '  const me = await publicServer.inject({ method: "GET", url: "/auth/me", headers: { authorization: "Bearer " + issued.json().token } });',
+      '  const anonymous = await publicServer.inject({ method: "GET", url: "/auth/me" });',
       "  const applied =",
       "    id.length === 36 &&",
       "    user.id.length === 36 &&",
@@ -695,8 +711,11 @@ try {
       "    issued.statusCode === 201 &&",
       '    issued.json().token.startsWith("saf_") &&',
       "    Date.parse(issued.json().expiresAt) > Date.now() &&",
-      "    refused.statusCode === 401;",
-      '  process.stdout.write(applied ? "applied" : "unexpected " + id + " " + JSON.stringify(user) + " " + issued.statusCode + " " + issued.body + " " + refused.statusCode);',
+      "    refused.statusCode === 401 &&",
+      "    me.statusCode === 200 &&",
+      "    me.json().id === admitted.json().id &&",
+      "    anonymous.statusCode === 401;",
+      '  process.stdout.write(applied ? "applied" : "unexpected " + id + " " + JSON.stringify(user) + " " + issued.statusCode + " " + issued.body + " " + refused.statusCode + " " + me.statusCode + " " + me.body + " " + anonymous.statusCode);',
       "} finally {",
       "  await store.close();",
       "}",

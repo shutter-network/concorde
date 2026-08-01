@@ -10,6 +10,12 @@
  * lifetime, add `usersMigrations` to the `store.migrate` call already being made, and
  * register `agentRoutes` on the Agent server and `publicRoutes` on the Public one,
  * each under a prefix of your choosing.
+ *
+ * One thing arrives here without being named in an import: the `declare module
+ * "fastify"` augmentation that types `request.safUser`, which travels with the
+ * `UserRecord` re-exported below. It is global, so a program that imports this subpath
+ * at all has the field on every `FastifyRequest` in it — accepted in ADR-0030, since
+ * the alternative is a cast at every one of the Operator's own handlers.
  */
 
 export { usersMigrations } from "./migrations.ts";
