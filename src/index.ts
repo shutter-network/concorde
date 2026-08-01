@@ -22,3 +22,5 @@ export type {
   Transaction,
 } from "./store/index.ts";
 export { openStore } from "./store/index.ts";
+export type { TemplateHandlerOptions } from "./template-handler.ts";
+export { templateHandler } from "./template-handler.ts";

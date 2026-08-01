@@ -13,6 +13,7 @@ We considered a minimal `{{name}}` substitution of about fifteen lines with no d
 ## Consequences
 
 - **An isolated environment per handler**, via `Handlebars.create()`, so registering `helpers` and `partials` never mutates a global instance the Operator may also be using.
+- **`strict` disables inverse sections**, which Handlebars documents and which is worth knowing before writing a template: `{{^absent}}…{{/absent}}` throws, where `{{#if absent}}`, `{{#unless absent}}`, `{{#each absent}}` and `{{else}}` all render as usual. Every ordinary way of asking "was this supplied?" still works, but the one spelling that does not fails the Signal permanently, so it is pinned by a test rather than left to be discovered.
 - **A malformed template is a permanent failure**, not a warning. That is the price of reading per Run, and it is visible in the Signal log rather than silent.
 - **No escaping or sanitisation is applied to substituted values.** User text enters the prompt verbatim, deliberately.
 - The template handler is one predefined implementation of the ordinary Signal Handler contract, not a special case in the framework. An Operator who outgrows it writes a handler ([ADR-0024](./0024-signal-handlers-receive-only-the-signal.md)).

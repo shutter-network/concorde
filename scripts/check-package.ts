@@ -44,7 +44,7 @@ const migrationsRoot = path.join(repoRoot, "migrations");
 
 /** The consumer's imports, spelled once: the type checker and Node see the same two. */
 const consumerImports = [
-  'import { coreMigrations, createCore, defaultLogger, openStore } from "shared-agent-framework";',
+  'import { coreMigrations, createCore, defaultLogger, openStore, templateHandler } from "shared-agent-framework";',
   'import { piScaffoldCheck } from "shared-agent-framework/pi";',
 ];
 
@@ -118,6 +118,11 @@ try {
     // so its position in `dist` is what makes the shipped folder reachable.
     "dist/core/migrations.js",
     "dist/core/core.js",
+    // The template Handler is public surface of its own, and the only module that
+    // reaches for `handlebars` — so a missing `dependencies` entry surfaces when the
+    // scratch project imports it below rather than at an Operator's first Signal.
+    "dist/template-handler.js",
+    "dist/template-handler.d.ts",
   ]) {
     assert.ok(entries.has(file), `the tarball should ship ${file}`);
   }
@@ -248,6 +253,7 @@ try {
       "  SignalHandler,",
       "  SignalHandlers,",
       "  Store,",
+      "  TemplateHandlerOptions,",
       "  Transaction,",
       '} from "shared-agent-framework";',
       'import { pgSchema, text } from "drizzle-orm/pg-core";',
@@ -302,6 +308,21 @@ try {
       "  };",
       "}",
       "",
+      "// The predefined Handler that renders its Prompt from a Handlebars file. The",
+      "// options are annotated separately, so a field that went missing from the",
+      "// declaration fails here rather than being silently ignored (ADR-0027). Nothing",
+      "// in this project runs, so the template it names need not exist; what is being",
+      "// checked is that the declaration accepts a URL, a Session-naming function, a",
+      "// data function, helpers and partials.",
+      "const promptOptions: TemplateHandlerOptions<{ userId: string }> = {",
+      '  template: new URL("./prompts/message.hbs", import.meta.url),',
+      '  session: (signal: Signal<{ userId: string }>) => "user_" + signal.payload.userId,',
+      "  data: (signal: Signal<{ userId: string }>) => ({ said: signal.id }),",
+      "  helpers: { shout: (value: string) => value.toUpperCase() },",
+      '  partials: { footer: "-- sent by the Gateway" },',
+      "};",
+      "const fromTemplate: SignalHandler<{ userId: string }> = templateHandler(promptOptions);",
+      "",
       "// A Producer of the Operator's own, told when something arrives on a channel",
       "// it shares with whoever notifies it. The connection is the Store's, so `pg`",
       "// is not an import an Operator ever needs.",
@@ -317,7 +338,10 @@ try {
       "  await store.tx(async (tx: Transaction) => write(tx));",
       '  const listening: Listening = store.listen("consumer_channel", watcher);',
       "  await listening.close();",
-      '  const handlers: SignalHandlers = { "message.received": greeter("hello") };',
+      "  const handlers: SignalHandlers = {",
+      '    "message.received": greeter("hello"),',
+      '    "prompt.render": fromTemplate,',
+      "  };",
       "  core.start(handlers);",
       "  await store.tx(async (tx: Transaction) => {",
       '    const emitted: EmittedSignal = { kind: "message.received", payload: { userId: "u1" } };',
@@ -344,12 +368,18 @@ try {
       "-e",
       [
         ...consumerImports,
-        "process.stdout.write(typeof openStore + ':' + piScaffoldCheck());",
+        // `templateHandler` is here because importing it loads `handlebars`, which
+        // an installed package only resolves if it is declared as a dependency.
+        "process.stdout.write(typeof openStore + ':' + typeof templateHandler + ':' + piScaffoldCheck());",
       ].join("\n"),
     ],
     consumer,
   );
-  assert.equal(imported, "function:ok", "both subpaths should resolve at runtime");
+  assert.equal(
+    imported,
+    "function:function:ok",
+    "both subpaths should resolve at runtime, and the template Handler should load handlebars",
+  );
 
   step("applying a shipped migration folder from inside the installed package");
   // The working directory this runs from holds no `migrations` folder, so a
