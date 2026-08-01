@@ -26,5 +26,8 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src", "scripts"]
+  // `drizzle.config.ts` is included but not built: it is how `migrations/core` is
+  // generated, so a mistake in it should fail the typecheck rather than the next
+  // person to run the generator.
+  "include": ["src", "scripts", "drizzle.config.ts"]
 }

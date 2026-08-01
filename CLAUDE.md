@@ -31,13 +31,23 @@ runs it as its own step.
 `npm run format` applies Biome's fixes; `npm run check` fails on unformatted code
 rather than warning.
 
+`npm run migrations:generate` regenerates a part's migration folder from its
+schema with `drizzle-kit`, and its output is committed — Operators never run a
+schema generation tool. It reads `drizzle.config.ts`, which covers the Core; a
+second part gets its own config file and `--config`, because `out` is one folder
+and each part owns its own. Read that file before running it: a generated first
+migration needs one line removed by hand.
+
 Conventions the build depends on:
 
 - **Relative imports carry `.ts` extensions.** Node runs the sources directly by
   stripping types, and `tsc` rewrites the extension to `.js` when it emits.
 - **`dist/` mirrors `src/` exactly**, so a path built from `import.meta.url` is
   the same relative path in both. That is what lets shipped migration folders
-  resolve from `src/store/…` and `dist/store/…` alike.
+  resolve from `src/store/…` and `dist/store/…` alike. `build` empties `dist`
+  first, because `tsc` never prunes its own output and a deleted module would
+  otherwise keep shipping; `npm run check:package` fails on a shipped file whose
+  source is gone.
 - **No syntax that needs a code transform**: no enums, namespaces, or parameter
   properties. `erasableSyntaxOnly` rejects them, because Node strips types
   rather than compiling them.
@@ -49,6 +59,8 @@ Conventions the build depends on:
 - **A shipped migration folder contains no `CREATE SCHEMA`.** `store.migrate`
   creates the descriptor's schema, and the tracking table lives in it, so a
   generated `CREATE SCHEMA` line must be removed after `drizzle-kit` writes it.
+  `src/core/migrations.test.ts` scans every shipped folder and fails on one left
+  in.
 - **Nothing outside `src/store/` imports `pg`.** Enforced by a Biome override:
   parts obtain a handle with `store.handle(schema)`.
 

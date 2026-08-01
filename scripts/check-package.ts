@@ -44,7 +44,7 @@ const migrationsRoot = path.join(repoRoot, "migrations");
 
 /** The consumer's imports, spelled once: the type checker and Node see the same two. */
 const consumerImports = [
-  'import { openStore, scaffoldMigrations } from "shared-agent-framework";',
+  'import { coreMigrations, createCore, defaultLogger, openStore } from "shared-agent-framework";',
   'import { piScaffoldCheck } from "shared-agent-framework/pi";',
 ];
 
@@ -114,7 +114,10 @@ try {
     // both. Migration folders resolve because of this and nothing else.
     "dist/store/store.js",
     "dist/store/store.d.ts",
-    "dist/scaffold.js",
+    // The Core's descriptor resolves `../../migrations/core` from its own module,
+    // so its position in `dist` is what makes the shipped folder reachable.
+    "dist/core/migrations.js",
+    "dist/core/core.js",
   ]) {
     assert.ok(entries.has(file), `the tarball should ship ${file}`);
   }
@@ -125,6 +128,21 @@ try {
     ![...entries].some((entry) => entry.startsWith("dist/test-support/")),
     "test fixtures should not ship",
   );
+
+  // Nothing ships that no longer exists. `tsc` writes into `outDir` and never
+  // prunes it, so a deleted or renamed module leaves its old output behind and
+  // every later tarball carries it — which is how a placeholder outlives the
+  // ticket that removed it. `npm run build` empties `dist` first; this is what
+  // proves it did.
+  step("checking dist mirrors src, with nothing left over");
+  for (const entry of entries) {
+    if (!entry.startsWith("dist/")) continue;
+    const source = entry.replace(/^dist\//, "src/").replace(/\.d\.ts$|\.js$/, ".ts");
+    assert.ok(
+      existsSync(path.join(repoRoot, source)),
+      `the tarball ships ${entry}, which no longer has a source at ${source}`,
+    );
+  }
 
   // `pg` is the Store's alone (ADR-0022), so no shipped declaration may name it.
   // The Biome override catches an import in our sources; this catches the subtler
@@ -208,12 +226,33 @@ try {
     path.join(consumer, "main.ts"),
     [
       ...consumerImports,
-      'import type { Db, MigrationDescriptor, Store, Transaction } from "shared-agent-framework";',
+      // Every type the package exports. `main.ts` is what replaced
+      // `skipLibCheck: false` here, so an export it does not mention is an export
+      // nothing checks: a declaration that resolved to `any`, or went missing
+      // altogether, would type-check in this project without it.
+      "import type {",
+      "  Core,",
+      "  CoreOptions,",
+      "  Db,",
+      "  EmittedSignal,",
+      "  LogFields,",
+      "  Logger,",
+      "  MigrationDescriptor,",
+      "  PostOutcome,",
+      "  Prompt,",
+      "  RunOutcome,",
+      "  RuntimeAdapter,",
+      "  Signal,",
+      "  SignalHandler,",
+      "  SignalHandlers,",
+      "  Store,",
+      "  Transaction,",
+      '} from "shared-agent-framework";',
       'import { pgSchema, text } from "drizzle-orm/pg-core";',
       "",
       "// Annotated throughout, so a declaration that resolved to `any` fails here.",
       'export const fromPi: "ok" = piScaffoldCheck();',
-      "export const descriptor: MigrationDescriptor = scaffoldMigrations;",
+      "export const descriptor: MigrationDescriptor = coreMigrations;",
       'export const store: Store = openStore("postgres://nobody@example.invalid/none");',
       "",
       "// An Operator's own schema and tables, kept through the same call the",
@@ -227,10 +266,52 @@ try {
       '  await db.insert(notes).values({ body: "written" });',
       "}",
       "",
+      "// A Runtime Adapter is an object with one method: no class to extend and no",
+      "// framework base type to import.",
+      "const runtime: RuntimeAdapter = {",
+      "  async run(prompt: Prompt, runId: string): Promise<RunOutcome> {",
+      '    return prompt.text === "" ? { ok: false, error: "nothing to say in " + runId } : { ok: true };',
+      "  },",
+      "};",
+      "",
+      "// The logging seam, satisfied structurally, and the default the framework",
+      "// falls back to when an Operator passes none.",
+      "const log: Logger = {",
+      "  debug: (fields: LogFields, message: string) => void [fields, message],",
+      "  info: (fields: LogFields, message: string) => void [fields, message],",
+      "  warn: (fields: LogFields, message: string) => void [fields, message],",
+      "  error: (fields: LogFields, message: string) => void [fields, message],",
+      "};",
+      "export const shipped: Logger = defaultLogger();",
+      "",
+      "const options: CoreOptions = { store, runtime, logger: log, wakeupIntervalMs: 500 };",
+      "export const core: Core = createCore(options);",
+      "",
+      "// A Handler declaring the payload shape its Producer writes, closing over",
+      "// everything else it needs (ADR-0024).",
+      "function greeter(greeting: string): SignalHandler<{ userId: string }> {",
+      "  return {",
+      "    handle: (signal: Signal<{ userId: string }>): Prompt[] => [",
+      '      { session: "user_" + signal.payload.userId, text: greeting + ", " + signal.id },',
+      "    ],",
+      "    post: (_signal: Signal<{ userId: string }>, outcome: PostOutcome) => {",
+      '      if (outcome.failed) log.warn({}, "a Run failed");',
+      "    },",
+      "  };",
+      "}",
+      "",
       "export async function useEverything(): Promise<void> {",
       "  await store.migrate(descriptor);",
       "  await write(store.handle({ notes }));",
       "  await store.tx(async (tx: Transaction) => write(tx));",
+      '  const handlers: SignalHandlers = { "message.received": greeter("hello") };',
+      "  core.start(handlers);",
+      "  await store.tx(async (tx: Transaction) => {",
+      '    const emitted: EmittedSignal = { kind: "message.received", payload: { userId: "u1" } };',
+      "    const id: string = await core.emit(tx, emitted);",
+      '    shipped.info({ signalId: id }, "emitted");',
+      "  });",
+      "  await core.stop();",
       "  await store.close();",
       "}",
       "",
@@ -271,15 +352,17 @@ try {
   writeFileSync(
     path.join(consumer, "migrate.ts"),
     [
-      'import { sql } from "drizzle-orm";',
-      'import { openStore, scaffoldMigrations } from "shared-agent-framework";',
+      'import { coreMigrations, createCore, openStore } from "shared-agent-framework";',
       "",
       "const store = openStore(process.argv[2]);",
+      "const core = createCore({ store, runtime: { run: async () => ({ ok: true }) } });",
       "try {",
-      "  await store.migrate(scaffoldMigrations);",
-      "  // Fails unless the folder resolved and its statements actually ran.",
-      '  await store.handle({}).execute(sql`insert into "saf_scaffold"."applied" default values`);',
-      '  process.stdout.write("applied");',
+      "  await store.migrate(coreMigrations);",
+      "  // Emitting is what proves the folder resolved and its statements actually",
+      "  // ran: the Signal has nowhere to go otherwise. The worker is never started,",
+      "  // so nothing processes it.",
+      '  const id = await store.tx((tx) => core.emit(tx, { kind: "probe", payload: {} }));',
+      '  process.stdout.write(id.length === 36 ? "applied" : "unexpected Signal id " + id);',
       "} finally {",
       "  await store.close();",
       "}",
