@@ -41,14 +41,14 @@ import { createPiAdapter } from "shared-agent-framework/pi";
 const apiKey = process.env.ANTHROPIC_API_KEY;
 if (apiKey === undefined) throw new Error("set ANTHROPIC_API_KEY; the agent's model needs it");
 
-// The port appears twice on purpose. Where the Agent server *binds* — the `listen` call
-// at the bottom of this file — and how the agent's container *reaches* it are two
-// separate values, and neither can be derived from the other. Nothing validates the URL
-// either, so it arrives in the agent's instructions exactly as written here. See the
-// quickstart's note on this, which is the one thing in this file most likely to need
-// changing on another machine.
+// Where the Agent server *binds* — the `listen` call at the bottom of this file — and
+// how the agent's container *reaches* it are two separate values, and neither can be
+// derived from the other. The second one is not in this file at all: it is written into
+// ./AGENTS.md, which is mounted into the agent's Workspace below, because the framework
+// no longer carries the agent's instructions and never sees that address. The two are the
+// thing in this deployment most likely to need changing on another machine, and changing
+// one means changing the other. See the quickstart's note on it.
 const agentPort = 7411;
-const agentServerUrl = `http://host.docker.internal:${agentPort}`;
 
 // Three directories, all of them this process's own, all bind-mounted into the agent's
 // container, and all three created here. The framework creates none of them (ADR-0028):
@@ -106,10 +106,28 @@ const runtime = createPiAdapter({
       { containerPath: "/workspace", gatewayPath: workspace },
       { containerPath: "/home/agent/.pi/agent", gatewayPath: agentDir },
       { containerPath: "/sessions", gatewayPath: sessionRoot },
+      // The fourth entry, and the whole of what tells the agent about the Agent server:
+      // a file committed beside this one, mounted into its working directory, which `pi`
+      // finds by itself — the adapter passes no flag and has never read it (ADR-0025).
+      //
+      // `readOnly`, and that is the point of it being a single-file entry: the Workspace
+      // around it stays writable, so `pi`'s own tooling is unaffected, while a successful
+      // prompt injection cannot rewrite the agent's own instructions for the next Run.
+      // The framework used to hold that property by rewriting three files before every
+      // Run; the container runtime now holds it by construction (ADR-0003, ADR-0028).
+      //
+      // The daemon creates the target of a mount that is not there, so after the first
+      // Run an *empty* `AGENTS.md` appears in the Workspace on this side, shadowed by
+      // this entry on every Run. That is the container runtime's doing and not ours;
+      // what it means is that dropping this entry leaves the agent reading an empty file
+      // rather than none.
+      {
+        containerPath: "/workspace/AGENTS.md",
+        gatewayPath: path.join(import.meta.dirname, "AGENTS.md"),
+        readOnly: true,
+      },
     ],
   },
-  agentServerUrl,
-  instructions: "You are the shared agent of several people. Be brief and be careful.",
 });
 const core = createCore({ store, runtime });
 // Nothing does this for you. Not registering a route group is how you switch it off, and

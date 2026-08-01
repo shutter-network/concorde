@@ -42,8 +42,8 @@ export const hostFromContainer = "host.docker.internal";
  * Note what this means for a deployment: the Agent server binding loopback works from a
  * container under Docker Desktop and **does not** under a plain Linux daemon, where the
  * server has to be bound somewhere the bridge can reach. Two separate values, the `host`
- * the Operator gives Fastify's `listen` and the adapter's `agentServerUrl`, both the
- * Operator's and neither derivable from the other (ADR-0010).
+ * the Operator gives Fastify's `listen` and the address they write into the agent's own
+ * `AGENTS.md`, both theirs and neither derivable from the other (ADR-0010).
  */
 export const addHostToGateway = `--add-host=${hostFromContainer}:host-gateway`;
 
@@ -87,10 +87,11 @@ export async function buildPiImage(): Promise<string> {
 /**
  * A TCP port nothing is listening on.
  *
- * Needed because the adapter's `agentServerUrl` is a construction argument and has to
- * carry the port, while the port is only known after listening — so the port is chosen
- * first and both values are built from it. The gap between closing this socket and the
- * server taking the port is a race in principle and has never been one in practice.
+ * Needed because the agent is told where the Agent server is in a file written before the
+ * Run, and that file has to carry the port, while the port is only known after listening
+ * — so the port is chosen first and both values are built from it. The gap between
+ * closing this socket and the server taking the port is a race in principle and has never
+ * been one in practice.
  */
 export async function reservePort(): Promise<number> {
   const socket = createServer();

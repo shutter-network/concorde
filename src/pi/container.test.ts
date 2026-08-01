@@ -11,8 +11,12 @@
  *  - a **named Session resumes** across two Runs, which is a claim about a Session file
  *    on disk being found and parsed by a second container — in a directory the Gateway
  *    never created, since `pi` makes each Session's own directory itself (ADR-0025)
- *  - the agent **reaches the Agent server** over HTTP from inside its container, with
- *    `curl` from its own shell tool and no credential (ADR-0010)
+ *  - `pi` **discovers an `AGENTS.md` the Operator placed in the Workspace**, with no flag
+ *    from the framework and nothing of the framework's in the file, and the agent
+ *    **reaches the Agent server** at the address that file names — over HTTP from inside
+ *    its container, with `curl` from its own shell tool and no credential (ADR-0010).
+ *    This is the whole replacement for the instructions file the framework used to write
+ *    before every Run, end to end
  *  - a **Session name `pi` refuses** fails that Run and no other, with `pi`'s own
  *    message in the Run's `error` — the framework carries no copy of that grammar and
  *    checks nothing, so this is the only place the claim can be tested at all
@@ -25,18 +29,22 @@
  *    which is what lets a file the agent must not change be one it cannot change
  *
  * What is real here and what is not, exactly: the container, the `pi` binary in it, the
- * three mounts, the Prompt on a pipe, the JSONL that comes back, the Agent server, the
- * Core, and PostgreSQL. **Only the model is stubbed** — a scripted OpenAI-compatible
- * server on this host, which is what makes the test deterministic and what makes it
- * need no provider credentials. The consequence, stated rather than hidden: this proves
- * the framework's half of a Run end to end, and says nothing about whether a real model
- * would choose to call the Agent server unprompted.
+ * mounts, the files the Operator placed in them, the Prompt on a pipe, the JSONL that
+ * comes back, the Agent server, the Core, and PostgreSQL. **Only the model is stubbed** —
+ * a scripted OpenAI-compatible server on this host, which is what makes the test
+ * deterministic and what makes it need no provider credentials. The consequence, stated
+ * rather than hidden: this proves the framework's half of a Run end to end, and says
+ * nothing about whether a real model would choose to call the Agent server unprompted.
+ *
+ * This test is also the Operator, and doing that job is most of what it sets up: it
+ * creates the three directories, writes `models.json` into the agent's own directory to
+ * describe the scripted model, and writes the `AGENTS.md` that carries the Agent server's
+ * address. The framework writes none of it and has never read any of it.
  *
  * Note where the scripted model still learns things for itself: the address it tells the
- * agent to `curl` is read **out of the system prompt it was given**, so a Run whose
- * agent directory did not mount has no URL to find and fails here rather than passing
- * quietly — which is exactly what `--append-system-prompt` falling back to its own
- * argument would otherwise produce.
+ * agent to `curl` is read **out of the system prompt it was given**, which is where `pi`
+ * puts a context file it discovered. So a Run whose `AGENTS.md` did not reach the
+ * container has no URL to find and fails here rather than passing quietly.
  *
  * Skipped unless `SAF_CONTAINER_TESTS` is set — see `../test-support/docker.ts` for why.
  */
@@ -86,8 +94,14 @@ const asking: SignalHandler<Ask> = {
 const handlerNote = "handler-note.txt";
 /** The file the agent writes in the Workspace for the Gateway to read. */
 const agentNote = "agent-note.txt";
-/** The file an Operator mounts read-only: the agent may read it and may not change it. */
-const guardedName = "AGENTS.md";
+/**
+ * What `pi` looks for in its working directory and its ancestors, and the name an
+ * Operator's instructions file therefore takes inside the container.
+ *
+ * The framework knows nothing about it: no flag names it, and this constant exists in a
+ * test rather than in `src/pi/` because `pi`'s own discovery is the whole mechanism.
+ */
+const agentsFileName = "AGENTS.md";
 /**
  * A Run id of the shape the Core hands the adapter.
  *
@@ -118,11 +132,12 @@ after(async () => {
 type Rig = {
   readonly runtime: RuntimeAdapter;
   readonly model: MockModel;
-  /** Where the agent's container was told to reach the Agent server. */
+  /** Where the Operator's own instructions file told the agent to reach the Gateway. */
   readonly agentServerUrl: string;
   readonly workspace: string;
   readonly agentDir: string;
   readonly sessionRoot: string;
+  readonly agentsFile: string;
   /** Emits a Signal and resolves when its Runs have finished. */
   ask(payload: Ask): Promise<string>;
   /** Every Run recorded for a Signal. */
@@ -136,6 +151,13 @@ type Paths = {
   readonly workspace: string;
   readonly agentDir: string;
   readonly sessionRoot: string;
+  /**
+   * The Operator's instructions file, on this side and **outside the Workspace**.
+   *
+   * Outside it because that is the arrangement worth demonstrating: a file under version
+   * control somewhere else, mounted into a Workspace the agent otherwise writes.
+   */
+  readonly agentsFile: string;
 };
 
 /** Three fresh directory names under a temporary root, cleaned up with the test. */
@@ -146,7 +168,13 @@ async function temporaryPaths(t: TestContext): Promise<Paths> {
     workspace: path.join(root, "workspace"),
     agentDir: path.join(root, "agent"),
     sessionRoot: path.join(root, "sessions"),
+    agentsFile: path.join(root, agentsFileName),
   };
+}
+
+/** The three directories an Operator creates, since the framework creates none. */
+function directoriesOf(paths: Paths): readonly string[] {
+  return [paths.workspace, paths.agentDir, paths.sessionRoot];
 }
 
 /** The scripted model, as `models.json` describes a provider to `pi`. */
@@ -164,13 +192,42 @@ function mockProvider(baseUrl: string): Record<string, unknown> {
   };
 }
 
-/** The adapter under test, however a case wants its mounts and its model pointed. */
-function adapterOn(
-  paths: Paths,
-  agentServerUrl: string,
-  models: Record<string, unknown>,
-  extraEntries: readonly Mount[] = [],
-): RuntimeAdapter {
+/**
+ * `models.json`, placed by the Operator in the directory they mount as the agent's.
+ *
+ * The framework used to write this file before every Run out of an opaque field of its
+ * configuration. It carries no such field now, and `pi` reads the file itself out of
+ * `PI_CODING_AGENT_DIR` (ADR-0016, ADR-0025).
+ */
+async function placeModels(paths: Paths, baseUrl: string): Promise<void> {
+  const file = path.join(paths.agentDir, "models.json");
+  await writeFile(file, `${JSON.stringify(mockProvider(baseUrl), null, 2)}\n`, "utf8");
+}
+
+/**
+ * The instructions file, as an Operator writes one: their own words, then the address.
+ *
+ * Nothing of the framework's is in it, and nothing of the framework's produced it — the
+ * quickstart is where an Operator gets this text, and a copy of it can go stale when the
+ * Core's routes change (ADR-0025).
+ */
+async function placeInstructions(paths: Paths, agentServerUrl: string): Promise<void> {
+  await writeFile(
+    paths.agentsFile,
+    [
+      "# You are the shared agent of a test",
+      "",
+      "The Gateway exposes an HTTP API to you and to nothing else, at",
+      `\`${agentServerUrl}\`. Reach it with \`curl\` from your shell tool. It takes no`,
+      'credential. `GET /signals?limit=` answers `{ "signals": [...] }`, newest first.',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
+/** The adapter under test, however a case wants its mounts pointed. */
+function adapterOn(paths: Paths, extraEntries: readonly Mount[] = []): RuntimeAdapter {
   return createPiAdapter({
     image,
     model: "mock-model",
@@ -189,11 +246,24 @@ function adapterOn(
         ...extraEntries,
       ],
     },
-    agentServerUrl,
-    instructions: "You are the shared agent of a test.",
-    models,
     extraArgs: [addHostToGateway],
   });
+}
+
+/**
+ * The instructions file as an entry: read-only, inside the Workspace, from outside it.
+ *
+ * The Workspace is writable by the agent, so an instructions file simply placed in it is
+ * one a successful injection can rewrite for the next Run. `readOnly` is what makes the
+ * property structural, and a single-file entry is what leaves the directory around it
+ * writable (ADR-0003, ADR-0028).
+ */
+function instructionsEntry(paths: Paths): Mount {
+  return {
+    containerPath: `/workspace/${agentsFileName}`,
+    gatewayPath: paths.agentsFile,
+    readOnly: true,
+  };
 }
 
 /**
@@ -211,10 +281,10 @@ async function withGateway(
   // All three, as an Operator's entry point does it, because the framework creates no
   // directory anywhere (ADR-0028) and the daemon refuses a bind source that is not there
   // rather than inventing one — which is the case the test below this one walks into.
-  await Promise.all(Object.values(paths).map((directory) => mkdir(directory, { recursive: true })));
+  await Promise.all(directoriesOf(paths).map((directory) => mkdir(directory, { recursive: true })));
 
-  // The port before the server, because `agentServerUrl` is a construction argument of
-  // the adapter and has to name the port the agent's container will connect to.
+  // The port before the server, because the agent is told where the Agent server is in a
+  // file written now, and it has to name the port the container will connect to.
   const port = await reservePort();
   const agentServerUrl = `http://${hostFromContainer}:${port}`;
   // A bare Fastify instance, as an Operator's entry point constructs it. The framework
@@ -222,7 +292,12 @@ async function withGateway(
   const agentServer = Fastify();
   const model = await startMockModel(reply);
 
-  const runtime = adapterOn(paths, agentServerUrl, mockProvider(model.baseUrl));
+  // The Operator's two files, both of them things the framework used to write and now
+  // knows nothing about: how to reach the model, and how to reach the Gateway.
+  await placeModels(paths, model.baseUrl);
+  await placeInstructions(paths, agentServerUrl);
+
+  const runtime = adapterOn(paths, [instructionsEntry(paths)]);
 
   const core = createCore({ store, runtime });
   // Nothing registers the Core's routes for you, and Fastify refuses a registration
@@ -295,10 +370,10 @@ function readsAndWrites(request: ModelRequest): ModelReply {
  * The Agent server's address, as the agent was told it.
  *
  * Read out of the system prompt rather than passed in from the test, because that is the
- * only channel the real thing has: `pi` ships no HTTP client, so the instructions file
- * the adapter writes plus `curl` *is* the binding (ADR-0010). A missing instructions
- * file makes this throw, which is the point — `--append-system-prompt` would otherwise
- * pass off its own argument as the prompt and nothing would look wrong.
+ * only channel the real thing has: `pi` ships no HTTP client, so the Operator's own
+ * `AGENTS.md` plus `curl` *is* the binding (ADR-0010). `pi` discovered that file in its
+ * working directory and put it here with no flag from us, and a Run where that failed
+ * makes this throw rather than quietly passing.
  */
 function agentServerIn(request: ModelRequest): string {
   const found = request.system.match(new RegExp(`http://${hostFromContainer}:\\d+`));
@@ -376,12 +451,18 @@ describe("pi in a real container", { skip }, () => {
         `a Run should have read a prior Signal's payload back: ${readSignals[0]}`,
       );
 
-      // The instructions file reached the agent, with the address this Gateway stated.
+      // The Operator's `AGENTS.md` reached the agent, with the address they wrote in it,
+      // and `pi` found it in its working directory with no flag from the framework —
+      // which is the whole of what replaced the file the framework used to write.
       const system = rig.model.requests[0]?.system ?? "";
-      assert.match(system, /The Gateway's Agent server/);
+      const placed = await readFile(rig.agentsFile, "utf8");
+      assert.ok(
+        system.includes(placed.trim()),
+        `the file the Operator placed should be in the system prompt verbatim: ${system.slice(-600)}`,
+      );
       assert.ok(
         system.includes(rig.agentServerUrl),
-        "the stated address should be the one written",
+        "the address the agent was told should be the one the Operator wrote",
       );
 
       // The Session resumed: the second Run's container found the Session file the first
@@ -458,7 +539,7 @@ describe("pi in a real container", { skip }, () => {
     // Everything but the Workspace, which is the typo this is about.
     await mkdir(paths.agentDir, { recursive: true });
     await mkdir(paths.sessionRoot, { recursive: true });
-    const runtime = adapterOn(paths, `http://${hostFromContainer}:1`, {});
+    const runtime = adapterOn(paths);
 
     const outcome = await runtime.run({ session: "user_42", text: "This will not start." }, runId);
 
@@ -481,32 +562,28 @@ describe("pi in a real container", { skip }, () => {
     // hold the same property and break every sibling operation `pi` needs.
     const paths = await temporaryPaths(t);
     await Promise.all(
-      Object.values(paths).map((directory) => mkdir(directory, { recursive: true })),
+      directoriesOf(paths).map((directory) => mkdir(directory, { recursive: true })),
     );
-    const guarded = path.join(paths.workspace, guardedName);
+    const guarded = paths.agentsFile;
     await writeFile(guarded, "the Operator's own words", "utf8");
 
     const model = await startMockModel((request) =>
       assistantMessages(request) === 0
         ? {
             bash: [
-              `cat /workspace/${guardedName}`,
-              `(printf 'overwritten by the agent' > /workspace/${guardedName}) 2>&1 || true`,
+              `cat /workspace/${agentsFileName}`,
+              `(printf 'overwritten by the agent' > /workspace/${agentsFileName}) 2>&1 || true`,
               `printf 'written by the agent' > /workspace/${agentNote}`,
               // The lock directory `pi` needs beside a settings file even to read one:
               // a sibling of the read-only file, in the read-write directory around it.
-              `mkdir /workspace/${guardedName}.lock && echo made-the-lock-directory`,
+              `mkdir /workspace/${agentsFileName}.lock && echo made-the-lock-directory`,
             ].join("; "),
           }
         : { say: "I could read it and I could not write it." },
     );
     try {
-      const runtime = adapterOn(
-        paths,
-        `http://${hostFromContainer}:1`,
-        mockProvider(model.baseUrl),
-        [{ containerPath: `/workspace/${guardedName}`, gatewayPath: guarded, readOnly: true }],
-      );
+      await placeModels(paths, model.baseUrl);
+      const runtime = adapterOn(paths, [instructionsEntry(paths)]);
 
       const outcome = await runtime.run({ session: "readonly", text: "Try to write it." }, runId);
       assert.deepEqual(outcome, { ok: true }, "being denied a write must not fail the Run");
@@ -531,7 +608,7 @@ describe("pi in a real container", { skip }, () => {
         await readFile(path.join(paths.workspace, agentNote), "utf8"),
         "written by the agent",
       );
-      await stat(path.join(paths.workspace, `${guardedName}.lock`));
+      await stat(path.join(paths.workspace, `${agentsFileName}.lock`));
     } finally {
       await model.close();
     }

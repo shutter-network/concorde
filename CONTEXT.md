@@ -53,7 +53,7 @@ The interchangeable agent implementation at the centre of the architecture. `pi`
 _Avoid_: engine, backend, model, LLM
 
 **Runtime Adapter**:
-The part that drives one kind of Agent Runtime on the Core's behalf. Its contract is narrow: start a Run against a Session with a Prompt, collect the output, report completion or failure. It passes the agent's configuration through without interpreting it. See [ADR-0016](./docs/adr/0016-agent-configuration-is-opaque-to-the-framework.md).
+The part that drives one kind of Agent Runtime on the Core's behalf. Its contract is narrow: start a Run against a Session with a Prompt, collect the output, report completion or failure. It does not carry the agent's own configuration at all — what the Agent Runtime reads on disk is the Operator's to place where it will look — and holds only what it puts on a command line. See [ADR-0016](./docs/adr/0016-agent-configuration-is-opaque-to-the-framework.md) and [ADR-0025](./docs/adr/0025-the-pi-adapter-spawns-one-confined-process-per-run.md).
 _Avoid_: driver, plugin, connector, backend
 
 **Mount Table**:

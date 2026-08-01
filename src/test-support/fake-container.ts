@@ -5,8 +5,7 @@
  * this script is what lets everything between "compose the invocation" and "read the
  * outcome" be exercised with no Docker, no image and no credentials: that the Prompt
  * reaches stdin and the stream is closed, that the argv arrives as composed, that the
- * agent's configuration is on disk *before* the container starts, that the outcome
- * comes from the stream and not the exit code, and that stderr is not a verdict.
+ * outcome comes from the stream and not the exit code, and that stderr is not a verdict.
  *
  * What it deliberately cannot prove is anything about a real container: that mounts
  * resolve, that user ids match, that a Session resumes. Those need Docker, and they are
@@ -17,7 +16,7 @@
  * be both.
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 export type FakeContainerScript = {
@@ -34,8 +33,6 @@ export type FakeContainerScript = {
   readonly exitCode?: number;
   /** Where to write what this process was given, as `FakeContainerReport` JSON. */
   readonly reportTo?: string;
-  /** Paths to test for existence at the moment this runs, for the report. */
-  readonly checkExisting?: readonly string[];
 };
 
 /** What the fake container runtime saw. */
@@ -44,8 +41,6 @@ export type FakeContainerReport = {
   readonly args: readonly string[];
   /** Everything written to its stdin, byte for byte. */
   readonly stdin: string;
-  /** Which of `checkExisting` were there when it ran. */
-  readonly existing: Readonly<Record<string, boolean>>;
 };
 
 const thisFile = fileURLToPath(import.meta.url);
@@ -70,13 +65,7 @@ if (process.argv[1] === thisFile) {
   for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
 
   if (script.reportTo !== undefined) {
-    const report: FakeContainerReport = {
-      args,
-      stdin: Buffer.concat(chunks).toString("utf8"),
-      existing: Object.fromEntries(
-        (script.checkExisting ?? []).map((file) => [file, existsSync(file)]),
-      ),
-    };
+    const report: FakeContainerReport = { args, stdin: Buffer.concat(chunks).toString("utf8") };
     writeFileSync(script.reportTo, JSON.stringify(report), "utf8");
   }
 

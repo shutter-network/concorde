@@ -26,7 +26,13 @@ export type ModelMessage = {
 
 /** One request the agent made of the model. */
 export type ModelRequest = {
-  /** The system prompt: `pi`'s own, plus whatever `--append-system-prompt` added. */
+  /**
+   * The system prompt: `pi`'s own, plus every context file it discovered for itself.
+   *
+   * That second half is where an `AGENTS.md` the Operator placed in the Workspace turns
+   * up. Nothing of the framework's is in here, and no flag of the framework's put it
+   * there (ADR-0025).
+   */
   readonly system: string;
   readonly messages: readonly ModelMessage[];
   /**

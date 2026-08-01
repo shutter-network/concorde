@@ -18,7 +18,7 @@ import type { Mount } from "../container/index.ts";
 import type { Prompt } from "../core/handlers.ts";
 import type { PiConfiguration } from "./configuration.ts";
 import { resolvePiConfiguration } from "./configuration.ts";
-import { composeInvocation, instructionsFileName, type PiInvocation } from "./invocation.ts";
+import { composeInvocation, type PiInvocation } from "./invocation.ts";
 
 /** A Run id, of the shape the Core hands the adapter. */
 const runId = "6f1a3c7e-0000-4000-8000-000000000001";
@@ -38,7 +38,6 @@ const minimal: PiConfiguration = {
   agentDirPath: "/home/agent/.pi/agent",
   sessionRootPath: "/sessions",
   mounts: { entries },
-  agentServerUrl: "http://host.docker.internal:7411",
 };
 
 function invocationFor(
@@ -366,10 +365,21 @@ describe("what the agent is told", () => {
     assert.equal(invocation.sessionDirectory, "/srv/saf/sessions/user_42");
   });
 
-  it("appends the instructions file the Gateway wrote into the agent's directory", () => {
-    assert.equal(
-      argumentAfter(invocationFor(), "--append-system-prompt"),
-      `/home/agent/.pi/agent/${instructionsFileName}`,
+  it("names no file of the framework's, because the framework writes none", () => {
+    // What used to be here was `--append-system-prompt <the agent directory>/…`, pointing
+    // at a file rewritten before every Run. The Operator places an `AGENTS.md` in the
+    // Workspace instead and `pi` finds it in its own working directory, so there is no
+    // flag to pass and nothing for the adapter to know (ADR-0025, ADR-0028).
+    const invocation = invocationFor({ extraArgs: ["--memory", "2g"] });
+
+    for (const flag of ["--append-system-prompt", "--system-prompt", "--prompt-file"]) {
+      assert.ok(!invocation.args.includes(flag), `${flag} should not be passed`);
+    }
+    // Nor by any other spelling: every argument is a flag, a container path the Operator
+    // declared, an image, a model, a Session name, or something they wrote themselves.
+    assert.ok(
+      !invocation.args.some((arg) => arg.endsWith(".md")),
+      `no argument should name a Markdown file: ${invocation.args.join(" ")}`,
     );
   });
 
@@ -479,20 +489,17 @@ describe("a configuration that cannot work", () => {
     );
   });
 
-  it("refuses an agent directory no entry of the Mount Table covers", () => {
-    // While the framework still writes the agent's configuration before every Run, that
-    // directory has to be one this process can reach. Refused at resolution rather than
-    // at the write, because a Run that fails is never retried (ADR-0017).
-    assert.throws(
-      () => resolvePiConfiguration({ ...minimal, agentDirPath: "/somewhere/unmounted" }),
-      /agentDirPath "\/somewhere\/unmounted" is not covered/,
-    );
-    // And the other two are not required to be mounted at all: a container path nobody
-    // mounted is a directory in the container's own writable layer.
+  it("asks nothing of the Mount Table about the three paths, not even that they are in it", () => {
+    // A container path nobody mounted is a directory in the container's own writable
+    // layer, discarded with the container. Unusual for all three at once and legitimate
+    // for any one of them, and nothing here is entitled to an opinion: the framework
+    // opens none of these directories, so it needs no path on this side of the mount for
+    // any of them (ADR-0028).
     assert.doesNotThrow(() =>
       resolvePiConfiguration({
         ...minimal,
         workspacePath: "/scratch",
+        agentDirPath: "/scratch/agent",
         sessionRootPath: "/scratch/sessions",
       }),
     );
@@ -509,29 +516,5 @@ describe("a configuration that cannot work", () => {
       () => resolvePiConfiguration({ ...minimal, containerCommand: [""] }),
       /containerCommand is empty/,
     );
-  });
-});
-
-describe("the Agent server URL", () => {
-  it("comes back from resolution exactly as supplied, whatever it is", () => {
-    // Resolution settles paths and fills defaults; it does not rewrite a string the
-    // Operator handed it, because a value that comes back different from how it went in
-    // is the kind of thing nobody thinks to check. Nothing judges it either: what a
-    // parser catches is a typo'd scheme, which nobody makes, and not a typo'd hostname,
-    // which is the mistake Operators actually make. See the field's own documentation.
-    for (const agentServerUrl of [
-      "http://gateway:7411",
-      "http://gateway:7411/",
-      "host.docker.internal:7411",
-      "/signals",
-      "ftp://host:21",
-      "",
-    ]) {
-      assert.equal(
-        resolvePiConfiguration({ ...minimal, agentServerUrl }).agentServerUrl,
-        agentServerUrl,
-        `${JSON.stringify(agentServerUrl)} should come back unchanged`,
-      );
-    }
   });
 });

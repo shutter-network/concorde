@@ -65,9 +65,6 @@ export type PiInvocation = {
   readonly sessionDirectory: string | undefined;
 };
 
-/** Where the framework's instructions file lands inside the agent's directory. */
-export const instructionsFileName = "gateway-instructions.md";
-
 /**
  * Composes the invocation for one Run.
  *
@@ -179,14 +176,20 @@ function agentArgs(config: ResolvedPiConfiguration, session: string): string[] {
     session,
     "--session-dir",
     sessionDirectoryFor(config, session).containerPath,
-    "--append-system-prompt",
-    `${config.agentDirPath}/${instructionsFileName}`,
+    // No `--append-system-prompt`, and no other flag naming a file: the framework writes
+    // none, so it has none to name. What tells the agent about the Agent server is an
+    // `AGENTS.md` the Operator places in the Workspace, which `pi` finds by itself in its
+    // working directory and its ancestors — and which the flag would have made *worse*,
+    // since it resolves a path that is not there to its own literal argument and the Run
+    // then settles happily knowing nothing (ADR-0025).
+    //
     // Project-local `.pi` settings and extensions are ignored, and that is load-bearing
     // rather than tidy: the Workspace is writable by the agent, and a saved trust
     // decision in the persisted `trust.json` would otherwise let one Run arrange for
-    // the next one to load configuration out of the Workspace — a durable
-    // reconfiguration by injection, which is what rewriting the configuration every
-    // Run exists to prevent (ADR-0003, ADR-0025).
+    // the next one to load configuration out of the Workspace — a reconfiguration by
+    // injection that outlives the Run that managed it (ADR-0003, ADR-0025). Context
+    // files are not project-local configuration and are unaffected, which is what makes
+    // a read-only `AGENTS.md` both readable and unchangeable.
     "--no-approve",
   );
   return args;
@@ -199,9 +202,10 @@ function agentArgs(config: ResolvedPiConfiguration, session: string): string[] {
  * and update telemetry, and a Run should not depend on reaching `pi.dev` — but that is
  * a preference, and an Operator who sets it themselves gets what they asked for.
  *
- * `PI_CODING_AGENT_DIR` is **not** a default and comes last. It is where the
- * configuration written before this Run actually is, and an agent pointed at any other
- * directory would find none of it and run unconfigured rather than fail.
+ * `PI_CODING_AGENT_DIR` is **not** a default and comes last. It is the directory the
+ * Operator declared, holding whatever they placed there and whatever the agent keeps
+ * between Runs, and an agent pointed at any other one would find none of it and run
+ * unconfigured rather than fail.
  */
 function environment(config: ResolvedPiConfiguration): Record<string, string> {
   return {

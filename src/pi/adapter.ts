@@ -2,10 +2,11 @@
  * The `pi` Runtime Adapter: one fresh container per Run.
  *
  * This is where the pieces around it are finally used, in the one order that works:
- * **compose, write, start, interpret.** Composing settles the Session name and the
- * argv; writing puts the configuration and the instructions file into the agent's
- * directory, where the container is about to look for them; only then is the container
- * started; and the outcome is read from the stream it produces.
+ * **compose, start, interpret.** Composing settles the Session name and the argv; the
+ * container is started with it; and the outcome is read from the stream it produces.
+ * There is no fourth step, and in particular nothing is written to a disk: what the
+ * agent reads is what the Operator placed in the directories they mounted, and this
+ * module opens no file at all (ADR-0025).
  *
  * A container rather than this process, and that is the load-bearing decision here
  * ([ADR-0025](../../docs/adr/0025-the-pi-adapter-spawns-one-confined-process-per-run.md)):
@@ -34,7 +35,6 @@ import { type PiConfiguration, resolvePiConfiguration } from "./configuration.ts
 import { composeInvocation } from "./invocation.ts";
 import { interpretPiOutput } from "./output.ts";
 import { runContainer } from "./process.ts";
-import { writeRunConfiguration } from "./run-files.ts";
 
 /**
  * Everything the adapter is constructed with: the agent's configuration, plus the
@@ -54,9 +54,10 @@ export type PiAdapterOptions = PiConfiguration & {
  * Builds the adapter, refusing a configuration that cannot work.
  *
  * A plain Runtime Adapter and nothing more: there is no second call to remember and no
- * adapter-specific type to hold it in. Nothing here touches a filesystem or starts a
- * container before a Run does, so whether the directories an Operator declared really
- * reach the agent is not a question this process asks
+ * adapter-specific type to hold it in. Nothing here touches a filesystem — not at
+ * construction and not during a Run — and nothing starts a container before a Run does,
+ * so whether the directories an Operator declared really reach the agent is not a
+ * question this process asks
  * ([ADR-0028](../../docs/adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)).
  *
  * What settles that is the container runtime, at the first Run: every entry is emitted
@@ -82,7 +83,6 @@ export function createPiAdapter(options: PiAdapterOptions): RuntimeAdapter {
   return {
     async run(prompt: Prompt, runId: string): Promise<RunOutcome> {
       const invocation = composeInvocation(options, prompt, runId);
-      await writeRunConfiguration(options);
 
       log.debug(
         {

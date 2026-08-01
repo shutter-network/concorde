@@ -5,8 +5,11 @@
  * and a deployment never restates a whole `docker run`. This is not the
  * runtime-neutral shape [ADR-0016](../../docs/adr/0016-agent-configuration-is-opaque-to-the-framework.md)
  * rejects: these options are `pi`-shaped on purpose, and an OpenClaw adapter would
- * have entirely different ones. What the framework does not do is *interpret* them —
- * `settings` and `models` are written out as given ([ADR-0025](../../docs/adr/0025-the-pi-adapter-spawns-one-confined-process-per-run.md)).
+ * have entirely different ones. What the framework does not do is *carry* the agent's
+ * own configuration: `settings.json`, `models.json` and whatever tells the agent about
+ * the Agent server are the Operator's to place in a directory they mount, and nothing
+ * here has heard of any of them
+ * ([ADR-0025](../../docs/adr/0025-the-pi-adapter-spawns-one-confined-process-per-run.md)).
  *
  * Nothing here is a mount. The three paths below are paths **inside the container**, and
  * where they come from on the Operator's own disk is the [Mount
@@ -20,9 +23,6 @@
 
 import path from "node:path";
 import { type MountTable, type ResolvedMountTable, resolveMountTable } from "../container/index.ts";
-
-/** Arbitrary JSON the framework writes out without reading (ADR-0016). */
-export type OpaqueJson = Readonly<Record<string, unknown>>;
 
 export type PiConfiguration = {
   /**
@@ -40,6 +40,10 @@ export type PiConfiguration = {
    *
    * The Workspace is shared with Signal Handlers, but only the Mount Table knows that:
    * from here it is a string that becomes `--workdir`.
+   *
+   * It is also where `pi` looks for an `AGENTS.md`, in this directory and its ancestors,
+   * which is how an Operator tells the agent about the Agent server. The adapter passes
+   * no flag for it and knows nothing about it (ADR-0025).
    */
   readonly workspacePath: string;
   /**
@@ -68,52 +72,14 @@ export type PiConfiguration = {
   /**
    * What the agent's container sees on disk, and which user it runs as.
    *
-   * The Workspace and the Session root are not required to be in here: a container path
-   * nobody mounted is a directory in the container's own writable layer, which is a
-   * legitimate if unusual thing to want and is discarded with the container either way.
-   * `agentDirPath` **is** required to be, and only while the framework still writes the
-   * agent's configuration into it before every Run — see `agentDirGatewayPath`.
+   * None of the three paths above is required to be in here: a container path nobody
+   * mounted is a directory in the container's own writable layer, which is a legitimate
+   * if unusual thing to want and is discarded with the container either way. The
+   * Workspace almost always is one, since it is shared with Signal Handlers, and the
+   * agent's directory almost always is too, since what it holds is meant to survive a
+   * Run — but that is the Operator's business and not a rule of the adapter's.
    */
   readonly mounts: MountTable;
-  /**
-   * The base URL the agent's container reaches the Agent server at. Write it with no
-   * trailing slash: `/signals` and `/runs` are appended to it as written.
-   *
-   * Nothing can derive it, which is why it is required and why it is stated rather than
-   * inferred from where that server binds: the two are separate values, and neither
-   * follows from the other. `http://host.docker.internal:7411` under Docker Desktop,
-   * `http://<compose service>:7411` on a shared network, the bridge address under a
-   * plain Linux daemon.
-   *
-   * It reaches the instructions file **verbatim**: unparsed, unchecked, and unrewritten,
-   * because the framework does not interpret the agent's configuration
-   * ([ADR-0016](../../docs/adr/0016-agent-configuration-is-opaque-to-the-framework.md))
-   * and this is configuration like any other. What a parser would have caught is a
-   * typo'd scheme, which nobody types by accident, and not a typo'd hostname, which is
-   * the mistake this value actually attracts. So a trailing slash survives too, and the
-   * double-slashed paths it produces match no route: the agent's reads 404 and the Run
-   * fails, permanently, since nothing is retried
-   * ([ADR-0017](../../docs/adr/0017-failed-runs-are-not-retried.md)). Either way the
-   * symptom is the agent saying it cannot reach the Gateway, which points back here.
-   *
-   * Required at all because the agent has no other way to read prior Signals and Runs,
-   * and [ADR-0010](../../docs/adr/0010-the-agent-reaches-the-gateway-over-http.md) says
-   * the shape of that API has to be described to the agent in its own configuration —
-   * which is what the instructions file written before each Run does.
-   */
-  readonly agentServerUrl: string;
-  /**
-   * The Operator's instructions to the agent, appended to `pi`'s own system prompt.
-   *
-   * Appended rather than replacing it: `pi`'s prompt is what makes its seven built-in
-   * tools usable, and `--append-system-prompt` is also the only one of the two flags
-   * that takes a file, so a long prompt does not have to survive an argument list.
-   */
-  readonly instructions?: string;
-  /** Written to `settings.json` before every Run, exactly as given. */
-  readonly settings?: OpaqueJson;
-  /** Written to `models.json` before every Run, exactly as given: custom providers. */
-  readonly models?: OpaqueJson;
   /**
    * Environment variables for the agent's container — provider API keys, a proxy.
    *
@@ -123,8 +89,8 @@ export type PiConfiguration = {
    * an in-process agent would hold the Store's `DATABASE_URL` (ADR-0025).
    *
    * `PI_CODING_AGENT_DIR` and `PI_OFFLINE` are the framework's and win over anything
-   * set here: the first is where the configuration written before each Run lands, and
-   * the agent reading a different directory would run unconfigured.
+   * set here: the first is `agentDirPath`, and an agent pointed at a different directory
+   * would find none of what the Operator placed there and run unconfigured.
    */
   readonly env?: Readonly<Record<string, string>>;
   /**
@@ -150,22 +116,6 @@ export type ResolvedPiConfiguration = {
   readonly agentDirPath: string;
   readonly sessionRootPath: string;
   readonly mounts: ResolvedMountTable;
-  /**
-   * Where the agent's directory is on the Gateway's own disk, from the Mount Table.
-   *
-   * Transitional, and the only path on this side the adapter holds: it exists because
-   * the framework still writes the agent's configuration into that directory before
-   * every Run. It is settled here rather than at the write so that an `agentDirPath` no
-   * entry covers is refused where the Operator wrote it — a Run that fails is never
-   * retried (ADR-0017), so leaving it to the write would turn every Signal the
-   * deployment ever receives into a permanently failed Run. It goes when `run-files.ts`
-   * does, and then nothing but the debug line asks the Mount Table for a path at all.
-   */
-  readonly agentDirGatewayPath: string;
-  readonly agentServerUrl: string;
-  readonly instructions: string | undefined;
-  readonly settings: OpaqueJson;
-  readonly models: OpaqueJson;
   readonly env: Readonly<Record<string, string>>;
   readonly network: string | undefined;
   readonly extraArgs: readonly string[];
@@ -178,56 +128,27 @@ export type ResolvedPiConfiguration = {
  *
  * Exported so that the adapter's own construction can refuse a bad deployment where the
  * Operator wrote it, rather than leaving it to arrive as a permanently failed Run, since
- * nothing is ever retried (ADR-0017). Composing an invocation and writing a Run's
- * configuration each call it again: it is pure and it is a handful of string checks, so
- * repeating it costs nothing and means neither can work from a configuration that was
- * never checked.
+ * nothing is ever retried (ADR-0017). Composing an invocation calls it again: it is pure
+ * and it is a handful of string checks, so repeating it costs nothing and means an
+ * invocation cannot be composed from a configuration that was never checked.
  */
 export function resolvePiConfiguration(config: PiConfiguration): ResolvedPiConfiguration {
   if (config.image === "") throw new Error("the pi adapter needs an image to run");
   if (config.model === "") throw new Error("the pi adapter needs a model");
-
-  const mounts = resolveMountTable(config.mounts);
-  const agentDirPath = containerPath(config.agentDirPath, "agentDirPath");
 
   return {
     image: config.image,
     model: config.model,
     provider: config.provider,
     workspacePath: containerPath(config.workspacePath, "workspacePath"),
-    agentDirPath,
+    agentDirPath: containerPath(config.agentDirPath, "agentDirPath"),
     sessionRootPath: containerPath(config.sessionRootPath, "sessionRootPath"),
-    mounts,
-    agentDirGatewayPath: agentDirOnDisk(mounts, agentDirPath),
-    // Untouched: resolution settles paths and fills defaults, and a string the Operator
-    // supplied is neither. See the field's own documentation for why nothing checks it.
-    agentServerUrl: config.agentServerUrl,
-    instructions: config.instructions,
-    settings: config.settings ?? {},
-    models: config.models ?? {},
+    mounts: resolveMountTable(config.mounts),
     env: config.env ?? {},
     network: config.network,
     extraArgs: config.extraArgs ?? [],
     containerCommand: containerCommandOf(config.containerCommand),
   };
-}
-
-/**
- * The agent's directory as this process can reach it, or a refusal.
- *
- * The one thing resolution asks of the Mount Table, and it asks only because the
- * framework still writes three files into that directory before every Run. Nothing
- * equivalent is asked about the Workspace or the Session root, which the framework never
- * opens.
- */
-function agentDirOnDisk(mounts: ResolvedMountTable, agentDirPath: string): string {
-  const onDisk = mounts.gatewayPathFor(agentDirPath);
-  if (onDisk === undefined) {
-    throw new Error(
-      `agentDirPath ${JSON.stringify(agentDirPath)} is not covered by any entry of the Mount Table, so the agent's configuration written before each Run would have nowhere on this side to be written to`,
-    );
-  }
-  return onDisk;
 }
 
 /**

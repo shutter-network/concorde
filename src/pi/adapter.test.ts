@@ -5,8 +5,12 @@
  * The container runtime here is a stub — `containerCommand` is public API and pointing
  * it at a script is what makes this fast — so every assertion is about the adapter and
  * none is about Docker. The stub is handed the argv the adapter composed and writes
- * down what it received, so "the Prompt reached stdin" and "the configuration was on
- * disk before the container started" are observed rather than assumed.
+ * down what it received, so "the Prompt reached stdin" is observed rather than assumed.
+ *
+ * The directories the Mount Table names here **do not exist**, and that is the point:
+ * the framework writes no files and opens none, so a Run composes and starts with
+ * nothing of the Operator's on disk. Whether the mounts really resolve is the container
+ * runtime's to say at the first Run, and there is no container runtime here.
  *
  * The streams the stub replays are the **real** captured `pi --mode json` output under
  * `./fixtures/`, so the two traps that matter here — the exit code says nothing, and
@@ -17,7 +21,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
@@ -31,7 +35,6 @@ import {
 } from "../test-support/fake-container.ts";
 import { createPiAdapter } from "./adapter.ts";
 import type { PiConfiguration } from "./configuration.ts";
-import { instructionsFileName } from "./invocation.ts";
 
 const runId = "6f1a3c7e-0000-4000-8000-000000000001";
 
@@ -69,17 +72,18 @@ type Adapter = {
   readonly lines: Logged[];
   /** Where the stub container runtime wrote down what it was given. */
   report(): FakeContainerReport;
-  readonly agentDir: string;
+  /** The three mount sources, in the order they were declared. None of them exists. */
+  readonly sources: readonly string[];
   readonly sessionRoot: string;
 };
 
 /**
- * An adapter over real directories, whose container runtime is the stub running
- * `script`.
+ * An adapter whose container runtime is the stub running `script`.
  *
- * The directories are real because the adapter writes into one of them before it starts
- * anything, and because which of them are there when the container starts is itself a
- * decision worth having a test walk into.
+ * Its three mount sources are paths under a temporary root and **none of them is
+ * created**: the framework opens no file and creates no directory, so a Run that
+ * composes and starts is one that needed nothing of the Operator's to be there yet. The
+ * temporary root itself is real only because the stub writes its report into it.
  */
 async function adapterOn(
   script: Omit<FakeContainerScript, "reportTo"> = {},
@@ -90,11 +94,6 @@ async function adapterOn(
   const workspace = path.join(root, "workspace");
   const agentDir = path.join(root, "agent");
   const sessionRoot = path.join(root, "sessions");
-  // The Operator's job now, not the framework's (ADR-0028). The Session root is left
-  // missing on purpose: `pi` creates each Session's own directory from inside the
-  // container, so a Gateway starting one that is not there yet is the ordinary case.
-  await mkdir(workspace, { recursive: true });
-  await mkdir(agentDir, { recursive: true });
 
   const reportTo = path.join(root, "report.json");
   const { lines, logger } = capturingLogger();
@@ -111,17 +110,7 @@ async function adapterOn(
         { containerPath: "/sessions", gatewayPath: sessionRoot },
       ],
     },
-    agentServerUrl: "http://host.docker.internal:7411",
-    containerCommand: fakeContainerCommand({
-      ...script,
-      reportTo,
-      checkExisting: [
-        path.join(agentDir, instructionsFileName),
-        path.join(agentDir, "settings.json"),
-        path.join(agentDir, "models.json"),
-        path.join(sessionRoot, "user_42"),
-      ],
-    }),
+    containerCommand: fakeContainerCommand({ ...script, reportTo }),
     ...extra,
   };
 
@@ -130,7 +119,7 @@ async function adapterOn(
     config,
     lines,
     report: () => fakeContainerReport(reportTo),
-    agentDir,
+    sources: [workspace, agentDir, sessionRoot],
     sessionRoot,
   };
 }
@@ -174,7 +163,7 @@ describe("the pi adapter", () => {
     assert.equal(adapter.report().stdin, "read @notes.md");
   });
 
-  it("starts the composed invocation, with the agent's configuration already on disk", async () => {
+  it("starts the composed invocation, and touches no filesystem on the way", async () => {
     const adapter = await adapterOn({ stdout: await fixture("settled-ok") });
 
     await adapter.runtime.run({ session: "user_42", text: "what happened?" }, runId);
@@ -188,19 +177,13 @@ describe("the pi adapter", () => {
     assert.ok(report.args.slice(0, image).includes("--mount"));
     assert.deepEqual(report.args.slice(image + 1, image + 3), ["--mode", "json"]);
     assert.equal(report.args.at(-1), "--no-approve");
-    // Write, *then* start: the agent reads its configuration and its instructions as it
-    // starts, and `--append-system-prompt` silently falls back to using the path as the
-    // prompt text when the file is not there.
-    //
-    // And the Session's own directory is *not* there, which is the same claim from the
-    // other side: the Agent Runtime creates it inside the container, so the Gateway
-    // starting one without it is the ordinary case rather than a broken one (ADR-0025).
-    assert.deepEqual(report.existing, {
-      [path.join(adapter.agentDir, instructionsFileName)]: true,
-      [path.join(adapter.agentDir, "settings.json")]: true,
-      [path.join(adapter.agentDir, "models.json")]: true,
-      [path.join(adapter.sessionRoot, "user_42")]: false,
-    });
+    // Compose, start, interpret, and no fourth step: not one of the three mount sources
+    // exists, and the Run got as far as reading an outcome anyway. Nothing was created
+    // on the way either — the Session's own directory is `pi`'s to make inside the
+    // container, and the directories around it are the Operator's (ADR-0025, ADR-0028).
+    for (const source of [...adapter.sources, path.join(adapter.sessionRoot, "user_42")]) {
+      await assert.rejects(() => stat(source), /ENOENT/, `${source} should not have been created`);
+    }
   });
 
   it("reads the outcome from the stream and not from the exit code", async () => {
