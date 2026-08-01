@@ -204,6 +204,107 @@ describe("the Mount Table", () => {
   });
 });
 
+describe("a Gateway that is itself in a container", () => {
+  it("translates every entry's source through one mapping, longest prefix first", () => {
+    // The whole of the containerised-Gateway fact, stated once: the daemon resolves a
+    // bind source on the *host*, and only a Gateway running on the host sees the same
+    // strings it does. Two prefixes, and the deeper one wins where both cover an entry.
+    const invocation = invocationFor({
+      mounts: {
+        entries: [
+          { containerPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
+          { containerPath: "/sessions", gatewayPath: "/srv/saf/sessions/live" },
+        ],
+        hostPaths: { "/srv": "/host/gateway", "/srv/saf/sessions": "/mnt/fast-disk" },
+      },
+    });
+
+    assert.deepEqual(valuesOf(invocation, "--mount"), [
+      "type=bind,source=/host/gateway/saf/workspace,target=/workspace",
+      "type=bind,source=/mnt/fast-disk/live,target=/sessions",
+    ]);
+  });
+
+  it("is the ordinary case, where saying nothing means every source is its own path", () => {
+    // A Gateway on the host has no ceremony to perform: the daemon resolves the same
+    // strings this process does. An empty mapping is the same statement written out.
+    const onHost = [
+      "type=bind,source=/srv/saf/workspace,target=/workspace",
+      "type=bind,source=/srv/saf/agent,target=/home/agent/.pi/agent",
+      "type=bind,source=/srv/saf/sessions,target=/sessions",
+    ];
+
+    assert.deepEqual(valuesOf(invocationFor({ mounts: { entries } }), "--mount"), onHost);
+    assert.deepEqual(
+      valuesOf(invocationFor({ mounts: { entries, hostPaths: {} } }), "--mount"),
+      onHost,
+      "an empty mapping should say what no mapping says",
+    );
+  });
+
+  it("refuses an entry the mapping does not cover, naming it and listing the prefixes", () => {
+    // The point of the whole feature. A mapping that covers two of three mounts is the
+    // mistake this shape exists to catch, and catching it means *refusing*: falling back
+    // to identity for the third would start, serve, and read an empty directory.
+    assert.throws(
+      () =>
+        resolvePiConfiguration({
+          ...minimal,
+          mounts: {
+            entries,
+            hostPaths: { "/srv/saf/workspace": "/host/workspace", "/srv/saf/agent": "/host/agent" },
+          },
+        }),
+      (error: Error) => {
+        assert.match(error.message, /"\/srv\/saf\/sessions"/);
+        assert.match(error.message, /"\/srv\/saf\/workspace".*"\/srv\/saf\/agent"/s);
+        return true;
+      },
+    );
+  });
+
+  it("hands a key matched exactly to the daemon whole, which is how a volume is named", () => {
+    // A named volume is the case this exists for: no runtime will mount a *subpath* of
+    // one, so a value that had a remainder composed onto it would look right and be
+    // wrong. An exact key is the one shape that never composes, and the Workspace here
+    // proves it by *not* becoming `/host/gateway/workspace` under the shorter key.
+    //
+    // The value is the volume's own location rather than its name, because these are
+    // emitted as `type=bind` and a bind source is resolved as a path. Nothing in the
+    // framework knows that, or checks it: the value is passed through unread.
+    const invocation = invocationFor({
+      mounts: {
+        entries: [
+          { containerPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
+          { containerPath: "/sessions", gatewayPath: "/srv/saf/sessions" },
+        ],
+        hostPaths: {
+          "/srv/saf/workspace": "/var/lib/docker/volumes/saf-workspace/_data",
+          "/srv/saf": "/host/gateway",
+        },
+      },
+    });
+
+    assert.deepEqual(valuesOf(invocation, "--mount"), [
+      "type=bind,source=/var/lib/docker/volumes/saf-workspace/_data,target=/workspace",
+      "type=bind,source=/host/gateway/sessions,target=/sessions",
+    ]);
+  });
+
+  it("keeps answering where a container path is on the Gateway's disk, not the host's", () => {
+    // The debug line asks "where is this Session's transcript on *my* disk", and the
+    // Operator reading it is inside the Gateway's container, not on the host. So the
+    // reverse lookup stays in this process's namespace while the daemon is told the
+    // host's, which is the reason the two are kept apart on a resolved entry at all.
+    const { mounts } = resolvePiConfiguration({
+      ...minimal,
+      mounts: { entries, hostPaths: { "/srv": "/host/gateway" } },
+    });
+
+    assert.equal(mounts.gatewayPathFor("/sessions/user_42"), "/srv/saf/sessions/user_42");
+  });
+});
+
 describe("the composed invocation", () => {
   it("starts the container runtime, which is docker unless told otherwise", () => {
     assert.equal(invocationFor().command, "docker");

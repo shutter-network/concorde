@@ -65,6 +65,40 @@ export type Mount = {
 export type MountTable = {
   /** At least one. An empty table is refused rather than producing a bare container. */
   readonly entries: readonly Mount[];
+  /**
+   * How this Gateway's own filesystem maps to the host's, for a Gateway in a container.
+   *
+   * Absent or empty means the Gateway runs on the host, which is the common case and
+   * costs nothing to say: every entry's `gatewayPath` is its own source, because the
+   * daemon resolves the same string this process does.
+   *
+   * They part company only when the Gateway is itself in a container, and that is **one
+   * fact about the deployment** rather than a property of each mount. Stated here, it is
+   * stated in the place where it is true: a map from a `gatewayPath` prefix to the host
+   * source it corresponds to, matched longest-first.
+   *
+   * Once non-empty it is exhaustive. An entry falling under no key is **refused at
+   * resolution**, naming the path and listing the prefixes declared, rather than falling
+   * back to identity. A fallback is what turns forgetting the third of three mappings
+   * into a deployment that starts, serves, and has one silently empty directory in it.
+   *
+   * A key matched exactly resolves to its value **whole**, with nothing appended. That is
+   * how a named volume is expressed: a runtime will not mount a *subpath* of one, so a
+   * composed source would look right and be wrong, and only an exact key never composes.
+   * Values are handed to the daemon unread. Nothing here requires one to look like a
+   * path, checks that a subpath of it can exist, or knows what a volume is: a volume
+   * stays a value, and whether a given runtime accepts the value is between the Operator
+   * and their runtime. Note that mounts are emitted as `type=bind`, whose source a daemon
+   * does resolve as a path, so under Docker the value for a volume is where that volume
+   * lives on the host rather than its name.
+   *
+   * Nothing discovers this. Reading the process's own mount information returns a
+   * confident wrong path whenever a directory sits on a separate filesystem, a subvolume
+   * or a virtual machine, and the round trip that once would have caught a bad guess is
+   * gone. ADR-0028 records the deferral and the constraint on whoever picks it up: an
+   * exact mechanism that fails loudly, or none.
+   */
+  readonly hostPaths?: Readonly<Record<string, string>>;
   /** The container's user, `uid:gid`. Defaults to this process's own. */
   readonly user?: string;
 };
@@ -73,6 +107,14 @@ export type MountTable = {
 export type ResolvedMount = {
   readonly containerPath: string;
   readonly gatewayPath: string;
+  /**
+   * What the daemon is given as the bind source: the `gatewayPath` through `hostPaths`.
+   *
+   * The same string as `gatewayPath` for a Gateway on the host, and the two are kept
+   * apart anyway, because `gatewayPathFor` has to keep answering in *this* process's
+   * namespace while the daemon is told about the host's.
+   */
+  readonly hostPath: string;
   readonly readOnly: boolean;
 };
 
@@ -99,10 +141,11 @@ export type ResolvedMountTable = {
 /**
  * Settles a Mount Table, or refuses it.
  *
- * Pure and total: it defaults the user, refuses a relative path on either side, and
- * refuses a table with no entries. It performs no I/O, so what it cannot tell you is
- * whether any of these paths exists — that is the daemon's answer at the first Run, and
- * deliberately nobody else's (ADR-0028).
+ * Pure and total: it applies `hostPaths`, defaults the user, refuses a relative path on
+ * either side, refuses an entry no `hostPaths` prefix covers, and refuses a table with no
+ * entries. It performs no I/O, so what it cannot tell you is whether any of these paths
+ * exists — that is the daemon's answer at the first Run, and deliberately nobody else's
+ * (ADR-0028).
  *
  * `createPiAdapter` calls it during construction, so a table that cannot work is refused
  * where the Operator wrote it rather than at the first Signal.
@@ -114,7 +157,8 @@ export function resolveMountTable(table: MountTable): ResolvedMountTable {
     );
   }
 
-  const entries = table.entries.map(resolveEntry);
+  const hostPaths = table.hostPaths ?? {};
+  const entries = table.entries.map((entry) => resolveEntry(entry, hostPaths));
   const user = table.user ?? ownUser();
 
   return {
@@ -129,7 +173,7 @@ export function resolveMountTable(table: MountTable): ResolvedMountTable {
   };
 }
 
-function resolveEntry(entry: Mount): ResolvedMount {
+function resolveEntry(entry: Mount, hostPaths: Readonly<Record<string, string>>): ResolvedMount {
   // A path inside the container, which the container runtime requires to be absolute,
   // and which is POSIX whatever this platform is.
   if (!entry.containerPath.startsWith("/")) {
@@ -145,21 +189,45 @@ function resolveEntry(entry: Mount): ResolvedMount {
   return {
     containerPath: entry.containerPath,
     gatewayPath: entry.gatewayPath,
+    hostPath: hostPathFor(entry.gatewayPath, hostPaths),
     readOnly: entry.readOnly ?? false,
   };
 }
 
 /**
+ * What the daemon should be given for a Gateway-side path.
+ *
+ * Identity while `hostPaths` is empty, which is a Gateway on the host. Otherwise the
+ * longest key covering the path, with whatever is left of the path appended, and nothing
+ * appended at all where the key matched exactly, so a value that is not a path survives
+ * whole.
+ */
+function hostPathFor(gatewayPath: string, hostPaths: Readonly<Record<string, string>>): string {
+  const prefixes = Object.keys(hostPaths);
+  if (prefixes.length === 0) return gatewayPath;
+
+  const longestFirst = [...prefixes].sort((a, b) => b.length - a.length);
+  for (const prefix of longestFirst) {
+    const rest = remainderUnder(gatewayPath, prefix);
+    if (rest !== undefined) return `${hostPaths[prefix]}${rest}`;
+  }
+
+  throw new Error(
+    `the mount's gatewayPath ${JSON.stringify(gatewayPath)} falls under none of the hostPaths prefixes this Gateway declared (${prefixes.map((prefix) => JSON.stringify(prefix)).join(", ")}), so there is no host path the container runtime's daemon could resolve it to`,
+  );
+}
+
+/**
  * One `--mount` value: `type=bind,source=…,target=…`, and `readonly` where declared.
  *
- * The source is the entry's Gateway-side path, because the mapping between the two is
- * the identity — which is a Gateway running on the host, and the only case there is
- * until a translation table exists for the one where it is not.
+ * The source is the entry's *host* path, because the daemon resolves it on the host and
+ * not in whatever namespace this process is in. For a Gateway on the host the two are
+ * one string, and `hostPaths` is what tells them apart when they are not.
  */
 function mountArgument(entry: ResolvedMount): string {
   const fields = [
     "type=bind",
-    field("source", entry.gatewayPath),
+    field("source", entry.hostPath),
     field("target", entry.containerPath),
   ];
   if (entry.readOnly) fields.push("readonly");
@@ -185,25 +253,41 @@ function gatewayPathIn(
   entries: readonly ResolvedMount[],
   containerPath: string,
 ): string | undefined {
-  let best: ResolvedMount | undefined;
+  let best: { readonly entry: ResolvedMount; readonly rest: string } | undefined;
   for (const entry of entries) {
-    if (!isUnder(containerPath, entry.containerPath)) continue;
-    if (best === undefined || entry.containerPath.length > best.containerPath.length) {
-      best = entry;
+    const rest = remainderUnder(containerPath, entry.containerPath);
+    if (rest === undefined) continue;
+    if (best === undefined || entry.containerPath.length > best.entry.containerPath.length) {
+      best = { entry, rest };
     }
   }
   if (best === undefined) return undefined;
 
   // The remainder is a container path and therefore POSIX; the answer is a path on this
   // platform, so the two are joined with what this platform separates paths with.
-  const rest = containerPath.slice(best.containerPath.length).replace(/^\/+/, "");
-  return rest === "" ? best.gatewayPath : path.join(best.gatewayPath, ...rest.split("/"));
+  const rest = best.rest.replace(/^\/+/, "");
+  return rest === ""
+    ? best.entry.gatewayPath
+    : path.join(best.entry.gatewayPath, ...rest.split("/"));
 }
 
-/** Whether `candidate` is the mount point itself or something inside it. */
-function isUnder(candidate: string, mountPoint: string): boolean {
-  if (candidate === mountPoint) return true;
-  return candidate.startsWith(mountPoint.endsWith("/") ? mountPoint : `${mountPoint}/`);
+/**
+ * What is left of `candidate` below `prefix`, or `undefined` if it is not below it. `""`
+ * where the two name the same thing, and otherwise leading-separated.
+ *
+ * Both longest-prefix matches in this module ask this one question: the one turning a
+ * Gateway path into a host path, and the one turning a container path back into a
+ * Gateway path. They still choose their own winner among the matches, but what counts as
+ * a match, and what is left over once one is taken, is settled here for both. A trailing
+ * separator on the prefix means nothing, since a directory is the same directory either
+ * way and an Operator writing one out is not making a different statement.
+ */
+function remainderUnder(candidate: string, prefix: string): string | undefined {
+  const withoutTrailing = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
+  if (candidate === withoutTrailing) return "";
+  return candidate.startsWith(`${withoutTrailing}/`)
+    ? candidate.slice(withoutTrailing.length)
+    : undefined;
 }
 
 /**
