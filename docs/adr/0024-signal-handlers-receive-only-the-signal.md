@@ -1,5 +1,17 @@
 # Signal Handlers receive only the Signal
 
+> **Superseded in one detail** by [ADR-0031](./0031-parts-that-run-are-components.md).
+> The Signal Worker (this ADR's Core) takes its Handler map as a **construction option**
+> rather than an argument to `start`, because a Component's `start` takes none. So *"the
+> Core is constructed, handlers are built against it, and the Core is handed its handler
+> map when it starts"* is now *"handlers are built, and the Signal Worker is constructed
+> with them"*, and **a Handler can no longer close over the Signal Worker itself**.
+> Nothing in the repository did. An Operator who wants to emit a Signal from a Handler
+> declares a `let` first and assigns it after construction, in the entry point, which is
+> where this ADR already puts Handler construction. Everything else here stands, and the
+> central claim stands more firmly: there is still no context object, and dependencies are
+> still declared in a Handler's own factory.
+
 A Signal Handler is a plain object with `handle(signal)` returning zero or more Prompts, and an optional `post(signal, { failed })`. There is **no context object**. Everything a handler needs — a logger, the Workspace path, the Messenger, its prompt template — it closes over, because the Operator's entry point already holds every object in the Gateway.
 
 Every web framework passes a context, so the absence needs explaining. We considered a full `ctx` carrying whatever a handler might plausibly want, including the Messenger. Rejected: it would put messaging in the Core's handler contract, and the Core knowing nothing about identity or messaging is what [ADR-0020](./0020-producers-are-trusted-components-of-the-gateway.md) bought. We then considered a minimal `ctx` of `{ log, workspace, signals }`, holding only things the Core legitimately owns. Rejected too, because it is a second way to obtain things the entry point can already pass, and a handler's dependencies are better declared in its factory than supplied ambiently.

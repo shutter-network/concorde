@@ -1,5 +1,14 @@
 # The agent reaches the Gateway over HTTP, not through tools
 
+> **Superseded in one detail** by
+> [ADR-0032](./0032-components-wire-themselves-at-construction.md). *"Switching one off is
+> simply not registering that plugin"* no longer describes the mechanism: a Component
+> registers its own routes on whichever servers it is given, so switching an endpoint
+> group off is **omitting the server option**. Still an omission rather than a flag, and
+> the route plugins stay exported for an Operator who wants their own prefix or Fastify
+> encapsulation. Everything else here stands, including that endpoint groups are
+> disableable per deployment at all.
+
 The agent has no direct access to the Gateway store. Everything it needs from the Gateway comes from an HTTP API that the Gateway exposes to it: sending Messages, creating and reading Users, and reading prior Signals.
 
 We considered injecting a fixed set of runtime tools instead. Rejected: the API is the contract, and expressing it as tools would bind it to one runtime's tool mechanism. How a given Agent Runtime reaches the API — `curl` from `pi`'s bash tool, a custom tool via the `pi` SDK, MCP under OpenClaw — is a concern of the runtime adapter.

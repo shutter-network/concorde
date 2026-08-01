@@ -17,15 +17,22 @@ Whoever runs and configures a Shared Agent. Trusted by every Party: holds the ag
 _Avoid_: builder, host, admin, provider, owner, integrator, implementor
 
 **Gateway**:
-The trusted application that mediates every interaction into and out of a Shared Agent. One deployable, and an assembly rather than a thing: a Core that runs Signals, Producers that face outward, and the Public and Agent servers they contribute routes to. Nothing represents the Gateway itself — the Operator's entry point *is* the assembly. See [ADR-0020](./docs/adr/0020-producers-are-trusted-components-of-the-gateway.md) and [ADR-0021](./docs/adr/0021-the-framework-has-no-plugin-system.md).
+The trusted application that mediates every interaction into and out of a Shared Agent. One deployable, and an assembly rather than a thing: a Signal Worker that runs Signals, Producers that face outward, and the Public and Agent servers they register routes on. Nothing represents the Gateway itself, and the Operator's entry point *is* the assembly. See [ADR-0020](./docs/adr/0020-producers-are-trusted-components-of-the-gateway.md) and [ADR-0031](./docs/adr/0031-parts-that-run-are-components.md).
 _Avoid_: proxy, broker, shield, warden, sidecar
 
-**Core**:
-The part of the Gateway that owns the Signal queue, Signal Handler dispatch, Run execution, and the Agent server routes for Signals and Runs. Holds no identity and knows nothing about messaging.
-_Avoid_: engine, kernel, runner
+**Part**:
+Anything the Gateway is assembled from, whether or not it runs. The general word, and the superset: every Component is a Part, and most Parts are not Components.
+
+**Component**:
+A Part with a lifecycle: a `name`, a `start` and a `stop`, ordered by the Operator's entry point. Only Parts that run are Components, which today means the Db, the Signal Worker and the two servers. Not a plugin contract: nothing declares dependencies, routes or tables to the framework. See [ADR-0031](./docs/adr/0031-parts-that-run-are-components.md) and [ADR-0032](./docs/adr/0032-components-wire-themselves-at-construction.md).
+_Avoid_: service, plugin, module, extension
+
+**Signal Worker**:
+The Component that owns the Signal queue, Signal Handler dispatch, Run execution, and the Agent server routes for Signals and Runs. Holds no identity and knows nothing about messaging. One Signal at a time, globally, which is what "worker" is there to say. Formerly the **Core**, the name every ADR up to [ADR-0030](./docs/adr/0030-passwords-are-traded-for-bearer-tokens.md) uses. See [ADR-0012](./docs/adr/0012-the-gateway-is-a-serial-signal-worker.md).
+_Avoid_: core, engine, kernel, runner, signal processor, prompt worker
 
 **Producer**:
-Anything inside the Gateway that emits Signals into the Core's queue. A **role**, not a kind of thing: the Messenger and the Scheduler are Producers, and so is a loop the Operator writes. Privileged — whatever it writes into a payload the Core takes as fact.
+Anything inside the Gateway that emits Signals into the Signal Worker's queue. A **role**, not a kind of thing: the Messenger and the Scheduler are Producers, and so is a loop the Operator writes. Privileged, in that whatever it writes into a payload the Signal Worker takes as fact.
 _Avoid_: source, ingress, adapter, connector
 
 **Public server**:
@@ -33,19 +40,19 @@ The HTTP server exposed outside the Gateway. Named for its exposure rather than 
 _Avoid_: user server, external API, frontend
 
 **Agent server**:
-The HTTP server only the Agent Runtime reaches, carrying the Core's Signal and Run routes plus whatever Producers expose to the agent. A mediation point, not a security boundary against the agent. See [ADR-0010](./docs/adr/0010-the-agent-reaches-the-gateway-over-http.md).
+The HTTP server only the Agent Runtime reaches, carrying the Signal Worker's Signal and Run routes plus whatever Producers expose to the agent. A mediation point, not a security boundary against the agent. See [ADR-0010](./docs/adr/0010-the-agent-reaches-the-gateway-over-http.md).
 _Avoid_: internal API, private server, control plane
 
-**Store**:
-The Gateway's own persistent state — Signals, Runs, Users, and whatever else each part keeps. The agent cannot touch it directly, only through the Agent server. Contrast the Workspace, which the agent reads and writes as files.
-_Avoid_: database, persistence layer, repository
+**Db**:
+The Component every other Part reaches PostgreSQL through: the pool, the schema-typed handle each Part queries on, transactions, `LISTEN` registrations, and migrations. The agent cannot touch it directly, only through the Agent server. Contrast the Workspace, which the agent reads and writes as files. Formerly the **Store**, which named the persistent state rather than the client, and persistent state has no lifecycle to start and stop. See [ADR-0022](./docs/adr/0022-the-store-is-postgresql-through-drizzle.md).
+_Avoid_: store, datastore, persistence layer, repository
 
 **Messenger**:
 The Producer that owns messaging — accepting Users' submissions, holding Outboxes, and any higher-level messaging concepts a deployment needs. Owns neither Users nor their authentication: it is constructed with the User Directory and reads an already-authenticated User off the request. See [ADR-0029](./docs/adr/0029-users-are-a-part-of-their-own.md).
 _Avoid_: message server, chat server, inbox service
 
 **User Directory**:
-The part that owns Users and their credentials — management on the Agent server, authentication on the Public server. Not a Producer: it emits no Signals and holds no reference to the Core. See [ADR-0029](./docs/adr/0029-users-are-a-part-of-their-own.md) and [ADR-0030](./docs/adr/0030-passwords-are-traded-for-bearer-tokens.md).
+The part that owns Users and their credentials — management on the Agent server, authentication on the Public server. Not a Producer: it emits no Signals and holds no reference to the Signal Worker. Not a Component either, having nothing to start or stop. See [ADR-0029](./docs/adr/0029-users-are-a-part-of-their-own.md) and [ADR-0030](./docs/adr/0030-passwords-are-traded-for-bearer-tokens.md).
 _Avoid_: auth service, identity provider, IdP, user store, account system, user module
 
 **Scheduler**:
@@ -57,7 +64,7 @@ The interchangeable agent implementation at the centre of the architecture. `pi`
 _Avoid_: engine, backend, model, LLM
 
 **Runtime Adapter**:
-The part that drives one kind of Agent Runtime on the Core's behalf. Its contract is narrow: start a Run against a Session with a Prompt, collect the output, report completion or failure. It does not carry the agent's own configuration at all — what the Agent Runtime reads on disk is the Operator's to place where it will look — and holds only what it puts on a command line. See [ADR-0016](./docs/adr/0016-agent-configuration-is-opaque-to-the-framework.md) and [ADR-0025](./docs/adr/0025-the-pi-adapter-spawns-one-confined-process-per-run.md).
+The Part that drives one kind of Agent Runtime on the Signal Worker's behalf. Its contract is narrow: start a Run against a Session with a Prompt, collect the output, report completion or failure. It does not carry the agent's own configuration at all — what the Agent Runtime reads on disk is the Operator's to place where it will look — and holds only what it puts on a command line. See [ADR-0016](./docs/adr/0016-agent-configuration-is-opaque-to-the-framework.md) and [ADR-0025](./docs/adr/0025-the-pi-adapter-spawns-one-confined-process-per-run.md).
 _Avoid_: driver, plugin, connector, backend
 
 **Mount Table**:
@@ -70,7 +77,7 @@ OpenClaw's own central process, which its own documentation calls "the Gateway".
 ## Signals and Runs
 
 **Signal**:
-Something arriving from outside that may cause the agent to act. Emitted by a Producer, carrying a `kind` and an arbitrary JSON payload. Immutable but for its processing state.
+Something arriving from outside that may cause the agent to act. Emitted by a Producer, carrying a `kind` and an arbitrary JSON payload. Immutable but for its processing state. A process signal is always written as `SIGTERM` or `SIGINT` here, never as an unqualified "signal": unqualified Signal always means ours, so nothing of ours is ever named `onSignal`.
 _Avoid_: trigger, event, request, stimulus
 
 **Signal Handler**:
@@ -93,12 +100,12 @@ One execution of the agent: a single Prompt, in one Session, producing whatever 
 _Avoid_: turn, job, invocation, task
 
 **Workspace**:
-The files and data that Signal Handlers and the agent share, as opposed to the Store, which the agent cannot touch directly. Global to a Shared Agent, not per Session.
+The files and data that Signal Handlers and the agent share, as opposed to the Db, which the agent cannot touch directly. Global to a Shared Agent, not per Session.
 _Avoid_: scratch, working directory, shared state
 
 ## Identity
 
-Owned by the User Directory — not the core, and not the Messenger.
+Owned by the User Directory, not the Signal Worker and not the Messenger.
 
 **User**:
 An entity that authenticates against the User Directory, and may submit Messages and hold an Outbox. Named by an opaque Gateway-issued id, never by email or any other scheme. Nothing removes one. See [ADR-0014](./docs/adr/0014-users-are-opaque-ids-and-authentication-is-pluggable.md) and [ADR-0029](./docs/adr/0029-users-are-a-part-of-their-own.md).
@@ -114,7 +121,7 @@ _Avoid_: session, JWT, API key, cookie
 
 ## Messaging
 
-Owned by the Messenger, not the core.
+Owned by the Messenger, not the Signal Worker.
 
 **Message**:
 Something exchanged between the agent and exactly one User, in one direction or the other. Carries an arbitrary JSON payload. **Outbound** means agent to User; **inbound** means User to agent. Never involves two Users, and never a group. See [ADR-0007](./docs/adr/0007-messages-carry-arbitrary-json-payloads.md).
@@ -137,11 +144,10 @@ _Avoid_: protected, sandboxed, isolated, secured
 ## Rejected
 
 **Component**:
-Rejected as a framework concept. There is no common contract that the Messenger, the Scheduler, an Authenticator and an Operator's own code all satisfy, and inventing one bought nothing that direct interfaces did not. Each part of the Gateway is customised on its own terms; HTTP routes extend through Fastify's plugin system rather than ours. "Part" is the informal word when one is needed. See [ADR-0021](./docs/adr/0021-the-framework-has-no-plugin-system.md).
-_Also rejected as synonyms_: service, plugin, module, extension
+No longer rejected, and kept here because it was. [ADR-0031](./docs/adr/0031-parts-that-run-are-components.md) reinstates it with a far narrower meaning than the one rejected: a lifecycle, and nothing else. What was rejected still is, and it is precisely why the interface is two methods and not a plugin system: there is no common contract that the Messenger, the Scheduler, an Authenticator and an Operator's own code all satisfy. "Service", "plugin", "module" and "extension" stay rejected as synonyms.
 
 **Authenticator**:
-Rejected, having been named in [ADR-0014](./docs/adr/0014-users-are-opaque-ids-and-authentication-is-pluggable.md) as the replaceable part that verifies a credential. Its own motivation was keeping authentication out of the core, and that is satisfied by the User Directory being a separate part: a deployment replaces our authentication by not registering its Public server plugin. Verification was also the wrong seam — an implementation of one still has to answer where the credential lives, so the useful extension point is **token issuance**, which is a public method and not an interface. See [ADR-0030](./docs/adr/0030-passwords-are-traded-for-bearer-tokens.md).
+Rejected, having been named in [ADR-0014](./docs/adr/0014-users-are-opaque-ids-and-authentication-is-pluggable.md) as the replaceable part that verifies a credential. Its own motivation was keeping authentication out of the core, and that is satisfied by the User Directory being a separate part: a deployment replaces our authentication by constructing the User Directory with no Public server ([ADR-0032](./docs/adr/0032-components-wire-themselves-at-construction.md)). Verification was also the wrong seam — an implementation of one still has to answer where the credential lives, so the useful extension point is **token issuance**, which is a public method and not an interface. See [ADR-0030](./docs/adr/0030-passwords-are-traded-for-bearer-tokens.md).
 _Also rejected as synonyms_: identity provider, auth provider, IdP, credential verifier
 
 **Submission**:
@@ -149,7 +155,7 @@ Rejected as a separate entity for what a User sends in. It is an **inbound Messa
 _Also rejected as synonyms_: request, input, utterance, post
 
 **Chat**:
-Rejected as a *core* concept: it presumes free-text back-and-forth, is meaningless for a scheduled Signal, and overlaps both Session and Outbox. If the Messenger needs one, the term is **Conversation**, and it lives there.
+Rejected as a *framework* concept: it presumes free-text back-and-forth, is meaningless for a scheduled Signal, and overlaps both Session and Outbox. If the Messenger needs one, the term is **Conversation**, and it lives there.
 
 **Mandate**:
 Named the agreed statement of what a Shared Agent is for. Real as a reason the framework exists, but with no operational role once agent configuration is opaque, and not needed to explain the framework either. See [ADR-0016](./docs/adr/0016-agent-configuration-is-opaque-to-the-framework.md).

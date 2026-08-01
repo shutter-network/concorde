@@ -1,5 +1,20 @@
 # The Store is PostgreSQL, accessed through Drizzle
 
+> **Renamed and superseded in one detail.** The Store is now the **Db**: `openDb`,
+> `db.handle`, `db.tx`, `db.listen`, `db.migrate`, and `db.stop` where `store.close` was.
+> The handle type this ADR's mechanism returns is `Handle<TSchema>`, since `Db` now names
+> the component. See [`CONTEXT.md`](../../CONTEXT.md) and
+> [ADR-0031](./0031-parts-that-run-are-components.md).
+>
+> [ADR-0032](./0032-components-wire-themselves-at-construction.md) changes how a
+> descriptor reaches `migrate`. It is registered rather than passed: a Component calls
+> `db.registerMigrations(...)` when it is constructed, an Operator with their own tables
+> does the same, and `db.migrate()` takes no arguments and applies everything registered.
+> The Db then verifies each registered schema at start and refuses to start behind one.
+> Everything this ADR decides is unaffected: PostgreSQL only, per-part schemas, per-part
+> tracking tables mandatory for the reason given below, and `pg` staying out of the public
+> API.
+
 The Store is PostgreSQL and nothing else. Schemas and queries are written with `drizzle-orm`'s `pg-core`, the whole surface is asynchronous, and there is no storage abstraction, no repository layer, and no second dialect.
 
 This reverses the initial intent, which was SQLite in a file. The reversal is not about scale — [ADR-0012](./0012-the-gateway-is-a-serial-signal-worker.md)'s serial worker means a single node is the design, and a SQLite file would have carried the load indefinitely. It is about a correctness trap. **Every SQLite driver for Node is synchronous, and Drizzle's transaction API is silently unsafe with them.** An `async` callback passed to `db.transaction()` typechecks with no complaint, and then: under `better-sqlite3` it throws `Transaction function cannot return a promise` *after* the callback body has already run outside any transaction, so writes land non-atomically while the caller reasonably concludes nothing happened; under `node:sqlite` it is accepted, no transaction is ever opened, and `tx.rollback()` does nothing — verified by successfully running `BEGIN` from inside the callback. A single `await` anywhere in the callback triggers it. Avoiding that means enforcing "never `await` inside a transaction" as a convention across our code *and* every Operator's, where the penalty for breaking it is silent data loss that no test reliably catches.

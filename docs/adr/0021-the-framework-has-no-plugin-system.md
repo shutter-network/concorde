@@ -1,5 +1,47 @@
 # The framework has no plugin system
 
+> **Superseded in part** by [ADR-0031](./0031-parts-that-run-are-components.md) and
+> [ADR-0032](./0032-components-wire-themselves-at-construction.md), including this ADR's
+> title. Seven claims below no longer hold. The rest do, and so does the argument that
+> produced them: the eleven seams have nothing in common, which is exactly why the
+> interface that now exists is two methods rather than a plugin contract.
+>
+> 1. *"no lifecycle protocol that parts of the Gateway implement in common"*. There is
+>    one. A **Component** is a `name`, a `start` and a `stop`, and only parts that run
+>    are Components: today the Db, the Signal Worker and the two servers (ADR-0031).
+> 2. *"Startup and shutdown ordering belong to the Operator, since nothing owns the set
+>    of parts."* Something owns the set now. The Operator writes the start order as a
+>    list; reverse-order stop and the unwind of a failed start are the framework's
+>    (ADR-0031).
+> 3. *"the Core takes its Signal Handlers when it starts"*. The Signal Worker takes them
+>    at construction, which makes one with no Handlers unconstructable rather than merely
+>    unstartable. The allowance in
+>    [ADR-0024](./0024-signal-handlers-receive-only-the-signal.md) that a Handler may
+>    close over the Core goes with it (ADR-0031).
+> 4. *"Each part exports an inert migration descriptor and the entry point applies them in
+>    one explicit step."* Components register their descriptor with the Db when they are
+>    constructed, and `db.migrate()` takes no arguments. The descriptors stay exported, so
+>    a pre-deploy migration job still constructs nothing (ADR-0032).
+> 5. *"constructing a part against an unmigrated schema is representable, and surfaces as
+>    a Postgres `relation does not exist` on the first request that touches it."* The Db
+>    verifies every registered schema at start and refuses to start behind one (ADR-0032).
+> 6. *"'Component' is retired as a term."* It is a term again, with the narrow meaning in
+>    ADR-0031. "Service", "plugin", "module" and "extension" stay rejected, and "part"
+>    stays the informal word for anything in the Gateway, most of which are not
+>    Components.
+> 7. *"[ADR-0010](./0010-the-agent-reaches-the-gateway-over-http.md)'s endpoint groups can
+>    be switched off per deployment ... is just not registering that plugin."* A Component
+>    registers its own routes on the servers it is given, so switching a group off is
+>    omitting the server option. Still an omission rather than a flag, and the route
+>    plugins stay exported for anyone who wants their own prefix or encapsulation
+>    (ADR-0032).
+>
+> Unaffected: the Gateway still has no object, Fastify is still public API, the Store's
+> schema is still not public API while obtaining a handle is, Producer is still a role
+> rather than a type, and the framework still ships no POSIX signal handling. What this
+> ADR calls the Store and the Core are now the Db and the Signal Worker; see
+> [`CONTEXT.md`](../../CONTEXT.md).
+
 The framework exposes ordinary constructed objects and named interfaces. It defines no plugin contract, no registry, and no lifecycle protocol that parts of the Gateway implement in common. An Operator customises each part on that part's own terms.
 
 We started from the opposite assumption: a single `Component` abstraction that the Messenger, the Scheduler, and anything an Operator wrote would all satisfy — owning tables, mounting routes on either server, running background work, emitting Signals, with `start`/`stop`. We also considered splitting it in two, a `Producer` that may emit Signals and a routes-only `Service`, so that a routes-only extension could not forge a Signal's attribution.
