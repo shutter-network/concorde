@@ -1,5 +1,29 @@
 # Parts that run are Components
 
+> **Superseded in part** by [ADR-0037](./0037-the-gateway-is-a-record-of-components.md),
+> including this ADR's title. Four claims below no longer hold; the body underneath them,
+> which is what `start`, `stop` and the unwind actually do, is unchanged.
+>
+> 1. *"only parts that run have one"*, and the enumeration that follows it. The User
+>    Directory and the HTTP Messenger are Components with `start` and `stop` that do
+>    nothing, because the record is the Gateway's directory of its own parts and membership
+>    is what gives a part its position before it needs one.
+> 2. *"Both methods are required"* still holds, but not for the reason given here. The
+>    ceremony argument is withdrawn, since membership is now the point. They are required
+>    because `name` is gone too, and a Component with both methods optional would be the
+>    empty type.
+> 3. *"A **Component** is a `name`, a `start` and a `stop`"*. There is no `name`. A record
+>    key is unique by construction and is the Operator's own word, and `serverComponent`
+>    loses its first argument.
+> 4. *"`components(list)` returns a plain `{ start, stop }` and is not itself a
+>    Component."* `createGateway(record)` replaces it and returns a `Gateway`, which is one.
+>
+> The start order for the *default* set is also no longer the Operator's, and it is not the
+> one this ADR arrives at: see
+> [ADR-0038](./0038-the-default-assembly-is-a-constructor.md), which puts the drain first
+> and takes back the inversion described below. Ordering an Operator's own record is still
+> theirs, and still unchecked.
+
 The framework defines one interface. A **Component** is a `name`, a `start()` and a
 `stop()`. `components(list)` starts them in the order given, stops them in reverse, and
 unwinds a failed start. Nothing else is added: no registry, no dependency declarations,

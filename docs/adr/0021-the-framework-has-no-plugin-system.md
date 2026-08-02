@@ -36,7 +36,15 @@
 >    plugins stay exported for anyone who wants their own prefix or encapsulation
 >    (ADR-0032).
 >
-> Unaffected: the Gateway still has no object, Fastify is still public API, the Store's
+> Also superseded, by [ADR-0037](./0037-the-gateway-is-a-record-of-components.md) and
+> [ADR-0038](./0038-the-default-assembly-is-a-constructor.md): *"The Gateway has no
+> object"* and *"the Operator's entry point is that assembly"*. `createGateway(record)`
+> returns one, and `createGatewayWithDefaults` constructs the six parts a deployment using
+> ours would otherwise construct by hand. The argument in this ADR's *body* is untouched,
+> and is the reason the returned object is a record with two methods rather than a plugin
+> host: it resolves nothing, injects nothing, and cannot say what depends on what.
+>
+> Unaffected: Fastify is still public API, the Store's
 > schema is still not public API while obtaining a handle is, Producer is still a role
 > rather than a type, and the framework still ships no POSIX signal handling. What this
 > ADR calls the Store and the Core are now the Db and the Signal Worker; see
