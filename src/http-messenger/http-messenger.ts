@@ -32,8 +32,13 @@
  *    dodging a collision with the Operator's own Producer, and they are the party who can
  *    rename: their Handler map is a literal in their own entry point.
  *
- * Four things about the surface are consequences worth meeting here:
+ * Five things about the surface are consequences worth meeting here:
  *
+ *  - **Writes take the caller's transaction and reads do not** (ADR-0023), which is the split
+ *    the User Directory established and this part follows: `send` is transactional on the
+ *    caller's behalf, and `history` goes through the part's own handle. The consequence is
+ *    worth stating where it will be met: a caller **cannot read its own uncommitted write**,
+ *    so `send` returns the record and a read-back has no reason to exist.
  *  - **Construction order is load-bearing.** `db.migrate()` applies descriptors in
  *    registration order, which is construction order, and this part's first migration
  *    references `saf_users.users` — so the User Directory must be constructed **before**
@@ -58,10 +63,16 @@
  */
 
 import type { FastifyInstance } from "fastify";
-import type { Db } from "../db/index.ts";
+import type { Db, Handle } from "../db/index.ts";
+import { limitSchema } from "../route-conventions.ts";
 import type { SignalWorker } from "../signals/worker.ts";
 import type { Users } from "../users/users.ts";
-import { insertMessage, type MessageWindow, selectMessages } from "./messages.ts";
+import {
+  insertMessage,
+  type MessageRecord,
+  type MessageWindow,
+  selectMessages,
+} from "./messages.ts";
 import { httpMessagesMigrations } from "./migrations.ts";
 import { agentMessageRoutes, publicMessageRoutes } from "./routes.ts";
 import { httpMessagesTables } from "./schema.ts";
@@ -134,37 +145,113 @@ export type HttpMessengerOptions = {
 };
 
 /**
- * What the constructor answers with: **nothing yet**.
+ * What the constructor answers with: the two things trusted code needs and no request can
+ * express.
  *
- * Not an oversight and not a placeholder. Every capability this part has so far is a route,
- * and no route plugin is exported (ADR-0034), so there is nothing for an Operator to hold
- * — the object exists because the wiring has to happen somewhere and a constructor is
- * where every other part does it. The two trusted-code methods, `send` and `history`, are
- * what will make holding it worthwhile.
+ * Every other capability this part has is a route it registered itself, and no route plugin
+ * is exported (ADR-0034), so what is on this object is what a Signal Handler and an
+ * Operator's entry point, both of them trusted code (ADR-0009, ADR-0020), cannot reach over
+ * HTTP: a send that joins a transaction of their own, and a read of any User's whole log that
+ * needs neither a Token nor a route.
+ *
+ * The two together are what make the **post phase** useful for messaging: a Handler told
+ * that a Run failed can tell the person who asked (ADR-0017), which is otherwise something
+ * nothing in the framework can do, since a failed Run emits nothing and the person is left
+ * waiting.
+ *
+ * Neither has a route, and there is deliberately **no method that writes an inbound
+ * Message**. `direction` is decided by which server a request arrived on, and trusted code
+ * does not get a path that puts words in a User's mouth (ADR-0034). A Handler migrating a
+ * history in, or a fixture that needs one, uses the Operator's own SQL.
  */
-export type HttpMessenger = Record<string, never>;
+export type HttpMessenger = {
+  /**
+   * Sends a Message to one User from inside the caller's transaction, and answers with the
+   * record.
+   *
+   * Takes the caller's transaction rather than finding one (ADR-0023), so that answering
+   * somebody and recording in the Operator's own tables why cannot come apart: a rollback
+   * loses both. Ambient enlistment is not available: a transaction started on one handle
+   * takes its own connection from the pool, so a second handle's writes would survive its
+   * rollback with nothing reported.
+   *
+   * The schema parameter is widened rather than named, because the transaction carries the
+   * schema of the handle it was started on and that handle belongs to the caller.
+   *
+   * Always **outbound**, with no parameter for the direction, because there is no direction
+   * to choose: this is the same insert the agent's own route reaches, and the inbound half of
+   * this part has no method at all.
+   *
+   * Which is also where an unknown User comes from: the foreign key refusing (ADR-0036),
+   * surfaced here as a **thrown** error rather than as the route's 404, since there is no
+   * reply to write it into. A consequence of the savepoint that insert needs anyway: the
+   * refusal does not abort the caller's transaction, so a caller that catches may carry on
+   * and commit what else it was doing.
+   */
+  send<TSchema extends Record<string, unknown>>(
+    tx: Handle<TSchema>,
+    userId: string,
+    text: string,
+  ): Promise<MessageRecord>;
+
+  /**
+   * One User's Messages, both directions, ascending by `seq`, so that a Handler can build a
+   * Prompt from more than the one Message that woke it.
+   *
+   * Any User's, and not only the one a Run is serving: the whole log is readable from trusted
+   * code for the reason the agent's own read is unscoped (ADR-0011).
+   *
+   * A read, so it takes no transaction and therefore **cannot see the caller's own
+   * uncommitted write**. `send` returns the record for exactly that reason, the way `create`
+   * does in the User Directory.
+   *
+   * It answers from the same query both reads answer from, with the same cursor options: no
+   * cursor is the newest `limit`, `before` the newest `limit` strictly below it, `after`
+   * everything above it, and every one of them ascending (ADR-0035). The routes refuse both
+   * cursors at once as the client bug it is there, and nothing refuses it here: what comes
+   * back is the stretch between them, newest end first if it does not fit. Recorded rather
+   * than guarded, and not a spelling to reach for.
+   *
+   * `limit` defaults to the number the routes default to and is **not** capped here: the cap
+   * on a route bounds a response body a stranger or the agent reads, which is not the case
+   * trusted code asking for a thousand Messages is in.
+   *
+   * The options are the shared window with every field made optional, and not a shape of this
+   * method's own: one list of cursor names in this part, not two that could drift.
+   */
+  history(userId: string, options?: Partial<MessageWindow>): Promise<MessageRecord[]>;
+};
 
 export function createHttpMessenger(options: HttpMessengerOptions): HttpMessenger {
   // The part's own handle, typed to its own tables. `pg` never leaves the Db (ADR-0022).
   const handle = options.db.handle(httpMessagesTables);
 
-  // One read, named once and given to both plugins. A User's own read and the agent's are
-  // the same query asked about a User named by a Token or by a query parameter, and the two
-  // surfaces sharing this one function is what keeps them from becoming a parallel pair that
-  // can disagree about what `before` means (ADR-0035).
-  const history = (userId: string, window: MessageWindow) => selectMessages(handle, userId, window);
+  // One read, named once and given to both plugins and to the method below. A User's own
+  // read, the agent's and a Handler's are the same query asked about a User named by a Token,
+  // a query parameter or an argument, and the three sharing this one function is what keeps
+  // them from becoming a parallel set that can disagree about what `before` means (ADR-0035).
+  const readHistory = (userId: string, window: MessageWindow) =>
+    selectMessages(handle, userId, window);
+
+  // And one outbound write, likewise named once: this part writes that direction here and
+  // nowhere else. Widened over the handle it is given, so the agent's route reaches it with
+  // the part's own, which is all a request needs (one insert is atomic by itself, and a
+  // request that sends a Message has nothing else to keep it with), while a Handler reaches
+  // the same statement with a transaction of its own (ADR-0023). The savepoint inside the
+  // insert is what makes both of them safe.
+  const sendOutbound = <TSchema extends Record<string, unknown>>(
+    on: Handle<TSchema>,
+    userId: string,
+    text: string,
+  ) => insertMessage(on, { userId, direction: "outbound", text });
 
   const agentRoutes = agentMessageRoutes({
-    history,
-    // Outbound, because this is the Agent server's plugin, and on the part's own handle:
-    // one insert is atomic by itself and a request that sends a Message has nothing else
-    // to keep it with. The savepoint inside is what makes the same insert safe for the
-    // caller's transaction that the inbound path and a Handler will reach it through.
-    send: (userId, text) => insertMessage(handle, { userId, direction: "outbound", text }),
+    history: readHistory,
+    send: (userId, text) => sendOutbound(handle, userId, text),
   });
   const publicRoutes = publicMessageRoutes(
     {
-      history,
+      history: readHistory,
       // One transaction with two statements in it and nothing else: the Message, then the
       // Signal that wakes the worker for it. The wakeup is `NOTIFY` inside this
       // transaction, so it and the row commit together or neither happens — a Producer
@@ -193,5 +280,14 @@ export function createHttpMessenger(options: HttpMessengerOptions): HttpMessenge
   options.agentServer.fastify.register(agentRoutes, { prefix: messagesPrefix });
   options.publicServer.fastify.register(publicRoutes, { prefix: messagesPrefix });
 
-  return {};
+  return {
+    // The one outbound write above, on the **caller's** handle rather than the part's own,
+    // which is the whole of what taking the transaction first means (ADR-0023).
+    send: sendOutbound,
+    // The one read above, reached with arguments instead of a query string: the routes' own
+    // default `limit` and none of their cap, since a cap bounds a response body and there is
+    // no response here.
+    history: (userId, asked) =>
+      readHistory(userId, { ...asked, limit: asked?.limit ?? limitSchema.default }),
+  };
 }

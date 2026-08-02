@@ -12,6 +12,14 @@
  * not a Component and goes in no start order: there is nothing here to start and nothing to
  * release.
  *
+ * What it answers with is worth holding, and it is two methods: `send`, which writes a
+ * Message to one User from inside the caller's own transaction, and `history`, which reads
+ * any User's log. Those are what trusted code has that no request does: a write that commits
+ * with the Operator's own (ADR-0023), and a read a Signal Handler can build a Prompt from.
+ * There is deliberately no method that writes an **inbound** Message: `direction` is decided
+ * by the server a request arrived on, and nothing here puts words in a User's mouth
+ * (ADR-0034).
+ *
  * **Construct it after the User Directory.** `messages.user_id` is a foreign key onto
  * `saf_users.users.id`, `db.migrate()` applies descriptors in registration order, and
  * registration order is construction order — so the other way round fails with PostgreSQL's

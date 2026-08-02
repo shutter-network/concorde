@@ -623,9 +623,9 @@ try {
       "const messengerOptions: HttpMessengerOptions = {",
       "  db, users, worker, publicServer: publicComponent, agentServer: agentComponent,",
       "};",
-      "// Annotated, and the object is empty on purpose: every capability this part has so far",
-      "// is a route it registered itself, and no route plugin is exported — the departure from",
-      "// ADR-0032's door-out pattern that ADR-0034 states.",
+      "// Annotated, and what it carries is two methods and no route plugin: the departure from",
+      "// ADR-0032's door-out pattern that ADR-0034 states. `send` and `history` are used in",
+      "// `useEverything` below, which is where the transaction split is visible.",
       "export const messenger: HttpMessenger = createHttpMessenger(messengerOptions);",
       "export const messagesDescriptor: MigrationDescriptor = httpMessagesMigrations;",
       "// The one shape every messaging surface answers with — the POST response, both reads,",
@@ -794,7 +794,19 @@ try {
       "  await db.tx((tx: Transaction) => users.revoke(tx, admitted.id));",
       '  shipped.info({ expiresAt: minted.expiresAt, of: minted.user.id }, "a Token was issued");',
       '  shipped.info({ admitted, sameUser, everyone: everyone.length }, "a User exists");',
-      '  shipped.info({ said, messenger }, "a Message has one shape on every surface");',
+      "  // The HTTP Messenger's two methods, which are what trusted code has and no request",
+      "  // does. `send` takes the consumer's own transaction, so telling somebody something and",
+      "  // recording why commit together or not at all (ADR-0023); `history` takes none, and",
+      "  // therefore cannot see that write until it commits, which is why `send` answers with",
+      "  // the record rather than leaving a read-back to be attempted. The `limit` below is past",
+      "  // the routes' cap on purpose: that cap bounds a response body, and a Handler building a",
+      "  // Prompt from a long history is not one.",
+      "  const answered: MessageRecord = await db.tx((tx: Transaction) =>",
+      '    messenger.send(tx, admitted.id, "the deploy finished"),',
+      "  );",
+      "  const whole: MessageRecord[] = await messenger.history(admitted.id, { limit: 1000 });",
+      "  const since: MessageRecord[] = await messenger.history(admitted.id, { after: answered.seq });",
+      '  shipped.info({ said, answered, log: whole.length, since: since.length }, "a Message has one shape on every surface");',
       "  // One call that starts every part that has something to run, and one that stops",
       "  // them in the reverse of the order given. The order is the consumer's own: the Db",
       "  // is first so that it stops last, the Agent server is before the Signal Worker",
@@ -879,8 +891,9 @@ try {
         // types satisfied by the objects the two calls above returned. Nothing connects and
         // nothing listens — what this proves is that the subpath resolves at runtime, that
         // construction is free of side effects beyond the two registrations it makes, and
-        // that the object it answers with is **empty**, because every capability it has so
-        // far is a route it registered itself (ADR-0034).
+        // that the object it answers with carries the **two** trusted-code methods and no
+        // route plugin, because every other capability it has is a route it registered
+        // itself (ADR-0034).
         "const messengerWorker = createSignalWorker({ db: scratch, runtime: { run: async () => ({ ok: true }) }, handlers: {} });",
         "const messenger = createHttpMessenger({ db: scratch, users: directory, worker: messengerWorker, publicServer: { fastify: Fastify() }, agentServer: { fastify: Fastify() } });",
         "const encoder = new TextEncoder();",
@@ -895,7 +908,7 @@ try {
         // because the module that used to hold one is gone from the package, and the
         // composed command line names no file for the agent to read either — the
         // Operator's `AGENTS.md` above is a mount and `pi` discovers it (ADR-0025).
-        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), resolvedMounts.containerArguments()[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersMigrations.schema, String(Object.keys(directory).sort()), httpMessagesMigrations.schema, String(Object.keys(messenger).length), messageReceivedKind];",
+        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), resolvedMounts.containerArguments()[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersMigrations.schema, String(Object.keys(directory).sort()), httpMessagesMigrations.schema, String(Object.keys(messenger).sort()), messageReceivedKind];",
         "process.stdout.write(built.join(':'));",
       ].join("\n"),
     ],
@@ -903,8 +916,8 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword:saf_http_messages:0:message.received",
-    "all four subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Directory should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying nothing, because every capability it has so far is a route it registered itself",
+    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword:saf_http_messages:history,send:message.received",
+    "all four subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Directory should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself",
   );
 
   step("applying a shipped migration folder from inside the installed package");
