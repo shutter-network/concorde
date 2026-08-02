@@ -7,11 +7,13 @@
  * Directory's own login route, because a Token minted any other way would be testing a
  * shortcut this surface does not have.
  *
- * Every Message here is **outbound**, sent the way the agent sends one, because nothing yet
- * writes an inbound one — the User's own `POST` and the trusted-code `send` are later
- * tickets. What is already observable is that the read names no direction at all: there is
- * no `direction` parameter to filter with, and asking for one is refused, so the log this
- * answers with is the whole log whatever wrote it (ADR-0035).
+ * Both directions are here, each written the way it arrives: the agent's send on the Agent
+ * server, and the User's own post on the Public one. That is what makes the read's
+ * direction-blindness observable rather than merely stated — one log, numbered across both,
+ * with no `direction` parameter to filter by and a refusal for anyone who asks for one
+ * (ADR-0035). The Signal Worker constructed below is never started, so the Signal a post
+ * emits sits `pending` and nothing downstream of it happens: what a submission wakes is
+ * `posted-messages.test.ts`'s subject, and this file's is the read.
  *
  * The paging tests are the ones that matter. A log longer than one page is walked backwards
  * to its start and then forwards to its end, and the two walks — which do not share a
@@ -75,8 +77,9 @@ before(async () => {
   agentServer = serverComponent("agent server", Fastify(), nowhere);
   publicServer = serverComponent("public server", Fastify(), nowhere);
 
-  // Required of the construction and never started: nothing on this surface emits, because
-  // a read is not an arrival.
+  // Required of the construction and never started: a post emits a Signal, and with nobody
+  // draining the queue it stays `pending` and wakes nothing — which is exactly what a read
+  // test wants, since the row is what it reads and the Run is not its subject.
   const worker = createSignalWorker({ db, runtime: fakeRuntime(), handlers: {} });
   // Both servers, so that `POST /users` and the login under `/auth` exist: a Token here is
   // bought with a password at the Directory's own route. Constructed before the Messenger,
@@ -126,6 +129,18 @@ async function sent(userId: string, text: string): Promise<MessageRecord> {
     payload: { userId, text },
   });
   assert.equal(response.statusCode, 201, `sending should have answered: ${response.body}`);
+  return response.json<MessageRecord>();
+}
+
+/** One Message from a User, posted the way their own client posts one. */
+async function posted(token: string, text: string): Promise<MessageRecord> {
+  const response = await publicServer.fastify.inject({
+    method: "POST",
+    url: prefix,
+    headers: { authorization: `Bearer ${token}` },
+    payload: { text },
+  });
+  assert.equal(response.statusCode, 201, `posting should have answered: ${response.body}`);
   return response.json<MessageRecord>();
 }
 
@@ -186,13 +201,24 @@ describe("a User reading their own Messages", () => {
     // Message log is one log in both directions, and this read filters neither (ADR-0035).
     assert.equal(first.direction, "outbound");
 
+    // And the other direction, written by the User themselves at the route beside this one.
+    // One log, numbered across both, in the order the two arrived: this is the read being
+    // direction-blind rather than only having no parameter to filter with.
+    const answered = await posted(client.token, "it finished, thanks");
+    assert.equal(answered.direction, "inbound");
+    assert.deepEqual(await log(client.token), [first, answered]);
+    assert.deepEqual(
+      (await log(client.token)).map((message) => message.direction),
+      ["outbound", "inbound"],
+    );
+
     for (const text of ["and the migration?", "and the rollback?"]) {
       await sent(client.id, text);
     }
-    assert.deepEqual(numbers(await log(client.token)), [1, 2, 3]);
+    assert.deepEqual(numbers(await log(client.token)), [1, 2, 3, 4]);
     // The newest two, still ascending: the descending selection behind a `limit` is
     // invisible from here, so a client concatenates pages without reversing anything.
-    assert.deepEqual(numbers(await log(client.token, "?limit=2")), [2, 3]);
+    assert.deepEqual(numbers(await log(client.token, "?limit=2")), [3, 4]);
 
     for (const window of ["?limit=0", "?limit=201", "?limit=none", "?after=-1", "?before=x"]) {
       assert.equal((await bearing(client.token, window)).statusCode, 400, window);

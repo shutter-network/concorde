@@ -21,6 +21,14 @@
  * have to construct the part that owns the tables — and, for this part, should not have to
  * construct a Signal Worker and a Runtime to get at them.
  *
+ * `messageReceivedKind` and `MessageRecord` are the two halves of this part's Signal
+ * contract, and they are here so that an Operator's Handler map is neither a string literal
+ * that can drift nor a payload shape re-declared by hand: a Handler for a submitted Message
+ * is `SignalHandler<MessageRecord>`, and `templateHandler<MessageRecord>` type-checks its
+ * template's data function against the same record every surface of this part answers with
+ * (ADR-0034). Registering no Handler for that `kind` is a 201 followed by a permanently
+ * failed Signal: the Message is stored and readable and the agent never sees it (ADR-0017).
+ *
  * **No route plugin is exported**, unlike every other part's, and no prefix is configurable.
  * That is this part's stated departure from ADR-0032's door-out pattern: an Operator who
  * needs these routes somewhere else wants a different messaging Producer (ADR-0034,
@@ -31,6 +39,6 @@
  */
 
 export type { HttpMessenger, HttpMessengerOptions } from "./http-messenger.ts";
-export { createHttpMessenger } from "./http-messenger.ts";
+export { createHttpMessenger, messageReceivedKind } from "./http-messenger.ts";
 export type { MessageRecord } from "./messages.ts";
 export { httpMessagesMigrations } from "./migrations.ts";

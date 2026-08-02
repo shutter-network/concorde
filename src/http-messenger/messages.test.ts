@@ -7,10 +7,11 @@
  * numbering is observed as the `seq` on a record, and the foreign key is observed as a 404.
  *
  * A real Signal Worker is constructed, because the part requires one, and it is never
- * started and never emits: the agent's send wakes nobody, and a User has nothing to post
- * yet. The Public server is constructed for the same reason, and what it answers from here —
- * a 401 on the read, a 404 on the post that does not exist — is the last test in this file.
- * What that 401 is made of is `own-messages.test.ts`'s subject, not this file's.
+ * started and never emits: the agent's send wakes nobody, and nothing in this file posts.
+ * The Public server is constructed for the same reason, and what it answers from here — the
+ * Directory's 401 on both of its routes, since this Db's own agent presents no Token — is the
+ * last test in this file. What that 401 is made of is `own-messages.test.ts`'s subject, and
+ * what a post does when one is presented is `posted-messages.test.ts`'s.
  *
  * Users are admitted over the User Directory's own Agent route, and each test admits its
  * own, so that a numbering assertion is about one User's log and not about what an earlier
@@ -277,17 +278,21 @@ describe("reading a User's Message log over the Agent server", () => {
 });
 
 describe("the Public server's plugin", () => {
-  it("needs a Token to read and has nothing to post to yet", async () => {
-    // The read exists and refuses this Db's own agent, because the Agent server's freedom
-    // from authentication is that server's and not the Messenger's: a Public route is
+  it("needs a Token to read and to post", async () => {
+    // Both routes exist and both refuse this Db's own agent, because the Agent server's
+    // freedom from authentication is that server's and not the Messenger's: a Public route is
     // behind the Directory's hook wherever the request came from. What that refusal is made
     // of is `own-messages.test.ts`'s subject.
     const read = await publicServer.fastify.inject({ method: "GET", url: prefix });
     assert.equal(read.statusCode, 401, read.body);
 
-    // And nothing a User can write to, so the surface says what is true: posting is a later
-    // ticket, and the wiring that will carry it is already the wiring above.
-    const posted = await publicServer.fastify.inject({ method: "POST", url: prefix });
-    assert.equal(posted.statusCode, 404, posted.body);
+    // A body this route would accept from a User, so the 401 is about the credential and not
+    // about the request: there is no way to write an inbound Message without being one.
+    const posted = await publicServer.fastify.inject({
+      method: "POST",
+      url: prefix,
+      payload: { text: "not from a User at all" },
+    });
+    assert.equal(posted.statusCode, 401, posted.body);
   });
 });

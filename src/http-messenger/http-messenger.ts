@@ -12,7 +12,7 @@
  * mechanism and delivery is polling (ADR-0035).
  *
  * It is the *HTTP* Messenger rather than *the* Messenger because it declines four freedoms
- * the framework offers, and three of them are visible right here (ADR-0034):
+ * the framework offers, and all four are visible right here (ADR-0034):
  *
  *  - **Both servers are required.** Neither half is a capability. Omitting a server on the
  *    User Directory switches one off and leaves a coherent object that does less; a
@@ -26,8 +26,13 @@
  *    against both, so an Operator who needs them elsewhere or behind a hook of their own
  *    wants a different messaging Producer, which ADR-0021 already says how to write.
  *  - **A Message is a `text` string**, with no `jsonb` and no payload convention.
+ *  - **The Signal `kind` is the constant `messageReceivedKind`**, below, and not a
+ *    construction option. Two HTTP Messengers in one Gateway are unconstructable anyway —
+ *    duplicate routes, one shared schema — so the only use for a configurable kind would be
+ *    dodging a collision with the Operator's own Producer, and they are the party who can
+ *    rename: their Handler map is a literal in their own entry point.
  *
- * Two things about the surface are consequences worth meeting here:
+ * Four things about the surface are consequences worth meeting here:
  *
  *  - **Construction order is load-bearing.** `db.migrate()` applies descriptors in
  *    registration order, which is construction order, and this part's first migration
@@ -39,6 +44,17 @@
  *    advertise a substitutability the foreign key has made false: this part needs *our*
  *    User Directory at the schema level, and the constructor is where that should be
  *    visible rather than at `migrate`.
+ *  - **A submitted Message and its Signal are one transaction**, and nothing else is in it.
+ *    PostgreSQL's `NOTIFY` is transactional, so the row and the wakeup become visible
+ *    together: a Signal from a transaction that rolled back wakes nobody, and a Message that
+ *    committed always has its Signal. That is the shape `src/signals/worker.ts` documents
+ *    `emit` as existing for (ADR-0023), and it is why the insert had to be savepoint-safe.
+ *  - **A `kind` with no Handler registered is a 201 followed by a permanently failed
+ *    Signal.** The Message is stored and readable, the agent never sees it, and the failure
+ *    is visible only on the Signal row (ADR-0017). Not guarded: for the Messenger to check
+ *    the Handler map it would have to reach into the Worker for something ADR-0024 removed,
+ *    and a Message being durable regardless of what happens downstream is the property worth
+ *    keeping.
  */
 
 import type { FastifyInstance } from "fastify";
@@ -58,6 +74,21 @@ import { httpMessagesTables } from "./schema.ts";
  * other deployment's (ADR-0034).
  */
 const messagesPrefix = "/messages";
+
+/**
+ * The `kind` of the Signal a submitted Message emits, and half of this part's Signal
+ * contract; the other half is that the payload **is** the `MessageRecord`, flat.
+ *
+ * Exported, so that a Handler map is not a string literal that can drift, and a constant
+ * rather than a construction option for the reason in this file's header (ADR-0034). A
+ * Handler is therefore written `SignalHandler<MessageRecord>` — or
+ * `templateHandler<MessageRecord>` — and its template's data function type-checks against
+ * the same record every other surface of this part answers with.
+ *
+ * A `kind` with no Handler registered fails the Signal permanently and stores the Message
+ * anyway, which is the consequence this part's header states and its tests pin (ADR-0017).
+ */
+export const messageReceivedKind = "message.received";
 
 export type HttpMessengerOptions = {
   readonly db: Db;
@@ -131,9 +162,25 @@ export function createHttpMessenger(options: HttpMessengerOptions): HttpMessenge
     // caller's transaction that the inbound path and a Handler will reach it through.
     send: (userId, text) => insertMessage(handle, { userId, direction: "outbound", text }),
   });
-  // The Directory's own hook, passed through and not wrapped: this part authenticates
-  // nobody, which is what `src/users/users.ts` promised it would do (ADR-0030).
-  const publicRoutes = publicMessageRoutes({ history }, options.users.requireUser);
+  const publicRoutes = publicMessageRoutes(
+    {
+      history,
+      // One transaction with two statements in it and nothing else: the Message, then the
+      // Signal that wakes the worker for it. The wakeup is `NOTIFY` inside this
+      // transaction, so it and the row commit together or neither happens — a Producer
+      // that nudged the worker after commit would have to remember to (ADR-0023). Inbound,
+      // because this is the Public server, and by the User the Token named.
+      submit: (userId, text) =>
+        options.db.tx(async (tx) => {
+          const message = await insertMessage(tx, { userId, direction: "inbound", text });
+          await options.worker.emit(tx, { kind: messageReceivedKind, payload: message });
+          return message;
+        }),
+    },
+    // The Directory's own hook, passed through and not wrapped: this part authenticates
+    // nobody, which is what `src/users/users.ts` promised it would do (ADR-0030).
+    options.users.requireUser,
+  );
 
   // The three acts of wiring, all of them here so that an Operator's entry point does none
   // of them (ADR-0032). Registering the descriptor is bookkeeping the Db does nothing with

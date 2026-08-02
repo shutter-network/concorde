@@ -16,10 +16,11 @@
  *
  * | Public server | Answers |
  * | --- | --- |
+ * | `POST /messages` | 201, the created inbound `MessageRecord`, and a Signal; or 401 |
  * | `GET /messages?after=&before=&limit=` | `{ messages: [...] }`, ascending by `seq`, or 401 |
  *
  * Nothing here authenticates anybody. The Agent server has no authentication at all
- * (ADR-0010), and the Public read takes the User Directory's `requireUser` as **one option
+ * (ADR-0010), and both Public routes take the User Directory's `requireUser` as **one option
  * on the route**, which is exactly what `src/users/users.ts` already promised: the User is
  * read off `request.safUser`, every refusal is the Directory's single 401, and this part
  * holds no Token, no header and no scheme of its own.
@@ -29,10 +30,11 @@
  * User and therefore cannot cursor an interleaved result: an unscoped read would need a
  * second paging mechanism inside the same route.
  *
- * The Public read has **no parameter naming a User at all**, which is how one User cannot
- * read another's log by any spelling of the request: there is nothing to guard, because
- * the id comes from a Token and from nowhere a client can write. `?user=` there is refused
- * as the unknown parameter it is.
+ * The Public routes have **no parameter naming a User at all**, which is how one User cannot
+ * read another's log or write into it by any spelling of the request: there is nothing to
+ * guard, because the id comes from a Token and from nowhere a client can write. `?user=` on
+ * the read is refused as the unknown parameter it is, and a `userId` in the body of a post
+ * reaches nothing.
  *
  * The capped limit, the envelope, the pattern-validated id, the refusal of an unknown query
  * parameter and the 404 body are the conventions in `route-conventions.ts` that every
@@ -72,6 +74,20 @@ export type MessageHistory = {
  */
 export type MessageOperations = MessageHistory & {
   send(userId: string, text: string): Promise<MessageRecord>;
+};
+
+/**
+ * What a User's own routes need of the part: the shared read, and a submission.
+ *
+ * `submit` is `send`'s counterpart and takes neither a `direction` nor a transaction, for
+ * the reasons `send` takes neither: inbound was decided by the server the request arrived
+ * on, and the transaction that carries the insert and the Signal it wakes the worker with is
+ * the part's own to open — a route has nothing else to put in it (ADR-0023). What it returns
+ * is the stored record, because that is what the 201 answers with and what the Signal
+ * payload already is.
+ */
+export type OwnMessageOperations = MessageHistory & {
+  submit(userId: string, text: string): Promise<MessageRecord>;
 };
 
 /**
@@ -119,6 +135,22 @@ const agentSendSchema = {
   type: "object",
   properties: { userId: idSchema, text: textSchema },
   required: ["userId", "text"],
+  additionalProperties: false,
+} as const;
+
+/**
+ * The body of a User's own `POST /`: what they said, and nothing else.
+ *
+ * There is **no `userId` here and nowhere for one to arrive**. The submitting User is the
+ * one their Token named, which is what makes the attribution in the Signal payload
+ * trustworthy — the Messenger writes it and the client never does. A client that posts one
+ * anyway has it dropped by `additionalProperties: false` and reaches nothing, so nobody can
+ * put words in another User's mouth.
+ */
+const submitSchema = {
+  type: "object",
+  properties: { text: textSchema },
+  required: ["text"],
   additionalProperties: false,
 } as const;
 
@@ -178,23 +210,46 @@ export function agentMessageRoutes(messageLog: MessageOperations): FastifyPlugin
 }
 
 /**
- * The Public server's Message routes: a User's own log, and nothing to write to it yet.
+ * The Public server's Message routes: a User's own log, and the one way anything gets into
+ * it from outside the Gateway.
  *
- * `presentedUser` is the User Directory's `requireUser`, taken as one option on the route
- * and not wrapped, extended or re-implemented. So an unauthenticated read is the
+ * `presentedUser` is the User Directory's `requireUser`, taken as one option on each route
+ * and not wrapped, extended or re-implemented. So an unauthenticated read or post is the
  * Directory's single 401 — a missing header, a header in another scheme, an unknown Token
  * and an expired one alike — and this part authenticates nobody (ADR-0030).
  *
- * The hook runs at `preHandler`, after validation, so a malformed window and an unknown
- * query parameter are both answered before a Token is looked at. That is the order
- * `GET /auth/me` already answers in, and it leaks nothing: a refusal names a parameter of
- * the route and never a User.
+ * The hook runs at `preHandler`, after validation, so a malformed window, an unknown query
+ * parameter and an empty `text` are all answered before a Token is looked at. That is the
+ * order `GET /auth/me` already answers in, and it leaks nothing: a refusal names a parameter
+ * or a field of the route and never a User.
  */
 export function publicMessageRoutes(
-  messageLog: MessageHistory,
+  messageLog: OwnMessageOperations,
   presentedUser: preHandlerAsyncHookHandler,
 ): FastifyPluginAsync {
   return async (fastify) => {
+    fastify.post<{ Body: { text: string } }>(
+      "/",
+      {
+        schema: { body: submitSchema },
+        preHandler: presentedUser,
+        preValidation: rejectUnknownQuery(),
+      },
+      // Inbound, because this is the Public server's plugin, and by the User the Token
+      // named: there is no field on this route for a client to put a User in, so nothing
+      // has to refuse one (ADR-0034). What `submit` does with it — one Message and one
+      // Signal in one transaction — is the constructor's, since a route holds no Db.
+      async (request, reply) => {
+        try {
+          return reply
+            .code(201)
+            .send(await messageLog.submit(request.safUser.id, request.body.text));
+        } catch (error) {
+          return refused(reply, error, request.safUser.id);
+        }
+      },
+    );
+
     fastify.get<{ Querystring: MessageWindow }>(
       "/",
       {
@@ -245,6 +300,10 @@ async function answerHistory(
  * The 404 describes the **referenced User** rather than the route, and it arrives from a
  * caught error class rather than from a branch, because the only enforcement is the foreign
  * key and there is deliberately no lookup in front of it (ADR-0036).
+ *
+ * Both surfaces refuse through this one function, and only the agent can meet the 404: a
+ * User's own post carries the id the Directory's hook just looked a User up by, and nothing
+ * removes a User (ADR-0029). The contention a busy log can lose is reachable from either.
  */
 function refused(reply: FastifyReply, error: unknown, userId: string): FastifyReply {
   if (error instanceof UnknownUserError) return notFound(reply, "User", userId);
