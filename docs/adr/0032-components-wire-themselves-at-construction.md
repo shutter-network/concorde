@@ -1,5 +1,26 @@
 # Components wire themselves at construction
 
+> **Amended by [ADR-0037](./0037-the-gateway-is-a-record-of-components.md) and
+> [ADR-0038](./0038-the-default-assembly-is-a-constructor.md).** The decision stands in
+> full: construction is still what wires, `db.migrate()` still applies whatever registered,
+> and `start` still verifies rather than applies — ADR-0038 reconsidered that last one and
+> kept it. Three *statements of fact* below have stopped being true of the repository, and
+> the third is the reason this banner exists at all.
+>
+> 1. *"the `Component` interface stays `name`, `start` and `stop`"*. There is no `name`
+>    (ADR-0037). What that sentence was actually claiming — no `routes` field, no
+>    `migrations` field, registration as a convention about constructor options rather than
+>    a contract — is unchanged.
+> 2. *"`example/gateway.ts`"*. The reference deployment's entry point is `example/main.ts`,
+>    and it no longer orders anything either: `createGatewayWithDefaults` constructs, wires
+>    and keys the six default Components, so what is left in the file is construct, migrate,
+>    start.
+> 3. *"`example/migrate.ts` exists so that migrations can run as a pre-deploy step"*. That
+>    file is deleted. The **capability** is untouched and so is the argument below for it,
+>    which is the reason each part's descriptor stays individually exported; what went is
+>    the worked example. `docs/quickstart.md`'s "Migrations as a separate step" is now the
+>    only place the script is written out (ADR-0038).
+
 A Component is given the parts it needs and wires itself to them. `createUsers({ db,
 tokenTtl, agentServer, publicServer })` registers its own routes on each server it is
 given and its own migration descriptor with the Db; `createSignalWorker({ db, runtime,

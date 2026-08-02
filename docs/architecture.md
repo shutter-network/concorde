@@ -12,9 +12,9 @@ The Gateway is one deployable application assembled from parts, several of which
 
 Not every part is a Producer. The **User Manager** owns Users, their Attributes and their Tokens, and contributes routes to both servers, but emits no Signals at all — a Signal per login would put a Run behind every authentication, and the worker is serial ([ADR-0029](./adr/0029-users-are-a-part-of-their-own.md)).
 
-Nothing represents the Gateway itself. There is no plugin system and no registry of parts: the Operator's entry point constructs the Db, the two servers, the Signal Worker, and whichever Producers the deployment wants, wiring them by passing them to each other ([ADR-0021](./adr/0021-the-framework-has-no-plugin-system.md)).
+A **Gateway** is a record of Components keyed by the Operator's own words, which starts in key order, stops in the reverse of it, and unwinds a failed start; what `createGateway(record)` returns is itself a Component ([ADR-0037](./adr/0037-the-gateway-is-a-record-of-components.md)). It is still not a plugin system and still not a registry: a **Component** is a `start` and a `stop` and nothing else — no name, no declared dependency and nothing resolved — because the parts already hold each other, having been passed to each other ([ADR-0021](./adr/0021-the-framework-has-no-plugin-system.md)). The rest of the wiring is construction too: a part handed a server registers its routes on that server, and a part with tables registers its migration descriptor with the Db, so `db.migrate()` takes no arguments and `db.start()` refuses to serve a schema the database is behind ([ADR-0032](./adr/0032-components-wire-themselves-at-construction.md)).
 
-The parts with something to run are **Components** — a `name`, a `start` and a `stop`, and nothing else ([ADR-0031](./adr/0031-parts-that-run-are-components.md)). The entry point writes them as a list, which starts in that order and stops in the reverse of it; a failed start unwinds what had started. Nothing declares a dependency and nothing is resolved, because the parts already hold each other. The rest of the wiring is construction too: a part handed a server registers its routes on that server, and a part with tables registers its migration descriptor with the Db, so `db.migrate()` takes no arguments and `db.start()` refuses to serve a schema the database is behind ([ADR-0032](./adr/0032-components-wire-themselves-at-construction.md)). An assembly is therefore four steps — construct, migrate, order, start — and only the order is the Operator's to reason about.
+`createGatewayWithDefaults` is the canonical path: one call builds the Db, both servers, the User Manager, the HTTP Messenger and the Signal Worker, wires them, and keys them in the one order that works — the Signal Worker's `stop` is the only stop that does work, so the drain runs first, while every server is still listening and the pool is still open ([ADR-0038](./adr/0038-the-default-assembly-is-a-constructor.md)). An assembly is therefore three steps — construct, migrate, start — and none of them is an ordering decision. An Operator who needs a different answer writes `createGateway` with a record of their own, which is a whole-or-nothing escape rather than a partial one.
 
 Users talk to the User Manager and the HTTP Messenger, and to nothing else. They never see a Signal. The Agent Implementation never reaches a User except through the Agent server. That, and nothing more, is what **Shielded** means.
 
@@ -43,24 +43,31 @@ flowchart LR
     AR <-->|files| WS
 ```
 
-## Parts
+## Components
 
-Three kinds of row below, and the distinction matters. **Components** are things the entry point constructs *and* puts in its start order, because they have something to run and something to release. **Objects** are constructed and merely held. **Seams** are things supplied *to* an object — a function or a narrow interface, with no lifecycle and no routes of its own.
+Every part a deployment is assembled from is a **Component**, and the six that exist are listed below in the order they start; they stop in the reverse of it. Two of them have nothing to run and say so with a `start` and a `stop` that do nothing, which is what buys them a key and a position before the day they need one ([ADR-0037](./adr/0037-the-gateway-is-a-record-of-components.md)). The Scheduler is the seventh row and is in no order at all, having no key and no code.
 
-| Part | Kind | Supplied by | Routes it contributes | Notes |
+| Component | Key | Supplied by | Routes it contributes | Notes |
 | --- | --- | --- | --- | --- |
-| Db | Component | framework | — | Signals, Runs, and whatever Producers keep. Owns the pool, the `LISTEN` connections and the migrations |
-| Public server | Component | Operator | — | the one surface exposed outside; a `Fastify()` the entry point constructs, wrapped in a `serverComponent` that holds its bind address until `start` |
-| Agent server | Component | Operator | — | reachable only by the Agent Implementation; a second `Fastify()`, bound loopback in the reference deployment |
-| Signal Worker | Component | framework | agent: read prior Signals, read Runs | owns the serial worker; one Run at a time, globally |
-| User Manager | object, replaceable | framework | public: log in, log out, change password, read self — agent: create and read Users | Users, their Attributes, and their Tokens. Not a Producer (ADR-0029), and not a Component: nothing to start, nothing to release (ADR-0031) |
-| HTTP Messenger | object | framework | public: post a Message, read own Message log; agent: send a Message, read any one User's Message log | one table, one `text` per Message, and a `seq` per User across both directions, so one cursored read serves polling and rendering (ADR-0035). Constructed with the Db, the User Manager, the Signal Worker and **both** servers, all required; owns no Users, and references theirs (ADR-0036). Not a Component: nothing to start, nothing to release |
-| Scheduler | object, replaceable | framework | agent: schedule future work | recurrence, cancellation, next-fire. **Deferred, not in v1** (ADR-0018) |
-| Runtime | seam | framework or Operator | — | narrow contract: Prompt + Session in, outcome out. The `pi` one spawns a confined process per Run (ADR-0025) |
-| Signal Handler | seam | Operator | — | arbitrary code; the primary extension point |
-| Workspace | directory | Operator | — | files shared by handlers and agent; global, not per Session |
+| Db | `db` | framework | — | Signals, Runs, and whatever Producers keep. Owns the pool, the `LISTEN` connections and the migrations. Starts first and stops last, because everything queries it and the drain queries it on the way down |
+| Agent server | `agentServer` | framework, address from the Operator | — | reachable only by the Agent Implementation; a bare `Fastify()` wrapped in a `serverComponent` that holds its bind address until `start`, bound loopback in the reference deployment |
+| Public server | `publicServer` | framework, address from the Operator | — | the one surface exposed outside; the second `Fastify()`, same wrapper. Grouped with the Agent server rather than stopped ahead of it, so both outlive the drain (ADR-0038) |
+| User Manager | `users` | framework, replaceable | public: log in, log out, change password, read self — agent: create and read Users | Users, their Attributes, and their Tokens. Not a Producer (ADR-0029). Nothing to start and nothing to release, so both methods do nothing |
+| HTTP Messenger | `messenger` | framework | public: post a Message, read own Message log; agent: send a Message, read any one User's Message log | one table, one `text` per Message, and a `seq` per User across both directions, so one cursored read serves polling and rendering (ADR-0035). Constructed with the Db, the User Manager, the Signal Worker and **both** servers, all required; owns no Users, and references theirs (ADR-0036). Both methods do nothing today, and its position already anticipates the day delivery stops being polling |
+| Signal Worker | `worker` | framework | agent: read prior Signals, read Runs | owns the serial worker; one Run at a time, globally. **The only `stop` that does work**: it waits for the Run in flight, which is why it is keyed last and therefore drains first (ADR-0038) |
+| Scheduler | — | framework, replaceable | agent: schedule future work | recurrence, cancellation, next-fire. **Deferred, not in v1** (ADR-0018) |
 
-Anything not in this table an Operator adds themselves: routes as Fastify plugins on either server, and background work as ordinary code that calls the Signal Worker's emit method. Work with a lifecycle of its own is a Component of the Operator's, written as two methods and a name and placed in the same list — nothing about the framework's own Components is privileged.
+An Operator's own Components go in the same record through `extend`, appended, so they start last and stop first — right for a Producer, wrong for a resource the drain uses, and the answer to the second is writing `createGateway` by hand (ADR-0038). Nothing about the framework's own is privileged.
+
+Three things in the design are **not** Components, and each is a different reason why.
+
+| Not a Component | Kind | Supplied by | Notes |
+| --- | --- | --- | --- |
+| Runtime | seam | framework or Operator | narrow contract: Prompt + Session in, outcome out. Held *by* the Signal Worker and never started, which is what lets a second Agent Implementation be one function (ADR-0025, ADR-0033) |
+| Signal Handler | seam | Operator | arbitrary code; the primary extension point. Receives only the Signal (ADR-0024) |
+| Workspace | directory | Operator | files shared by handlers and agent; global, not per Session. Not a value the framework holds at all — it is a Mount Table entry and a path |
+
+Anything else an Operator adds themselves: routes as Fastify plugins on either server, and background work as ordinary code that calls the Signal Worker's emit method.
 
 ## The loop
 
@@ -75,7 +82,7 @@ Anything not in this table an Operator adds themselves: routes as Fastify plugin
 
 ## Extension points
 
-**Signal Handler** and **Runtime** — both arbitrary code, neither restricted. The **User Manager**, **HTTP Messenger** and **Scheduler** are replaceable by construction: don't build ours, build yours. Two qualifications on that, both the HTTP Messenger's. It is replaceable only *wholesale*: it exports no route plugin and its prefixes are fixed, so an Operator who wants these routes elsewhere or behind a hook of their own writes their own messaging Producer instead ([ADR-0034](./adr/0034-the-http-messenger-is-an-opinionated-messenger.md)). And a deployment that does construct it is tied to *our* User Manager at the schema level rather than the type level, because its `user_id` is a foreign key onto `saf_users.users.id`: a replacement User Manager must own that table ([ADR-0036](./adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)). Replacing only *how a User proves who they are*, while keeping our Tokens, is narrower still: write your own login route and call the User Manager's token issuance. That is the seam, and there is no Authenticator interface ([ADR-0030](./adr/0030-passwords-are-traded-for-bearer-tokens.md)). Routes extend through Fastify's plugin system on either server, and further Producers are ordinary code calling the Signal Worker's emit method. There is deliberately no framework-level plugin contract ([ADR-0021](./adr/0021-the-framework-has-no-plugin-system.md)).
+**Signal Handler** and **Runtime** — both arbitrary code, neither restricted. The **User Manager**, **HTTP Messenger** and **Scheduler** are replaceable by construction: don't build ours, build yours. That means leaving `createGatewayWithDefaults`, which builds the first two and forbids their keys in what `extend` returns, precisely so that a substitution cannot be silent ([ADR-0038](./adr/0038-the-default-assembly-is-a-constructor.md)). Two further qualifications, both the HTTP Messenger's. It is replaceable only *wholesale*: it exports no route plugin and its prefixes are fixed, so an Operator who wants these routes elsewhere or behind a hook of their own writes their own messaging Producer instead ([ADR-0034](./adr/0034-the-http-messenger-is-an-opinionated-messenger.md)). And a deployment that does construct it is tied to *our* User Manager at the schema level rather than the type level, because its `user_id` is a foreign key onto `saf_users.users.id`: a replacement User Manager must own that table ([ADR-0036](./adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)). Replacing only *how a User proves who they are*, while keeping our Tokens, is narrower still: write your own login route and call the User Manager's token issuance. That is the seam, and there is no Authenticator interface ([ADR-0030](./adr/0030-passwords-are-traded-for-bearer-tokens.md)). Routes extend through Fastify's plugin system on either server, and further Producers are ordinary code calling the Signal Worker's emit method. There is deliberately no framework-level plugin contract ([ADR-0021](./adr/0021-the-framework-has-no-plugin-system.md)).
 
 ## What this framework provides
 
@@ -95,7 +102,7 @@ Each is a deliberate decision, not an omission:
 - **Isolation of any kind.** A deployment needing real isolation runs two Shared Agents.
 - **Protection against a bad Producer.** Producers are trusted by construction (ADR-0020).
 - **Availability under a hostile User.** With no timeouts and a serial worker, a User who steers the agent into an unbounded tool loop halts it for every Party until an Operator restarts (ADR-0017).
-- **Authentication on the Agent server.** There is none, and reaching the port is access — so keeping it unreachable is the deployment's job, through the bind address its entry point states when it constructs that server's Component (ADR-0004, ADR-0010).
+- **Authentication on the Agent server.** There is none, and reaching the port is access — so keeping it unreachable is the deployment's job, through the bind address its entry point states when it asks for that server (ADR-0004, ADR-0010).
 - **Any limit on password guessing.** The login route is unthrottled and no lockout exists. Rate limiting belongs to the deployment's edge, where it survives a second Gateway process; per-User lockout was refused because it hands an attacker a cheaper attack than it prevents (ADR-0030).
 - **Account recovery.** No email, no reset flow, no security questions. A forgotten password is trusted code setting a new one (ADR-0014, ADR-0030).
 - **Removal of a User.** Nothing deletes or deactivates one. Revoking their Tokens is the whole of it (ADR-0029).

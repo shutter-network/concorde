@@ -47,5 +47,5 @@ We considered **PGlite**, embedded Postgres compiled to WASM, which would have k
 - **Postgres is not abstracted and will not be swapped.** `pgSchema`, transactional DDL, and `LISTEN`/`NOTIFY` are used directly. Anyone reaching for a different engine is rewriting the Store, and that is the intended cost.
 - Migration hashes are recorded but **never verified**, so Drizzle gives no schema-drift detection. If we want that, we write it.
 
-- **Parts obtain a handle with `store.handle(schema)`**, which returns a typed `PgDatabase<PgQueryResultHKT, typeof schema>` over the shared pool. `pg` therefore stays internal rather than joining Fastify and Drizzle as public API.
+- **Components obtain a handle with `store.handle(schema)`**, which returns a typed `PgDatabase<PgQueryResultHKT, typeof schema>` over the shared pool. `pg` therefore stays internal rather than joining Fastify and Drizzle as public API.
 - **Operators may keep their own tables after all**, using exactly this mechanism: `store.handle(theirSchema)` plus their own migration descriptor passed to `store.migrate()`. This closes what was an open question here and softens [ADR-0021](./0021-the-framework-has-no-plugin-system.md)'s "Operators get no tables of their own" — the capability falls out of the design rather than being added to it, and needs no privileged access or special case.

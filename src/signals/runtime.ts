@@ -1,5 +1,5 @@
 /**
- * The Runtime seam: the Part that drives one kind of Agent Implementation on the
+ * The Runtime seam: the part that drives one kind of Agent Implementation on the
  * Signal Worker's behalf.
  *
  * Deliberately the narrowest interface in the framework, because it is the one

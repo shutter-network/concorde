@@ -136,6 +136,18 @@ Conventions the build depends on:
   listener)`, which keeps that connection inside the Db too. The override is on
   the whole tree but `src/db/**`, so a new directory is covered without being
   listed.
+- **Exactly one shipped module imports a *value* from `fastify`, and it is
+  `dist/default-gateway.js`.** It constructs the default assembly's two servers and
+  cannot do it any other way
+  ([ADR-0038](./docs/adr/0038-the-default-assembly-is-a-constructor.md)); everywhere
+  else names Fastify's types and never its runtime, which is what keeps
+  `serverComponent` structural and `fastify` an honest **peer** dependency.
+  `scripts/check-package.ts` compares the emitted files that import it against an
+  allowlist of that one name rather than against nothing, so a `FastifyListenOptions`
+  written without `import type` still fails the packaging check — and nothing else
+  would catch it, because the throwaway consumer installs Fastify and the import would
+  resolve. A second module that genuinely needs one is a new allowlist entry, and it
+  should arrive with the sentence saying why.
 - **Nothing in `src/container/` knows about an Agent Implementation.** That
   directory is the Agent Container, the Mount Table and the process handling —
   what `docker run` takes and what to do with it — and it is exported from the

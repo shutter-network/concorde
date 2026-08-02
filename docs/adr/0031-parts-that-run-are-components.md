@@ -1,7 +1,7 @@
 # Parts that run are Components
 
 > **Superseded in part** by [ADR-0037](./0037-the-gateway-is-a-record-of-components.md),
-> including this ADR's title. Four claims below no longer hold; the body underneath them,
+> including this ADR's title. Five claims below no longer hold; the body underneath them,
 > which is what `start`, `stop` and the unwind actually do, is unchanged.
 >
 > 1. *"only parts that run have one"*, and the enumeration that follows it. The User
@@ -17,6 +17,11 @@
 >    loses its first argument.
 > 4. *"`components(list)` returns a plain `{ start, stop }` and is not itself a
 >    Component."* `createGateway(record)` replaces it and returns a `Gateway`, which is one.
+> 5. *"'Part' survives as the informal word for anything in the Gateway, Component or not,
+>    and most parts are not Components."* The second half is false — every part of a
+>    deployment is one — and with it went the term: `CONTEXT.md` retired capital-`P`
+>    **Part** rather than keeping a word whose extension had shrunk to the Runtime.
+>    Lowercase "part" is ordinary English and the glossary stops policing it.
 >
 > The start order for the *default* set is also no longer the Operator's, and it is not the
 > one this ADR arrives at: see
