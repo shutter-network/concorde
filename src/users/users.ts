@@ -168,8 +168,8 @@ export type Users = {
    *
    * This is the whole integration surface, and it is deliberately a hook rather than
    * a plugin: it works on either server, inside any plugin of the Operator's, at any
-   * depth, with nothing of ours to register first. The Messenger will use exactly
-   * this and will authenticate nobody itself.
+   * depth, with nothing of ours to register first. The HTTP Messenger uses exactly
+   * this and authenticates nobody itself.
    *
    * A route that does not take it reads `request.safUser` as `undefined` despite the
    * type, because the augmentation cannot express "set only after this ran". Nothing
@@ -279,8 +279,8 @@ export type Users = {
    * deployment wanting OIDC — or a wallet signature, or a corporate header — writes its
    * own login route on the Public server, establishes identity however it likes, and
    * calls this. What comes back is an ordinary Token, and nothing downstream, including
-   * `requireUser`, the Operator's own routes and the Messenger when it exists, can tell
-   * how it was obtained. That is why there is no `verify(request)` interface to
+   * `requireUser`, the Operator's own routes and the HTTP Messenger, can tell how it was
+   * obtained. That is why there is no `verify(request)` interface to
    * implement: an implementation of one would still have had to answer "and where does
    * the credential live?", and would have reimplemented this storage to satisfy it.
    *

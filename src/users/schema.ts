@@ -31,8 +31,9 @@ export const usersSchema = pgSchema("saf_users");
  * may not exist.
  *
  * There is deliberately **no `deactivated_at`** and no delete — nothing removes a
- * User (ADR-0029) — and no `outbox_cursor`, which is Outbox state and belongs to the
- * Messenger (ADR-0015).
+ * User (ADR-0029) — and **no read position of any kind**, here or in the HTTP
+ * Messenger: a client's cursor is the largest `seq` it holds, so there is nothing to
+ * store (ADR-0035).
  */
 export const users = usersSchema.table("users", {
   id: uuid("id").primaryKey().defaultRandom(),

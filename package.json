@@ -23,6 +23,10 @@
       "types": "./dist/users/index.d.ts",
       "default": "./dist/users/index.js"
     },
+    "./http-messenger": {
+      "types": "./dist/http-messenger/index.d.ts",
+      "default": "./dist/http-messenger/index.js"
+    },
     "./messenger": null
   },
   "files": [

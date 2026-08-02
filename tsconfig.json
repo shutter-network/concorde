@@ -37,7 +37,8 @@
     "paths": {
       "shared-agent-framework": ["./src/index.ts"],
       "shared-agent-framework/pi": ["./src/pi/index.ts"],
-      "shared-agent-framework/users": ["./src/users/index.ts"]
+      "shared-agent-framework/users": ["./src/users/index.ts"],
+      "shared-agent-framework/http-messenger": ["./src/http-messenger/index.ts"]
     }
   },
   // The `drizzle.*.config.ts` files are included but not built: they are how the
@@ -45,5 +46,12 @@
   // the typecheck rather than the next person to run the generator. `example` is
   // included for the same reason — it is the reference deployment, and one that does
   // not compile is worse than none.
-  "include": ["src", "scripts", "drizzle.config.ts", "drizzle.users.config.ts", "example"]
+  "include": [
+    "src",
+    "scripts",
+    "drizzle.config.ts",
+    "drizzle.users.config.ts",
+    "drizzle.http-messages.config.ts",
+    "example"
+  ]
 }

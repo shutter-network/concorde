@@ -56,12 +56,13 @@ schema generation tool. Each part has a config file of its own and passes it wit
 `--config`, because `out` is one folder and each part owns its own:
 
 ```sh
-npm run migrations:generate                                        # the Signal Worker
-npm run migrations:generate -- --config drizzle.users.config.ts    # the User Directory
+npm run migrations:generate                                            # the Signal Worker
+npm run migrations:generate -- --config drizzle.users.config.ts        # the User Directory
+npm run migrations:generate -- --config drizzle.http-messages.config.ts # the HTTP Messenger
 ```
 
-Read the config before running either: a generated first migration needs one line
-removed by hand.
+Read the config before running any of them: a generated first migration needs one
+line removed by hand, and the HTTP Messenger's needs a constraint added.
 
 Conventions the build depends on:
 
@@ -96,6 +97,20 @@ Conventions the build depends on:
   generated `CREATE SCHEMA` line must be removed after `drizzle-kit` writes it.
   `src/signals/migrations.test.ts` scans every shipped folder and fails on one
   left in.
+- **`migrations/http-messages` carries a foreign key `drizzle-kit` cannot
+  generate.** `messages.user_id` references `saf_users.users.id`, and
+  `src/http-messenger/schema.ts` may not say so: a schema file importing another
+  part's makes the generator emit that part's `CREATE TABLE` into this folder
+  ([ADR-0036](./docs/adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)).
+  So the constraint is added by hand to the generated migration, and the snapshot
+  hand-edited to match, on **every** regeneration — which also means the next
+  generation proposes dropping it, and that statement is deleted by hand too. This
+  hand-edit is the more dangerous of the two: a forgotten `CREATE SCHEMA` removal
+  fails loudly on the first migration of a new deployment, while a forgotten
+  foreign key is silent — every test passes against a database that simply does
+  not enforce it. `src/http-messenger/migrations.test.ts` scans the shipped folder
+  for it, and also pins that applying this part before the User Directory fails
+  legibly, since registration order is construction order.
 - **Nothing outside `src/db/` imports `pg`.** Enforced by a Biome override:
   parts obtain a handle with `db.handle(schema)`, and the one thing that needs a
   connection of its own — a `LISTEN` registration — with `db.listen(channel,

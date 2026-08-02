@@ -372,12 +372,12 @@ function presentedToken(authorization: string | undefined): string | undefined {
  *
  * It is an ordinary Fastify hook and not a plugin, so an Operator adds it to a route
  * of their own — on either server, inside any plugin, at any depth — without
- * registering anything of ours, and the Messenger will do exactly the same.
+ * registering anything of ours, and the HTTP Messenger does exactly the same.
  *
  * The User is **assigned by a plain property write** rather than declared with
  * `decorateRequest`, and that is the design and not a shortcut (ADR-0030). A
  * decoration is scoped to the plugin instance that made it, so making it visible to a
- * *sibling* plugin — which is what an Operator's routes and the Messenger's both are —
+ * *sibling* plugin — which is what an Operator's routes and the HTTP Messenger's both are —
  * would mean marking our plugins `skip-override` through `fastify-plugin`, and a
  * `skip-override` plugin has the `prefix` passed to `register` **silently ignored**.
  * That was measured during design, not recalled. The price of assigning instead is one
