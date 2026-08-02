@@ -14,25 +14,32 @@
  * | `POST /messages` | 201, the created outbound `MessageRecord`; 404 if no such User |
  * | `GET /messages?user=&after=&before=&limit=` | `{ messages: [...] }`, ascending by `seq` |
  *
- * The Public server's plugin registers **no routes yet**: an honest empty plugin rather
- * than a placeholder route, so nothing answers on that surface until the tickets that give
- * a User something to post and something to read.
+ * | Public server | Answers |
+ * | --- | --- |
+ * | `GET /messages?after=&before=&limit=` | `{ messages: [...] }`, ascending by `seq`, or 401 |
  *
  * Nothing here authenticates anybody. The Agent server has no authentication at all
- * (ADR-0010), and the Public routes will take the User Directory's `requireUser` as one
- * option on the route, which is exactly what `src/users/users.ts` already promised.
+ * (ADR-0010), and the Public read takes the User Directory's `requireUser` as **one option
+ * on the route**, which is exactly what `src/users/users.ts` already promised: the User is
+ * read off `request.safUser`, every refusal is the Directory's single 401, and this part
+ * holds no Token, no header and no scheme of its own.
  *
  * `user` is **required** on the agent's read. Not for confidentiality — the agent may read
  * everything and an unscoped read leaks nothing new (ADR-0011) — but because `seq` is per
  * User and therefore cannot cursor an interleaved result: an unscoped read would need a
  * second paging mechanism inside the same route.
  *
+ * The Public read has **no parameter naming a User at all**, which is how one User cannot
+ * read another's log by any spelling of the request: there is nothing to guard, because
+ * the id comes from a Token and from nowhere a client can write. `?user=` there is refused
+ * as the unknown parameter it is.
+ *
  * The capped limit, the envelope, the pattern-validated id, the refusal of an unknown query
  * parameter and the 404 body are the conventions in `route-conventions.ts` that every
  * part's routes share; only the sentence a refusal ends with is this part's.
  */
 
-import type { FastifyPluginAsync, FastifyReply } from "fastify";
+import type { FastifyPluginAsync, FastifyReply, preHandlerAsyncHookHandler } from "fastify";
 import { idSchema, limitSchema, notFound, unknownQueryRefusal } from "../route-conventions.ts";
 import {
   type MessageRecord,
@@ -42,8 +49,20 @@ import {
 } from "./messages.ts";
 
 /**
- * What the routes need of the part, and no more: a send and a read, with no Db, no table
- * objects and no direction.
+ * The read **both** surfaces need of the part, and the reason it is a type of its own.
+ *
+ * A User's own read and the agent's are one implementation reached with the User id from a
+ * different place — a Token or a query parameter — and this is the seam that says so. Two
+ * of these would be two chances to disagree about what `before` means, which is a thing no
+ * client could report and no test of one surface would catch (ADR-0035).
+ */
+export type MessageHistory = {
+  history(userId: string, window: MessageWindow): Promise<MessageRecord[]>;
+};
+
+/**
+ * What the agent's routes need of the part, and no more: the shared read and a send, with
+ * no Db, no table objects and no direction.
  *
  * `send` takes no `direction`, because which one it is was decided by the server the
  * request arrived on — so there is nothing on this seam for a caller to set and nothing to
@@ -51,9 +70,8 @@ import {
  * (ADR-0023): a request that sends a Message has one statement in it, and a Handler
  * answering somebody has its own tables to keep that statement with.
  */
-export type MessageOperations = {
+export type MessageOperations = MessageHistory & {
   send(userId: string, text: string): Promise<MessageRecord>;
-  history(userId: string, window: MessageWindow): Promise<MessageRecord[]>;
 };
 
 /**
@@ -112,6 +130,20 @@ const agentHistorySchema = {
   additionalProperties: false,
 } as const;
 
+/**
+ * A User's own read: the window, and **nothing naming a User**.
+ *
+ * The agent's schema above is this one plus a required `user`, and the difference is the
+ * whole difference between the two surfaces. It is not spelled as an omission from a shared
+ * object, because what matters here is that there is no such property to omit: a request
+ * cannot ask about somebody else, so nothing has to refuse one that does.
+ */
+const ownHistorySchema = {
+  type: "object",
+  properties: { after: cursorSchema, before: cursorSchema, limit: limitSchema },
+  additionalProperties: false,
+} as const;
+
 /** The agent's Message routes, over the operations above. */
 export function agentMessageRoutes(messageLog: MessageOperations): FastifyPluginAsync {
   return async (fastify) => {
@@ -146,15 +178,35 @@ export function agentMessageRoutes(messageLog: MessageOperations): FastifyPlugin
 }
 
 /**
- * The Public server's Message routes: none yet.
+ * The Public server's Message routes: a User's own log, and nothing to write to it yet.
  *
- * An empty plugin and not a placeholder route, so the surface says what is true — nothing
- * a User can reach exists — and the wiring the constructor does is the wiring that will
- * carry the routes when they arrive, rather than something to add along with them.
+ * `presentedUser` is the User Directory's `requireUser`, taken as one option on the route
+ * and not wrapped, extended or re-implemented. So an unauthenticated read is the
+ * Directory's single 401 — a missing header, a header in another scheme, an unknown Token
+ * and an expired one alike — and this part authenticates nobody (ADR-0030).
+ *
+ * The hook runs at `preHandler`, after validation, so a malformed window and an unknown
+ * query parameter are both answered before a Token is looked at. That is the order
+ * `GET /auth/me` already answers in, and it leaks nothing: a refusal names a parameter of
+ * the route and never a User.
  */
-export function publicMessageRoutes(): FastifyPluginAsync {
-  return async () => {
-    return;
+export function publicMessageRoutes(
+  messageLog: MessageHistory,
+  presentedUser: preHandlerAsyncHookHandler,
+): FastifyPluginAsync {
+  return async (fastify) => {
+    fastify.get<{ Querystring: MessageWindow }>(
+      "/",
+      {
+        schema: { querystring: ownHistorySchema },
+        preHandler: presentedUser,
+        preValidation: rejectUnknownQuery("after", "before", "limit"),
+      },
+      // The whole difference from the agent's read is the User id: theirs comes from a
+      // query parameter, this one from the Token the hook above verified. There is no
+      // parameter here a client could put a User in, so nothing can read another's log.
+      async (request, reply) => answerHistory(reply, messageLog, request.safUser.id, request.query),
+    );
   };
 }
 
@@ -167,7 +219,7 @@ export function publicMessageRoutes(): FastifyPluginAsync {
  */
 async function answerHistory(
   reply: FastifyReply,
-  messageLog: MessageOperations,
+  messageLog: MessageHistory,
   userId: string,
   asked: MessageWindow,
 ): Promise<FastifyReply | { readonly messages: MessageRecord[] }> {

@@ -45,7 +45,7 @@ import type { FastifyInstance } from "fastify";
 import type { Db } from "../db/index.ts";
 import type { SignalWorker } from "../signals/worker.ts";
 import type { Users } from "../users/users.ts";
-import { insertMessage, selectMessages } from "./messages.ts";
+import { insertMessage, type MessageWindow, selectMessages } from "./messages.ts";
 import { httpMessagesMigrations } from "./migrations.ts";
 import { agentMessageRoutes, publicMessageRoutes } from "./routes.ts";
 import { httpMessagesTables } from "./schema.ts";
@@ -68,6 +68,10 @@ export type HttpMessengerOptions = {
    * `saf_users.users.id` (ADR-0036): this part needs our Directory at the schema level
    * rather than the type level, and a structural type would advertise a substitutability
    * that has stopped being true. Construct it before this.
+   *
+   * It is also where the Public routes' authentication comes from: `requireUser` is taken
+   * off this object and put on the route as one option, so this part holds no Token and no
+   * header of its own and every refusal is the Directory's single 401 (ADR-0030).
    */
   readonly users: Users;
   /**
@@ -113,15 +117,23 @@ export function createHttpMessenger(options: HttpMessengerOptions): HttpMessenge
   // The part's own handle, typed to its own tables. `pg` never leaves the Db (ADR-0022).
   const handle = options.db.handle(httpMessagesTables);
 
+  // One read, named once and given to both plugins. A User's own read and the agent's are
+  // the same query asked about a User named by a Token or by a query parameter, and the two
+  // surfaces sharing this one function is what keeps them from becoming a parallel pair that
+  // can disagree about what `before` means (ADR-0035).
+  const history = (userId: string, window: MessageWindow) => selectMessages(handle, userId, window);
+
   const agentRoutes = agentMessageRoutes({
+    history,
     // Outbound, because this is the Agent server's plugin, and on the part's own handle:
     // one insert is atomic by itself and a request that sends a Message has nothing else
     // to keep it with. The savepoint inside is what makes the same insert safe for the
     // caller's transaction that the inbound path and a Handler will reach it through.
     send: (userId, text) => insertMessage(handle, { userId, direction: "outbound", text }),
-    history: (userId, window) => selectMessages(handle, userId, window),
   });
-  const publicRoutes = publicMessageRoutes();
+  // The Directory's own hook, passed through and not wrapped: this part authenticates
+  // nobody, which is what `src/users/users.ts` promised it would do (ADR-0030).
+  const publicRoutes = publicMessageRoutes({ history }, options.users.requireUser);
 
   // The three acts of wiring, all of them here so that an Operator's entry point does none
   // of them (ADR-0032). Registering the descriptor is bookkeeping the Db does nothing with

@@ -8,8 +8,9 @@
  *
  * A real Signal Worker is constructed, because the part requires one, and it is never
  * started and never emits: the agent's send wakes nobody, and a User has nothing to post
- * yet. The Public server is constructed for the same reason and answers nothing, which is
- * the last test in this file.
+ * yet. The Public server is constructed for the same reason, and what it answers from here —
+ * a 401 on the read, a 404 on the post that does not exist — is the last test in this file.
+ * What that 401 is made of is `own-messages.test.ts`'s subject, not this file's.
  *
  * Users are admitted over the User Directory's own Agent route, and each test admits its
  * own, so that a numbering assertion is about one User's log and not about what an earlier
@@ -276,12 +277,17 @@ describe("reading a User's Message log over the Agent server", () => {
 });
 
 describe("the Public server's plugin", () => {
-  it("answers nothing at all yet", async () => {
-    // An honest empty plugin rather than a placeholder route: nothing a User can reach
-    // exists, and the wiring that will carry those routes is already the wiring above.
-    for (const method of ["GET", "POST"] as const) {
-      const response = await publicServer.fastify.inject({ method, url: prefix });
-      assert.equal(response.statusCode, 404, `${method} ${prefix} on the Public server`);
-    }
+  it("needs a Token to read and has nothing to post to yet", async () => {
+    // The read exists and refuses this Db's own agent, because the Agent server's freedom
+    // from authentication is that server's and not the Messenger's: a Public route is
+    // behind the Directory's hook wherever the request came from. What that refusal is made
+    // of is `own-messages.test.ts`'s subject.
+    const read = await publicServer.fastify.inject({ method: "GET", url: prefix });
+    assert.equal(read.statusCode, 401, read.body);
+
+    // And nothing a User can write to, so the surface says what is true: posting is a later
+    // ticket, and the wiring that will carry it is already the wiring above.
+    const posted = await publicServer.fastify.inject({ method: "POST", url: prefix });
+    assert.equal(posted.statusCode, 404, posted.body);
   });
 });
