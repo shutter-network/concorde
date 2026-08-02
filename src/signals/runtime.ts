@@ -23,17 +23,38 @@ import type { Prompt } from "./handlers.ts";
 export type RunOutcome = { readonly ok: true } | { readonly ok: false; readonly error: string };
 
 /**
+ * The Prompt as a Runtime receives it: the same Prompt a Handler wrote, with its
+ * Session **resolved**.
+ *
+ * Two types rather than one nullable type, because the `null` a Handler may write
+ * means "give me a fresh Session" and is a request rather than a value. The Signal
+ * Worker answers it — naming the Session after the Run it belongs to, before any
+ * Runtime sees it (ADR-0033) — so by the time a Prompt gets here the question has
+ * been settled once, by the one part that owns the Run row. A single nullable type
+ * would push the same `?? something` into every Runtime ever written, and each would
+ * invent a naming convention of its own.
+ */
+export type RunPrompt = Omit<Prompt, "session"> & {
+  /** The Session this Run happens in. Always a name; never a request for one. */
+  readonly session: string;
+};
+
+/**
  * Starts one Run and reports how it ended.
  *
- * `runId` is the Run's id, already recorded, so a Runtime can name it in its own
- * logs and artifacts. A Runtime that throws instead of returning a failure is
- * treated as a failed Run carrying the thrown message, so neither form can take
- * the worker down.
+ * One argument, and deliberately not the Run's id alongside it. The id used to be
+ * here so that a Runtime could turn it into a Session name for a Prompt asking for a
+ * fresh one; the Worker does that now, so nothing downstream of this seam has a use
+ * for a Run id, and an Agent Implementation that wanted to log one is answered by
+ * ADR-0012 instead (see the note in `src/container/agent-container.ts`).
+ *
+ * A Runtime that throws instead of returning a failure is treated as a failed Run
+ * carrying the thrown message, so neither form can take the worker down.
  *
  * There is no timeout and no cancellation, on this call or anywhere else
  * (ADR-0017): a Run that never returns halts the Gateway, and that hole is
  * accepted rather than papered over with a number the framework cannot know.
  */
 export type Runtime = {
-  run(prompt: Prompt, runId: string): Promise<RunOutcome>;
+  run(prompt: RunPrompt): Promise<RunOutcome>;
 };

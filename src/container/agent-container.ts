@@ -23,8 +23,7 @@
  */
 
 import { defaultLogger, type Logger } from "../logging.ts";
-import type { Prompt } from "../signals/handlers.ts";
-import type { RunOutcome, Runtime } from "../signals/runtime.ts";
+import type { RunOutcome, RunPrompt, Runtime } from "../signals/runtime.ts";
 import { type MountTable, resolveMountTable } from "./mount-table.ts";
 import { runContainer } from "./process.ts";
 
@@ -129,8 +128,11 @@ export type AgentContainerRuntimeSpec = {
    * so when it fails. A reader supplied once, at construction, cannot. It is called once
    * per Run and its result used for both the command line and the reader, so a `run`
    * that is not pure cannot be asked twice and disagree with itself.
+   *
+   * It is handed a `RunPrompt`, so the Session is a string and there is no fresh-Session
+   * case to handle: the Signal Worker settled that before the Runtime was called.
    */
-  run(prompt: Prompt): RunPlan;
+  run(prompt: RunPrompt): RunPlan;
 };
 
 /** One Run's command line, and what to feed it. */
@@ -162,7 +164,7 @@ export type ComposedCommand = {
  * line with no entry point in it and nothing able to notice (ADR-0033).
  */
 export type AgentContainerRuntime = Runtime & {
-  commandFor(prompt: Prompt): ComposedCommand;
+  commandFor(prompt: RunPrompt): ComposedCommand;
 };
 
 /**
@@ -190,11 +192,20 @@ export function createAgentContainerRuntime(
   return {
     commandFor: (prompt) => compose(spec.run(prompt)),
 
-    async run(prompt: Prompt): Promise<RunOutcome> {
+    async run(prompt: RunPrompt): Promise<RunOutcome> {
       // Asked once, and its answer used for both the command line and the reader.
       const plan = spec.run(prompt);
       const invocation = compose(plan);
 
+      // No Run id on this line or the one below it, and that is a decision rather than an
+      // oversight: the Run id is not at this seam at all any more (ADR-0033), and it does
+      // not need to be. The Signal Worker is **serial globally** — one Signal, one Run in
+      // flight, ever (ADR-0012) — and its own "Run started" and "Run finished" lines
+      // bracket these two, so the Run a container line belongs to is the one immediately
+      // above it and cannot be another. Putting the id back here means putting it back on
+      // the seam, and widening the narrowest interface in the framework to serve a log
+      // line; the Session is on the Worker's lines and in every failure message, and it
+      // is what a transcript is found by.
       log.debug(
         // `redactedArgs`, never `args`: this line exists so a mount or a network problem
         // can be diagnosed without the framework's source, and the command line carries

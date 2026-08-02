@@ -76,9 +76,12 @@ export type SignalRecord = {
  * A Run as the agent reads it.
  *
  * `signalId` is the Signal whose Handler produced this Prompt, and `session` is a
- * plain name rather than a reference to anything — `null` means the Prompt asked for
- * a fresh Session, whose generated name the Signal Worker never learns (ADR-0016). The
- * timings are ISO 8601 strings, or `null` for a Run that has not reached that point.
+ * plain name rather than a reference to anything (ADR-0016). Every Run the Worker
+ * records now has one, a fresh Session included, since the Worker names that one after
+ * the Run itself (ADR-0033); it stays `string | null` here because rows written before
+ * it did that are still readable, and the agent should meet the same `null` the column
+ * holds rather than a name invented for it. The timings are ISO 8601 strings, or `null`
+ * for a Run that has not reached that point.
  */
 export type RunRecord = {
   readonly id: string;

@@ -27,14 +27,13 @@
  * starts, serves, and fails its first Run permanently (ADR-0017, ADR-0033).
  */
 
-import { randomUUID } from "node:crypto";
 import {
   type AgentContainer,
   type AgentContainerRuntime,
   createAgentContainerRuntime,
   type RunPlan,
 } from "../container/index.ts";
-import type { Prompt } from "../signals/handlers.ts";
+import type { RunPrompt } from "../signals/runtime.ts";
 import { interpretPiOutput } from "./output.ts";
 
 /**
@@ -68,19 +67,19 @@ export const createPiRuntime = (container: AgentContainer): AgentContainerRuntim
  * argument starting with `-` as an unknown option, and both are ordinary Handlebars
  * output (ADR-0027). Piped stdin becomes the initial message with neither treatment
  * applied.
+ *
+ * Pure, and a total function of its Prompt: the Session is already a name by the time it
+ * gets here, because the Signal Worker resolved a Handler's request for a fresh one
+ * against the Run row it had just written (ADR-0033). There is nothing to generate and no
+ * naming convention of `pi`'s own — which is the point, since a second Agent
+ * Implementation would otherwise have had to invent one too.
  */
-export function piRun(prompt: Prompt): RunPlan {
+export function piRun(prompt: RunPrompt): RunPlan {
   if (prompt.text.trim() === "") {
     throw new Error(
       "the Prompt has no text, and the Agent Implementation drops an empty message rather than answering it, so the Run would settle having said nothing",
     );
   }
-
-  // A Prompt asking for a fresh Session is given a name rather than left unnamed, so the
-  // transcript survives for debugging (ADR-0025). Naming it is moving to the Signal
-  // Worker, which owns the Run row and can derive the name from it (ADR-0033); until it
-  // does, the name is generated here and cannot be traced back to a Run.
-  const session = prompt.session ?? `run_${randomUUID()}`;
 
   return {
     args: [
@@ -92,7 +91,7 @@ export function piRun(prompt: Prompt): RunPlan {
       // which is exactly the fresh-or-named semantics a Prompt asks for. The other
       // resolves only an *existing* Session and exits 1 otherwise (ADR-0006).
       "--session-id",
-      session,
+      prompt.session,
       // No `--model`, no `--provider`, no `--session-dir`, and no flag naming a file. The
       // first two are `defaultModel` and `defaultProvider` in a `settings.json` the
       // Operator mounts; the third is `pi`'s own to resolve, under the agent directory the
@@ -114,6 +113,6 @@ export function piRun(prompt: Prompt): RunPlan {
     // Closed over the Session, which is the whole reason the reader is produced per Run:
     // a failure says which Session it was, and that is what a Run's `error` column needs
     // to be worth reading (ADR-0033).
-    outcome: (stdout) => interpretPiOutput(stdout, session),
+    outcome: (stdout) => interpretPiOutput(stdout, prompt.session),
   };
 }

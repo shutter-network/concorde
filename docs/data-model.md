@@ -31,7 +31,7 @@ One Prompt executed in one Session.
 | --- | --- |
 | `id` | opaque |
 | `signal_id` | the Signal whose handler produced this Prompt |
-| `session` | a plain **name**, not a foreign key — Sessions live in the Agent Implementation (ADR-0016) |
+| `session` | a plain **name**, not a foreign key — Sessions live in the Agent Implementation (ADR-0016). A Handler asking for a fresh Session writes `null`, and the Signal Worker answers it with `run_<id>` before the Run starts, so every Run this version records names the Session it actually used ([ADR-0033](./adr/0033-an-agent-is-a-container-and-one-function.md)). The column stays nullable, and the Agent server still reports `string \| null`, because Runs recorded before that read back as they were written |
 | `prompt` | the text delivered to the agent |
 | `state` | `pending` \| `running` \| `done` \| `failed` |
 | `error` | nullable; the Runtime's failure message |

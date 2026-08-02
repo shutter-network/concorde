@@ -12,20 +12,20 @@
  * failure that matters most and the only place it is observable is here.
  */
 
-import type { Prompt } from "../signals/handlers.ts";
-import type { RunOutcome, Runtime } from "../signals/runtime.ts";
-
-export type RecordedRun = {
-  readonly prompt: Prompt;
-  readonly runId: string;
-};
+import type { RunOutcome, RunPrompt, Runtime } from "../signals/runtime.ts";
 
 /** What the adapter should do with one Prompt. Defaults to succeeding. */
-export type RuntimeScript = (prompt: Prompt, runId: string) => RunOutcome | Promise<RunOutcome>;
+export type RuntimeScript = (prompt: RunPrompt) => RunOutcome | Promise<RunOutcome>;
 
 export type FakeRuntime = Runtime & {
-  /** Every Run, in the order the worker started them. */
-  readonly recorded: readonly RecordedRun[];
+  /**
+   * Every Prompt handed to it, in the order the worker started them.
+   *
+   * The Prompts and nothing beside them, because a Prompt is now the whole of what
+   * the seam is given: the Run id left it, and a Run's Session — the one thing that
+   * used to need the id to be interesting — is on the Prompt itself (ADR-0033).
+   */
+  readonly recorded: readonly RunPrompt[];
   /** Whether two Runs were ever in flight at once. Always expected to be false. */
   readonly overlapped: boolean;
   /** The Prompt texts, in order — the usual assertion, spelled once. */
@@ -44,7 +44,7 @@ export type FakeRuntime = Runtime & {
 const holdMs = 5;
 
 export function fakeRuntime(script: RuntimeScript = () => ({ ok: true })): FakeRuntime {
-  const recorded: RecordedRun[] = [];
+  const recorded: RunPrompt[] = [];
   let inFlight = 0;
   let overlapped = false;
 
@@ -54,10 +54,10 @@ export function fakeRuntime(script: RuntimeScript = () => ({ ok: true })): FakeR
       return overlapped;
     },
     texts() {
-      return recorded.map((run) => run.prompt.text);
+      return recorded.map((prompt) => prompt.text);
     },
-    async run(prompt, runId) {
-      recorded.push({ prompt, runId });
+    async run(prompt) {
+      recorded.push(prompt);
       inFlight += 1;
       if (inFlight > 1) overlapped = true;
       try {
@@ -66,7 +66,7 @@ export function fakeRuntime(script: RuntimeScript = () => ({ ok: true })): FakeR
         // with it because the first happened to finish first.
         await new Promise((resume) => setTimeout(resume, holdMs));
         if (inFlight > 1) overlapped = true;
-        return await script(prompt, runId);
+        return await script(prompt);
       } finally {
         inFlight -= 1;
       }

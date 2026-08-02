@@ -7,12 +7,13 @@
  * is `src/container/agent-container.test.ts` and is deliberately not restated here: this
  * file is only the `pi`-shaped half, which is now most of what there is to say about `pi`.
  *
- * No Docker, no credentials, no network, no filesystem. `piRun` is a pure function of its
- * Prompt in every case but one — a Prompt asking for a fresh Session gets a generated
- * name, so two calls disagree — and the last case here is the one that reads that name
- * back out rather than predicting it. What none of this can prove is that the mounts
- * resolve, that the image declares the two things `pi` needs of it, or that a Session
- * resumes: nothing but a real container can, and that is `./container.test.ts`.
+ * No Docker, no credentials, no network, no filesystem. `piRun` is a **pure and total**
+ * function of its Prompt, with no case left over: the Session arrives already named,
+ * because the Signal Worker answered a Handler's request for a fresh one before any of
+ * this ran (ADR-0033), and that is asserted in `src/signals/worker.test.ts` where it
+ * happens. What none of this can prove is that the mounts resolve, that the image
+ * declares the two things `pi` needs of it, or that a Session resumes: nothing but a real
+ * container can, and that is `./container.test.ts`.
  *
  * Assertions are on the composed argv rather than on a rendered string, and several are
  * on flag *pairs*, because that is the property a mistake breaks: `pi` is not the process
@@ -23,7 +24,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { AgentContainer, ComposedCommand } from "../container/index.ts";
-import type { Prompt } from "../signals/handlers.ts";
+import type { RunPrompt } from "../signals/runtime.ts";
 import { createPiRuntime, piRun } from "./runtime.ts";
 
 /** The least container a `pi` deployment declares, plus what one really mounts. */
@@ -37,12 +38,12 @@ const minimal: AgentContainer = {
   },
 };
 
-const prompt: Prompt = { session: "user_42", text: "what happened?" };
+const prompt: RunPrompt = { session: "user_42", text: "what happened?" };
 
 /** The command line one Prompt composes, without starting anything. */
 function commandFor(
   container: Partial<AgentContainer> = {},
-  given: Prompt = prompt,
+  given: RunPrompt = prompt,
 ): ComposedCommand {
   return createPiRuntime({ ...minimal, ...container }).commandFor(given);
 }
@@ -243,18 +244,5 @@ describe("the outcome reader one Run gets", () => {
 
     assert.equal(outcome.ok, false);
     assert.match(outcome.ok ? "" : outcome.error, /^Session user_99 produced no output/);
-  });
-
-  it("names a generated Session where the Prompt asked for a fresh one", async () => {
-    // Not an ephemeral Session: the transcript survives for debugging (ADR-0025). The
-    // name is generated here only until the Signal Worker names it from the Run row,
-    // which is what makes it traceable back to one (ADR-0033).
-    const plan = piRun({ session: null, text: "hi" });
-    const named = plan.args[plan.args.indexOf("--session-id") + 1] ?? "";
-
-    assert.match(named, /^run_/);
-    const outcome = await plan.outcome(silence());
-    assert.equal(outcome.ok, false);
-    assert.ok((outcome.ok ? "" : outcome.error).startsWith(`Session ${named} `));
   });
 });

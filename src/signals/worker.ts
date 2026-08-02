@@ -36,7 +36,7 @@ import { defaultLogger, type Logger } from "../logging.ts";
 import type { Prompt, Signal, SignalHandlers } from "./handlers.ts";
 import { signalsMigrations } from "./migrations.ts";
 import { agentReadRoutes } from "./routes.ts";
-import type { RunOutcome, Runtime } from "./runtime.ts";
+import type { RunOutcome, RunPrompt, Runtime } from "./runtime.ts";
 import { runs, signals, workerTables } from "./schema.ts";
 
 /** What a Producer hands to `worker.emit`. */
@@ -338,8 +338,13 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
 
     // Ids are generated here rather than by the database so that each Run is
     // paired with the Prompt it came from without depending on the order a
-    // multi-row insert returns.
-    const queued = prompts.map((prompt) => ({ id: randomUUID(), prompt }));
+    // multi-row insert returns. Having the id in hand before the insert is also
+    // what lets the Session be named from it and written in the same row, rather
+    // than the row saying `null` and a second statement correcting it.
+    const queued = prompts.map((prompt) => {
+      const id = randomUUID();
+      return { id, prompt: promptForRun(id, prompt) };
+    });
     await handle.insert(runs).values(
       queued.map(({ id, prompt }) => ({
         id,
@@ -362,7 +367,7 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
       : `${failures.length} of ${queued.length} Runs failed, the first with: ${first}`;
   }
 
-  async function executeRun(signal: Signal, runId: string, prompt: Prompt): Promise<RunOutcome> {
+  async function executeRun(signal: Signal, runId: string, prompt: RunPrompt): Promise<RunOutcome> {
     log.info({ runId, signalId: signal.id, session: prompt.session }, "Run started");
     await handle
       .update(runs)
@@ -371,7 +376,7 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
 
     let outcome: RunOutcome;
     try {
-      outcome = await runtime.run(prompt, runId);
+      outcome = await runtime.run(prompt);
     } catch (error) {
       // An adapter that throws is a failed Run, not a dead worker.
       outcome = { ok: false, error: describe(error) };
@@ -580,6 +585,25 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
       await working;
     },
   };
+}
+
+/**
+ * The Prompt a Handler wrote, with its request for a fresh Session answered.
+ *
+ * `session: null` is a question, and this is the one place in the framework that
+ * answers it (ADR-0033). `run_<runId>` is not a transcription of any agent's grammar
+ * and nothing is checked against one — the framework holds no copy of what an Agent
+ * Implementation will accept, and generating a conservative name is not checking one
+ * (ADR-0025). What it buys is that the transcript of a fresh Session survives and can
+ * be traced back to the Run that made it, from the Run's own row.
+ *
+ * Here rather than in each Runtime because the Worker owns the Run row: it has the id
+ * before the row is written, so the name it derives goes into `runs.session` in the
+ * same statement, and `runs.session` stops being null for exactly the case where the
+ * name was worth having. A Runtime doing it could record nothing.
+ */
+function promptForRun(runId: string, prompt: Prompt): RunPrompt {
+  return { ...prompt, session: prompt.session ?? `run_${runId}` };
 }
 
 /** What goes in an `error` column: the message alone. The stack goes to the log. */

@@ -471,13 +471,10 @@ describe("the template Handler under the worker", () => {
       const second = await emit(worker, "prompt.render");
       assert.deepEqual(await settled(second), { state: "done", error: null });
 
-      assert.deepEqual(
-        runtime.recorded.map((run) => run.prompt),
-        [
-          { session: "user_42", text: "the first wording" },
-          { session: "user_42", text: "the second wording" },
-        ],
-      );
+      assert.deepEqual(runtime.recorded, [
+        { session: "user_42", text: "the first wording" },
+        { session: "user_42", text: "the second wording" },
+      ]);
     });
   });
 
@@ -522,7 +519,7 @@ describe("the template Handler under the worker", () => {
       assert.deepEqual(await settled(after), { state: "done", error: null });
       // No Run was ever started for a Signal whose Prompt could not be produced.
       assert.deepEqual(
-        runtime.recorded.map((run) => run.prompt.text),
+        runtime.recorded.map((prompt) => prompt.text),
         ["a Prompt that renders"],
       );
     });

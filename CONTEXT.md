@@ -93,7 +93,7 @@ Arbitrary code, authored by the Operator, that accepts Signals of one `kind` and
 _Avoid_: trigger, processor, adapter, hook, listener
 
 **Prompt**:
-What a Signal Handler produces from a Signal, and the only form in which anything from outside reaches the agent. A Signal may yield none, one, or many.
+What a Signal Handler produces from a Signal, and the only form in which anything from outside reaches the agent. A Signal may yield none, one, or many. It names the Session it goes to, or writes `null` to ask for a fresh one — and *that* form of it reaches the Handler seam only: the Signal Worker answers the request before calling a Runtime, so a Prompt at the Runtime seam always names a Session and is a type of its own (`RunPrompt`) rather than the same type re-checked. See [ADR-0033](./docs/adr/0033-an-agent-is-a-container-and-one-function.md).
 
 **Post phase**:
 The Signal Handler's second entry point, for cleanup. Runs once after all Runs arising from a Signal have finished, receives a flag saying whether one failed, and cannot produce Prompts. See [ADR-0017](./docs/adr/0017-failed-runs-are-not-retried.md).

@@ -325,12 +325,17 @@ describe("the worker", () => {
         assert.equal((await settled(id)).state, "done");
 
         const rows = await runsOf(id);
+        const fresh = rows[2];
+        assert.ok(fresh !== undefined, "the third Run should exist");
         assert.deepEqual(
           rows.map((row) => [row.session, row.prompt, row.state, row.error]),
           [
             ["user_1", "one", "done", null],
             ["user_2", "two", "done", null],
-            [null, "three, in a fresh Session", "done", null],
+            // Not `null`, which is what this column said for a fresh Session until the
+            // Worker started naming them: the one Prompt whose Session nobody chose
+            // still records the one it used (ADR-0033).
+            [`run_${fresh.id}`, "three, in a fresh Session", "done", null],
           ],
         );
         assert.ok(
@@ -548,7 +553,7 @@ describe("the worker", () => {
 
         assert.equal(row.state, "failed");
         assert.deepEqual(
-          runtime.recorded.map((run) => run.prompt.session),
+          runtime.recorded.map((prompt) => prompt.session),
           ["user_1", "user:2", "../escape"],
         );
         // The rejected name is on its own Run's row beside the Runtime's own words,
@@ -566,14 +571,22 @@ describe("the worker", () => {
     );
   });
 
-  it("hands the Runtime each Prompt with the id of the Run recorded for it", async () => {
-    const observed: { runId: string; prompt: string | undefined; state: string | undefined }[] = [];
-    // Reading the Run mid-flight is the one intermediate read in this file, and it
-    // is here because the id is only useful if it names a Run that already exists —
-    // this is what the agent sees over the Agent server while its Run is going.
-    const runtime = fakeRuntime(async (_prompt, runId) => {
-      const [row] = await db.handle({ runs }).select().from(runs).where(eq(runs.id, runId));
-      observed.push({ runId, prompt: row?.prompt, state: row?.state });
+  it("has each Run recorded and running by the time the Runtime is called", async () => {
+    const observed: { found: number; prompt: string | undefined; state: string | undefined }[] = [];
+    // Reading the Run mid-flight is the one intermediate read in this file, and it is
+    // here because the Prompt is only worth handing over if the Run behind it already
+    // exists — this is what the agent sees over the Agent server while its own Run is
+    // going. The Runtime used to be handed the Run's id to make this checkable; it takes
+    // one argument now (ADR-0033), so the lookup is by Session, and `found` is asserted
+    // rather than assumed: a Session name is unique here only because these two are, and
+    // taking the first of two matches would make this test pass by luck.
+    const runtime = fakeRuntime(async (prompt) => {
+      const found = await db
+        .handle({ runs })
+        .select()
+        .from(runs)
+        .where(eq(runs.session, prompt.session));
+      observed.push({ found: found.length, prompt: found[0]?.prompt, state: found[0]?.state });
       return { ok: true };
     });
 
@@ -581,8 +594,8 @@ describe("the worker", () => {
       {
         paired: {
           handle: () => [
-            { session: "user_1", text: "first" },
-            { session: "user_2", text: "second" },
+            { session: "paired_1", text: "first" },
+            { session: "paired_2", text: "second" },
           ],
         },
       },
@@ -591,25 +604,63 @@ describe("the worker", () => {
         const id = await emit(worker, "paired");
         await settled(id);
 
+        assert.deepEqual(observed, [
+          { found: 1, prompt: "first", state: "running" },
+          { found: 1, prompt: "second", state: "running" },
+        ]);
+        assert.deepEqual(
+          runtime.recorded.map((prompt) => [prompt.session, prompt.text]),
+          [
+            ["paired_1", "first"],
+            ["paired_2", "second"],
+          ],
+        );
+      },
+    );
+  });
+
+  it("names a fresh Session after the Run it belongs to, and hands the Runtime that name", async () => {
+    // The whole of what a Handler writing `session: null` now gets. The name is the
+    // framework's one convention rather than each Runtime's, and it is resolved here,
+    // where the Run row is: a Runtime that generated its own could name a Session the
+    // Run's row could not record, which is what `runs.session` said `null` for
+    // (ADR-0025, ADR-0033).
+    const runtime = fakeRuntime();
+    await withWorker(
+      {
+        unnamed: {
+          handle: () => [
+            { session: null, text: "a fresh Session" },
+            { session: null, text: "another, and not the same one" },
+            { session: "chosen", text: "a name the Handler wrote" },
+          ],
+        },
+      },
+      runtime,
+      async (worker) => {
+        const id = await emit(worker, "unnamed");
+        assert.equal((await settled(id)).state, "done");
+
         const rows = await runsOf(id);
+        // Every Run records the Session it used, and the two fresh ones are told apart
+        // by the Runs they belong to rather than by chance.
         assert.deepEqual(
-          observed.map((seen) => [seen.prompt, seen.state]),
-          [
-            ["first", "running"],
-            ["second", "running"],
-          ],
+          rows.map((row) => row.session),
+          [`run_${rows[0]?.id}`, `run_${rows[1]?.id}`, "chosen"],
         );
+        // And the Runtime was handed exactly what the row says, so an Operator reading
+        // the row is reading what the agent was actually given.
         assert.deepEqual(
-          observed.map((seen) => seen.runId).sort(),
-          rows.map((row) => row.id).sort(),
+          runtime.recorded.map((prompt) => prompt.session),
+          rows.map((row) => row.session),
         );
-        assert.deepEqual(
-          runtime.recorded.map((run) => [run.prompt.session, run.prompt.text]),
-          [
-            ["user_1", "first"],
-            ["user_2", "second"],
-          ],
-        );
+        // And the Session is the only thing resolving touched: all three Prompts ran, in
+        // the order the Handler returned them, carrying the text it wrote.
+        assert.deepEqual(runtime.texts(), [
+          "a fresh Session",
+          "another, and not the same one",
+          "a name the Handler wrote",
+        ]);
       },
     );
   });

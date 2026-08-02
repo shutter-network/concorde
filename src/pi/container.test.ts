@@ -111,16 +111,6 @@ const agentNote = "agent-note.txt";
  */
 const agentsFileName = "AGENTS.md";
 /**
- * A Run id of the shape the Signal Worker hands a Runtime.
- *
- * Only the two cases that drive the Runtime directly need one. They have no Signal
- * Worker because they have no need of one: what they are about is what the container
- * runtime does with a Mount Table, and a Signal on a queue would add a database and
- * prove nothing more.
- */
-const runId = "6f1a3c7e-0000-4000-8000-000000000001";
-
-/**
  * Where `pi` puts its transcripts, relative to the agent directory it was given.
  *
  * The framework does not know this and does not say it: no `--session-dir` is passed, so
@@ -169,10 +159,15 @@ type Rig = {
   transcripts(): Promise<string[]>;
   /** Emits a Signal and resolves when its Runs have finished. */
   ask(payload: Ask): Promise<string>;
-  /** Every Run recorded for a Signal. */
+  /**
+   * Every Run recorded for a Signal.
+   *
+   * The id comes back because a fresh Session is named after it, so it is what a test
+   * checks the name against rather than predicting one (ADR-0033).
+   */
   runsOf(
     signalId: string,
-  ): Promise<{ session: string | null; state: string; error: string | null }[]>;
+  ): Promise<{ id: string; session: string | null; state: string; error: string | null }[]>;
 };
 
 /** Where a test wants the two mounts pointed, given where they really are. */
@@ -413,7 +408,12 @@ async function withGateway(
     },
     async runsOf(signalId) {
       const rows = await handle.select().from(runs).where(eq(runs.signalId, signalId));
-      return rows.map((row) => ({ session: row.session, state: row.state, error: row.error }));
+      return rows.map((row) => ({
+        id: row.id,
+        session: row.session,
+        state: row.state,
+        error: row.error,
+      }));
     },
   };
 
@@ -500,19 +500,27 @@ describe("pi in a real container", { skip }, () => {
 
       // A Signal produced an actual agent Run, recorded with its true outcome. The model
       // it talked to is the one `settings.json` made the default, since no flag named it.
-      for (const [label, signalId, session] of [
-        ["the first", first, "user_42"],
-        ["the second", second, "user_42"],
-        // `null`, because the Run row records what the Handler asked for and this
-        // Handler asked for a fresh Session; the generated name is the Runtime's.
-        ["the fresh", fresh, null],
+      for (const [label, signalId] of [
+        ["the first", first],
+        ["the second", second],
       ] as const) {
+        const rows = await rig.runsOf(signalId);
         assert.deepEqual(
-          await rig.runsOf(signalId),
-          [{ session, state: "done", error: null }],
+          rows.map(({ session, state, error }) => ({ session, state, error })),
+          [{ session: "user_42", state: "done", error: null }],
           `${label} Signal should have one Run, done`,
         );
       }
+
+      // The Handler that asked for a fresh Session, which is the Worker's to name. The
+      // row says `run_<its own id>` rather than `null`, so the Session an Operator has to
+      // go looking for is on the Run they are already looking at (ADR-0033).
+      const [freshRun] = await rig.runsOf(fresh);
+      assert.ok(freshRun !== undefined, "the fresh Signal should have one Run");
+      assert.deepEqual(
+        { session: freshRun.session, state: freshRun.state, error: freshRun.error },
+        { session: `run_${freshRun.id}`, state: "done", error: null },
+      );
 
       // The agent read prior Signals over the Agent server, from inside its container,
       // and got real records back — in every Run, found by its own Prompt.
@@ -577,6 +585,14 @@ describe("pi in a real container", { skip }, () => {
         transcripts.some((file) => file.includes("user_42")),
         `the named Session should be one of them: ${transcripts.join(", ")}`,
       );
+      // And the other is the fresh one, findable on disk from the Run's own row. This is
+      // what naming a fresh Session buys and the reason it is not left ephemeral: the
+      // transcript of a Run nobody chose a Session for is still one an Operator can open,
+      // starting from the Run they were reading (ADR-0025, ADR-0033).
+      assert.ok(
+        transcripts.some((file) => file.includes(`run_${freshRun.id}`)),
+        `the fresh Session's transcript should be named after its Run: ${transcripts.join(", ")}`,
+      );
 
       // The Workspace both ways: the agent read the Handler's file, and what the agent
       // wrote is a file this process can read and then edit.
@@ -635,7 +651,7 @@ describe("pi in a real container", { skip }, () => {
     await mkdir(paths.agentDir, { recursive: true });
     const runtime = runtimeOn(paths);
 
-    const outcome = await runtime.run({ session: "user_42", text: "This will not start." }, runId);
+    const outcome = await runtime.run({ session: "user_42", text: "This will not start." });
 
     assert.equal(outcome.ok, false);
     const error = outcome.ok ? "" : outcome.error;
@@ -680,7 +696,7 @@ describe("pi in a real container", { skip }, () => {
       await placeSettings(paths);
       const runtime = runtimeOn(paths, [instructionsEntry(paths), settingsEntry(paths)]);
 
-      const outcome = await runtime.run({ session: "readonly", text: "Try to write it." }, runId);
+      const outcome = await runtime.run({ session: "readonly", text: "Try to write it." });
       assert.deepEqual(outcome, { ok: true }, "being denied a write must not fail the Run");
 
       const seen = model.requests.flatMap((request) => request.texts);

@@ -28,6 +28,7 @@ export type {
   PostOutcome,
   Prompt,
   RunOutcome,
+  RunPrompt,
   RunRecord,
   RunState,
   Runtime,

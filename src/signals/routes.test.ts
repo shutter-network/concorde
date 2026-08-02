@@ -249,9 +249,10 @@ describe("reading Runs over the Agent server", () => {
 
     const fresh = list.find((run) => run.prompt === "fresh");
     assert.ok(fresh !== undefined);
-    // `null` is a Run whose Prompt asked for a fresh Session: the name is the Agent
-    // Runtime's to generate and the Signal Worker never learns it.
-    assert.equal(fresh.session, null);
+    // The Run whose Prompt asked for a fresh Session, and it reads as a Session like any
+    // other: the Signal Worker named it after this very Run before starting it, so what
+    // the agent sees here is where the transcript went rather than `null` (ADR-0033).
+    assert.equal(fresh.session, `run_${fresh.id}`);
     assert.equal(fresh.state, "done");
     assert.equal(fresh.error, null);
   });
@@ -259,14 +260,14 @@ describe("reading Runs over the Agent server", () => {
   it("reports the Runs of one Signal, and one Run by id", async () => {
     const twoPrompts = idOf("two prompts");
     const both = await readRuns(`/runs?signalId=${twoPrompts}`);
+    const one = both[0];
+    assert.ok(one !== undefined);
     assert.deepEqual(
       both.map((run) => run.session),
-      [null, "user_b"],
+      [`run_${one.id}`, "user_b"],
     );
     assert.ok(both.every((run) => run.signalId === twoPrompts));
 
-    const one = both[0];
-    assert.ok(one !== undefined);
     const byId = await read(`/runs/${one.id}`);
     assert.equal(byId.statusCode, 200);
     assert.deepEqual(byId.json<RunRecord>(), one);
@@ -294,8 +295,12 @@ describe("the read surface", () => {
     const { signals: seenSignals, runs: seenRuns } = whatItSaw;
 
     assert.deepEqual(
-      seenRuns.map((run) => run.session).toSorted(),
-      [null, "user_a", "user_b", "user_c", "user_e"].toSorted(),
+      // The one Session nobody named is folded to a fixed word, because its name is the
+      // id of the Run carrying it and so differs every time this suite runs (ADR-0033).
+      seenRuns
+        .map((run) => (run.session === `run_${run.id}` ? "named after its own Run" : run.session))
+        .toSorted(),
+      ["named after its own Run", "user_a", "user_b", "user_c", "user_e"].toSorted(),
       "a Run should see the Runs of every other Session",
     );
     assert.deepEqual(

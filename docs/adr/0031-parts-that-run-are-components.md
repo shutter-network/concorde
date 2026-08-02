@@ -14,7 +14,7 @@ not a plugin contract. It is a lifecycle, and only parts that run have one.**
 
 Today there are four: the Db, the Signal Worker, the Public server and the Agent server.
 The User Directory is not one. Neither is the Runtime, whose whole contract is
-`run(prompt, runId)`; nor the Mount Table, which is inert by decision
+`run(prompt)`; nor the Mount Table, which is inert by decision
 ([ADR-0028](./0028-the-mount-table-declares-mounts-and-verifies-nothing.md)); nor a
 Signal Handler, which is the extension point rather than a part. `createUsers` returns
 what it returns today, with no `start` and no `stop`, because it has nothing to run and

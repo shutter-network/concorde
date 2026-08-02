@@ -38,9 +38,9 @@ import {
   type Mount,
   type RunOutcome,
   type RunPlan,
+  type RunPrompt,
 } from "../index.ts";
 import type { LogFields, Logger } from "../logging.ts";
-import type { Prompt } from "../signals/handlers.ts";
 import {
   type FakeContainerScript,
   fakeContainerCommand,
@@ -57,23 +57,24 @@ const entries: readonly Mount[] = [
 /** The least container the Runtime accepts, plus the mounts most tests want. */
 const minimal: AgentContainer = { image: "saf/agent:latest", mounts: { entries } };
 
-const prompt: Prompt = { session: "user_42", text: "what happened?" };
+const prompt: RunPrompt = { session: "user_42", text: "what happened?" };
 
 /**
  * A stand-in Agent Implementation: the Prompt on stdin, and a Session named in failure.
  *
  * The reader closes over the Session, which is the whole reason `run` produces one per
- * Run rather than being handed a reader once at construction.
+ * Run rather than being handed a reader once at construction. It takes the Session as it
+ * finds it and resolves nothing: a `RunPrompt`'s Session is a string, because the Signal
+ * Worker answered a Handler's request for a fresh one long before here (ADR-0033).
  */
-function agentRun(given: Prompt): RunPlan {
-  const session = given.session ?? "fresh";
+function agentRun({ session, text }: RunPrompt): RunPlan {
   return {
     args: ["--session-id", session, "--answer"],
-    stdin: given.text,
+    stdin: text,
     outcome: async (stdout) => {
-      let text = "";
-      for await (const chunk of stdout) text += Buffer.from(chunk).toString("utf8");
-      return text.includes("answered")
+      let said = "";
+      for await (const chunk of stdout) said += Buffer.from(chunk).toString("utf8");
+      return said.includes("answered")
         ? { ok: true }
         : { ok: false, error: `Session ${session} produced no answer.` };
     },
@@ -83,7 +84,7 @@ function agentRun(given: Prompt): RunPlan {
 /** The command line one Prompt composes, without starting anything. */
 function commandFor(
   container: Partial<AgentContainer> = {},
-  given: Prompt = prompt,
+  given: RunPrompt = prompt,
 ): ComposedCommand {
   return createAgentContainerRuntime({
     container: { ...minimal, ...container },
@@ -589,7 +590,7 @@ describe("what the agent's function is asked", () => {
     });
 
     assert.equal(asked, 0, "construction must not ask");
-    assert.deepEqual(await runtime.run(prompt, "r1"), { ok: true });
+    assert.deepEqual(await runtime.run(prompt), { ok: true });
     assert.equal(asked, 1);
 
     runtime.commandFor(prompt);
@@ -669,7 +670,7 @@ describe("a Run", () => {
     );
 
     const shown = started.runtime.commandFor(prompt);
-    await started.runtime.run(prompt, "r1");
+    await started.runtime.run(prompt);
 
     // The stub is the container runtime, so what it was handed is `args` minus the
     // stub's own leading arguments, which `command` and the rest of `containerCommand`
@@ -683,7 +684,7 @@ describe("a Run", () => {
   it("reads its outcome from the stream and not from the exit code", async () => {
     const succeeded = await runtimeOn({ stdout: "answered", exitCode: 3 });
 
-    assert.deepEqual(await succeeded.runtime.run(prompt, "r1"), { ok: true });
+    assert.deepEqual(await succeeded.runtime.run(prompt), { ok: true });
     // Said out loud, because it is a combination that should not occur.
     assert.ok(succeeded.lines.some((line) => line.level === "warn"));
   });
@@ -693,7 +694,7 @@ describe("a Run", () => {
     // to be in the message rather than only in a log line.
     const failed = await runtimeOn({ stdout: "", stderr: "Unable to find image\n", exitCode: 125 });
 
-    const outcome = await failed.runtime.run(prompt, "r1");
+    const outcome = await failed.runtime.run(prompt);
     assert.equal(
       outcome.ok === false && outcome.error,
       "Session user_42 produced no answer. The container exited with code 125. Its stderr said: Unable to find image",
@@ -703,14 +704,14 @@ describe("a Run", () => {
   it("names the Session in that failure, which is what the per-Run reader buys", async () => {
     const failed = await runtimeOn({ stdout: "" });
 
-    const outcome = await failed.runtime.run({ session: "user_99", text: "hi" }, "r1");
+    const outcome = await failed.runtime.run({ session: "user_99", text: "hi" });
     assert.match(outcome.ok === false ? outcome.error : "", /Session user_99/);
   });
 
   it("logs the command line with the environment's values taken out", async () => {
     const started = await runtimeOn({ stdout: "answered" }, { env: { KEY: "sk-a-real-key" } });
 
-    await started.runtime.run(prompt, "r1");
+    await started.runtime.run(prompt);
 
     const line = started.lines.find((it) => it.message === "starting the agent's container");
     assert.ok(line !== undefined, "the composed command line should be logged");
@@ -727,9 +728,6 @@ describe("a Run", () => {
       run: agentRun,
     });
 
-    await assert.rejects(
-      missing.run(prompt, "r1"),
-      /saf-not-a-container-runtime.*could not be started/s,
-    );
+    await assert.rejects(missing.run(prompt), /saf-not-a-container-runtime.*could not be started/s);
   });
 });

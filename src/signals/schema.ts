@@ -110,9 +110,13 @@ export const signals = workerSchema.table(
  *
  * `session` is a plain name and **not** a foreign key — Sessions live in the Agent
  * Implementation, and the Signal Worker stores only the name it routed to (ADR-0016).
- * It is nullable because a Prompt may request a fresh Session by naming none: the
- * Runtime generates a name for it, and the contract carries nothing back (a Runtime
- * returns an outcome, not output), so the Worker has nothing to record there.
+ *
+ * The Worker now **always writes it**, including for a Prompt that requested a fresh
+ * Session by naming none: it names that one `run_<the Run's id>` from the id it is
+ * about to insert, so no Run is left saying nothing about where its transcript went
+ * (ADR-0033). The column stays nullable all the same, and that is deliberate rather
+ * than pending: rows written before the Worker did this still hold `null`, and a
+ * `NOT NULL` would be a migration that either fails on them or rewrites history.
  */
 export const runs = workerSchema.table(
   "runs",

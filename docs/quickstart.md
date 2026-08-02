@@ -184,7 +184,10 @@ has no date. `state` is one of `pending`, `processing`, `done`, `failed`, and `e
 string or `null`.
 
 A **Run** is `{ id, signalId, session, prompt, state, error, startedAt, endedAt }`.
-`session` is a plain name, or `null` where the Prompt asked for a fresh Session. `state`
+`session` is a plain name: a Handler asking for a fresh Session writes `null`, and the
+Signal Worker names it `run_<the Run's id>` before the Run starts, so every Run recorded
+by this version has one. It is still typed `string | null`, because a Run recorded before
+the Worker did that reads back the way it was written. `state`
 is one of `pending`, `running`, `done`, `failed`. The timings are ISO 8601 strings, or
 `null` for a Run that has not reached that point. The Run executing right now is in there,
 and so is its Signal.
