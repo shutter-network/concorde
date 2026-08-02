@@ -9,7 +9,7 @@
  * inside the package and an Operator never runs a schema generation tool (ADR-0022).
  *
  * A file of its own rather than a second entry in `drizzle.config.ts`, because `out`
- * is one folder: the two configs must not be merged, or the User Directory's
+ * is one folder: the two configs must not be merged, or the User Manager's
  * migrations land in the Signal Worker's folder and are applied into its schema under
  * its tracking table.
  *

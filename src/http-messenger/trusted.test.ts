@@ -10,7 +10,7 @@
  *
  * The subject is still what a client can observe. There is no second seam for these methods
  * and deliberately no route of their own, so they are reached the way an Operator reaches
- * them, in a transaction of this file's own, and confirmed the way the User Directory
+ * them, in a transaction of this file's own, and confirmed the way the User Manager
  * confirms its trusted surface: over HTTP, on the User's own route and the agent's, against
  * real Fastify instances and real PostgreSQL. **The two methods are the only path to a row
  * anywhere in this file**: nothing here writes SQL of its own, holds a handle, or names a
@@ -60,7 +60,7 @@ let worker: SignalWorker;
 let agentServer: Component & { readonly fastify: FastifyInstance };
 let publicServer: Component & { readonly fastify: FastifyInstance };
 
-/** Where the constructor put the Messenger's plugins, and the Directory's login. */
+/** Where the constructor put the Messenger's plugins, and the User Manager's login. */
 const prefix = "/messages";
 const auth = "/auth";
 
@@ -105,7 +105,7 @@ before(async () => {
     logger: silent,
   });
   // Both servers, so that `POST /users` and the login under `/auth` exist: a Token here is
-  // bought with a password at the Directory's own route. Constructed before the Messenger,
+  // bought with a password at the Manager's own route. Constructed before the Messenger,
   // and that order is load-bearing rather than narrative (ADR-0036).
   const users = createUsers({ db, tokenTtl: hour, scrypt: cheap, agentServer, publicServer });
   // And held, which this file is the first to have a reason to do.

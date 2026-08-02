@@ -2,7 +2,7 @@ import type { MigrationDescriptor } from "../db/index.ts";
 import { usersSchema } from "./schema.ts";
 
 /**
- * The User Directory's migration descriptor: inert data registered with the Db,
+ * The User Manager's migration descriptor: inert data registered with the Db,
  * which applies it alongside the Signal Worker's when `db.migrate()` is called and
  * verifies it at `db.start()` (ADR-0022, ADR-0032).
  *

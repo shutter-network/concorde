@@ -7,13 +7,13 @@ import { httpMessagesSchema } from "./schema.ts";
  * `db.start()` (ADR-0022, ADR-0032).
  *
  * Its own schema and its own tracking table, mandatory rather than tidy for the reason the
- * User Directory's are: Drizzle's guard compares folder timestamps against only the newest
+ * User Manager's are: Drizzle's guard compares folder timestamps against only the newest
  * row of a tracker, so two parts sharing one would have the older part's migrations
  * silently skipped while `migrate` resolved successfully.
  *
  * **Registration order is load-bearing here and nowhere else.** `db.migrate()` applies
  * descriptors in registration order, which is construction order, and this folder's first
- * migration references `saf_users.users` — so the User Directory must be constructed
+ * migration references `saf_users.users` — so the User Manager must be constructed
  * before the HTTP Messenger (ADR-0036). Nothing checks it. The failure is PostgreSQL's
  * `schema "saf_users" does not exist` — or `relation "saf_users.users" does not exist` where
  * the schema is there and the table is not — which names the missing thing plainly enough to

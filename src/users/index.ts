@@ -1,5 +1,5 @@
 /**
- * The User Directory, from `shared-agent-framework/users`.
+ * The User Manager, from `shared-agent-framework/users`.
  *
  * A subpath of its own, like the `pi` adapter's, so that what a deployment depends
  * on is legible from its import statements: the Signal Worker and the Db come from the

@@ -67,7 +67,7 @@ let db: Db;
 let directory: Users;
 /**
  * The two servers, exactly as an Operator holds them: two bare Fastify instances of
- * their own, each given a place in a start order, and handed to the Directory so that
+ * their own, each given a place in a start order, and handed to the Manager so that
  * it registers its two route groups itself. Nothing here starts either — `inject`
  * needs no socket — so the listen options go unused.
  */
@@ -225,7 +225,7 @@ describe("refusing a request", () => {
     const user = await admit();
     const issued = await logIn(user.id);
 
-    // A Token from a Directory whose Tokens last a millisecond: expired by the time
+    // A Token from a Manager whose Tokens last a millisecond: expired by the time
     // the response is read, over the same Db, so the row is there and only its
     // `expires_at` is in the past. This is how the refusal of an expired Token is
     // reachable without a test waiting for anything.
@@ -299,7 +299,7 @@ describe("refusing a request", () => {
   });
 
   it("refuses an expired Token even where it was issued", async () => {
-    // The other half of the claim: it is not that one Directory refuses another's
+    // The other half of the claim: it is not that one Manager refuses another's
     // Tokens, it is that an expired Token is refused. `expires_at` is written from the
     // database's clock and compared against the database's clock, so this is the row
     // saying no rather than this process deciding.
@@ -354,7 +354,7 @@ describe("two Tokens for one User", () => {
     }
 
     // A third, obtained through the other prefix, works on the first prefix's route:
-    // the Tokens belong to the Directory and not to a registration of it.
+    // the Tokens belong to the Manager and not to a registration of it.
     const third = await logIn(user.id, alsoAt);
     assert.deepEqual((await bearing(`${auth}/me`, third.token)).json(), user);
     assert.deepEqual((await bearing(`${alsoAt}/me`, first.token)).json(), user);

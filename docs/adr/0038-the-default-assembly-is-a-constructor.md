@@ -1,6 +1,6 @@
 # The default assembly is a constructor
 
-`createGatewayWithDefaults` builds the Db, both Fastify servers, the User Directory, the
+`createGatewayWithDefaults` builds the Db, both Fastify servers, the User Manager, the
 HTTP Messenger and the Signal Worker, wires them to each other, puts them in an order, and
 returns a Gateway ([ADR-0037](./0037-the-gateway-is-a-record-of-components.md)). It is the
 canonical path, and `example/main.ts` is a consumer of it rather than a demonstration of
@@ -182,5 +182,5 @@ only the Messenger's position is reasoned: it must outlive the drain, because th
 - **The Db is reached at `gateway.components.db`,** like everything else. It carries
   `migrate` and a schema-typed handle beside `start` and `stop`, and no field is hung off
   the Gateway for it. A convenience field was considered twice during design and dropped
-  once the User Directory and the HTTP Messenger became Components, since the exception it
+  once the User Manager and the HTTP Messenger became Components, since the exception it
   was an exception to had gone.

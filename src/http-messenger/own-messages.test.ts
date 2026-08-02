@@ -4,7 +4,7 @@
  * The subject is what a client sees, never how a Message is stored: every assertion here is
  * made over HTTP against two real Fastify instances and real PostgreSQL, and **nothing
  * inserts a row directly**. Every Token is bought with a real password at the User
- * Directory's own login route, because a Token minted any other way would be testing a
+ * Manager's own login route, because a Token minted any other way would be testing a
  * shortcut this surface does not have.
  *
  * Both directions are here, each written the way it arrives: the agent's send on the Agent
@@ -44,7 +44,7 @@ let db: Db;
 let agentServer: Component & { readonly fastify: FastifyInstance };
 let publicServer: Component & { readonly fastify: FastifyInstance };
 
-/** Where the constructor put the Messenger's plugins, and the Directory's login. */
+/** Where the constructor put the Messenger's plugins, and the User Manager's login. */
 const prefix = "/messages";
 const auth = "/auth";
 
@@ -82,11 +82,11 @@ before(async () => {
   // test wants, since the row is what it reads and the Run is not its subject.
   const worker = createSignalWorker({ db, runtime: fakeRuntime(), handlers: {} });
   // Both servers, so that `POST /users` and the login under `/auth` exist: a Token here is
-  // bought with a password at the Directory's own route. Constructed before the Messenger,
+  // bought with a password at the Manager's own route. Constructed before the Messenger,
   // and that order is load-bearing rather than narrative (ADR-0036).
   const users = createUsers({ db, tokenTtl: hour, scrypt: cheap, agentServer, publicServer });
   // Nothing is held: the read under test is a route, and the constructor registered it
-  // itself, behind the Directory's own hook (ADR-0032).
+  // itself, behind the Manager's own hook (ADR-0032).
   createHttpMessenger({ db, users, worker, publicServer, agentServer });
 
   await db.migrate();
@@ -110,7 +110,7 @@ async function admitted(): Promise<Client> {
   return { id, token: await tokenFor(id) };
 }
 
-/** One real login, at the Directory's own route, on whichever Public server carries it. */
+/** One real login, at the Manager's own route, on whichever Public server carries it. */
 async function tokenFor(id: string, server = () => publicServer.fastify): Promise<string> {
   const issued = await server().inject({
     method: "POST",
@@ -302,11 +302,11 @@ describe("a User reading their own Messages", () => {
 });
 
 describe("an unauthenticated read", () => {
-  it("is the User Directory's single 401, however the Token is missing or refused", async () => {
+  it("is the User Manager's single 401, however the Token is missing or refused", async () => {
     const client = await admitted();
     await sent(client.id, "not for a stranger");
 
-    // A Token from a Directory whose Tokens last a millisecond, over the same Db: the row
+    // A Token from a Manager whose Tokens last a millisecond, over the same Db: the row
     // is there and only its `expires_at` is in the past, so an expired Token is reachable
     // without a test waiting for anything.
     const briefly = serverComponent("public server", Fastify(), nowhere);
@@ -342,7 +342,7 @@ describe("an unauthenticated read", () => {
     }
 
     // Byte for byte, not merely equivalent: the Messenger authenticates nobody, so this is
-    // the Directory's one refusal reaching a route in another part unchanged (ADR-0030).
+    // the Manager's one refusal reaching a route in another part unchanged (ADR-0030).
     const [first, ...rest] = refusals;
     assert.ok(first !== undefined);
     for (const refused of rest) {
@@ -356,7 +356,7 @@ describe("an unauthenticated read", () => {
 
   it("answers a malformed request before it looks at a Token, as GET /auth/me does", async () => {
     // The documented consequence of the query refusal being a `preValidation` hook and the
-    // Directory's being a `preHandler`: a stranger asking for something this route does not
+    // Manager's being a `preHandler`: a stranger asking for something this route does not
     // have is told so, and never gets as far as the 401. Pinned rather than guarded, because
     // a refusal names a parameter of the route and never a User.
     assert.equal((await presenting(undefined, "?text=hello")).statusCode, 400);

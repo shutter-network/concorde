@@ -70,7 +70,7 @@ let db: Db;
 let directory: Users;
 /**
  * The two servers, exactly as an Operator holds them: two bare Fastify instances of
- * their own, each given a place in a start order, and handed to the Directory so that
+ * their own, each given a place in a start order, and handed to the Manager so that
  * it registers its two route groups itself. Nothing here starts either — `inject`
  * needs no socket — so the listen options go unused.
  */

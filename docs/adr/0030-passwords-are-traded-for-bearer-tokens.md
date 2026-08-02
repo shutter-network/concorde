@@ -26,7 +26,7 @@ ADR-0014 named authentication a replaceable component, the **Authenticator**, an
 second half of its title goes with this decision. Its own justification is what
 retires it: *"Pluggability is not motivated by any particular scenario — it is that
 authentication is irrelevant to mediating a Shared Agent, so it stays out of the
-core."* That goal is met by construction once the User Directory is a separate part
+core."* That goal is met by construction once the User Manager is a separate part
 ([ADR-0029](./0029-users-are-a-part-of-their-own.md)) — not registering its Public
 server plugin is how a deployment replaces our authentication, exactly as
 [ADR-0021](./0021-the-framework-has-no-plugin-system.md) says replacing the Messenger

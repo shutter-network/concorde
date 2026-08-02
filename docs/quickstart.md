@@ -220,7 +220,7 @@ Seven things about that surface, and most of them are refusals:
   Message log is read by cursor and cannot be searched or filtered."* There is no text
   matching, no field matching, and no `direction` parameter either. A client that wants one
   side of the conversation filters the page it already has.
-- **No Token is a 401**, and it is the User Directory's own single refusal rather than
+- **No Token is a 401**, and it is the User Manager's own single refusal rather than
   anything of the Messenger's: both Public routes take `users.requireUser` as one option and
   this part authenticates nobody.
 - **An empty `text` is a 400**, so a stray keypress does not start a Run. There is no maximum
@@ -407,7 +407,7 @@ for a Run that never finishes.
 All JSON, all on the Agent server, and **all unscoped**. Which of them exist is a
 consequence of which parts your entry point handed that server to: the first four are the
 Signal Worker's, the next three are there because the reference deployment hands the Agent
-server to the User Directory as well, and the last two because it hands it to the HTTP
+server to the User Manager as well, and the last two because it hands it to the HTTP
 Messenger.
 
 | Route | Answers |
@@ -471,7 +471,7 @@ them is a request that would otherwise be written and quietly misunderstood:
   mouth. Everything else is immutable: a Signal but for the state the worker gives it, a Run
   which is the worker's record of its own work, and a Message once written. Setting
   attributes, replacing a password, issuing a Token and revoking one are methods on the User
-  Directory and no route at all.
+  Manager and no route at all.
 
 `pi` ships no HTTP client, so the agent calls this with its shell tool and `curl` — which
 is why `curl` is one of the [three things the agent's image
@@ -522,12 +522,12 @@ third of them is the one thing about that file that is not arbitrary.
 One word before them. A **Component** is a part with something to run: a `name`, a
 `start` and a `stop`, and nothing else at all. Four things here are Components — the Db,
 the two servers and the Signal Worker — and two parts deliberately are not: the User
-Directory and the HTTP Messenger, neither of which has anything to start or anything to
+Manager and the HTTP Messenger, neither of which has anything to start or anything to
 release. It is not a plugin contract: nothing declares a dependency, nothing is resolved,
 and parts still hold each other because you passed them to each other.
 
 1. **Construct.** The Db from one PostgreSQL URL, two `Fastify()` instances as Components,
-   the Runtime, the User Directory, the Signal Worker with its Handler map and the HTTP
+   the Runtime, the User Manager, the Signal Worker with its Handler map and the HTTP
    Messenger, each handed what it needs as an ordinary constructor option. Construction is
    also the whole of the wiring: a part handed a server registers its routes on that server,
    and a part with tables of its own registers its migration descriptor with the Db, so there is
@@ -574,9 +574,9 @@ const messenger = createHttpMessenger({ db, users, worker, publicServer, agentSe
 ```
 
 That call registers its own migration descriptor with the Db and its two route groups at
-`/messages`, the Public pair behind the Directory's `requireUser` and the Agent pair behind
+`/messages`, the Public pair behind the Manager's `requireUser` and the Agent pair behind
 no credential at all, which is the whole of the wiring. Nothing here is a capability to leave
-out, unlike the User Directory's servers: a Messenger with no Public server cannot be reached
+out, unlike the User Manager's servers: a Messenger with no Public server cannot be reached
 by the people it exists for, and one with no Agent server cannot be answered, so each is a
 broken Messenger rather than a smaller one and both are unconstructable instead of documented.
 No route plugin is exported and no prefix is configurable either, which is this part's one
@@ -603,13 +603,13 @@ mattered when it does not
 ([ADR-0031](./adr/0031-parts-that-run-are-components.md)). The day delivery stops being
 polling it becomes one, with a `LISTEN` registration and a `stop` that closes open responses.
 
-**It is constructed after the User Directory, and that one is load-bearing.**
+**It is constructed after the User Manager, and that one is load-bearing.**
 `messages.user_id` is a foreign key onto `saf_users.users.id`
 ([ADR-0036](./adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)), `db.migrate()`
 applies descriptors in registration order, and registration order is construction order, so
 the other way round fails on this part's first migration with `schema "saf_users" does not
 exist`. In *this* file the wrong order cannot be written at all, and by nothing clever: the
-Directory is an argument to the call, so putting it first is a TypeScript error about a
+Manager is an argument to the call, so putting it first is a TypeScript error about a
 variable used before its declaration. That is the whole of the check, and it is a property of
 taking the object rather than something the framework does. Where descriptors are registered
 by hand instead, as [a migration job of its own](#migrations-as-a-separate-step) does, there
@@ -929,7 +929,7 @@ notification and cleanup go.
 
 There is no credential on it. **Reaching the port is access**, and what it exposes is
 every Signal, every Run and — in the reference deployment, which hands it to the User
-Directory too — every User, unscoped by Session or by User.
+Manager too — every User, unscoped by Session or by User.
 
 That is deliberate: a credential is no boundary against the agent, which is the only
 party meant to reach it at all. What follows is that keeping the port unreachable is
@@ -999,9 +999,9 @@ skips the older folder's migrations and reports success.
 
 **The order of that list is load-bearing, and it is the one thing here that nothing checks.**
 Descriptors are applied in registration order, and the HTTP Messenger's first migration adds a
-foreign key onto `saf_users.users`, so the User Directory's descriptor comes before it or the
+foreign key onto `saf_users.users`, so the User Manager's descriptor comes before it or the
 migration fails with `schema "saf_users" does not exist`. In `gateway.ts` that order comes for
-free, out of the Messenger taking the Directory as a constructor argument; here they are three
+free, out of the Messenger taking the User Manager as a constructor argument; here they are three
 values in a list, and there is nothing in a list that could hold them in order.
 
 **Nothing goes unnoticed if you forget the step.** `db.start()` compares, for every
@@ -1057,7 +1057,7 @@ before `gateway.start()`: Fastify refuses a route registration once a server is 
 and `start` is what listens.
 
 **Users and authentication.** The reference deployment already does this: it constructs
-the **User Directory** and hands it both servers, which is the whole of the wiring. There
+the **User Manager** and hands it both servers, which is the whole of the wiring. There
 is no separate registration call and no descriptor to remember, because handing a part a
 server *is* how its routes get registered:
 
@@ -1144,7 +1144,7 @@ const gateway = components([db, agentServer, worker, sweeper, publicServer]);
 
 Both methods are required, which is the rule that keeps the list to parts that actually
 run: a part with nothing to start and nothing to release stays out of it rather than
-carrying two empty methods. The User Directory is the worked example of that — it is not
+carrying two empty methods. The User Manager is the worked example of that — it is not
 a Component and has no position in the order.
 
 **Your own tables.** `db.handle(yourSchema)` gives you a typed Drizzle handle through

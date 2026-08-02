@@ -23,7 +23,7 @@ import { createTestDatabase } from "../test-support/database.ts";
 import { httpMessagesMigrations } from "./migrations.ts";
 
 describe("the HTTP Messenger's shipped migration folder", () => {
-  it("contains the foreign key onto the User Directory's Users", () => {
+  it("contains the foreign key onto the User Manager's Users", () => {
     const folder = fileURLToPath(httpMessagesMigrations.folder);
     const sqlFiles = readdirSync(folder, { withFileTypes: true })
       .filter((entry) => entry.isFile() && entry.name.endsWith(".sql"))
@@ -42,17 +42,17 @@ describe("the HTTP Messenger's shipped migration folder", () => {
     assert.match(
       statements,
       /foreign key\s*\("user_id"\)\s*references\s*"saf_users"\."users"\s*\("id"\)/i,
-      'no shipped statement makes "user_id" a foreign key onto "saf_users"."users"("id"). drizzle-kit cannot generate it — a schema file importing the User Directory\'s would emit its table into this folder — so it is added by hand on every regeneration, and a forgotten addition leaves the constraint silently unenforced (ADR-0036)',
+      'no shipped statement makes "user_id" a foreign key onto "saf_users"."users"("id"). drizzle-kit cannot generate it — a schema file importing the User Manager\'s would emit its table into this folder — so it is added by hand on every regeneration, and a forgotten addition leaves the constraint silently unenforced (ADR-0036)',
     );
   });
 });
 
-describe("migrating the HTTP Messenger before the User Directory", () => {
+describe("migrating the HTTP Messenger before the User Manager", () => {
   it("fails, and names the table that is not there", async () => {
     const database = await createTestDatabase("http_messages_ordering");
     try {
       // The one descriptor, alone, which is what an entry point that constructed this part
-      // before the User Directory would have registered. Nothing checks the order; this is
+      // before the User Manager would have registered. Nothing checks the order; this is
       // what the failure looks like, recorded so that it is not a surprise (ADR-0036).
       database.db.registerMigrations(httpMessagesMigrations);
       const failure = await database.db.migrate().then(

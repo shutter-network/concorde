@@ -158,7 +158,7 @@ try {
     // (ADR-0021), so the consumer brings the instance and registers this on it.
     "dist/signals/routes.js",
     "dist/signals/routes.d.ts",
-    // The User Directory, under its own subpath and with its own migration
+    // The User Manager, under its own subpath and with its own migration
     // descriptor: `dist/users/migrations.js` resolves `../../migrations/users` from
     // its own module, so its position in `dist` is what makes that folder reachable
     // (ADR-0029).
@@ -404,7 +404,7 @@ try {
       // is made of — the Agent Container, the Run plan, the composed command line — comes
       // from the package root, because none of it is `pi`-shaped. The three values it
       // does export are in `consumerImports` above.
-      // The User Directory's own types, from its own subpath, for the same reason:
+      // The User Manager's own types, from its own subpath, for the same reason:
       // a deployment with no identity in it imports nothing from there (ADR-0029).
       "import type {",
       "  IssuedToken,",
@@ -502,7 +502,7 @@ try {
       '  stop: async () => log.info({}, "the loop has stopped"),',
       "};",
       "",
-      "// The User Directory: constructed from the same Db, contributing one more",
+      "// The User Manager: constructed from the same Db, contributing one more",
       "// migration descriptor to the one call and one more plugin to the Agent server,",
       "// under a prefix the Operator chooses (ADR-0029).",
       "// The cost of a password derivation, named rather than defaulted, because a",
@@ -613,12 +613,12 @@ try {
       "// (ADR-0032).",
       "const workerRoutes: FastifyPluginAsync = worker.agentRoutes;",
       "",
-      "// The HTTP Messenger: the Db, the User Directory its `user_id` references with a",
+      "// The HTTP Messenger: the Db, the User Manager its `user_id` references with a",
       "// foreign key, the Signal Worker a submission wakes, and **both** servers — all five",
       "// required, because a Messenger nobody can reach or nobody can answer through is",
-      "// broken rather than smaller (ADR-0034). Written after the Directory because",
+      "// broken rather than smaller (ADR-0034). Written after the User Manager because",
       "// construction order is registration order and this part's first migration references",
-      "// the Directory's table (ADR-0036). The two server options are satisfied by what",
+      "// the User Manager's table (ADR-0036). The two server options are satisfied by what",
       "// `serverComponent` returned, as every other part's are.",
       "const messengerOptions: HttpMessengerOptions = {",
       "  db, users, worker, publicServer: publicComponent, agentServer: agentComponent,",
@@ -880,7 +880,7 @@ try {
         // The one function `pi` adds, on its own, which is what an author of a second
         // Agent Implementation writes the equivalent of.
         "const plan = piRun({ session: 'user_42', text: 'what happened?' });",
-        // The User Directory, constructed as an Operator constructs it. `openDb`
+        // The User Manager, constructed as an Operator constructs it. `openDb`
         // connects lazily, so this reaches the database not at all: what it proves is
         // that the subpath resolves at runtime and that construction is free of side
         // effects, like every other part's.
@@ -917,7 +917,7 @@ try {
   assert.equal(
     imported,
     "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword:saf_http_messages:history,send:message.received",
-    "all four subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Directory should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself",
+    "all four subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Manager should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself",
   );
 
   step("applying a shipped migration folder from inside the installed package");
@@ -942,7 +942,7 @@ try {
       "const db = openDb(process.argv[2]);",
       "// Both servers, constructed before the parts because the HTTP Messenger requires them",
       "// at construction and registers itself on them there (ADR-0032, ADR-0034). The User",
-      "// Directory's own two plugins go up by hand further down, which is what proves those",
+      "// User Manager's own two plugins go up by hand further down, which is what proves those",
       "// stay exported and that its server options are defaults rather than policy.",
       "const agentServer = Fastify();",
       "const publicServer = Fastify();",
@@ -955,7 +955,7 @@ try {
       "// deployment switches both route groups off, and its two plugins are registered",
       "// by hand below instead.",
       "const users = createUsers({ db, tokenTtl: 60_000, scrypt: { logN: 12, blockSize: 8, parallelism: 1 } });",
-      "// The HTTP Messenger, constructed **after** the Directory, which is what makes its",
+      "// The HTTP Messenger, constructed **after** the User Manager, which is what makes its",
       "// folder apply after `migrations/users`: registration order is construction order, and",
       "// its first migration references `saf_users.users` (ADR-0036). Nothing is held: it",
       "// exports no plugin, and it put its own routes at `/messages` on both servers above.",
@@ -977,7 +977,7 @@ try {
       "  // worker is never started, so nothing processes the Signal.",
       '  const id = await db.tx((tx) => worker.emit(tx, { kind: "probe", payload: {} }));',
       "  const user = await db.tx((tx) => users.create(tx));",
-      "  // And a login, which is what proves the User Directory's *second* migration",
+      "  // And a login, which is what proves the User Manager's *second* migration",
       "  // applied: a Token has nowhere to be written otherwise. It goes over the two",
       "  // plugins on two servers, registered by hand under the same prefixes the",
       "  // constructor would have used — which is what proves both stay exported and",

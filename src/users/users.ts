@@ -1,5 +1,5 @@
 /**
- * The User Directory: the part of the Gateway that owns Users.
+ * The User Manager: the part of the Gateway that owns Users.
  *
  * Constructed like every other part — one call, an ordinary object back, and nothing
  * to register it with. It wires itself the way every part does, registering its own
@@ -108,7 +108,7 @@ export type UsersOptions = {
    * replaces our password login with its own scheme — OIDC, a wallet signature, a
    * corporate header — while keeping our Tokens, since `issueToken` is a method and
    * there is no Authenticator interface to implement (ADR-0030). Nothing else about
-   * the User Directory changes when it is left out.
+   * the User Manager changes when it is left out.
    */
   readonly publicServer?: {
     readonly fastify: FastifyInstance;
@@ -643,7 +643,7 @@ async function userForToken(handle: UsersHandle, token: string): Promise<UserRec
 /**
  * The digest a login with nothing to verify against is verified against instead.
  *
- * Derived once, lazily, and at the Directory's own cost, so that a miss costs what a
+ * Derived once, lazily, and at the Manager's own cost, so that a miss costs what a
  * hit costs however the Operator constructed it: a dummy fixed in code would make
  * misses cheaper than hits for any deployment that raised the parameters, which is
  * the timing signal it exists to remove. The password it is written from is 32 random

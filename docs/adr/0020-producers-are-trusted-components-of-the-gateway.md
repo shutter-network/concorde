@@ -1,7 +1,7 @@
 # Producers are trusted components of the Gateway
 
 > **Amended by [ADR-0029](./0029-users-are-a-part-of-their-own.md).** Users, and the
-> authenticating of them, belong to the **User Directory** — a part of the Gateway that
+> authenticating of them, belong to the **User Manager** — a part of the Gateway that
 > is *not* a Producer, since it emits no Signals. So "Users, Messages, and Outboxes
 > belong to the Messenger" below reads "Messages and Outboxes", and the Messenger reads
 > the already-authenticated User off the request rather than authenticating anyone. The

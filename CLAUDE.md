@@ -57,7 +57,7 @@ schema generation tool. Each part has a config file of its own and passes it wit
 
 ```sh
 npm run migrations:generate                                              # the Signal Worker
-npm run migrations:generate -- --config drizzle.users.config.ts          # the User Directory
+npm run migrations:generate -- --config drizzle.users.config.ts          # the User Manager
 npm run migrations:generate -- --config drizzle.http-messages.config.ts  # the HTTP Messenger
 ```
 
@@ -125,7 +125,7 @@ Conventions the build depends on:
   fails loudly on the first migration of a new deployment, while a forgotten
   foreign key is silent — every test passes against a database that simply does
   not enforce it. `src/http-messenger/migrations.test.ts` scans the shipped folder
-  for it, and also pins that applying this part before the User Directory fails
+  for it, and also pins that applying this part before the User Manager fails
   legibly, since registration order is construction order.
 - **Nothing outside `src/db/` imports `pg`.** Enforced by a Biome override:
   parts obtain a handle with `db.handle(schema)`, and the one thing that needs a

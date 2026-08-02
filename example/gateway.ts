@@ -13,11 +13,11 @@
  * an assembly is, whole, is four steps:
  *
  *   1. **construct** — the Db, two Fastify instances as Components, the Runtime, the
- *      User Directory, the Signal Worker with its Handlers and the HTTP Messenger. A part
+ *      User Manager, the Signal Worker with its Handlers and the HTTP Messenger. A part
  *      handed a server registers its routes on it and a part with tables registers its
  *      migration descriptor with the Db, so construction is also the whole of the wiring
  *      ([ADR-0032](../docs/adr/0032-components-wire-themselves-at-construction.md)). The
- *      order is arbitrary but for one pair, the Messenger after the User Directory, which
+ *      order is arbitrary but for one pair, the Messenger after the User Manager, which
  *      migration order makes load-bearing and whose comment below says why
  *   2. **migrate** — explicitly, and after the construction above, because constructing
  *      a part is what registers the descriptor `db.migrate()` applies. `migrate.ts` is
@@ -38,7 +38,7 @@
  *
  * Read ../docs/quickstart.md alongside this. It explains the parts that are load-bearing
  * and cannot be guessed from here: why the agent's container reaches this process at
- * `host.docker.internal` and where that stops being true, what the User Directory does
+ * `host.docker.internal` and where that stops being true, what the User Manager does
  * and does not do for you, and the two risks this design accepts.
  */
 
@@ -201,7 +201,7 @@ const runtime = createPiRuntime({
   },
 });
 
-// The User Directory, and the first part here that is **held** rather than constructed for
+// The User Manager, and the first part here that is **held** rather than constructed for
 // its wiring alone: the HTTP Messenger below takes it. Handing it the two servers is still
 // most of what this deployment asks of it (`POST /auth/tokens` on the Public one, `POST
 // /users` and the two reads on the Agent one), and omitting a server is how either group is
@@ -298,18 +298,18 @@ const worker = createSignalWorker({
 
 // The HTTP Messenger: a way in for a person and a way back for the agent, which is what this
 // deployment had neither of. Both route groups land at `/messages` on the server they belong
-// to, the Public pair behind the Directory's `requireUser` and the Agent pair behind no
+// to, the Public pair behind the Manager's `requireUser` and the Agent pair behind no
 // credential at all (ADR-0010). A submission is one transaction, the Message row and then the
 // Signal that wakes the Worker for it, so what somebody said and the fact that anybody was
 // told about it commit together or neither does (ADR-0034).
 //
-// **Constructed after the User Directory**, and that is not a matter of taste.
+// **Constructed after the User Manager**, and that is not a matter of taste.
 // `messages.user_id` is a foreign key onto `saf_users.users.id`, `db.migrate()` applies
 // descriptors in registration order, and registration order is construction order, so the
 // other way round fails on this part's first migration with `schema "saf_users" does not
 // exist` (ADR-0036).
 //
-// In *this* file the wrong order is caught, and by nothing clever: the Directory is an
+// In *this* file the wrong order is caught, and by nothing clever: the Manager is an
 // argument here, so putting this call first is a TypeScript error about a variable used
 // before its declaration rather than a Gateway that boots and cannot migrate. That is the
 // whole of the check, and it is a property of taking the object rather than something the

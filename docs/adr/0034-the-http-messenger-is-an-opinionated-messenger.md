@@ -53,7 +53,7 @@ scoped plugin, behind a shared hook, or under a version prefix.
 
 This part does neither, and the divergence is deliberate rather than an oversight.
 
-**Both servers are required** because neither half is a capability. The User Directory
+**Both servers are required** because neither half is a capability. The User Manager
 without an Agent server is a deployment that manages Users elsewhere, and without a Public
 server it is a deployment that authenticates its own way
 ([ADR-0030](./0030-passwords-are-traded-for-bearer-tokens.md)): both are coherent objects
@@ -62,9 +62,9 @@ exists for, and one with no Agent server cannot be answered by the agent. Each i
 smaller Messenger but a broken one, and making them unconstructable is cheaper than
 documenting them.
 
-**No plugin is exported** because the door out has nowhere to go. The User Directory's
+**No plugin is exported** because the door out has nowhere to go. The User Manager's
 plugin is useful in isolation: it is a set of routes over its own tables, and an Operator
-mounting it under `/v2` still has a working User Directory. This part's routes are half of
+mounting it under `/v2` still has a working User Manager. This part's routes are half of
 a contract whose other half is the Signal `kind`, the record shape and a client written
 against both. An Operator who needs these routes somewhere else, or behind a hook of their
 own, is an Operator who wants a different messaging part, and ADR-0021 already says what to
@@ -74,7 +74,7 @@ do about that.
 
 Not a configuration flag, and not a subclass: a **second messaging Producer**, with its own
 PostgreSQL schema, its own Signal `kind` and its own tables, sharing nothing with this one
-but the User Directory and the Signal Worker. That is the extension mechanism the framework
+but the User Manager and the Signal Worker. That is the extension mechanism the framework
 already has ([ADR-0021](./0021-the-framework-has-no-plugin-system.md)): a Producer is
 ordinary code that emits Signals, and there is no plugin contract to satisfy. Nothing in
 this part may assume it is the only one.

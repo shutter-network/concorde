@@ -1,5 +1,5 @@
 /**
- * The two secrets the User Directory holds, in one file so that they are read
+ * The two secrets the User Manager holds, in one file so that they are read
  * together.
  *
  * They want **opposite** treatment, and that is the thing most likely to be

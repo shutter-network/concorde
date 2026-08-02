@@ -2,7 +2,7 @@
  * The HTTP Messenger's one table, in the part's own PostgreSQL schema
  * ([`data-model.md`](../../docs/data-model.md)).
  *
- * Not public API, for the reason the User Directory's schema is not: every part of the
+ * Not public API, for the reason the User Manager's schema is not: every part of the
  * Gateway owns a schema and no part reads another's tables, so these objects are
  * exported for this part's own modules and are deliberately absent from the package's
  * `/http-messenger` subpath (ADR-0021, ADR-0022).
@@ -15,7 +15,7 @@
  *    `saf_users.users.id` in the database (ADR-0036). Expressing it here would mean
  *    importing `../users/schema.ts`, and `drizzle-kit` follows imports: it would emit
  *    `CREATE TABLE saf_users.users` into *this* part's folder, which would have this part
- *    creating the User Directory's table. So the constraint is added to the generated
+ *    creating the User Manager's table. So the constraint is added to the generated
  *    migration by hand and the snapshot is hand-edited to match, on every regeneration,
  *    and `migrations.test.ts` scans the shipped folder for it — a forgotten addition is
  *    silent where the `CREATE SCHEMA` that must be *removed* fails loudly.

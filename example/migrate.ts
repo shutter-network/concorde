@@ -18,16 +18,16 @@
  * to keep when you add a part — a migration job that needs the things `gateway.ts` needs
  * is a broken migration job.
  *
- * This deployment has three such parts, the Signal Worker, the User Directory and the HTTP
+ * This deployment has three such parts, the Signal Worker, the User Manager and the HTTP
  * Messenger, so there are three descriptors. A deployment with its own tables registers its
  * own beside them, through the same call and with no privilege attached to ours.
  *
  * **The order of the list below is load-bearing.** `db.migrate()` applies descriptors in
  * registration order, and the HTTP Messenger's first migration adds a foreign key onto
- * `saf_users.users`, so the User Directory's descriptor comes before it or the migration
+ * `saf_users.users`, so the User Manager's descriptor comes before it or the migration
  * fails naming the schema it could not find (ADR-0036). Nothing here checks that, and there
  * is nothing here that could: these are three values in a list, where `gateway.ts` gets the
- * same order out of the Messenger taking the Directory as an argument.
+ * same order out of the Messenger taking the User Manager as an argument.
  *
  * `gateway.ts` registers the same three — by construction rather than by hand, which is one
  * registration and not two — and then *verifies* them: `db.start()` refuses to serve

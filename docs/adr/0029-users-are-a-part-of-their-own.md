@@ -1,6 +1,15 @@
 # Users are a part of their own
 
-Users belong to the **User Directory**: a part of the Gateway with its own PostgreSQL
+> **Renamed.** This decision named the part the **User Directory**, and every document
+> that followed used that name until it was swept. It is now the **User Manager**.
+> Nothing else here changed: the argument for splitting Users out of the Messenger, and
+> every consequence below, stand exactly as recorded. "Directory" went because it was
+> also the filesystem word this repo uses for the agent's own directory, and because it
+> undersells a part that hashes, issues, revokes and replaces.
+> [`CONTEXT.md`](../../CONTEXT.md) carries the rest of the argument, including why a word
+> this vague was taken anyway.
+
+Users belong to the **User Manager**: a part of the Gateway with its own PostgreSQL
 schema, its own migration descriptor, and its own export subpath, constructed like any
 other. [ADR-0014](./0014-users-are-opaque-ids-and-authentication-is-pluggable.md) put
 them inside the Messenger, and [`architecture.md`](../architecture.md) and
@@ -16,7 +25,7 @@ severe. A deployment wanting authenticated HTTP clients against its own routes a
 chat at all would have had to construct a Messenger it never uses — and the Messenger
 is both the largest part in the framework and the one most likely to be replaced
 wholesale. The reverse case is rarer and cheaper: a deployment replacing the User
-Directory keeps the Messenger.
+Manager keeps the Messenger.
 
 The cost of the split is a **foreign key we do not get**, since
 [ADR-0022](./0022-the-store-is-postgresql-through-drizzle.md) forbids one part's table
@@ -62,7 +71,7 @@ HTTP surface is narrowed, because only it is reachable by an injected prompt.
   deactivation flag put a state and two authentication branches into the code for a
   capability no deployment has yet asked for. Removal returns as an ADR and a
   migration when one does.
-- **The User Directory is not a Producer.** It emits no Signals and takes no reference
+- **The User Manager is not a Producer.** It emits no Signals and takes no reference
   to the Core. A Signal on login is refused rather than merely omitted:
   [ADR-0012](./0012-the-gateway-is-a-serial-signal-worker.md) makes the worker globally
   serial, so a Signal per login turns any authentication burst — a client refreshing

@@ -5,7 +5,8 @@ the one exception to [ADR-0022](./0022-the-store-is-postgresql-through-drizzle.m
 rule that no table references another part's, which `data-model.md` recorded as settled:
 "Not a foreign key: Users are the User Directory's, and no part references another's tables.
 Nothing therefore enforces that this names a real User, which is safe only because nothing
-removes one."
+removes one." (Quoted as written; the User Directory is now the **User Manager**
+([ADR-0029](./0029-users-are-a-part-of-their-own.md)).)
 
 The constraint is also the **only** enforcement. The insert runs, PostgreSQL raises `23503`,
 and the route answers 404. There is no lookup in front of it. A check in front of a
@@ -38,7 +39,7 @@ deliberately.
 **1. `drizzle-kit` cannot generate it.** A part's config points at one schema file, and a
 schema file importing `../users/schema.ts` makes the generator emit `CREATE TABLE
 saf_users.users` into *this* part's migration folder, which would have this part creating the
-User Directory's table. So the constraint is added by hand to the generated migration and
+User Manager's table. So the constraint is added by hand to the generated migration and
 the snapshot is hand-edited to match, on **every** regeneration. `CLAUDE.md` already
 documents one such hand-edit, the `CREATE SCHEMA` line that must be removed; this is a
 second, and unlike the first it is an *addition*, so a forgotten one leaves a silently
@@ -47,21 +48,21 @@ shipped folder, the way the first one is.
 
 **2. Construction order becomes load-bearing at `migrate`.** `db.migrate()` applies
 descriptors in registration order, which is construction order
-([ADR-0032](./0032-components-wire-themselves-at-construction.md)), so the User Directory
+([ADR-0032](./0032-components-wire-themselves-at-construction.md)), so the User Manager
 must be constructed before the HTTP Messenger. Nothing checks this. The failure is
 PostgreSQL's `schema "saf_users" does not exist`, because `db.migrate` creates each
-descriptor's schema immediately before applying that descriptor's folder, so a Directory that
-has not been reached yet has no schema either. `relation "saf_users.users" does not exist` is
-the same mistake against a database where that schema is already there and its table is not.
-Either message names the missing thing plainly enough to leave alone, and both are recorded
-in the part's own header and in the quickstart. Before this ADR, construction order in an
-entry point was pure narrative.
+descriptor's schema immediately before applying that descriptor's folder, so a User Manager
+that has not been reached yet has no schema either. `relation "saf_users.users" does not
+exist` is the same mistake against a database where that schema is already there and its
+table is not. Either message names the missing thing plainly enough to leave alone, and
+both are recorded in the part's own header and in the quickstart. Before this ADR,
+construction order in an entry point was pure narrative.
 
-**3. This part requires *our* User Directory**, at the schema level rather than the type
+**3. This part requires *our* User Manager**, at the schema level rather than the type
 level. `architecture.md`'s "replaceable by construction: don't build ours, build yours" no
-longer composes freely for a deployment using this Messenger: a replacement User Directory
+longer composes freely for a deployment using this Messenger: a replacement User Manager
 must own `saf_users.users` with the same primary key, or this part will not migrate. The
-constructor names the User Directory's own type nominally for this reason, so the dependency
+constructor names the User Manager's own type nominally for this reason, so the dependency
 is visible where the call is written rather than at `migrate`.
 
 **4. It can never catch anything else.** The constraint **never fires a cascade**, because
@@ -74,7 +75,7 @@ agent copying an id wrong. That is the trade, stated as a ratio rather than impl
 Underneath all four sits the thing ADR-0022's rule was protecting. Per-part schemas exist so
 that parts migrate independently, and a cross-schema reference couples two folders' histories.
 This one couples them in **one direction only**, and along one edge: the HTTP Messenger knows
-about Users, and the User Directory knows nothing about Messages. That asymmetry is the whole
+about Users, and the User Manager knows nothing about Messages. That asymmetry is the whole
 of what makes the exception affordable, and it is the property to check before anyone proposes
 a second one.
 

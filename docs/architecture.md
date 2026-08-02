@@ -10,22 +10,22 @@ The Gateway is one deployable application assembled from parts, several of which
 2. **Signal Worker** — the Signal queue, Signal Handler dispatch, Run execution, and Agent server routes for Signals and Runs. Holds no identity and knows nothing about messaging.
 3. **Producers** — trusted parts that emit Signals into the Signal Worker: the **HTTP Messenger** for messaging, and the **Scheduler** for time. An Operator picks the ones they want and writes their own where needed. **v1 ships only the HTTP Messenger**; the Scheduler is designed and deferred ([ADR-0018](./adr/0018-scheduling-is-a-separate-component.md)). Messaging is one part making one set of choices rather than the framework's last word on the subject: a deployment wanting a different content shape, `kind` or route layout writes a second messaging Producer as a peer, and pays for it in two Message logs the agent reads separately ([ADR-0034](./adr/0034-the-http-messenger-is-an-opinionated-messenger.md)).
 
-Not every part is a Producer. The **User Directory** owns Users, their Attributes and their Tokens, and contributes routes to both servers, but emits no Signals at all — a Signal per login would put a Run behind every authentication, and the worker is serial ([ADR-0029](./adr/0029-users-are-a-part-of-their-own.md)).
+Not every part is a Producer. The **User Manager** owns Users, their Attributes and their Tokens, and contributes routes to both servers, but emits no Signals at all — a Signal per login would put a Run behind every authentication, and the worker is serial ([ADR-0029](./adr/0029-users-are-a-part-of-their-own.md)).
 
 Nothing represents the Gateway itself. There is no plugin system and no registry of parts: the Operator's entry point constructs the Db, the two servers, the Signal Worker, and whichever Producers the deployment wants, wiring them by passing them to each other ([ADR-0021](./adr/0021-the-framework-has-no-plugin-system.md)).
 
 The parts with something to run are **Components** — a `name`, a `start` and a `stop`, and nothing else ([ADR-0031](./adr/0031-parts-that-run-are-components.md)). The entry point writes them as a list, which starts in that order and stops in the reverse of it; a failed start unwinds what had started. Nothing declares a dependency and nothing is resolved, because the parts already hold each other. The rest of the wiring is construction too: a part handed a server registers its routes on that server, and a part with tables registers its migration descriptor with the Db, so `db.migrate()` takes no arguments and `db.start()` refuses to serve a schema the database is behind ([ADR-0032](./adr/0032-components-wire-themselves-at-construction.md)). An assembly is therefore four steps — construct, migrate, order, start — and only the order is the Operator's to reason about.
 
-Users talk to the User Directory and the HTTP Messenger, and to nothing else. They never see a Signal. The Agent Implementation never reaches a User except through the Agent server. That, and nothing more, is what **Shielded** means.
+Users talk to the User Manager and the HTTP Messenger, and to nothing else. They never see a Signal. The Agent Implementation never reaches a User except through the Agent server. That, and nothing more, is what **Shielded** means.
 
 ```mermaid
 flowchart LR
     U[Users] <-->|log in| P[Public server]
     U <-->|post, read own log by cursor| P
     subgraph GW[Gateway]
-      P --> UD[User Directory]
+      P --> UM[User Manager]
       P --> M[HTTP Messenger]
-      M -.->|reads authenticated User, references its Users| UD
+      M -.->|reads authenticated User, references its Users| UM
       M -->|emit Signal| Q[(Signal queue)]
       S[Scheduler<br/>deferred] -.->|emit Signal| Q
       Q --> W[Serial worker]
@@ -33,7 +33,7 @@ flowchart LR
       H -->|0..n Prompts| RA[Runtime]
       AS[Agent server]
       AS --> M
-      AS --> UD
+      AS --> UM
       AS -.-> S
       AS --> Q
     end
@@ -53,8 +53,8 @@ Three kinds of row below, and the distinction matters. **Components** are things
 | Public server | Component | Operator | — | the one surface exposed outside; a `Fastify()` the entry point constructs, wrapped in a `serverComponent` that holds its bind address until `start` |
 | Agent server | Component | Operator | — | reachable only by the Agent Implementation; a second `Fastify()`, bound loopback in the reference deployment |
 | Signal Worker | Component | framework | agent: read prior Signals, read Runs | owns the serial worker; one Run at a time, globally |
-| User Directory | object, replaceable | framework | public: log in, log out, change password, read self — agent: create and read Users | Users, their Attributes, and their Tokens. Not a Producer (ADR-0029), and not a Component: nothing to start, nothing to release (ADR-0031) |
-| HTTP Messenger | object | framework | public: post a Message, read own Message log; agent: send a Message, read any one User's Message log | one table, one `text` per Message, and a `seq` per User across both directions, so one cursored read serves polling and rendering (ADR-0035). Constructed with the Db, the User Directory, the Signal Worker and **both** servers, all required; owns no Users, and references theirs (ADR-0036). Not a Component: nothing to start, nothing to release |
+| User Manager | object, replaceable | framework | public: log in, log out, change password, read self — agent: create and read Users | Users, their Attributes, and their Tokens. Not a Producer (ADR-0029), and not a Component: nothing to start, nothing to release (ADR-0031) |
+| HTTP Messenger | object | framework | public: post a Message, read own Message log; agent: send a Message, read any one User's Message log | one table, one `text` per Message, and a `seq` per User across both directions, so one cursored read serves polling and rendering (ADR-0035). Constructed with the Db, the User Manager, the Signal Worker and **both** servers, all required; owns no Users, and references theirs (ADR-0036). Not a Component: nothing to start, nothing to release |
 | Scheduler | object, replaceable | framework | agent: schedule future work | recurrence, cancellation, next-fire. **Deferred, not in v1** (ADR-0018) |
 | Runtime | seam | framework or Operator | — | narrow contract: Prompt + Session in, outcome out. The `pi` one spawns a confined process per Run (ADR-0025) |
 | Signal Handler | seam | Operator | — | arbitrary code; the primary extension point |
@@ -64,7 +64,7 @@ Anything not in this table an Operator adds themselves: routes as Fastify plugin
 
 ## The loop
 
-1. A Producer emits a Signal — in v1, the HTTP Messenger, which reads the User the User Directory authenticated, records an inbound Message, and emits the Signal in one transaction.
+1. A Producer emits a Signal — in v1, the HTTP Messenger, which reads the User the User Manager authenticated, records an inbound Message, and emits the Signal in one transaction.
 2. The worker takes the oldest pending Signal.
 3. It dispatches on `kind` to exactly one Signal Handler, which returns zero or more Prompts, each naming a Session.
 4. For each Prompt the Runtime starts a Run. Under `pi`, one fresh process against the named session.
@@ -75,7 +75,7 @@ Anything not in this table an Operator adds themselves: routes as Fastify plugin
 
 ## Extension points
 
-**Signal Handler** and **Runtime** — both arbitrary code, neither restricted. The **User Directory**, **HTTP Messenger** and **Scheduler** are replaceable by construction: don't build ours, build yours. Two qualifications on that, both the HTTP Messenger's. It is replaceable only *wholesale*: it exports no route plugin and its prefixes are fixed, so an Operator who wants these routes elsewhere or behind a hook of their own writes their own messaging Producer instead ([ADR-0034](./adr/0034-the-http-messenger-is-an-opinionated-messenger.md)). And a deployment that does construct it is tied to *our* User Directory at the schema level rather than the type level, because its `user_id` is a foreign key onto `saf_users.users.id`: a replacement Directory must own that table ([ADR-0036](./adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)). Replacing only *how a User proves who they are*, while keeping our Tokens, is narrower still: write your own login route and call the User Directory's token issuance. That is the seam, and there is no Authenticator interface ([ADR-0030](./adr/0030-passwords-are-traded-for-bearer-tokens.md)). Routes extend through Fastify's plugin system on either server, and further Producers are ordinary code calling the Signal Worker's emit method. There is deliberately no framework-level plugin contract ([ADR-0021](./adr/0021-the-framework-has-no-plugin-system.md)).
+**Signal Handler** and **Runtime** — both arbitrary code, neither restricted. The **User Manager**, **HTTP Messenger** and **Scheduler** are replaceable by construction: don't build ours, build yours. Two qualifications on that, both the HTTP Messenger's. It is replaceable only *wholesale*: it exports no route plugin and its prefixes are fixed, so an Operator who wants these routes elsewhere or behind a hook of their own writes their own messaging Producer instead ([ADR-0034](./adr/0034-the-http-messenger-is-an-opinionated-messenger.md)). And a deployment that does construct it is tied to *our* User Manager at the schema level rather than the type level, because its `user_id` is a foreign key onto `saf_users.users.id`: a replacement User Manager must own that table ([ADR-0036](./adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)). Replacing only *how a User proves who they are*, while keeping our Tokens, is narrower still: write your own login route and call the User Manager's token issuance. That is the seam, and there is no Authenticator interface ([ADR-0030](./adr/0030-passwords-are-traded-for-bearer-tokens.md)). Routes extend through Fastify's plugin system on either server, and further Producers are ordinary code calling the Signal Worker's emit method. There is deliberately no framework-level plugin contract ([ADR-0021](./adr/0021-the-framework-has-no-plugin-system.md)).
 
 ## What this framework provides
 
@@ -111,5 +111,5 @@ Each is a deliberate decision, not an omission:
 ## Open
 
 - Why `pi` was chosen over `openclaw`, which already provides much of this (ADR-0005).
-- Whether the User Directory, HTTP Messenger and Scheduler stay parts of one deployable or become peer services later (ADR-0020). The foreign key between the first two is a new argument for one deployable (ADR-0036).
+- Whether the User Manager, HTTP Messenger and Scheduler stay parts of one deployable or become peer services later (ADR-0020). The foreign key between the first two is a new argument for one deployable (ADR-0036).
 - Whether removal of a User ever returns, and in what form (ADR-0029).

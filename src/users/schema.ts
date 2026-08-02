@@ -1,5 +1,5 @@
 /**
- * The User Directory's tables, in the part's own PostgreSQL schema
+ * The User Manager's tables, in the part's own PostgreSQL schema
  * ([`data-model.md`](../../docs/data-model.md)).
  *
  * Not public API, for the same reason the Signal Worker's schema is not: every part of the
@@ -18,7 +18,7 @@ import { sql } from "drizzle-orm";
 import { index, jsonb, pgSchema, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 /**
- * The User Directory's schema. Prefixed for the reason the Signal Worker's is: the framework
+ * The User Manager's schema. Prefixed for the reason the Signal Worker's is: the framework
  * is installed into a database it does not own, an unprefixed `users` is a schema an
  * Operator plausibly already has, and this name is not theirs to change — the table
  * below is compiled against it, so a descriptor naming a different schema would
@@ -39,7 +39,7 @@ export const users = usersSchema.table("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   /**
    * Arbitrary JSON, deployment-defined, and where grouping and therefore
-   * authorization live, since there is no Party (ADR-0008, ADR-0014). The Directory
+   * authorization live, since there is no Party (ADR-0008, ADR-0014). The Manager
    * stores them and interprets none of them.
    *
    * The default is what makes the agent's route safe by construction rather than by
@@ -104,7 +104,7 @@ export const tokens = usersSchema.table(
       .default(sql`clock_timestamp()`),
     /**
      * **Not nullable**, so "never expires" is unrepresentable and no read branches on
-     * null. Written from the Directory's construction-time lifetime, against the
+     * null. Written from the Manager's construction-time lifetime, against the
      * database's clock rather than this process's, since the comparison that refuses
      * an expired Token is made against the same clock.
      *
@@ -123,7 +123,7 @@ export const tokens = usersSchema.table(
 );
 
 /**
- * Everything the User Directory keeps, as `db.handle` wants it: one object, so
+ * Everything the User Manager keeps, as `db.handle` wants it: one object, so
  * every module of this part asks for the same handle by the same name.
  */
 export const usersTables = { users, tokens };

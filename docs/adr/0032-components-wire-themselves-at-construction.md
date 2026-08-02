@@ -28,7 +28,7 @@ components happen to share.
 ## What is kept, and what it costs
 
 **Omission still switches a route group off.** The server options are optional, so a
-deployment with no use for the User Directory's Agent server routes passes no
+deployment with no use for the User Manager's Agent server routes passes no
 `agentServer`, and a deployment replacing our password login with its own passes no
 `publicServer` ([ADR-0030](./0030-passwords-are-traded-for-bearer-tokens.md)). ADR-0010's
 property survives with a different spelling: an omission rather than a flag, still.
@@ -41,7 +41,7 @@ plugin. Passing the server is the easy path; the plugin is the door out.
 
 **The prefix becomes the component's**, and every document already assumed it was.
 `example/AGENTS.md` hard-codes `/signals` and `/runs` into the agent's own instructions,
-and the User Directory's own doc comments write `{ prefix: "/users" }` and `POST
+and the User Manager's own doc comments write `{ prefix: "/users" }` and `POST
 /auth/tokens` as though they were fixed. Making the component own the layout removes an
 option nobody was varying and turns three documents into one truth. An Operator who needs
 a different layout takes the escape hatch above.

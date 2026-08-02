@@ -30,7 +30,7 @@
  *
  * The Signal Worker is present here and nowhere else in this part, for one criterion: a
  * transaction that creates a User and emits a Signal must commit or roll back as one.
- * The User Directory is not a Producer and emits nothing itself (ADR-0029), so that
+ * The User Manager is not a Producer and emits nothing itself (ADR-0029), so that
  * pattern is the deployment's, and this is where it is proved to work.
  *
  * A database of this file's own, because no two test files may share one, and a
@@ -72,7 +72,7 @@ let directory: Users;
 let worker: SignalWorker;
 /**
  * The two servers, exactly as an Operator holds them: two bare Fastify instances of
- * their own, each given a place in a start order, and handed to the Directory so that
+ * their own, each given a place in a start order, and handed to the Manager so that
  * it registers its two route groups itself. Nothing here starts either — `inject`
  * needs no socket — so the listen options go unused.
  */
@@ -106,7 +106,7 @@ before(async () => {
   database = await createTestDatabase("users_trusted");
   db = database.db;
   // Both descriptors registered, because one test here spans both parts. The
-  // Directory needs no other part migrated to work, which `users.test.ts` is what
+  // Manager needs no other part migrated to work, which `users.test.ts` is what
   // proves.
   db.registerMigrations(signalsMigrations, usersMigrations);
   await db.migrate();
@@ -444,7 +444,7 @@ describe("issuing a Token from trusted code", () => {
     await works(bought.token, withPassword, "another User's Token");
 
     // And it expires, because it is written from the same construction-time lifetime
-    // and nothing about it says otherwise. A Directory of its own, with a lifetime
+    // and nothing about it says otherwise. A Manager of its own, with a lifetime
     // short enough that no clock has to be moved.
     const brief = createUsers({ db, tokenTtl: 1, scrypt: cheap });
     const fleeting = await db.tx((tx) => brief.issueToken(tx, oidc.id));
@@ -573,7 +573,7 @@ describe("the Agent server", () => {
     assert.deepEqual(created.attributes, {});
 
     // Including through the credential they were given: logging in as the User the
-    // agent made shows the same empty Attributes to the Directory and to whoever
+    // agent made shows the same empty Attributes to the Manager and to whoever
     // branches on them.
     assert.deepEqual((await logIn(created.id)).user.attributes, {});
   });
@@ -591,7 +591,7 @@ describe("a User and a Signal in one transaction", () => {
   }
 
   it("commits as one, which is how a deployment gets a `user.created` Signal", async () => {
-    // The User Directory is **not** a Producer: it takes no reference to the Signal
+    // The User Manager is **not** a Producer: it takes no reference to the Signal
     // Worker and emits nothing, because the worker is globally serial and a Signal per
     // User event would put a Run behind one (ADR-0029). A deployment that wants it emits
     // it itself, and this is the pattern — both writes take the caller's transaction

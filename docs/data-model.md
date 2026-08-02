@@ -2,11 +2,11 @@
 
 Terminology is in [CONTEXT.md](../CONTEXT.md); rationale is in [docs/adr/](./adr/).
 
-The model splits along the Gateway's internal boundaries ([ADR-0020](./adr/0020-producers-are-trusted-components-of-the-gateway.md)): the **Signal Worker** owns Signals and Runs, the **User Directory** owns Users and their Tokens, the **HTTP Messenger** owns Messages. The Scheduler keeps its own model, not described here. The Workspace is files, not rows. Signal Handlers are code, not data.
+The model splits along the Gateway's internal boundaries ([ADR-0020](./adr/0020-producers-are-trusted-components-of-the-gateway.md)): the **Signal Worker** owns Signals and Runs, the **User Manager** owns Users and their Tokens, the **HTTP Messenger** owns Messages. The Scheduler keeps its own model, not described here. The Workspace is files, not rows. Signal Handlers are code, not data.
 
-The split is literal: each part owns a PostgreSQL schema and migrates it independently, and no table references another part's ([ADR-0022](./adr/0022-the-store-is-postgresql-through-drizzle.md)), with **exactly one exception**: the HTTP Messenger's `user_id`, which is a foreign key onto the User Directory's `users.id` and is the only enforcement that a Message names a real User ([ADR-0036](./adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)). A second exception is an ADR of its own.
+The split is literal: each part owns a PostgreSQL schema and migrates it independently, and no table references another part's ([ADR-0022](./adr/0022-the-store-is-postgresql-through-drizzle.md)), with **exactly one exception**: the HTTP Messenger's `user_id`, which is a foreign key onto the User Manager's `users.id` and is the only enforcement that a Message names a real User ([ADR-0036](./adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)). A second exception is an ADR of its own.
 
-The Signal Worker's schema is **`saf_signals`**, the User Directory's is **`saf_users`** and the HTTP Messenger's is **`saf_http_messages`**. A schema is named for its subject rather than for the part, so that renaming a part is not a schema migration; the HTTP Messenger's carries the part because "HTTP" is the durable half of that name, and what the rule protects against is a rename becoming a migration ([ADR-0034](./adr/0034-the-http-messenger-is-an-opinionated-messenger.md)). Each schema carries its own migration tracking table, which is what stops one part's migrations being silently skipped, and a part registers its migration descriptor with the Db when it is constructed ([ADR-0032](./adr/0032-components-wire-themselves-at-construction.md)). Registration order is construction order, and the foreign key makes it load-bearing: the User Directory must be constructed before the HTTP Messenger or the latter's first migration fails with `schema "saf_users" does not exist`, since each descriptor's schema is created immediately before its own folder is applied and a Directory not reached yet has no schema either.
+The Signal Worker's schema is **`saf_signals`**, the User Manager's is **`saf_users`** and the HTTP Messenger's is **`saf_http_messages`**. A schema is named for its subject rather than for the part, so that renaming a part is not a schema migration; the HTTP Messenger's carries the part because "HTTP" is the durable half of that name, and what the rule protects against is a rename becoming a migration ([ADR-0034](./adr/0034-the-http-messenger-is-an-opinionated-messenger.md)). Each schema carries its own migration tracking table, which is what stops one part's migrations being silently skipped, and a part registers its migration descriptor with the Db when it is constructed ([ADR-0032](./adr/0032-components-wire-themselves-at-construction.md)). Registration order is construction order, and the foreign key makes it load-bearing: the User Manager must be constructed before the HTTP Messenger or the latter's first migration fails with `schema "saf_users" does not exist`, since each descriptor's schema is created immediately before its own folder is applied and a User Manager not reached yet has no schema either.
 
 ## Signal Worker (`saf_signals`)
 
@@ -41,7 +41,7 @@ One Prompt executed in one Session.
 
 There is no `timed_out` state, because there are no timeouts ([ADR-0017](./adr/0017-failed-runs-are-not-retried.md)).
 
-## User Directory (`saf_users`)
+## User Manager (`saf_users`)
 
 ### User
 
@@ -104,7 +104,7 @@ The `kind` and payload shape of the Signals this part emits are **its contract, 
 | `kind` | `message.received`, an exported constant rather than a construction option (ADR-0034) |
 | `payload` | the stored inbound Message, flat: `{ id, userId, direction, seq, text, createdAt }` |
 
-The payload **is** the record every other surface returns, not a projection of it: one shape for the POST response, both reads, the trusted-code methods and this. `direction` is always `inbound` here and `seq` is redundant for most Handlers; both are carried so that the part has one shape rather than two kept parallel by hand. `userId` is the id of the User the **User Directory** authenticated, read off the request and never from the body, which is what makes attribution trustworthy. `createdAt` is an ISO 8601 string, because JSON has no date. A Handler wanting more than the one Message reads that User's log through the part's own method rather than re-deriving anything from the payload.
+The payload **is** the record every other surface returns, not a projection of it: one shape for the POST response, both reads, the trusted-code methods and this. `direction` is always `inbound` here and `seq` is redundant for most Handlers; both are carried so that the part has one shape rather than two kept parallel by hand. `userId` is the id of the User the **User Manager** authenticated, read off the request and never from the body, which is what makes attribution trustworthy. `createdAt` is an ISO 8601 string, because JSON has no date. A Handler wanting more than the one Message reads that User's log through the part's own method rather than re-deriving anything from the payload.
 
 ## Invariants
 
@@ -127,7 +127,7 @@ The payload **is** the record every other surface returns, not a projection of i
 - **Delivery state on Messages.** Cursors replace acks and redelivery bookkeeping (ADR-0015).
 - **Read state of any kind.** No stored cursor, no unread count, no receipts, no cross-device sync. The read position a client needs is the largest `seq` it holds (ADR-0035).
 - **Any way to remove or edit a Message.** No delete, no update, no retention setting (ADR-0035).
-- **Identity in the Signal Worker.** It belongs to the User Directory alone (ADR-0020, ADR-0029).
+- **Identity in the Signal Worker.** It belongs to the User Manager alone (ADR-0020, ADR-0029).
 - **Any way to remove a User.** No delete, no deactivation flag (ADR-0029).
 - **Credentials other than a password.** No table of credential kinds, no `kind` column with one value in it. A second first-class kind would be an ADR and a migration; a deployment that wants one today writes its own login route and issues a Token (ADR-0030).
 - **Account-recovery state.** No reset tokens, no verification records, no security answers (ADR-0014, ADR-0030).

@@ -15,12 +15,12 @@
  * the framework offers, and all four are visible right here (ADR-0034):
  *
  *  - **Both servers are required.** Neither half is a capability. Omitting a server on the
- *    User Directory switches one off and leaves a coherent object that does less; a
+ *    User Manager switches one off and leaves a coherent object that does less; a
  *    Messenger with no Public server cannot be reached by the people it exists for, and one
  *    with no Agent server cannot be answered by the agent. Each is not a smaller Messenger
  *    but a broken one, and making them unconstructable is cheaper than documenting them.
  *  - **No route plugin is exported and no prefix is configurable**, which is the departure
- *    from ADR-0032's door-out pattern. The User Directory's plugin is useful in isolation —
+ *    from ADR-0032's door-out pattern. The User Manager's plugin is useful in isolation —
  *    routes over its own tables, working under any prefix. These routes are half of a
  *    contract whose other half is the Signal `kind`, the record shape and a client written
  *    against both, so an Operator who needs them elsewhere or behind a hook of their own
@@ -35,19 +35,19 @@
  * Five things about the surface are consequences worth meeting here:
  *
  *  - **Writes take the caller's transaction and reads do not** (ADR-0023), which is the split
- *    the User Directory established and this part follows: `send` is transactional on the
+ *    the User Manager established and this part follows: `send` is transactional on the
  *    caller's behalf, and `history` goes through the part's own handle. The consequence is
  *    worth stating where it will be met: a caller **cannot read its own uncommitted write**,
  *    so `send` returns the record and a read-back has no reason to exist.
  *  - **Construction order is load-bearing.** `db.migrate()` applies descriptors in
  *    registration order, which is construction order, and this part's first migration
- *    references `saf_users.users` — so the User Directory must be constructed **before**
+ *    references `saf_users.users` — so the User Manager must be constructed **before**
  *    this. Nothing checks it; the failure is PostgreSQL's `schema "saf_users" does not
  *    exist`, or `relation "saf_users.users" does not exist` where the schema is there and
  *    the table is not (ADR-0036).
  *  - **`users` and `worker` are named nominally.** A structural type on `users` would
  *    advertise a substitutability the foreign key has made false: this part needs *our*
- *    User Directory at the schema level, and the constructor is where that should be
+ *    User Manager at the schema level, and the constructor is where that should be
  *    visible rather than at `migrate`.
  *  - **A submitted Message and its Signal are one transaction**, and nothing else is in it.
  *    PostgreSQL's `NOTIFY` is transactional, so the row and the wakeup become visible
@@ -104,16 +104,16 @@ export const messageReceivedKind = "message.received";
 export type HttpMessengerOptions = {
   readonly db: Db;
   /**
-   * The User Directory whose Users these Messages belong to.
+   * The User Manager whose Users these Messages belong to.
    *
    * Named nominally, and required, because `messages.user_id` is a **foreign key** onto
-   * `saf_users.users.id` (ADR-0036): this part needs our Directory at the schema level
+   * `saf_users.users.id` (ADR-0036): this part needs our Manager at the schema level
    * rather than the type level, and a structural type would advertise a substitutability
    * that has stopped being true. Construct it before this.
    *
    * It is also where the Public routes' authentication comes from: `requireUser` is taken
    * off this object and put on the route as one option, so this part holds no Token and no
-   * header of its own and every refusal is the Directory's single 401 (ADR-0030).
+   * header of its own and every refusal is the Manager's single 401 (ADR-0030).
    */
   readonly users: Users;
   /**
@@ -126,9 +126,9 @@ export type HttpMessengerOptions = {
   /**
    * The Public server, where Users reach their own Messages, at **`/messages`**.
    *
-   * Required, unlike the User Directory's: a Messenger nobody can reach is broken rather
+   * Required, unlike the User Manager's: a Messenger nobody can reach is broken rather
    * than smaller. Structural, and asks for nothing but the Fastify instance, for the purely
-   * technical reason the Directory's option is — `FastifyInstance` has five generic
+   * technical reason the Manager's option is — `FastifyInstance` has five generic
    * parameters — so what satisfies it is what `serverComponent` returns.
    */
   readonly publicServer: {
@@ -203,7 +203,7 @@ export type HttpMessenger = {
    *
    * A read, so it takes no transaction and therefore **cannot see the caller's own
    * uncommitted write**. `send` returns the record for exactly that reason, the way `create`
-   * does in the User Directory.
+   * does in the User Manager.
    *
    * It answers from the same query both reads answer from, with the same cursor options: no
    * cursor is the newest `limit`, `before` the newest `limit` strictly below it, `after`
@@ -264,7 +264,7 @@ export function createHttpMessenger(options: HttpMessengerOptions): HttpMessenge
           return message;
         }),
     },
-    // The Directory's own hook, passed through and not wrapped: this part authenticates
+    // The Manager's own hook, passed through and not wrapped: this part authenticates
     // nobody, which is what `src/users/users.ts` promised it would do (ADR-0030).
     options.users.requireUser,
   );

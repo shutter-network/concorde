@@ -1,5 +1,5 @@
 /**
- * The User Directory's contributions to the two servers: creating and reading Users
+ * The User Manager's contributions to the two servers: creating and reading Users
  * on the Agent server, and trading a password for a Token on the Public one.
  *
  * Two plugins and not one, because they are registered on different Fastify
@@ -83,13 +83,13 @@ export type UserRecord = {
 };
 
 /**
- * What the agent's routes need of the User Directory, and no more: three operations
+ * What the agent's routes need of the User Manager, and no more: three operations
  * over the part's own handle, with no Db and no table objects.
  *
  * `create` takes one thing, an optional initial password, and there is no second
  * parameter waiting to be added: Attributes are what the agent may not supply, and
  * absence is how that is enforced. Note that it is also transaction-less, where the
- * Directory's own `create` takes one (ADR-0023): a request that creates a User has
+ * Manager's own `create` takes one (ADR-0023): a request that creates a User has
  * one statement in it and nothing to keep that statement with, while an Operator
  * creating a User has their own tables to keep it with.
  */
@@ -118,7 +118,7 @@ export type Credentials = {
 export type IssuedToken = {
   /** The Token, in the only response that will ever carry it. */
   readonly token: string;
-  /** When it stops working, ISO 8601, from the Directory's construction-time lifetime. */
+  /** When it stops working, ISO 8601, from the Manager's construction-time lifetime. */
   readonly expiresAt: string;
   /** The User it belongs to, including the Attributes governing their authorization. */
   readonly user: UserRecord;
@@ -142,7 +142,7 @@ export type PasswordChange = {
 };
 
 /**
- * What the Public routes need of the User Directory: a login, the two revocations, and
+ * What the Public routes need of the User Manager: a login, the two revocations, and
  * a password change.
  *
  * `logIn` answers `undefined` for **every** kind of failure and `changePassword`
@@ -316,7 +316,7 @@ export function unauthorized(reply: FastifyReply): FastifyReply {
 }
 
 /**
- * What the preHandler needs of the User Directory: a Token in, a User or nothing out.
+ * What the preHandler needs of the User Manager: a Token in, a User or nothing out.
  *
  * `undefined` for every way it can fail, for the reason `CredentialOperations` answers
  * `undefined` for every way a login can: an unknown Token and an expired one arrive
@@ -331,7 +331,7 @@ export type TokenOperations = {
  *
  * This augmentation is **global**: it is shipped in the package, so a
  * `FastifyRequest` anywhere in a program that imports this subpath has the field,
- * whether or not that program constructs the Directory. That is the cost of typing a
+ * whether or not that program constructs the Manager. That is the cost of typing a
  * request property at all, and it is accepted in ADR-0030; the name is namespaced
  * because an unqualified `user` is what `@fastify/jwt` claims, and a collision between
  * two Fastify decorators is a boot failure rather than a runtime one.

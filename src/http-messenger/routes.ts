@@ -2,7 +2,7 @@
  * The HTTP Messenger's contributions to the two servers, both of them at `/messages`.
  *
  * Two plugins and not one, because they are registered on different Fastify instances
- * listening on different addresses. Unlike the User Directory's, **neither is exported and
+ * listening on different addresses. Unlike the User Manager's, **neither is exported and
  * neither prefix is configurable**, which is this part's stated departure from ADR-0032's
  * door-out pattern: these routes are half of a contract whose other half is the Signal
  * `kind`, the record shape and a client written against both, so an Operator who wants
@@ -20,9 +20,9 @@
  * | `GET /messages?after=&before=&limit=` | `{ messages: [...] }`, ascending by `seq`, or 401 |
  *
  * Nothing here authenticates anybody. The Agent server has no authentication at all
- * (ADR-0010), and both Public routes take the User Directory's `requireUser` as **one option
+ * (ADR-0010), and both Public routes take the User Manager's `requireUser` as **one option
  * on the route**, which is exactly what `src/users/users.ts` already promised: the User is
- * read off `request.safUser`, every refusal is the Directory's single 401, and this part
+ * read off `request.safUser`, every refusal is the Manager's single 401, and this part
  * holds no Token, no header and no scheme of its own.
  *
  * `user` is **required** on the agent's read. Not for confidentiality — the agent may read
@@ -213,9 +213,9 @@ export function agentMessageRoutes(messageLog: MessageOperations): FastifyPlugin
  * The Public server's Message routes: a User's own log, and the one way anything gets into
  * it from outside the Gateway.
  *
- * `presentedUser` is the User Directory's `requireUser`, taken as one option on each route
+ * `presentedUser` is the User Manager's `requireUser`, taken as one option on each route
  * and not wrapped, extended or re-implemented. So an unauthenticated read or post is the
- * Directory's single 401 — a missing header, a header in another scheme, an unknown Token
+ * Manager's single 401 — a missing header, a header in another scheme, an unknown Token
  * and an expired one alike — and this part authenticates nobody (ADR-0030).
  *
  * The hook runs at `preHandler`, after validation, so a malformed window, an unknown query
@@ -302,7 +302,7 @@ async function answerHistory(
  * key and there is deliberately no lookup in front of it (ADR-0036).
  *
  * Both surfaces refuse through this one function, and only the agent can meet the 404: a
- * User's own post carries the id the Directory's hook just looked a User up by, and nothing
+ * User's own post carries the id the Manager's hook just looked a User up by, and nothing
  * removes a User (ADR-0029). The contention a busy log can lose is reachable from either.
  */
 function refused(reply: FastifyReply, error: unknown, userId: string): FastifyReply {

@@ -55,7 +55,7 @@ So `name` goes. `serverComponent` loses its first argument and becomes
 ## Not only parts that run
 
 The record is the Gateway's directory of its own parts, and a part that cannot be in it
-cannot be reached through the Gateway at all. The User Directory and the HTTP Messenger
+cannot be reached through the Gateway at all. The User Manager and the HTTP Messenger
 have nothing to start and nothing to release, and under ADR-0031 that kept them out. They
 are Components now, with `start` and `stop` that do nothing.
 

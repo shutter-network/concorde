@@ -1,5 +1,5 @@
 /**
- * The User Directory, as the agent and an Operator can observe it.
+ * The User Manager, as the agent and an Operator can observe it.
  *
  * The subject is not that Fastify routes a request, and it is never how a User is
  * stored: every assertion here is made over HTTP against a real Fastify instance and
@@ -13,7 +13,7 @@
  * lives, so an agent that could choose them could mint itself an administrator, and
  * an injected prompt reaches this surface with nothing in its way.
  *
- * The Signal Worker is deliberately absent from this file. The User Directory takes no
+ * The Signal Worker is deliberately absent from this file. The User Manager takes no
  * reference to it, emits no Signals, and its migration descriptor is applied alone
  * here — so a deployment with identity and no Signals at all is what these tests
  * actually run.
@@ -34,7 +34,7 @@ let db: Db;
 let directory: Users;
 /**
  * The Agent server: a bare Fastify instance an Operator constructed, given a place in
- * a start order — and the thing the User Directory is handed to wire itself to.
+ * a start order — and the thing the User Manager is handed to wire itself to.
  */
 let agentServer: Component & { readonly fastify: FastifyInstance };
 
@@ -298,7 +298,7 @@ describe("the Agent server plugin", () => {
     const user = await created(undefined, alsoAt);
     assert.deepEqual((await read(`/${user.id}`, alsoAt)).json(), user);
     // And the same User through the registration the constructor made, because both
-    // are the same Directory over the same Db.
+    // are the same Manager over the same Db.
     assert.deepEqual(await readBack(user.id), user);
 
     // Nothing answers where the plugin was not put, including at the root, which is

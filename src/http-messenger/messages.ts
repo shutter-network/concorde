@@ -25,7 +25,7 @@ type MessagesHandle = Handle<typeof httpMessagesTables>;
  * are paid so that this part has one shape rather than two kept parallel by hand
  * (ADR-0034). `createdAt` is an ISO 8601 string, because JSON has no date.
  *
- * It lives here rather than in `routes.ts`, where the User Directory keeps `UserRecord`,
+ * It lives here rather than in `routes.ts`, where the User Manager keeps `UserRecord`,
  * because it is not only the wire shape: it is what the insert answers with and what a
  * Handler is written against, and the routes are one consumer of it among three.
  */

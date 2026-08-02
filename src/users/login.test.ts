@@ -17,7 +17,7 @@
  *    rather than milliseconds. The claim is about the code path, and a claim about
  *    wall-clock time on a shared machine is a flaky test rather than a strong one.
  *
- * The Directory under test is constructed with a **deliberately cheap** scrypt cost,
+ * The Manager under test is constructed with a **deliberately cheap** scrypt cost,
  * because every login here would otherwise pay the real one; one test constructs with
  * the default and logs in, so the shipped parameters are exercised too.
  *
@@ -62,7 +62,7 @@ let db: Db;
 let directory: Users;
 /**
  * The two servers, exactly as an Operator holds them: two bare Fastify instances of
- * their own, each given a place in a start order, and handed to the Directory so that
+ * their own, each given a place in a start order, and handed to the Manager so that
  * it registers its two route groups itself. Nothing here starts either — `inject`
  * needs no socket — so the listen options below go unused.
  */
@@ -306,7 +306,7 @@ describe("refusing a login", () => {
     const nobody = "9a7c6b5d-4e3f-4a2b-9c8d-7e6f5a4b3c2d";
 
     // One miss first, so the fixed dummy digest this Gateway verifies against is
-    // already derived. It is built lazily and at the Directory's own cost, so that a
+    // already derived. It is built lazily and at the Manager's own cost, so that a
     // miss costs what a hit costs however the Operator constructed it.
     await attempt({ user: nobody, password });
 
@@ -364,7 +364,7 @@ describe("refusing a login", () => {
 
 describe("the Token's lifetime", () => {
   it("comes from the construction-time option and from nothing else", async () => {
-    // A second Directory over the same Db, differing only in the number an
+    // A second Manager over the same Db, differing only in the number an
     // Operator chose. A lifetime of a millisecond is a Token that is expired by the
     // time the response is read, which is how the refusal of an expired one is
     // reachable without a test waiting for anything.
@@ -438,7 +438,7 @@ describe("the cost of a password", () => {
       await logIn(written.id, password);
 
       // And the other direction, which is the same claim: a digest written under the
-      // new parameters verifies through the Directory that knows nothing about them.
+      // new parameters verifies through the Manager that knows nothing about them.
       const laterResponse = await server.fastify.inject({
         method: "POST",
         url: "/users",

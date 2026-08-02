@@ -5,7 +5,7 @@
 > which is what `start`, `stop` and the unwind actually do, is unchanged.
 >
 > 1. *"only parts that run have one"*, and the enumeration that follows it. The User
->    Directory and the HTTP Messenger are Components with `start` and `stop` that do
+>    Manager and the HTTP Messenger are Components with `start` and `stop` that do
 >    nothing, because the record is the Gateway's directory of its own parts and membership
 >    is what gives a part its position before it needs one.
 > 2. *"Both methods are required"* still holds, but not for the reason given here. The
@@ -37,7 +37,7 @@ degenerates to "a thing with an optional everything". That still holds. **A Comp
 not a plugin contract. It is a lifecycle, and only parts that run have one.**
 
 Today there are four: the Db, the Signal Worker, the Public server and the Agent server.
-The User Directory is not one. Neither is the Runtime, whose whole contract is
+The User Manager is not one. Neither is the Runtime, whose whole contract is
 `run(prompt)`; nor the Mount Table, which is inert by decision
 ([ADR-0028](./0028-the-mount-table-declares-mounts-and-verifies-nothing.md)); nor a
 Signal Handler, which is the extension point rather than a part. `createUsers` returns
@@ -74,7 +74,7 @@ framework. `components(list)` receives objects that already hold each other; it 
 nothing, injects nothing, and could not tell you what depends on what. A graph was
 considered and rejected: it would move the wiring out of the entry point, and the wiring
 is where the Signal Handlers are built, which is what keeps the Signal Worker free of a
-reference to the User Directory ([ADR-0029](./0029-users-are-a-part-of-their-own.md)).
+reference to the User Manager ([ADR-0029](./0029-users-are-a-part-of-their-own.md)).
 
 `components(list)` returns a plain `{ start, stop }` and is not itself a Component.
 Nesting has no use here and would force it to carry a `name` that nothing reads.

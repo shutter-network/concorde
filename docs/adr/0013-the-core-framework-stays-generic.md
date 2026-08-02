@@ -2,7 +2,7 @@
 
 > **Amended by [ADR-0029](./0029-users-are-a-part-of-their-own.md) and
 > [ADR-0030](./0030-passwords-are-traded-for-bearer-tokens.md).** Users belong to the
-> **User Directory**, not the Messenger, and there is no **Authenticator** — the seam is
+> **User Manager**, not the Messenger, and there is no **Authenticator** — the seam is
 > token issuance. Both substitutions leave this ADR's argument intact: authentication is
 > still outside the core, and it is still an extension point. Only the name and the
 > owner changed.
