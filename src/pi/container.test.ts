@@ -56,10 +56,10 @@ import path from "node:path";
 import { after, before, describe, it, type TestContext } from "node:test";
 import { eq } from "drizzle-orm";
 import Fastify from "fastify";
+import { components, serverComponent } from "../components.ts";
 import type { Mount } from "../container/index.ts";
-import type { Db } from "../db/index.ts";
+import { openDb } from "../db/index.ts";
 import type { SignalHandler } from "../signals/handlers.ts";
-import { signalsMigrations } from "../signals/migrations.ts";
 import type { RuntimeAdapter } from "../signals/runtime.ts";
 import { runs } from "../signals/schema.ts";
 import { createSignalWorker } from "../signals/worker.ts";
@@ -113,16 +113,20 @@ const agentsFileName = "AGENTS.md";
 const runId = "6f1a3c7e-0000-4000-8000-000000000001";
 
 let image: string;
+/**
+ * The throwaway database, and the Db that will drop it — which is deliberately **not**
+ * the Gateway's.
+ *
+ * The Gateway's Db is a Component, so the list stops it, and a pool cannot be ended
+ * twice. This one is opened by `createTestDatabase`, is never queried on, and exists to
+ * hand the database back at the end.
+ */
 let database: TestDatabase;
-let db: Db;
 
 before(async () => {
   if (skip !== false) return;
   image = await buildPiImage();
   database = await createTestDatabase("pi_container");
-  db = database.db;
-  db.registerMigrations(signalsMigrations);
-  await db.migrate();
 });
 
 after(async () => {
@@ -272,7 +276,14 @@ function instructionsEntry(paths: Paths): Mount {
  * Stands up a whole Gateway around one `pi` adapter and hands it to `body`.
  *
  * One end-to-end path, so this is used once: a Signal Worker, a real database, the
- * Agent server with the Worker's routes on it, and the scripted model.
+ * Agent server with the Worker's routes on it, and the scripted model. Assembled the
+ * way `example/gateway.ts` assembles one — construct, migrate, order, start — because
+ * this is the only place a whole Gateway is put together against real everything, and
+ * an assembly the reference entry point does not use would prove the wrong thing.
+ *
+ * What it does **not** prove is the ordering: it stops nothing mid-Run, so that the
+ * Agent server must outlive the Signal Worker stays reasoning in a comment rather than
+ * a passing assertion (ADR-0031).
  */
 async function withGateway(
   t: TestContext,
@@ -289,9 +300,12 @@ async function withGateway(
   // file written now, and it has to name the port the container will connect to.
   const port = await reservePort();
   const agentServerUrl = `http://${hostFromContainer}:${port}`;
-  // A bare Fastify instance, as an Operator's entry point constructs it. The framework
-  // ships no server and no bind default, so the host below is this test's to state.
-  const agentServer = Fastify();
+  // A bare Fastify instance in a Component, as an Operator's entry point constructs it:
+  // the framework ships no server and defaults no address, so both are stated here.
+  // Bound beyond loopback on purpose — under a plain Linux daemon a container cannot
+  // reach a loopback-bound server at all, and this test has to pass on both. Nothing
+  // warns about it and nothing inspects what was bound (ADR-0004).
+  const agentServer = serverComponent("agent server", Fastify(), { port, host: "0.0.0.0" });
   const model = await startMockModel(reply);
 
   // The Operator's two files, both of them things the framework used to write and now
@@ -301,15 +315,13 @@ async function withGateway(
 
   const runtime = adapterOn(paths, [instructionsEntry(paths)]);
 
-  const worker = createSignalWorker({ db, runtime, handlers: { ask: asking } });
-  // Nothing registers the Signal Worker's routes for you, and Fastify refuses one
-  // after a server is listening.
-  await agentServer.register(worker.agentRoutes);
-  // Bound beyond loopback on purpose: under a plain Linux daemon a container cannot
-  // reach a loopback-bound server at all, and this test has to pass on both. Nothing
-  // warns about it, and nothing inspects what was bound — the address is the
-  // deployment's alone (ADR-0004).
-  await agentServer.listen({ port, host: "0.0.0.0" });
+  // The Gateway's own Db, on the same database. Handing it to the Worker is what
+  // registers the Worker's migration descriptor, so `migrate` comes after construction
+  // and takes no arguments; handing the Worker the server is what registers its routes,
+  // so nothing here calls `register`.
+  const db = openDb(database.url);
+  const worker = createSignalWorker({ db, runtime, handlers: { ask: asking }, agentServer });
+  await db.migrate();
 
   const handle = db.handle({ runs });
   const rig: Rig = {
@@ -338,12 +350,16 @@ async function withGateway(
     },
   };
 
-  await worker.start();
+  // The reference deployment's order, minus the Public server this test has no use for:
+  // the Db first so it stops last, the Agent server before the Worker so it closes after
+  // the drain, and `start` in one call that binds the port the agent was already told
+  // about (ADR-0031).
+  const gateway = components([db, agentServer, worker]);
+  await gateway.start();
   try {
     await body(rig);
   } finally {
-    await worker.stop();
-    await agentServer.close();
+    await gateway.stop();
     await model.close();
   }
 }

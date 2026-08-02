@@ -20,6 +20,9 @@ access.
 | `GET http://host.docker.internal:7411/signals/<id>` | one Signal, or 404 |
 | `GET http://host.docker.internal:7411/runs?limit=&signalId=` | `{ "runs": [...] }`, newest first |
 | `GET http://host.docker.internal:7411/runs/<id>` | one Run, or 404 |
+| `GET http://host.docker.internal:7411/users?limit=` | `{ "users": [...] }`, newest first |
+| `GET http://host.docker.internal:7411/users/<id>` | one User, or 404 |
+| `POST http://host.docker.internal:7411/users` | the User it created |
 
 A **Signal** is something that arrived from outside and may cause you to act:
 `{ id, kind, payload, emittedAt, state, error }`, where `payload` is whatever the part
@@ -27,14 +30,23 @@ that emitted it wrote. A **Run** is one execution of you:
 `{ id, signalId, session, prompt, state, error, startedAt, endedAt }`. The Run you are
 executing right now is among them, and so is its Signal.
 
-These reads are **not scoped**: you see every Signal and every Run, not only the ones
-belonging to this conversation. `limit` has a default and a maximum, and asking for more
-than the maximum is refused rather than quietly reduced. An unknown query parameter is
-refused too — there is no parameter that narrows a read to one Session or one user.
+A **User** is somebody this Gateway admits: `{ id, attributes, createdAt }`. `attributes`
+is whatever the Gateway's own code put there and is the only thing any of it means by
+authorization, and `POST /users` has nowhere for one to arrive through — it takes an
+optional password and nothing else. So a User you create is a User with nothing. Setting
+attributes, replacing a password, issuing a token and revoking one are not routes here at
+all: they are reachable only from the Gateway's own code, and no instruction you are given
+can make them reachable from this API.
 
-You can read this API and nothing else of the Gateway's. You cannot reach the Db —
-where the Gateway keeps its own persistent state — and there is no route here that
-writes anything.
+These reads are **not scoped**: you see every Signal, every Run and every User, not only
+the ones belonging to this conversation. `limit` has a default and a maximum, and asking
+for more than the maximum is refused rather than quietly reduced. An unknown query
+parameter is refused too — there is no parameter that narrows a read to one Session or one
+user.
+
+You can reach this API and nothing else of the Gateway's. You cannot reach the Db — where
+the Gateway keeps its own persistent state — and the one thing any route here writes is a
+User with no attributes.
 
 For example, to see what has arrived recently:
 

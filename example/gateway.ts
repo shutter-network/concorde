@@ -5,36 +5,44 @@
  *
  * Nothing here represents the Gateway. There is no framework object to construct, no
  * registry to add parts to, and no lifecycle to implement: this file *is* the Gateway,
- * and everything below it is a part being constructed and handed to another part. The
- * ordering is therefore yours, and it is the one thing about this file that is not
- * arbitrary:
+ * and everything below it is a part being constructed and handed to another part. What
+ * an assembly is, whole, is four steps:
  *
- *   1. **open the Db** — a connection URL, and nothing happens on the wire yet
- *   2. **construct, and register routes** — two Fastify instances, the Runtime Adapter,
- *      and the Signal Worker with its Handlers, whose routes go onto the Agent one
- *   3. **migrate** — explicitly, so it can also be a deploy step of its own, and after
- *      the construction above because constructing a part is what registers the
- *      migration descriptor `db.migrate()` then applies
- *   4. **start the Signal Worker** — with no arguments: its Handlers were a construction
- *      option, because a Worker with none should not be constructible
- *   5. **listen** — last, because Fastify refuses a route registration after that
+ *   1. **construct** — the Db, two Fastify instances as Components, the Runtime Adapter,
+ *      the User Directory and the Signal Worker with its Handlers. A part handed a
+ *      server registers its routes on it and a part with tables registers its migration
+ *      descriptor with the Db, so construction is also the whole of the wiring
+ *      ([ADR-0032](../docs/adr/0032-components-wire-themselves-at-construction.md))
+ *   2. **migrate** — explicitly, and after the construction above, because constructing
+ *      a part is what registers the descriptor `db.migrate()` applies. `migrate.ts` is
+ *      the same call as a deploy step of its own, which is what a second replica needs
+ *   3. **order** — the list, which is the one thing in this file that is not arbitrary
+ *      and the one thing nothing checks. Its comment is below and is worth reading
+ *   4. **start** — one call, in list order, and `stop` in the reverse of it
  *
  * Two things this file is deliberately on the hook for, because the framework ships
- * neither: **shutdown** (the `SIGINT` handler at the bottom, whose ordering matters) and
- * **emitting Signals** (the last line, which is a Producer — a Producer is anything that
- * emits, including a loop in an entry point).
+ * neither: **shutdown** (the two-line loop at the bottom, whose exit code and escalation
+ * policy are this file's) and **emitting Signals** (the last line, which is a Producer —
+ * a Producer is anything that emits, including a loop in an entry point).
  *
  * Read ../docs/quickstart.md alongside this. It explains the parts that are load-bearing
- * and cannot be guessed from here: why the Public server has no routes, why the agent's
- * container reaches this process at `host.docker.internal` and where that stops being
- * true, and the two risks this design accepts.
+ * and cannot be guessed from here: why the agent's container reaches this process at
+ * `host.docker.internal` and where that stops being true, what the User Directory does
+ * and does not do for you, and the two risks this design accepts.
  */
 
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import Fastify from "fastify";
-import { createSignalWorker, openDb, templateHandler } from "shared-agent-framework";
+import {
+  components,
+  createSignalWorker,
+  openDb,
+  serverComponent,
+  templateHandler,
+} from "shared-agent-framework";
 import { createPiAdapter } from "shared-agent-framework/pi";
+import { createUsers } from "shared-agent-framework/users";
 
 // Refused here rather than discovered later: a Run that fails is never retried, so a
 // Gateway that starts without a usable model turns every Signal it ever receives into a
@@ -42,13 +50,13 @@ import { createPiAdapter } from "shared-agent-framework/pi";
 const apiKey = process.env.ANTHROPIC_API_KEY;
 if (apiKey === undefined) throw new Error("set ANTHROPIC_API_KEY; the agent's model needs it");
 
-// Where the Agent server *binds* — the `listen` call at the bottom of this file — and
-// how the agent's container *reaches* it are two separate values, and neither can be
-// derived from the other. The second one is not in this file at all: it is written into
-// ./AGENTS.md, which is mounted into the agent's Workspace below, because the framework
-// no longer carries the agent's instructions and never sees that address. The two are the
-// thing in this deployment most likely to need changing on another machine, and changing
-// one means changing the other. See the quickstart's note on it.
+// Where the Agent server *binds* — the Component below — and how the agent's container
+// *reaches* it are two separate values, and neither can be derived from the other. The
+// second one is not in this file at all: it is written into ./AGENTS.md, which is mounted
+// into the agent's Workspace below, because the framework no longer carries the agent's
+// instructions and never sees that address. The two are the thing in this deployment most
+// likely to need changing on another machine, and changing one means changing the other.
+// See the quickstart's note on it.
 const agentPort = 7411;
 
 // Three directories, all of them this process's own, all bind-mounted into the agent's
@@ -69,14 +77,28 @@ const db = openDb(process.env.DATABASE_URL ?? "postgres://saf:saf@localhost:5433
 
 // Two ordinary Fastify instances, because the framework ships no server: there is nothing
 // of ours between this file and Fastify, and every option, hook and plugin is reachable
-// without asking whether we pass it through. What makes them two different surfaces is
-// what goes on each of them, and nothing else.
+// without asking whether we pass it through. `serverComponent` constructs nothing and
+// defaults nothing — it holds the address until `start`, since `Fastify()` takes none,
+// and puts the instance on `.fastify` so your own routes go on the same server ours do.
 //
-// The Public one carries no routes at all, and that is finished work rather than a stub:
-// Users reach the Messenger through it and the Messenger is out of scope. It is here
-// because it is part of the Gateway's shape, and because it is where your own plugins go.
-const publicServer = Fastify();
-const agentServer = Fastify();
+// What makes them two different surfaces is what goes on each of them, and nothing else.
+// The two bind addresses are written side by side because the asymmetry between them is
+// the reason there are two servers at all.
+const publicServer = serverComponent("public server", Fastify(), {
+  port: 8080,
+  // Every interface. This is the surface meant to be exposed, and a Public server on
+  // loopback inside a container is reachable by nobody at all — a deployment that looks
+  // healthy and serves no User. Behind a reverse proxy on this host, write "localhost".
+  host: "0.0.0.0",
+});
+const agentServer = serverComponent("agent server", Fastify(), {
+  port: agentPort,
+  // Loopback, which is also Fastify's own default and written out anyway because it is
+  // the more consequential of the two: this server has no authentication, so reaching the
+  // port is read-write access to everything on it (ADR-0010). "localhost" rather than
+  // "127.0.0.1" because Fastify expands it to both loopback addresses, IPv4 and IPv6.
+  host: "localhost",
+});
 
 const runtime = createPiAdapter({
   image: "saf-agent:0.83.0",
@@ -129,6 +151,28 @@ const runtime = createPiAdapter({
     ],
   },
 });
+
+// The User Directory, constructed and held by nobody, because handing it the two servers
+// is the whole of what this deployment asks of it: `POST /auth/tokens` on the Public one,
+// `POST /users` and the two reads on the Agent one. Omitting a server is how either group
+// is switched off — there is no flag and no route to guard (ADR-0010).
+//
+// A deployment with routes of its own keeps the object instead. `requireUser` is on it,
+// and so are the four things trusted code may do and the agent may not: setting
+// Attributes, replacing a password, issuing a Token and revoking (ADR-0029, ADR-0030).
+// It is **not** a Component and has no place in the list below: nothing to start, nothing
+// to release (ADR-0031). Seeding the first User is out of band and not in this file,
+// because a User has no natural key and so "create if absent" cannot be written.
+createUsers({
+  db,
+  // Thirty days. No default, because the trade is the deployment's: longer is fewer
+  // logins and a longer window for a stolen Token, and nothing in the framework can tell
+  // which side of that this Gateway is on.
+  tokenTtl: 30 * 24 * 60 * 60 * 1000,
+  agentServer,
+  publicServer,
+});
+
 const worker = createSignalWorker({
   db,
   runtime,
@@ -147,50 +191,73 @@ const worker = createSignalWorker({
       data: (signal) => signal.payload,
     }),
   },
+  // Which registers the Worker's read-only routes on it at no prefix — `/signals` and
+  // `/runs`, the URLs ./AGENTS.md hands the agent. The exported `worker.agentRoutes` is
+  // the door out of that default, for a prefix or an encapsulation of your own.
+  agentServer,
 });
-// By hand here, which is the door the exported plugin is: handing the Signal Worker the
-// Agent server does the same registration at construction. Either way, not registering
-// this group at all is how it is switched off — it is read-only and unscoped, so the
-// agent sees every Signal and every Run.
-await agentServer.register(worker.agentRoutes);
 
-// After construction, because the Signal Worker registers its own migration descriptor
-// with the Db and `db.migrate()` applies whatever registered. migrate.ts is the entry
-// point a deploy runs instead of this one, and it registers the same descriptor
-// explicitly — the identical descriptor twice is one registration.
+// After construction, because a part registers its own migration descriptor with the Db
+// and `db.migrate()` applies whatever registered. migrate.ts is the entry point a deploy
+// runs instead of this one, and it registers the same two descriptors explicitly — the
+// identical descriptor twice is one registration.
+//
+// One process on one machine can do this here. More than one cannot: Drizzle's migrator
+// takes no advisory lock, so two replicas booting together race into a duplicate-relation
+// crash on all but one. Run migrate.ts as a step of its own and delete this line; nothing
+// goes unnoticed if you do, because `start` below refuses a schema the database is behind.
 await db.migrate();
 
-await worker.start();
+// The list, and the one thing in this file that is not arbitrary. `components` starts in
+// this order and stops in the reverse of it, so every position is a claim about what must
+// still be working while the thing after it shuts down:
+//
+//   1. **the Db**, so it stops last. Everything queries it and the drain queries it on
+//      the way down; closing it earlier pulls the `LISTEN` connection out from under a
+//      running Signal Worker, which then logs a dropped connection and retries forever.
+//   2. **the Agent server**, before the Worker so that it closes *after* the drain. The
+//      agent calls it during a Run — ./AGENTS.md is where it is given those URLs — so
+//      closing it first refuses the agent its own API mid-Run.
+//   3. **the Signal Worker**, whose `stop` waits for the Run in flight and never cancels
+//      one: a Run abandoned halfway leaves effects nothing retries (ADR-0017).
+//   4. **the Public server**, last, so that it is first to stop accepting submissions.
+//
+// `[db, worker, agentServer, publicServer]` reads more naturally and groups the two
+// servers together, and it is wrong for the reason in 2. **Nothing checks this and
+// nothing can**: whether the agent calls the Agent server mid-Run is the model's choice,
+// so the ordering is reasoning rather than a passing assertion (ADR-0031).
+const gateway = components([db, agentServer, worker, publicServer]);
 
-// The two bind addresses, side by side, because the asymmetry between them is the reason
-// there are two servers and no default of ours hides either one.
-await publicServer.listen({
-  port: 8080,
-  // Every interface. This is the surface meant to be exposed, and a Public server on
-  // loopback inside a container is reachable by nobody at all — a deployment that looks
-  // healthy and serves no User. Behind a reverse proxy on this host, write "localhost".
-  host: "0.0.0.0",
-});
-await agentServer.listen({
-  port: agentPort,
-  // Loopback, which is also Fastify's own default and written out anyway because it is
-  // the more consequential of the two: this server has no authentication, so reaching the
-  // port is read-write access to the whole Db, and moving it off loopback should be a
-  // change someone made on purpose (ADR-0010). "localhost" rather than "127.0.0.1"
-  // because Fastify expands it to both loopback addresses, IPv4 and IPv6.
-  host: "localhost",
-});
+// Which opens the pool, refuses to serve if any registered schema is behind the migration
+// folder shipped beside it, and only then starts the worker and binds the two ports. A
+// part that throws here stops everything that had already started, so a Gateway that
+// could not boot holds nothing open.
+await gateway.start();
 
-// Shutdown, in the order that matters. `worker.stop()` first: it waits for the Run in
-// flight and closes the connection the worker listens for wakeups on. Closing the Db
-// first instead pulls that connection out from under a running Signal Worker, which
-// then logs a dropped connection and retries forever. Nothing here handles a Run that
-// is mid-flight when the signal arrives — that is a situation every Operator meets alone.
-process.on("SIGINT", async () => {
-  await worker.stop();
-  await Promise.all([agentServer.close(), publicServer.close()]);
-  await db.stop();
-});
+// Shutdown, and both of the signals that mean it. The framework ships no signal handling
+// at all (ADR-0021), which is why these three lines are here rather than behind an
+// option: the exit code, any timeout on the drain and what a second signal does are the
+// Operator's, and they differ per deployment.
+//
+// `SIGTERM` is the one that matters and the one this file used to be missing. `SIGINT` is
+// Ctrl-C, but `docker stop`, systemd and a Kubernetes eviction all send `SIGTERM`, so
+// without it the drain never ran in the only situation it was written for — and a Signal
+// left `processing` fails permanently on the next boot (ADR-0017).
+//
+// Two things follow from `once` rather than `on`. A **different** second signal — Ctrl-C
+// and then a `docker stop` — calls `stop` a second time, which is harmless: it pops what
+// it stopped, so the second call finds nothing to do and no part is torn down twice. A
+// **repeated** signal finds no listener left and gets Node's default, which kills this
+// process mid-drain. That is the escalation this file chooses, and `process.on` is how
+// you decline it.
+//
+// There is no `process.exit` anywhere here, deliberately: once `stop` has returned, the
+// pool is closed, the listening connection is closed, the sweep interval is cleared and
+// both servers are shut, so nothing holds the event loop and the process ends by itself.
+// An exit call would be a way to cut the drain short and buy nothing.
+for (const stopping of ["SIGINT", "SIGTERM"] as const) {
+  process.once(stopping, () => void gateway.stop());
+}
 
 // A Producer: something inside the Gateway that puts a Signal in the queue. There is no
 // framework concept here beyond a function call, and it takes the transaction rather than

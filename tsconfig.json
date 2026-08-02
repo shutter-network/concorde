@@ -36,7 +36,8 @@
     // so nothing else is affected.
     "paths": {
       "shared-agent-framework": ["./src/index.ts"],
-      "shared-agent-framework/pi": ["./src/pi/index.ts"]
+      "shared-agent-framework/pi": ["./src/pi/index.ts"],
+      "shared-agent-framework/users": ["./src/users/index.ts"]
     }
   },
   // The `drizzle.*.config.ts` files are included but not built: they are how the
