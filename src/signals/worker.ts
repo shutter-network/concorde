@@ -204,8 +204,8 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
 
   // The two acts of wiring, both of them here so that an Operator's entry point does
   // neither (ADR-0032). Registering the descriptor is bookkeeping the Db does nothing
-  // with until `migrate` or `start`, and it is the identical descriptor
-  // `example/migrate.ts` registers, which is one registration and not two.
+  // with until `migrate` or `start`, and it is the identical descriptor a pre-deploy
+  // migration step registers by hand, which is one registration and not two.
   options.db.registerMigrations(signalsMigrations);
   const agentRoutes = agentReadRoutes(handle);
   // At no prefix, and not awaited: Fastify defers a plugin until the server is ready,

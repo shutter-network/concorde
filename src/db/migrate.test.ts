@@ -117,8 +117,8 @@ describe("db.migrate", () => {
 
 describe("db.registerMigrations", () => {
   it("takes the identical descriptor twice as one registration", async (t) => {
-    // The case an Operator meets: `migrate.ts` registers the descriptor a part
-    // exports, and the part registers the same one at construction.
+    // The case an Operator meets: a pre-deploy migration step registers the descriptor
+    // a part exports, and the part registers the same one at construction.
     const db = await freshDb(t, "registered_twice");
     db.registerMigrations(alphaMigrations);
     db.registerMigrations(alphaMigrations);

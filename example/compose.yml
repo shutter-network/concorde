@@ -1,9 +1,9 @@
 # The reference deployment's containers: PostgreSQL, the agent image, and the networks.
 #
-#     docker compose -f example/compose.yaml up -d --build
+#     docker compose -f example/compose.yml up -d --build
 #
 # Note what is *not* here: the Gateway. It runs on the host, as an ordinary Node
-# process (`node example/gateway.ts`), and that is a deliberate choice rather than a
+# process (`node example/main.ts`), and that is a deliberate choice rather than a
 # gap. The Gateway starts a container per Run, so containerising it means handing it a
 # container runtime socket — which is root on the host, a far larger hole than the one
 # it would close. Running it on the host also makes the file ownership story true by
@@ -12,7 +12,7 @@
 #
 # One consequence worth stating, because it is what a reader looking for a port here needs:
 # neither of the Gateway's two ports is published by anything in this file, and neither is
-# written here at all. Both are the host's own and both are in `gateway.ts`, where the servers
+# written here at all. Both are the host's own and both are in `main.ts`, where the servers
 # bind: the Public one, which is where a person logs in and posts a Message, and the Agent one
 # on loopback, which the agent's container reaches from the network below at
 # `host.docker.internal`.

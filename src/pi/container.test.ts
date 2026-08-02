@@ -251,7 +251,7 @@ async function placeModels(paths: Paths, baseUrl: string): Promise<void> {
  * scripted model at all is the proof that it works (ADR-0025, ADR-0033).
  *
  * Written **outside** the agent directory and mounted read-only into it, which is what
- * `example/gateway.ts` does and is the arrangement worth proving: `pi` takes a lock beside
+ * `example/main.ts` does and is the arrangement worth proving: `pi` takes a lock beside
  * this file even to read it, so a Run against a settings file it cannot write is a claim
  * that only a real container settles.
  */
@@ -335,10 +335,11 @@ function instructionsEntry(paths: Paths): Mount {
  * Stands up a whole Gateway around one `pi` Runtime and hands it to `body`.
  *
  * One end-to-end path, so this is used once: a Signal Worker, a real database, the
- * Agent server with the Worker's routes on it, and the scripted model. Assembled the
- * way `example/gateway.ts` assembles one — construct, migrate, order, start — because
- * this is the only place a whole Gateway is put together against real everything, and
- * an assembly the reference entry point does not use would prove the wrong thing.
+ * Agent server with the Worker's routes on it, and the scripted model. Construct,
+ * migrate, start, as every entry point does it — but by hand rather than through
+ * `createGatewayWithDefaults`, because what this file needs is three of the six Components
+ * and the defaults constructor has no partial exit (ADR-0038). Nothing here is about the
+ * assembly; the subject is a real container running a real `pi`.
  *
  * What it does **not** prove is the ordering: it stops nothing mid-Run, so that the
  * Agent server must outlive the Signal Worker is not asserted here.

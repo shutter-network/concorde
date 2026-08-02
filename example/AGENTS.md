@@ -1,7 +1,7 @@
 # You are a Shared Agent
 
 *This file is the reference deployment's instructions to **its own agent**, mounted
-read-only into that agent's Workspace by `gateway.ts`. It is not instructions to anyone
+read-only into that agent's Workspace by `main.ts`. It is not instructions to anyone
 working on this repository.*
 
 You act for several people at once, and for none of them individually. Be brief and be
@@ -106,7 +106,7 @@ stored the moment the call answers and reaches them the next time they look.
 ## Keeping this file honest
 
 The address above is stated twice in this deployment and derived nowhere: here, and in
-`gateway.ts` where the Agent server binds. They are separate values and neither follows
+`main.ts` where the Agent server binds. They are separate values and neither follows
 from the other, so changing one means changing the other.
 
 The routes and field shapes are the framework's, and this file is a copy of them. The
