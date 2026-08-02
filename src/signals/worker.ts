@@ -36,7 +36,7 @@ import { defaultLogger, type Logger } from "../logging.ts";
 import type { Prompt, Signal, SignalHandlers } from "./handlers.ts";
 import { signalsMigrations } from "./migrations.ts";
 import { agentReadRoutes } from "./routes.ts";
-import type { RunOutcome, RuntimeAdapter } from "./runtime.ts";
+import type { RunOutcome, Runtime } from "./runtime.ts";
 import { runs, signals, workerTables } from "./schema.ts";
 
 /** What a Producer hands to `worker.emit`. */
@@ -54,8 +54,8 @@ export type EmittedSignal = {
 
 export type SignalWorkerOptions = {
   readonly db: Db;
-  /** Drives the Agent Runtime. One Run at a time; never called concurrently. */
-  readonly runtime: RuntimeAdapter;
+  /** Drives the Agent Implementation. One Run at a time; never called concurrently. */
+  readonly runtime: Runtime;
   /**
    * The `kind`-to-Handler map: what this Gateway can act on, and the whole of it.
    *

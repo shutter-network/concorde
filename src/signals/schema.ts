@@ -108,12 +108,11 @@ export const signals = workerSchema.table(
 /**
  * One Prompt executed in one Session.
  *
- * `session` is a plain name and **not** a foreign key — Sessions live in the
- * Agent Runtime, and the Signal Worker stores only the name it routed to (ADR-0016).
+ * `session` is a plain name and **not** a foreign key — Sessions live in the Agent
+ * Implementation, and the Signal Worker stores only the name it routed to (ADR-0016).
  * It is nullable because a Prompt may request a fresh Session by naming none: the
- * Runtime Adapter generates a name for it, and the contract carries nothing back
- * (the Adapter returns an outcome, not output), so the Worker has nothing to record
- * there.
+ * Runtime generates a name for it, and the contract carries nothing back (a Runtime
+ * returns an outcome, not output), so the Worker has nothing to record there.
  */
 export const runs = workerSchema.table(
   "runs",
@@ -126,7 +125,7 @@ export const runs = workerSchema.table(
     /** The text delivered to the agent, as delivered. */
     prompt: text("prompt").notNull(),
     state: text("state").$type<RunState>().notNull().default("pending"),
-    /** The Runtime Adapter's failure message. Null unless failed. */
+    /** The Runtime's failure message. Null unless failed. */
     error: text("error"),
     startedAt: timestamp("started_at", { withTimezone: true }),
     endedAt: timestamp("ended_at", { withTimezone: true }),

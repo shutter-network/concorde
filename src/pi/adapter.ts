@@ -1,5 +1,5 @@
 /**
- * The `pi` Runtime Adapter: one fresh container per Run.
+ * The `pi` Runtime: one fresh container per Run.
  *
  * This is where the pieces around it are finally used, in the one order that works:
  * **compose, start, interpret.** Composing settles the Session name and the argv; the
@@ -30,7 +30,7 @@
 
 import { defaultLogger, type Logger } from "../logging.ts";
 import type { Prompt } from "../signals/handlers.ts";
-import type { RunOutcome, RuntimeAdapter } from "../signals/runtime.ts";
+import type { RunOutcome, Runtime } from "../signals/runtime.ts";
 import { type PiConfiguration, resolvePiConfiguration } from "./configuration.ts";
 import { composeInvocation } from "./invocation.ts";
 import { interpretPiOutput } from "./output.ts";
@@ -53,7 +53,7 @@ export type PiAdapterOptions = PiConfiguration & {
 /**
  * Builds the adapter, refusing a configuration that cannot work.
  *
- * A plain Runtime Adapter and nothing more: there is no second call to remember and no
+ * A plain Runtime and nothing more: there is no second call to remember and no
  * adapter-specific type to hold it in. Nothing here touches a filesystem — not at
  * construction and not during a Run — and nothing starts a container before a Run does,
  * so whether the directories an Operator declared really reach the agent is not a
@@ -70,7 +70,7 @@ export type PiAdapterOptions = PiConfiguration & {
  * because a Run that fails is never retried (ADR-0017): otherwise every Signal the
  * deployment ever receives becomes a permanently failed Run.
  */
-export function createPiAdapter(options: PiAdapterOptions): RuntimeAdapter {
+export function createPiAdapter(options: PiAdapterOptions): Runtime {
   const log = options.logger ?? defaultLogger();
   // Called for its throwing, and the resolved value deliberately dropped: nothing here
   // holds one, because composing a Run's invocation resolves the options again. That
@@ -135,7 +135,7 @@ export function createPiAdapter(options: PiAdapterOptions): RuntimeAdapter {
  *
  * The exit code and stderr are diagnosis, and only ever reach a message that was
  * already going to say the Run failed. This is the difference between "the Agent
- * Runtime produced no output at all" and that plus "exit code 125: Unable to find
+ * Implementation produced no output at all" and that plus "exit code 125: Unable to find
  * image", which is the whole of what an Operator needs to fix it — and the Run's
  * `error` column is the only place they will look.
  */

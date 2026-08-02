@@ -6,7 +6,7 @@ Terminology is defined in [CONTEXT.md](../CONTEXT.md). Decisions and their ratio
 
 The Gateway is one deployable application assembled from parts, several of which contribute routes to the Public server, the Agent server, or both. Three rings, from the inside out:
 
-1. **Agent Runtime** — `pi` primarily, `openclaw` as the alternative, driven by a Runtime Adapter. In the reference deployment it runs inside a container.
+1. **Agent Implementation** — `pi` primarily, `openclaw` as the alternative, driven by a Runtime. In the reference deployment it runs inside a container.
 2. **Signal Worker** — the Signal queue, Signal Handler dispatch, Run execution, and Agent server routes for Signals and Runs. Holds no identity and knows nothing about messaging.
 3. **Producers** — trusted parts that emit Signals into the Signal Worker: the **Messenger** for messaging, and the **Scheduler** for time. An Operator picks the ones they want and writes their own where needed. **v1 ships only the Messenger**; the Scheduler is designed and deferred ([ADR-0018](./adr/0018-scheduling-is-a-separate-component.md)).
 
@@ -16,7 +16,7 @@ Nothing represents the Gateway itself. There is no plugin system and no registry
 
 The parts with something to run are **Components** — a `name`, a `start` and a `stop`, and nothing else ([ADR-0031](./adr/0031-parts-that-run-are-components.md)). The entry point writes them as a list, which starts in that order and stops in the reverse of it; a failed start unwinds what had started. Nothing declares a dependency and nothing is resolved, because the parts already hold each other. The rest of the wiring is construction too: a part handed a server registers its routes on that server, and a part with tables registers its migration descriptor with the Db, so `db.migrate()` takes no arguments and `db.start()` refuses to serve a schema the database is behind ([ADR-0032](./adr/0032-components-wire-themselves-at-construction.md)). An assembly is therefore four steps — construct, migrate, order, start — and only the order is the Operator's to reason about.
 
-Users talk to the User Directory and the Messenger, and to nothing else. They never see a Signal. The Agent Runtime never reaches a User except through the Agent server. That, and nothing more, is what **Shielded** means.
+Users talk to the User Directory and the Messenger, and to nothing else. They never see a Signal. The Agent Implementation never reaches a User except through the Agent server. That, and nothing more, is what **Shielded** means.
 
 ```mermaid
 flowchart LR
@@ -30,14 +30,14 @@ flowchart LR
       S[Scheduler<br/>deferred] -.->|emit Signal| Q
       Q --> W[Serial worker]
       W -->|kind| H[Signal Handler]
-      H -->|0..n Prompts| RA[Runtime Adapter]
+      H -->|0..n Prompts| RA[Runtime]
       AS[Agent server]
       AS --> M
       AS --> UD
       AS -.-> S
       AS --> Q
     end
-    RA -->|one process per Run| AR[Agent Runtime]
+    RA -->|one process per Run| AR[Agent Implementation]
     AR -->|HTTP| AS
     H <-->|files| WS[(Workspace)]
     AR <-->|files| WS
@@ -51,12 +51,12 @@ Three kinds of row below, and the distinction matters. **Components** are things
 | --- | --- | --- | --- | --- |
 | Db | Component | framework | — | Signals, Runs, and whatever Producers keep. Owns the pool, the `LISTEN` connections and the migrations |
 | Public server | Component | Operator | — | the one surface exposed outside; a `Fastify()` the entry point constructs, wrapped in a `serverComponent` that holds its bind address until `start` |
-| Agent server | Component | Operator | — | reachable only by the Agent Runtime; a second `Fastify()`, bound loopback in the reference deployment |
+| Agent server | Component | Operator | — | reachable only by the Agent Implementation; a second `Fastify()`, bound loopback in the reference deployment |
 | Signal Worker | Component | framework | agent: read prior Signals, read Runs | owns the serial worker; one Run at a time, globally |
 | User Directory | object, replaceable | framework | public: log in, log out, change password, read self — agent: create and read Users | Users, their Attributes, and their Tokens. Not a Producer (ADR-0029), and not a Component: nothing to start, nothing to release (ADR-0031) |
 | Messenger | object, replaceable | framework | public: submit, poll Outbox — agent: send Message, read the Message log | the Message log in both directions, Outboxes as a view over it, optional Conversations. Constructed with the User Directory; owns no Users |
 | Scheduler | object, replaceable | framework | agent: schedule future work | recurrence, cancellation, next-fire. **Deferred, not in v1** (ADR-0018) |
-| Runtime Adapter | seam | framework or Operator | — | narrow contract: Prompt + Session in, outcome out. The `pi` one spawns a confined process per Run (ADR-0025) |
+| Runtime | seam | framework or Operator | — | narrow contract: Prompt + Session in, outcome out. The `pi` one spawns a confined process per Run (ADR-0025) |
 | Signal Handler | seam | Operator | — | arbitrary code; the primary extension point |
 | Workspace | directory | Operator | — | files shared by handlers and agent; global, not per Session |
 
@@ -67,7 +67,7 @@ Anything not in this table an Operator adds themselves: routes as Fastify plugin
 1. A Producer emits a Signal — in v1, the Messenger, which reads the User the User Directory authenticated, records an inbound Message, and emits the Signal in one transaction.
 2. The worker takes the oldest pending Signal.
 3. It dispatches on `kind` to exactly one Signal Handler, which returns zero or more Prompts, each naming a Session.
-4. For each Prompt the Runtime Adapter starts a Run. Under `pi`, one fresh process against the named session.
+4. For each Prompt the Runtime starts a Run. Under `pi`, one fresh process against the named session.
 5. During the Run the agent may call the Agent server: send Messages, read the Message log for any User, read Users, create a User with no Attributes, read prior Signals. It may not grant a User privileges, re-credential one, mint a Token, or remove one (ADR-0029).
 6. Outbound Messages are appended to the Message log and become visible in that User's Outbox.
 7. The handler's post phase runs, told whether any Run failed.
@@ -75,11 +75,11 @@ Anything not in this table an Operator adds themselves: routes as Fastify plugin
 
 ## Extension points
 
-**Signal Handler** and **Runtime Adapter** — both arbitrary code, neither restricted. The **User Directory**, **Messenger** and **Scheduler** are replaceable by construction: don't build ours, build yours. Replacing only *how a User proves who they are*, while keeping our Tokens, is narrower still: write your own login route and call the User Directory's token issuance. That is the seam, and there is no Authenticator interface ([ADR-0030](./adr/0030-passwords-are-traded-for-bearer-tokens.md)). Routes extend through Fastify's plugin system on either server, and further Producers are ordinary code calling the Signal Worker's emit method. There is deliberately no framework-level plugin contract ([ADR-0021](./adr/0021-the-framework-has-no-plugin-system.md)).
+**Signal Handler** and **Runtime** — both arbitrary code, neither restricted. The **User Directory**, **Messenger** and **Scheduler** are replaceable by construction: don't build ours, build yours. Replacing only *how a User proves who they are*, while keeping our Tokens, is narrower still: write your own login route and call the User Directory's token issuance. That is the seam, and there is no Authenticator interface ([ADR-0030](./adr/0030-passwords-are-traded-for-bearer-tokens.md)). Routes extend through Fastify's plugin system on either server, and further Producers are ordinary code calling the Signal Worker's emit method. There is deliberately no framework-level plugin contract ([ADR-0021](./adr/0021-the-framework-has-no-plugin-system.md)).
 
 ## What this framework provides
 
-- No path from a User to the Agent Runtime except through the Gateway.
+- No path from a User to the Agent Implementation except through the Gateway.
 - Every Signal comes from a trusted Producer. What a Producer puts in a payload is its own contract — the Messenger's contract includes the submitting User's id.
 - Every Message involves exactly one User, in one direction, and Users read only their own Outbox.
 - No identifier or counter exposed to a User is influenced by another User's activity.
@@ -90,7 +90,7 @@ Each is a deliberate decision, not an omission:
 
 - **Confidentiality between Users.** The agent reads everything and decides what to send to whom (ADR-0002, ADR-0011).
 - **Injection resistance.** Accepted risk, mitigated by guidance to handler authors (ADR-0003).
-- **Runtime confinement.** The deployment's responsibility (ADR-0004).
+- **Agent Implementation confinement.** The deployment's responsibility (ADR-0004).
 - **Non-repudiation.** No party can prove what the agent was told or replied (ADR-0001).
 - **Isolation of any kind.** A deployment needing real isolation runs two Shared Agents.
 - **Protection against a bad Producer.** Producers are trusted by construction (ADR-0020).
@@ -105,7 +105,7 @@ Each is a deliberate decision, not an omission:
 - **One Run at a time, globally.** Throughput is roughly one Run per Run-duration for the whole agent, and a short question queues behind a long task (ADR-0012).
 - **Nothing is bounded by time.** No Run timeout, no handler timeout. A hung `bash` call or a wedged handler halts every Party until an Operator restarts the process (ADR-0017).
 - **At-most-once processing.** A failed Signal is dropped after partial effect and never re-run.
-- **Swapping Agent Runtime means rewriting the agent's configuration** (ADR-0016).
+- **Swapping Agent Implementation means rewriting the agent's configuration** (ADR-0016).
 - **The read-side blast radius of a successful injection is everything the agent-facing API exposes** (ADR-0011).
 
 ## Open

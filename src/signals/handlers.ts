@@ -33,12 +33,12 @@ export type Signal<TPayload = unknown> = {
  *
  * `session` names the Session this Prompt continues; `null` requests a fresh one
  * (ADR-0006). A Session is the agent's own conversation state, kept by the Agent
- * Runtime and continued by naming it again — which is what makes one Prompt
+ * Implementation and continued by naming it again — which is what makes one Prompt
  * remember an earlier one. The framework holds no opinion about the names: any
- * string reaches the Runtime Adapter unchanged, and what a name may contain is a
- * property of the Agent Runtime an Operator chose. One that runtime will not
- * accept fails that Prompt's Run alone, with the runtime's own words in the Run's
- * `error` and the name in its `session`.
+ * string reaches the Runtime unchanged, and what a name may contain is a property
+ * of the Agent Implementation an Operator chose. One it will not accept fails that
+ * Prompt's Run alone, with its own words in the Run's `error` and the name in its
+ * `session`.
  */
 export type Prompt = {
   readonly session: string | null;

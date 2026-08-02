@@ -1,6 +1,6 @@
 # Information flow between users is the agent's decision
 
-A Shared Agent may hold context from several users at once. We considered enforcing confidentiality between them in the Gateway — filtering outbound messages against a declared policy, or partitioning context into one confined runtime instance per user — and rejected both. The Gateway does not inspect or restrict what the agent chooses to reveal to whom.
+A Shared Agent may hold context from several users at once. We considered enforcing confidentiality between them in the Gateway — filtering outbound messages against a declared policy, or partitioning context into one confined Agent Implementation per user — and rejected both. The Gateway does not inspect or restrict what the agent chooses to reveal to whom.
 
 Cross-user inference is frequently the point. A mediating or coordinating agent is expected to reason across everything every party has told it; a framework that structurally prevented this would prevent the use cases that motivate a Shared Agent in the first place.
 

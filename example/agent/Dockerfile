@@ -3,7 +3,7 @@
 # There is no published `pi` image, so every deployment builds one. This is the
 # reference: four requirements, and everything else is yours.
 #
-#  1. **`pi` is the entry point.** The Runtime Adapter appends `pi`'s own flags after
+#  1. **`pi` is the entry point.** The Runtime appends `pi`'s own flags after
 #     the image name, so an image whose entry point is something else needs
 #     `--entrypoint pi` in the adapter's `extraArgs`.
 #  2. **A POSIX shell.** The agent's own shell tool needs one. Nothing of the
@@ -26,7 +26,7 @@ FROM node:24-alpine
 
 RUN apk add --no-cache curl
 
-# Pinned, and worth keeping pinned. Every fact the Runtime Adapter relies on — the
+# Pinned, and worth keeping pinned. Every fact the Runtime relies on — the
 # flag names, the JSONL record types, the terminal record, what the exit code does and
 # does not mean — was read out of this exact version.
 RUN npm install -g @earendil-works/pi-coding-agent@0.83.0

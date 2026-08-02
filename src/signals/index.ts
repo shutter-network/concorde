@@ -7,7 +7,7 @@ export type {
 } from "./handlers.ts";
 export { signalsMigrations } from "./migrations.ts";
 export type { RunRecord, SignalRecord } from "./routes.ts";
-export type { RunOutcome, RuntimeAdapter } from "./runtime.ts";
+export type { RunOutcome, Runtime } from "./runtime.ts";
 // The states are exported now that they are on the wire: `SignalRecord.state` and
 // `RunRecord.state` are what the Agent server answers with, so a consumer reading
 // one has something to name. The table objects they are defined beside stay

@@ -8,8 +8,8 @@
  * and everything below it is a part being constructed and handed to another part. What
  * an assembly is, whole, is four steps:
  *
- *   1. **construct** — the Db, two Fastify instances as Components, the Runtime Adapter,
- *      the User Directory and the Signal Worker with its Handlers. A part handed a
+ *   1. **construct** — the Db, two Fastify instances as Components, the Runtime, the
+ *      User Directory and the Signal Worker with its Handlers. A part handed a
  *      server registers its routes on it and a part with tables registers its migration
  *      descriptor with the Db, so construction is also the whole of the wiring
  *      ([ADR-0032](../docs/adr/0032-components-wire-themselves-at-construction.md))

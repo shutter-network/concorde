@@ -263,7 +263,7 @@ declares a dependency, nothing is resolved, and parts still hold each other beca
 passed them to each other.
 
 1. **Construct.** The Db from one PostgreSQL URL, two `Fastify()` instances as Components,
-   the Runtime Adapter, the User Directory and the Signal Worker with its Handler map,
+   the Runtime, the User Directory and the Signal Worker with its Handler map,
    each handed what it needs as an ordinary constructor option. Construction is also the
    whole of the wiring: a part handed a server registers its routes on that server, and a
    part with tables of its own registers its migration descriptor with the Db, so there is
@@ -414,7 +414,7 @@ hundredth would.
 
 ### The line you need to diagnose a mount or a network is off by default
 
-The Runtime Adapter logs the whole composed container invocation — every flag, every
+The Runtime logs the whole composed container invocation — every flag, every
 `--mount`, the image, the network, and `pi`'s own arguments — so that diagnosing a mount
 or a network problem never means reading framework source. Since nothing is verified any
 more, this line is the whole of what the framework offers for that, which makes it worth
@@ -661,9 +661,8 @@ so a Signal Worker with no Handlers is not something you can construct, let alon
 `session: null` asks for a fresh Session; a string continues a named one. One Session per
 user, one per Run, one for the whole agent, or a hybrid — all four are things you just
 write, and the framework prefers none of them. It also checks nothing: your name reaches
-the Agent Runtime exactly as you wrote it, and one that runtime will not accept fails
-that Prompt's Run with the runtime's own complaint in the Run's `error` and your name in
-its `session`.
+the Agent Implementation exactly as you wrote it, and one it will not accept fails that
+Prompt's Run with its own complaint in the Run's `error` and your name in its `session`.
 
 `templateHandler`, which the reference deployment uses, is one of these and not a special
 case. It re-reads its `.hbs` file every Run, so you can edit wording without restarting.
@@ -824,13 +823,14 @@ recorded as **failed** carrying the provider's own message — which is worth se
 because it is also what a real model error looks like:
 
 ```
-"error": "the Agent Runtime settled with stopReason \"error\" and exited successfully
-          anyway: 401 {\"type\":\"error\", ... \"message\":\"invalid x-api-key\"} ..."
+"error": "the Agent Implementation settled with stopReason \"error\" and exited
+          successfully anyway: 401 {\"type\":\"error\", ... \"message\":\"invalid
+          x-api-key\"} ..."
 ```
 
-Note "exited successfully anyway". The Agent Runtime's machine-readable mode exits zero
-on model and API errors, so the outcome is read out of the event stream and never from the
-exit code. You do not have to do anything about that; it is here because seeing a
+Note "exited successfully anyway". The Agent Implementation's machine-readable mode exits
+zero on model and API errors, so the outcome is read out of the event stream and never
+from the exit code. You do not have to do anything about that; it is here because seeing a
 successful exit next to a failed Run is otherwise alarming.
 
 ## Why the Gateway is not in the compose file
@@ -947,8 +947,8 @@ So you do not go looking:
 - **POSIX signal handling.** The framework installs none. `components` gives you the
   ordering; the exit code, any timeout on the drain and what a second signal does are
   yours.
-- **Any Agent Runtime but `pi`.** The adapter's contract is narrow enough that another is
-  possible; none is written.
+- **Any Agent Implementation but `pi`.** The Runtime contract is narrow enough that
+  another is possible; none is written.
 - **Retention.** Session directories grow by one per fresh-Session Run and nothing prunes
   them.
 

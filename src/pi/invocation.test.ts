@@ -535,7 +535,7 @@ describe("the Session a Prompt runs in", () => {
 
     // Derived from the Run rather than random, so the Session file left behind can be
     // found from the Run row — which holds `null` in its own `session` column for
-    // exactly this case, since the Runtime Adapter's outcome carries nothing back.
+    // exactly this case, since the Runtime's outcome carries nothing back.
     assert.equal(invocation.session, `run_${runId}`);
     assert.equal(argumentAfter(invocation, "--session-id"), `run_${runId}`);
     assert.equal(argumentAfter(invocation, "--session-dir"), `/sessions/run_${runId}`);

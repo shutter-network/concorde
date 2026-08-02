@@ -1,5 +1,5 @@
 /**
- * Reading the Agent Runtime's JSONL output into a Run outcome.
+ * Reading the Agent Implementation's JSONL output into a Run outcome.
  *
  * This is the highest-risk logic in the `pi` adapter and the reason it is a module of
  * its own with no process in it. Three properties of `pi --mode json` each produce a
@@ -190,33 +190,33 @@ function outcomeOf(reading: Reading): RunOutcome {
     const { line, why } = reading.unreadable;
     return {
       ok: false,
-      error: `the Agent Runtime wrote a line that could not be read as a record — ${why} — so its output cannot be trusted: ${excerpt(line)}`,
+      error: `the Agent Implementation wrote a line that could not be read as a record — ${why} — so its output cannot be trusted: ${excerpt(line)}`,
     };
   }
   if (reading.pending.trim() !== "") {
     return {
       ok: false,
-      error: `the Agent Runtime's output ended mid-record after ${reading.records} records, so the Run did not finish: ${excerpt(reading.pending)}`,
+      error: `the Agent Implementation's output ended mid-record after ${reading.records} records, so the Run did not finish: ${excerpt(reading.pending)}`,
     };
   }
   if (reading.records === 0) {
     return {
       ok: false,
       error:
-        "the Agent Runtime produced no output at all, so nothing says whether the Run happened",
+        "the Agent Implementation produced no output at all, so nothing says whether the Run happened",
     };
   }
   if (!reading.settled) {
     return {
       ok: false,
-      error: `the Agent Runtime's output ended after ${reading.records} records without an agent_settled record, so the Run did not finish. An agent_end is not the end: it can be followed by a retry or a compaction`,
+      error: `the Agent Implementation's output ended after ${reading.records} records without an agent_settled record, so the Run did not finish. An agent_end is not the end: it can be followed by a retry or a compaction`,
     };
   }
   const answer = reading.settledAnswer;
   if (answer === undefined) {
     return {
       ok: false,
-      error: `the Agent Runtime settled after ${reading.records} records with no assistant message, so there is nothing that says the Run succeeded`,
+      error: `the Agent Implementation settled after ${reading.records} records with no assistant message, so there is nothing that says the Run succeeded`,
     };
   }
   if (!answeredStopReasons.has(answer.stopReason)) {
@@ -224,7 +224,7 @@ function outcomeOf(reading: Reading): RunOutcome {
     // Run's `error` column — the only thing an Operator has to go on (trap 1).
     return {
       ok: false,
-      error: `the Agent Runtime settled with stopReason ${JSON.stringify(answer.stopReason)} and exited successfully anyway: ${answer.errorMessage ?? `the agent's last message was not an answer (${answer.stopReason})`}`,
+      error: `the Agent Implementation settled with stopReason ${JSON.stringify(answer.stopReason)} and exited successfully anyway: ${answer.errorMessage ?? `the agent's last message was not an answer (${answer.stopReason})`}`,
     };
   }
   return { ok: true };

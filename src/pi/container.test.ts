@@ -60,7 +60,7 @@ import { components, serverComponent } from "../components.ts";
 import type { Mount } from "../container/index.ts";
 import { openDb } from "../db/index.ts";
 import type { SignalHandler } from "../signals/handlers.ts";
-import type { RuntimeAdapter } from "../signals/runtime.ts";
+import type { Runtime } from "../signals/runtime.ts";
 import { runs } from "../signals/schema.ts";
 import { createSignalWorker } from "../signals/worker.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
@@ -136,7 +136,7 @@ after(async () => {
 
 /** Everything one test needs standing up around the adapter. */
 type Rig = {
-  readonly runtime: RuntimeAdapter;
+  readonly runtime: Runtime;
   readonly model: MockModel;
   /** Where the Operator's own instructions file told the agent to reach the Gateway. */
   readonly agentServerUrl: string;
@@ -233,7 +233,7 @@ async function placeInstructions(paths: Paths, agentServerUrl: string): Promise<
 }
 
 /** The adapter under test, however a case wants its mounts pointed. */
-function adapterOn(paths: Paths, extraEntries: readonly Mount[] = []): RuntimeAdapter {
+function adapterOn(paths: Paths, extraEntries: readonly Mount[] = []): Runtime {
   return createPiAdapter({
     image,
     model: "mock-model",
@@ -402,7 +402,7 @@ function agentServerIn(request: ModelRequest): string {
   return found[0];
 }
 
-/** The Prompt whose Run the model refuses, so the Run fails inside the Agent Runtime. */
+/** The Prompt whose Run the model refuses, so it fails inside the Agent Implementation. */
 const doomed = "This Prompt cannot work.";
 
 /**

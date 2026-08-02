@@ -129,7 +129,7 @@ try {
     "dist/pi/process.js",
     // The Mount Table, which is not the `pi` adapter's: it ships under its own directory
     // and is reachable from the package root, because nothing in it knows about an Agent
-    // Runtime (ADR-0028).
+    // Implementation (ADR-0028).
     "dist/container/index.js",
     "dist/container/index.d.ts",
     "dist/container/mount-table.js",
@@ -185,8 +185,8 @@ try {
     "test fixtures should not ship",
   );
 
-  // Neither do the captured Agent Runtime streams beside the `pi` adapter, which are
-  // a test's input and not part of anything an Operator installs.
+  // Neither do the captured Agent Implementation streams beside the `pi` adapter, which
+  // are a test's input and not part of anything an Operator installs.
   assert.ok(
     ![...entries].some((entry) => entry.endsWith(".jsonl")),
     "the captured output fixtures should not ship",
@@ -345,7 +345,7 @@ try {
       "  RunOutcome,",
       "  RunRecord,",
       "  RunState,",
-      "  RuntimeAdapter,",
+      "  Runtime,",
       "  Signal,",
       "  SignalHandler,",
       "  SignalHandlers,",
@@ -398,9 +398,9 @@ try {
       '  await tx.insert(notes).values({ body: "written" });',
       "}",
       "",
-      "// A Runtime Adapter is an object with one method: no class to extend and no",
+      "// A Runtime is an object with one method: no class to extend and no",
       "// framework base type to import.",
-      "const runtime: RuntimeAdapter = {",
+      "const runtime: Runtime = {",
       "  async run(prompt: Prompt, runId: string): Promise<RunOutcome> {",
       '    return prompt.text === "" ? { ok: false, error: "nothing to say in " + runId } : { ok: true };',
       "  },",
@@ -557,15 +557,15 @@ try {
       "// (ADR-0032).",
       "const workerRoutes: FastifyPluginAsync = worker.agentRoutes;",
       "",
-      "// The `pi` Runtime Adapter's configuration, every field of it, so a field that",
+      "// The `pi` Runtime's configuration, every field of it, so a field that",
       "// went missing from the declaration fails here rather than being ignored at the",
       "// Operator's first Run. There is no field for the agent's own configuration and",
       "// none for the Agent server's address: the framework writes no files, so what the",
       "// agent reads is placed by the Operator in a directory they mount (ADR-0025).",
       "// The Mount Table comes from the package root, not from `/pi`: it knows nothing",
-      "// about an Agent Runtime, and an entry may name a directory or a single file and",
-      "// may be read-only — which is how the `AGENTS.md` below is protected from the",
-      "// agent that reads it (ADR-0028).",
+      "// about an Agent Implementation, and an entry may name a directory or a single",
+      "// file and may be read-only — which is how the `AGENTS.md` below is protected",
+      "// from the agent that reads it (ADR-0028).",
       'const workspace: Mount = { containerPath: "/workspace", gatewayPath: "/srv/saf/workspace" };',
       "const mounts: MountTable = {",
       "  entries: [",
@@ -599,17 +599,17 @@ try {
       ");",
       "",
       "// The adapter itself, which is what an Operator actually passes to the Signal",
-      "// Worker: a plain Runtime Adapter, with no second call to remember and no type",
-      "// of its own to hold one (ADR-0028). Annotated as a RuntimeAdapter because that is the seam",
+      "// Worker: a plain Runtime, with no second call to remember and no type",
+      "// of its own to hold one (ADR-0028). Annotated as a Runtime because that is the seam",
       "// the Signal Worker is given and the whole of what construction returns.",
       "const piAdapterOptions: PiAdapterOptions = { ...piConfig, logger: log };",
-      "export const piAdapter: RuntimeAdapter = createPiAdapter(piAdapterOptions);",
+      "export const piAdapter: Runtime = createPiAdapter(piAdapterOptions);",
       "",
-      "// A Runtime Adapter an Operator could write out of the pieces the subpath ships:",
+      "// A Runtime an Operator could write out of the pieces the subpath ships:",
       "// compose the invocation, start the container, read the outcome out of the JSONL.",
       "// Three steps and not four — there is nothing to write. The spawning is theirs",
       "// here, which is what proves these compose.",
-      "export const piRuntime: RuntimeAdapter = {",
+      "export const piRuntime: Runtime = {",
       "  async run(prompt: Prompt, id: string): Promise<RunOutcome> {",
       "    const invocation: PiInvocation = composeInvocation(piConfig, prompt, id);",
       "    const stdout: AsyncIterable<Uint8Array> = (async function* () {",
@@ -758,7 +758,7 @@ try {
   assert.equal(
     imported,
     "function:function:docker:run_r1:true:type=bind,source=/srv/saf/workspace,target=/workspace:/srv/saf/sessions/user_42:docker:false:function:run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword",
-    "all three subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount and answer where a container path is on the Operator's disk, the pi adapter should construct as a plain Runtime Adapter — `run` and nothing else — settle its defaults, compose an invocation that passes no system-prompt flag, and read an outcome, and the User Directory should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included",
+    "all three subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount and answer where a container path is on the Operator's disk, the pi adapter should construct as a plain Runtime — `run` and nothing else — settle its defaults, compose an invocation that passes no system-prompt flag, and read an outcome, and the User Directory should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included",
   );
 
   step("applying a shipped migration folder from inside the installed package");

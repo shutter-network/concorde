@@ -9,8 +9,8 @@
  * composing their own table needs no temporary directory and no container to test it.
  *
  * Nothing in it knows about `pi`, which is why it lives here and is exported from the
- * package root rather than the `./pi` subpath: a second Runtime Adapter would need
- * exactly this and nothing of it would change.
+ * package root rather than the `./pi` subpath: a second Runtime would need exactly
+ * this and nothing of it would change.
  *
  * What replaces the checking is the container runtime itself. Every mount is emitted as
  * `--mount type=bind`, never `-v`, and that is load-bearing rather than stylistic:
@@ -51,7 +51,7 @@ export type Mount = {
 /**
  * The whole of the agent container's filesystem, and the user that shares it.
  *
- * The user belongs here rather than with the Runtime Adapter because every reason it
+ * The user belongs here rather than with the Runtime because every reason it
  * exists is a filesystem reason: with bind mounts the files the agent writes are owned
  * by the container's user, so a mismatch leaves Signal Handlers unable to read what the
  * agent wrote in the shared Workspace and the agent unable to read theirs. What is
@@ -59,7 +59,7 @@ export type Mount = {
  * they are declared together.
  *
  * `network`, `workdir`, `extraArgs`, the image and the container command deliberately
- * stay with the Runtime Adapter. The line is "the shared filesystem and who shares it",
+ * stay with the Runtime. The line is "the shared filesystem and who shares it",
  * not "every container flag".
  */
 export type MountTable = {
@@ -129,11 +129,11 @@ export type ResolvedMountTable = {
    * Where a path inside the container is on the Gateway's own disk, or `undefined`.
    *
    * Longest-prefix match, so a Session's own directory resolves through the entry that
-   * mounts the Session root. It exists for the Runtime Adapter's debug line, which is
-   * the only thing that can answer "where is this Session's transcript on my disk" — the
-   * question ADR-0025 records the forgetful-agent failure as being diagnosed with. A
-   * Runtime Adapter that still writes files of its own uses it for those too, and that
-   * is the whole of what a container path is ever turned back into.
+   * mounts the Session root. It exists for the Runtime's debug line, which is the only
+   * thing that can answer "where is this Session's transcript on my disk" — the question
+   * ADR-0025 records the forgetful-agent failure as being diagnosed with. A Runtime that
+   * still writes files of its own uses it for those too, and that is the whole of what a
+   * container path is ever turned back into.
    */
   gatewayPathFor(containerPath: string): string | undefined;
 };

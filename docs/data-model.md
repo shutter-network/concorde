@@ -31,10 +31,10 @@ One Prompt executed in one Session.
 | --- | --- |
 | `id` | opaque |
 | `signal_id` | the Signal whose handler produced this Prompt |
-| `session` | a plain **name**, not a foreign key — Sessions live in the Agent Runtime (ADR-0016) |
+| `session` | a plain **name**, not a foreign key — Sessions live in the Agent Implementation (ADR-0016) |
 | `prompt` | the text delivered to the agent |
 | `state` | `pending` \| `running` \| `done` \| `failed` |
-| `error` | nullable; the Runtime Adapter's failure message |
+| `error` | nullable; the Runtime's failure message |
 | `started_at`, `ended_at` | |
 
 There is no `timed_out` state, because there are no timeouts ([ADR-0017](./adr/0017-failed-runs-are-not-retried.md)).

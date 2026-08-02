@@ -1,8 +1,8 @@
 /**
- * A fake Runtime Adapter: records the Prompts it was handed and returns a scripted
+ * A fake Runtime: records the Prompts it was handed and returns a scripted
  * outcome.
  *
- * The Runtime Adapter is the one thing in the framework that is faked in tests
+ * The Runtime is the one thing in the framework that is faked in tests
  * (ADR-0022 keeps PostgreSQL real), because the alternative is a container, an
  * image, and credentials for every assertion about dispatch. The real one arrives
  * in tickets 07 and 08.
@@ -13,7 +13,7 @@
  */
 
 import type { Prompt } from "../signals/handlers.ts";
-import type { RunOutcome, RuntimeAdapter } from "../signals/runtime.ts";
+import type { RunOutcome, Runtime } from "../signals/runtime.ts";
 
 export type RecordedRun = {
   readonly prompt: Prompt;
@@ -23,7 +23,7 @@ export type RecordedRun = {
 /** What the adapter should do with one Prompt. Defaults to succeeding. */
 export type RuntimeScript = (prompt: Prompt, runId: string) => RunOutcome | Promise<RunOutcome>;
 
-export type FakeRuntime = RuntimeAdapter & {
+export type FakeRuntime = Runtime & {
   /** Every Run, in the order the worker started them. */
   readonly recorded: readonly RecordedRun[];
   /** Whether two Runs were ever in flight at once. Always expected to be false. */

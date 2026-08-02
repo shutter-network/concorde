@@ -55,10 +55,10 @@ export type PiInvocation = {
   /**
    * Where that Session's own directory will be, as the Gateway sees it.
    *
-   * Nothing creates it: the Agent Runtime does, inside the container, into the mounted
-   * Session root. This is here **for the adapter's debug line alone**. "Where is this
-   * Session's transcript on my disk" is the question asked while diagnosing the
-   * forgetful-agent failure ADR-0025 describes, and the container path in the logged
+   * Nothing creates it: the Agent Implementation does, inside the container, into the
+   * mounted Session root. This is here **for the adapter's debug line alone**. "Where
+   * is this Session's transcript on my disk" is the question asked while diagnosing
+   * the forgetful-agent failure ADR-0025 describes, and the container path in the logged
    * argv does not answer it. The Mount Table answers it, and `undefined` is its honest
    * answer where the Session root is not something the Operator mounted.
    */
@@ -68,7 +68,7 @@ export type PiInvocation = {
 /**
  * Composes the invocation for one Run.
  *
- * Takes the same two values as `RuntimeAdapter.run` so there is no third spelling of
+ * Takes the same two values as `Runtime.run` so there is no third spelling of
  * what a Run is, and resolves the configuration itself — resolving is a handful of
  * string checks, and doing it per Run means the invocation cannot be composed from a
  * configuration that was never checked.
@@ -83,7 +83,7 @@ export function composeInvocation(
 
   if (prompt.text.trim() === "") {
     throw new Error(
-      "the Prompt has no text, and the Agent Runtime drops an empty message rather than answering it, so the Run would settle having said nothing",
+      "the Prompt has no text, and the Agent Implementation drops an empty message rather than answering it, so the Run would settle having said nothing",
     );
   }
 

@@ -1,6 +1,13 @@
-# pi is the primary Agent Runtime
+# pi is the primary Agent Implementation
 
-`pi` is the Agent Runtime the framework targets first. Other runtimes, `openclaw` in particular, must remain swappable behind a runtime adapter.
+> **Renamed.** This decision was recorded as "pi is the primary Agent Runtime", and the
+> filename still says so. What it calls the Agent Runtime is now the **Agent
+> Implementation**, and what it calls the runtime adapter is now the **Runtime**: the word
+> "runtime" had come to mean three things at once, and
+> [ADR-0033](./0033-an-agent-is-a-container-and-one-function.md) settles which one keeps
+> it. The filename is left alone because it is what twenty other documents link to.
+
+`pi` is the Agent Implementation the framework targets first. Others, `openclaw` in particular, must remain swappable behind a Runtime.
 
 This is a deliberate trade against the more obvious alternative. `pi` is a coding-agent harness, drivable as a JSONL subprocess, over an RPC protocol, or as an in-process TypeScript SDK. `openclaw` is close to the opposite — a long-running daemon that already ships messaging channels, per-peer session scoping, bearer auth with scopes, cron, and webhooks, which is a large fraction of what our Gateway is specified to do. Building on OpenClaw would mean writing considerably less code; building on `pi` means the Gateway must own user management, mailboxes, scheduling, and session lifecycle itself.
 
@@ -12,5 +19,5 @@ This is a deliberate trade against the more obvious alternative. `pi` is a codin
 
 ## Consequences
 
-- The Gateway implements user management, authentication, mailboxes, and time-based Signals itself, because `pi` provides none of these. None of it may be delegated to runtime features.
-- The runtime adapter contract is shaped by the weaker runtime. Capabilities OpenClaw has and `pi` lacks (tool allow/deny, per-peer isolation, hot config reload) cannot be assumed by the framework.
+- The Gateway implements user management, authentication, mailboxes, and time-based Signals itself, because `pi` provides none of these. None of it may be delegated to an Agent Implementation's own features.
+- The Runtime contract is shaped by the weaker Agent Implementation. Capabilities OpenClaw has and `pi` lacks (tool allow/deny, per-peer isolation, hot config reload) cannot be assumed by the framework.

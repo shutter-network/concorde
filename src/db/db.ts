@@ -43,7 +43,7 @@ export type Transaction = PgTransaction<
  * `db.migrate()` applies whatever registered rather than any part applying its
  * own. It stays exported because the migration entry point registers it directly
  * — a pre-deploy migration job must not have to construct a Signal Worker, and
- * through it a Runtime Adapter and a model credential (ADR-0032).
+ * through it a Runtime and a model credential (ADR-0032).
  */
 export type MigrationDescriptor = {
   /**

@@ -5,7 +5,7 @@ Signals are rows in the Gateway store. Producers emit them and execute nothing t
 The Gateway runs a **single worker** that takes Signals in arrival order and, for each one:
 
 1. runs the Signal Handler, obtaining zero or more Prompts;
-2. runs the Agent Runtime once per Prompt — for `pi`, one fresh process per Run ([ADR-0006](./0006-session-routing-is-chosen-by-the-signal-handler.md));
+2. runs the Agent Implementation once per Prompt — for `pi`, one fresh process per Run ([ADR-0006](./0006-session-routing-is-chosen-by-the-signal-handler.md));
 3. runs the handler's post phase.
 
 Signals are processed one at a time. There is no parallelism across Sessions.

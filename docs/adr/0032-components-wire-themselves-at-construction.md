@@ -58,7 +58,7 @@ registers the same set. `example/migrate.ts` exists so that migrations can run a
 pre-deploy step rather than only at boot, and it must stay cheap: descriptors therefore
 remain exported and that file registers them directly, constructing nothing but a Db. The
 alternative, letting construction be the only path, would have made the migration job
-build a Signal Worker, which needs a Runtime Adapter, which in the reference deployment
+build a Signal Worker, which needs a Runtime, which in the reference deployment
 needs a model credential and an image name. **A migration job that needs an
 `ANTHROPIC_API_KEY` is a broken migration job.**
 

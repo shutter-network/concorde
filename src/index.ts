@@ -25,7 +25,7 @@ export type {
   RunOutcome,
   RunRecord,
   RunState,
-  RuntimeAdapter,
+  Runtime,
   Signal,
   SignalHandler,
   SignalHandlers,

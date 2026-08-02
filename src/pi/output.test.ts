@@ -1,5 +1,5 @@
 /**
- * The Agent Runtime's JSONL output, and the three traps in reading it.
+ * The Agent Implementation's JSONL output, and the three traps in reading it.
  *
  * The fixtures under `./fixtures/` are **real** `pi --mode json` output, captured
  * from `@earendil-works/pi-coding-agent` 0.83.0 driven against a local

@@ -396,7 +396,7 @@ describe("a Handler's Handlebars environment", () => {
 /**
  * The two criteria that are about the Signal log rather than the Handler.
  *
- * PostgreSQL is real and the Runtime Adapter is the only fake (ADR-0022), and the
+ * PostgreSQL is real and the Runtime is the only fake (ADR-0022), and the
  * Signal Worker here is started once and never restarted — which is what "no restart" in
  * the ticket means and what a second `templateHandler` call in a fresh process would not
  * demonstrate.
@@ -453,7 +453,7 @@ describe("the template Handler under the worker", () => {
     }
   }
 
-  it("hands the rendered Prompt to the Runtime Adapter, and picks up an edited template with no restart", async (t) => {
+  it("hands the rendered Prompt to the Runtime, and picks up an edited template with no restart", async (t) => {
     const file = await templateFile(t, "the first wording");
     const handler = templateHandler<unknown>({
       template: file,

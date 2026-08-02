@@ -2,8 +2,8 @@
  * Starting a container and reading what it wrote.
  *
  * The one place in the `pi` adapter that spawns anything, and it spawns one thing: a
- * Run, whose stdout is the Agent Runtime's JSONL event stream. Four things have to be
- * right — write stdin and close it, read stdout to the end, collect stderr without
+ * Run, whose stdout is the Agent Implementation's JSONL event stream. Four things have
+ * to be right — write stdin and close it, read stdout to the end, collect stderr without
  * letting it fill, and wait for the process to be gone — and getting any of them wrong
  * produces a hang rather than a failure.
  *

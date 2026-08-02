@@ -41,8 +41,8 @@ services:
   # Builds the agent image — and then runs it once, so that "the image built" and "`pi`
   # actually runs in it" are the same command. It exits immediately and is *meant* to
   # sit there as `Exited (0)`; `docker compose logs agent-image` shows the version it
-  # printed. Every real agent container is started by the Gateway's Runtime Adapter,
-  # one per Run, and is never a service here.
+  # printed. Every real agent container is started by the Gateway's Runtime, one per
+  # Run, and is never a service here.
   agent-image:
     build: ./agent
     image: saf-agent:0.83.0
@@ -56,8 +56,8 @@ networks:
     name: saf_db
   # The agent's own network: only the agent and the Gateway are meant to be reachable
   # across it. Named explicitly rather than left to Compose's `<project>_<network>`
-  # prefixing, because the entry point passes this exact string to the Runtime Adapter
-  # as `network` and a mismatch is a container that will not start.
+  # prefixing, because the entry point passes this exact string to the Runtime as
+  # `network` and a mismatch is a container that will not start.
   agent:
     name: saf_agent
 

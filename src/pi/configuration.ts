@@ -1,9 +1,9 @@
 /**
- * What an Operator configures the `pi` Runtime Adapter with.
+ * What an Operator configures the `pi` Runtime with.
  *
  * Named fields rather than a command line, so changing the model is a one-line edit
  * and a deployment never restates a whole `docker run`. This is not the
- * runtime-neutral shape [ADR-0016](../../docs/adr/0016-agent-configuration-is-opaque-to-the-framework.md)
+ * agent-neutral shape [ADR-0016](../../docs/adr/0016-agent-configuration-is-opaque-to-the-framework.md)
  * rejects: these options are `pi`-shaped on purpose, and an OpenClaw adapter would
  * have entirely different ones. What the framework does not do is *carry* the agent's
  * own configuration: `settings.json`, `models.json` and whatever tells the agent about
@@ -66,7 +66,7 @@ export type PiConfiguration = {
    * The framework creates nothing here, neither this root nor a Session's own
    * directory inside it. The Operator creates whatever their mounts point at
    * ([ADR-0028](../../docs/adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md));
-   * the Agent Runtime creates each Session's directory from inside the container.
+   * the Agent Implementation creates each Session's directory from inside the container.
    */
   readonly sessionRootPath: string;
   /**
@@ -194,7 +194,7 @@ function containerCommandOf(given: readonly string[] | undefined): readonly [str
  *
  * A name the Handler did choose is passed through untouched, whatever it is: `pi`
  * validates `--session-id` itself, and a copy of its grammar living here would drift
- * from it and reject names a second Agent Runtime accepts (ADR-0024, ADR-0016).
+ * from it and reject names a second Agent Implementation accepts (ADR-0024, ADR-0016).
  */
 export function sessionFor(session: string | null, runId: string): string {
   return session ?? `run_${runId}`;

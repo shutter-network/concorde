@@ -13,7 +13,7 @@ One of the entities a Shared Agent belongs to. Explains why this framework exist
 _Avoid_: owner, tenant, stakeholder, principal
 
 **Operator**:
-Whoever runs and configures a Shared Agent. Trusted by every Party: holds the agent's configuration, writes its Signal Handlers, and has the only direct access to the Agent Runtime. See [ADR-0001](./docs/adr/0001-the-gateway-is-trusted.md).
+Whoever runs and configures a Shared Agent. Trusted by every Party: holds the agent's configuration, writes its Signal Handlers, and has the only direct access to the Agent Implementation. See [ADR-0001](./docs/adr/0001-the-gateway-is-trusted.md).
 _Avoid_: builder, host, admin, provider, owner, integrator, implementor
 
 **Gateway**:
@@ -40,7 +40,7 @@ The HTTP server exposed outside the Gateway. Named for its exposure rather than 
 _Avoid_: user server, external API, frontend
 
 **Agent server**:
-The HTTP server only the Agent Runtime reaches, carrying the Signal Worker's Signal and Run routes plus whatever Producers expose to the agent. A mediation point, not a security boundary against the agent. See [ADR-0010](./docs/adr/0010-the-agent-reaches-the-gateway-over-http.md).
+The HTTP server only the Agent Implementation reaches, carrying the Signal Worker's Signal and Run routes plus whatever Producers expose to the agent. A mediation point, not a security boundary against the agent. See [ADR-0010](./docs/adr/0010-the-agent-reaches-the-gateway-over-http.md).
 _Avoid_: internal API, private server, control plane
 
 **Db**:
@@ -59,16 +59,24 @@ _Avoid_: auth service, identity provider, IdP, user store, account system, user 
 The Producer that owns recurrence, cancellation, and next-fire computation, and emits a Signal when a schedule matures. See [ADR-0018](./docs/adr/0018-scheduling-is-a-separate-component.md).
 _Avoid_: cron, timer, job queue
 
-**Agent Runtime**:
-The interchangeable agent implementation at the centre of the architecture. `pi` is the primary target; `openclaw` is the reference alternative. See [ADR-0005](./docs/adr/0005-pi-is-the-primary-agent-runtime.md).
-_Avoid_: engine, backend, model, LLM
+**Agent Implementation**:
+The interchangeable agent program at the centre of the architecture. `pi` is the primary target; `openclaw` is the reference alternative. Formerly the **Agent Runtime**, the name ADR-0005 was recorded under and every ADR up to [ADR-0032](./docs/adr/0032-components-wire-themselves-at-construction.md) used before the rename swept them. Renamed because "runtime" had come to mean three things at once, and this was the weakest of the three claims on it: `pi` is a program, and the word was wanted for what actually runs one. See [ADR-0005](./docs/adr/0005-pi-is-the-primary-agent-runtime.md) and [ADR-0033](./docs/adr/0033-an-agent-is-a-container-and-one-function.md).
+_Avoid_: agent runtime, engine, backend, model, LLM
 
-**Runtime Adapter**:
-The Part that drives one kind of Agent Runtime on the Signal Worker's behalf. Its contract is narrow: start a Run against a Session with a Prompt, collect the output, report completion or failure. It does not carry the agent's own configuration at all — what the Agent Runtime reads on disk is the Operator's to place where it will look — and holds only what it puts on a command line. See [ADR-0016](./docs/adr/0016-agent-configuration-is-opaque-to-the-framework.md) and [ADR-0025](./docs/adr/0025-the-pi-adapter-spawns-one-confined-process-per-run.md).
-_Avoid_: driver, plugin, connector, backend
+**Runtime**:
+The Part the Signal Worker hands a Prompt to and gets an outcome back from, and the narrowest interface in the framework: one method. It carries none of the Agent Implementation's own configuration, because what that reads on disk is the Operator's to place where it will look. Named for the Worker's own field, which has always been `runtime`. Formerly the **Runtime Adapter**; "adapter" is gone, since there is no longer a second kind of thing for it to adapt between. See [ADR-0016](./docs/adr/0016-agent-configuration-is-opaque-to-the-framework.md) and [ADR-0033](./docs/adr/0033-an-agent-is-a-container-and-one-function.md).
+_Avoid_: runtime adapter, driver, plugin, connector, backend
+
+**Agent Container**:
+The declaration of the container one Run happens in: the image, the Mount Table, the networks, the environment, the entry point, and the flags the framework does not model. Inert and agent-agnostic: it creates nothing, checks no path and starts nothing, resolving to container arguments and no more. Only the image is required. See [ADR-0033](./docs/adr/0033-an-agent-is-a-container-and-one-function.md).
+_Avoid_: sandbox, box, environment, runtime config, container spec
+
+**Agent Container Runtime**:
+The Runtime that runs an Agent Implementation as one fresh container per Run, generic over which one. It owns the whole of the container: the arguments, the confinement, the process, the redaction and the diagnosis of a failure. What an Agent Implementation adds to it is **one function**, which says what to put after the image, what to write on stdin, and how to read what comes back. `createPiRuntime` is that function plus two defaults. See [ADR-0033](./docs/adr/0033-an-agent-is-a-container-and-one-function.md).
+_Avoid_: container adapter, executor, launcher, supervisor
 
 **Mount Table**:
-The declaration of which directories and files the Agent Runtime's container sees, where each one comes from, and which user the container runs as. Runtime-agnostic and inert: it creates nothing, writes nothing and checks nothing, resolving to container arguments and no more. One entry is a **Mount**. The Workspace is one of them; so is any file the Operator wants the agent to be unable to change. See [ADR-0028](./docs/adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md).
+The declaration of which directories and files the agent's container sees, and where each one comes from. One entry is a **Mount**. The Workspace is one of them; so is any file the Operator wants the agent to be unable to change. Optional: an image carrying its own configuration and keeping nothing between Runs mounts nothing, and the cost of that is only that no Session survives the container. It used to carry the container's user as well, on the argument that what is shared and who shares it are two halves of one fact; the user is no longer configuration at all. See [ADR-0028](./docs/adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md).
 _Avoid_: volume, bind, share, sandbox, mount config
 
 **OpenClaw daemon**:
@@ -92,7 +100,7 @@ The Signal Handler's second entry point, for cleanup. Runs once after all Runs a
 _Avoid_: post handler, teardown, finalizer, callback
 
 **Session**:
-The Agent Runtime's unit of conversational continuity. A Signal Handler routes each Prompt to a fresh or a named Session. Organises context; does not isolate it.
+The Agent Implementation's unit of conversational continuity. A Signal Handler routes each Prompt to a fresh or a named Session. Organises context; does not isolate it. A Handler asking for a fresh one is answered by the Signal Worker, which names it after the Run it belongs to before any Runtime sees it. So every Run records the Session it actually used, and no Runtime invents a naming convention of its own.
 _Avoid_: chat, conversation, thread, context
 
 **Run**:
@@ -138,7 +146,7 @@ _Avoid_: queue, feed, inbox, notifications
 ## Properties
 
 **Shielded**:
-Of a Shared Agent: reachable only through the Gateway, with no direct path from any User to the Agent Runtime. A statement about topology, not a security guarantee — see [ADR-0003](./docs/adr/0003-prompt-injection-is-an-accepted-risk.md) and [ADR-0004](./docs/adr/0004-runtime-confinement-is-the-deployments-responsibility.md).
+Of a Shared Agent: reachable only through the Gateway, with no direct path from any User to the Agent Implementation. A statement about topology, not a security guarantee — see [ADR-0003](./docs/adr/0003-prompt-injection-is-an-accepted-risk.md) and [ADR-0004](./docs/adr/0004-runtime-confinement-is-the-deployments-responsibility.md).
 _Avoid_: protected, sandboxed, isolated, secured
 
 ## Rejected

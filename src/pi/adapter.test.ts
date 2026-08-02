@@ -26,7 +26,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 import type { LogFields, Logger } from "../logging.ts";
-import type { RuntimeAdapter } from "../signals/runtime.ts";
+import type { Runtime } from "../signals/runtime.ts";
 import {
   type FakeContainerReport,
   type FakeContainerScript,
@@ -67,7 +67,7 @@ async function fixture(name: string): Promise<string> {
 }
 
 type Adapter = {
-  readonly runtime: RuntimeAdapter;
+  readonly runtime: Runtime;
   readonly config: PiConfiguration;
   readonly lines: Logged[];
   /** Where the stub container runtime wrote down what it was given. */

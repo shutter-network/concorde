@@ -1,8 +1,8 @@
 /**
  * The drain loop and Signal Handler dispatch: the heart of the Signal Worker.
  *
- * PostgreSQL is real (ADR-0022) and the only fake is the Runtime Adapter, which is
- * the seam a container would otherwise sit behind. The Handlers are written inline,
+ * PostgreSQL is real (ADR-0022) and the only fake is the Runtime, which is the seam
+ * a container would otherwise sit behind. The Handlers are written inline,
  * because that is exactly what an Operator writes — a plain object closing over
  * whatever the test needs, with no harness from us (ADR-0024).
  *
@@ -23,7 +23,7 @@ import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
 import type { SignalHandler, SignalHandlers } from "./handlers.ts";
 import { signalsMigrations } from "./migrations.ts";
-import type { RuntimeAdapter } from "./runtime.ts";
+import type { Runtime } from "./runtime.ts";
 import { runs, signals } from "./schema.ts";
 import { createSignalWorker, type SignalWorker, signalChannel } from "./worker.ts";
 
@@ -79,7 +79,7 @@ type WorkerBody = (worker: SignalWorker, entries: readonly LogEntry[]) => Promis
  */
 async function withWorker(
   handlers: SignalHandlers,
-  runtime: RuntimeAdapter,
+  runtime: Runtime,
   body: WorkerBody,
   sweepIntervalMs: number = sweepingMs,
 ): Promise<void> {
@@ -106,7 +106,7 @@ async function withWorker(
  */
 function withNotifiedWorker(
   handlers: SignalHandlers,
-  runtime: RuntimeAdapter,
+  runtime: Runtime,
   body: WorkerBody,
 ): Promise<void> {
   return withWorker(
@@ -256,7 +256,7 @@ describe("worker.start", () => {
  * (ADR-0021). Never called — if `handlers` ever became optional, `@ts-expect-error`
  * would fail the typecheck.
  */
-export function constructingWithoutHandlersDoesNotCompile(runtime: RuntimeAdapter): SignalWorker {
+export function constructingWithoutHandlersDoesNotCompile(runtime: Runtime): SignalWorker {
   // @ts-expect-error the kind-to-Handler map is a required option
   return createSignalWorker({ db, runtime });
 }
@@ -521,10 +521,10 @@ describe("the worker", () => {
     });
   });
 
-  it("hands the Runtime Adapter any Session name, and fails only the Run it rejects", async () => {
-    // What makes a name acceptable is the Agent Runtime's to say and nothing here
-    // holds a copy of it (ADR-0016), so every Prompt reaches the adapter with the
-    // name its Handler wrote — including the two spellings a check of ours would
+  it("hands the Runtime any Session name, and fails only the Run it rejects", async () => {
+    // What makes a name acceptable is the Agent Implementation's to say and nothing
+    // here holds a copy of it (ADR-0016), so every Prompt reaches the Runtime with
+    // the name its Handler wrote — including the two spellings a check of ours would
     // have refused.
     const runtime = fakeRuntime((prompt) =>
       prompt.session === "user:2"
@@ -551,7 +551,7 @@ describe("the worker", () => {
           runtime.recorded.map((run) => run.prompt.session),
           ["user_1", "user:2", "../escape"],
         );
-        // The rejected name is on its own Run's row beside the runtime's own words,
+        // The rejected name is on its own Run's row beside the Runtime's own words,
         // and the Prompts around it ran — which is the ordinary shape of a failed
         // Run (ADR-0017) rather than an exception the framework made for names.
         assert.deepEqual(
@@ -566,7 +566,7 @@ describe("the worker", () => {
     );
   });
 
-  it("hands the Runtime Adapter each Prompt with the id of the Run recorded for it", async () => {
+  it("hands the Runtime each Prompt with the id of the Run recorded for it", async () => {
     const observed: { runId: string; prompt: string | undefined; state: string | undefined }[] = [];
     // Reading the Run mid-flight is the one intermediate read in this file, and it
     // is here because the id is only useful if it names a Run that already exists —
@@ -614,7 +614,7 @@ describe("the worker", () => {
     );
   });
 
-  it("treats a Runtime Adapter that throws as a failed Run rather than a dead worker", async () => {
+  it("treats a Runtime that throws as a failed Run rather than a dead worker", async () => {
     const runtime = fakeRuntime(() => {
       throw new Error("the container would not start");
     });

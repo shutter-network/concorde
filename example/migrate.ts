@@ -13,7 +13,7 @@
  * is inert data: a folder, a PostgreSQL schema, a tracking table. They are registered
  * here **directly**, rather than by constructing the parts that own them, and that is
  * the whole reason they stay exported: a migration job that had to build a Signal Worker
- * would need a Runtime Adapter, and in this deployment a model credential and an agent
+ * would need a Runtime, and in this deployment a model credential and an agent
  * image (ADR-0032). So this file constructs nothing but a Db, and that is the property
  * to keep when you add a part — a migration job that needs the things `gateway.ts` needs
  * is a broken migration job.
