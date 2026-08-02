@@ -56,13 +56,29 @@ schema generation tool. Each part has a config file of its own and passes it wit
 `--config`, because `out` is one folder and each part owns its own:
 
 ```sh
-npm run migrations:generate                                            # the Signal Worker
-npm run migrations:generate -- --config drizzle.users.config.ts        # the User Directory
-npm run migrations:generate -- --config drizzle.http-messages.config.ts # the HTTP Messenger
+npm run migrations:generate                                              # the Signal Worker
+npm run migrations:generate -- --config drizzle.users.config.ts          # the User Directory
+npm run migrations:generate -- --config drizzle.http-messages.config.ts  # the HTTP Messenger
 ```
 
-Read the config before running any of them: a generated first migration needs one
-line removed by hand, and the HTTP Messenger's needs a constraint added.
+Read the config before running any of them, because what ships is never quite what was
+generated. Every part needs one line **removed**: a generated first migration begins
+`CREATE SCHEMA`, and `db.migrate` has already created the descriptor's schema before it
+applies the folder. The HTTP Messenger needs a second edit, in the other direction: the
+foreign key on `messages.user_id` onto `saf_users.users.id`
+([ADR-0036](./docs/adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)) **added
+back**, in the migration and in its snapshot both, since `drizzle-kit` reads one schema
+file and a reference into another part's is a thing it cannot generate. Every later
+regeneration then proposes a `DROP CONSTRAINT` for it, which is deleted from what it
+wrote; `drizzle.http-messages.config.ts` has the mechanics.
+
+Those two hand-edits guard different failures, and the addition is the dangerous one. A
+forgotten removal is loud: `src/signals/migrations.test.ts` scans every shipped folder
+and fails on a stray `CREATE SCHEMA`. A forgotten addition is **silent**: every test
+passes against a database that simply does not enforce the constraint, and what it stops
+enforcing is the agent's 404 for a Message addressed to nobody. That is why
+`src/http-messenger/migrations.test.ts` scans the shipped folder for the constraint
+itself.
 
 Conventions the build depends on:
 

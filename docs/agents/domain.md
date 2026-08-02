@@ -8,7 +8,7 @@ root, one `docs/adr/`.
 
 - **`CONTEXT.md`** at the repo root — the glossary of domain terms
 - **`docs/adr/`** — read the ADRs that touch the area you're about to work in.
-  There are currently 30 (`0001`–`0030`), and most `CONTEXT.md` entries link to
+  There are currently 36 (`0001`–`0036`), and most `CONTEXT.md` entries link to
   the ADR that decided them; follow those links rather than reading the whole set.
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence;
@@ -22,16 +22,19 @@ terms or decisions actually get resolved.
 /
 ├── CONTEXT.md          ← the glossary
 ├── docs/
+│   ├── quickstart.md   ← the Operator's walkthrough, which mirrors example/
 │   ├── architecture.md
 │   ├── data-model.md
 │   ├── adr/            ← 0001-…  numbered, kebab-case titles
 │   └── agents/         ← this file, plus issue-tracker.md and triage-labels.md
+├── src/                ← one directory per part of the Gateway
+├── example/            ← the reference deployment the quickstart describes
 └── .scratch/           ← issues and specs (see issue-tracker.md)
 ```
 
-There is no `src/` yet — this repo is currently design docs only. If it grows into
-a multi-context repo, the signal is a root `CONTEXT-MAP.md` pointing at per-context
-`CONTEXT.md` files under `src/<context>/`, each with its own `docs/adr/`.
+The whole of `src/` is one context: the glossary and `docs/adr/` above cover all of it. If
+it ever grows into a multi-context repo, the signal is a root `CONTEXT-MAP.md` pointing at
+per-context `CONTEXT.md` files under `src/<context>/`, each with its own `docs/adr/`.
 
 ## Use the glossary's vocabulary
 

@@ -1,6 +1,7 @@
 # Quickstart
 
-From a fresh clone to a completed agent Run, on one machine, in five commands.
+From a fresh clone to a conversation with the agent, on one machine, in five commands and
+four requests.
 
 Everything here is self-contained: you do not need to read an architecture document or
 a decision record to get this working. Links to those exist where you might want the
@@ -9,10 +10,11 @@ reasoning, and every one of them is optional.
 What you will end up with is a **Gateway**: one process that owns a queue of things that
 arrived from outside, turns each of them into a Prompt, and runs an AI agent against
 that Prompt inside a container. The vocabulary is in [`../CONTEXT.md`](../CONTEXT.md);
-the five words you need before you start are:
+the six words you need before you start are:
 
 | Word | Meaning |
 | --- | --- |
+| **Message** | one thing said, in one direction: a person to the agent, or the agent to them |
 | **Signal** | something that arrived from outside and may cause the agent to act |
 | **Signal Handler** | your code, which turns a Signal into zero, one, or many Prompts |
 | **Run** | one execution of the agent: one Prompt, in one Session |
@@ -42,30 +44,22 @@ docker compose -f example/compose.yaml up -d --build   # PostgreSQL, the agent i
 ANTHROPIC_API_KEY=sk-ant-... node example/gateway.ts
 ```
 
-The last command starts the Gateway *and* emits one Signal, so a Run happens
-immediately. You should see roughly this, one JSON line at a time:
-
-```
-Signal claimed                              {"kind":"ask", ...}
-Run started                                 {"session":"user_42", ...}
-Run finished                                {"session":"user_42", ...}
-Signal finished                             {"state":"done", ...}
-```
-
+**The last command prints nothing at all**, and that is what a healthy Gateway looks like.
 Nothing announces that either server started. One call binds both ports, opens the pool
 and starts the worker, and it says nothing about any of it — the framework logs no
 startup line anywhere, and any line you want about one is yours to write next to that
-call. The first line above is the Signal the last line of the entry point emits, and it
-is the first sign the process got up.
+call.
+
+Nothing else happens either, and that is the other half of the silence. This deployment's
+only Producer is the **HTTP Messenger**, so the first Signal this Gateway ever sees is a
+Message somebody posted, and until somebody posts one there is nothing to claim and nothing
+to run. `gateway.ts` takes no arguments, because there is nothing left to say to it from a
+shell: a person logs in over the Public server, posts a Message, and reads the agent's
+answer back, which is [the next section](#a-conversation-in-four-requests).
 
 `Ctrl-C` stops it — after the Run in flight has finished, which is not instant and is
 [the part of shutdown nothing can fix for you](#shutdown-is-two-lines-and-the-policy-is-yours). It
-keeps running because a Gateway is a server; ask it something else by restarting it with
-your question as an argument:
-
-```sh
-ANTHROPIC_API_KEY=sk-ant-... node example/gateway.ts "what did I ask you before?"
-```
+keeps running because a Gateway is a server, and you want it up for the four requests below.
 
 ### Why `npm run build` is in that list
 
@@ -98,6 +92,146 @@ Notice what is *not* in that compose file: **the Gateway**. It runs on your host
 ordinary Node process. That is deliberate — see
 ["Why the Gateway is not in the compose file"](#why-the-gateway-is-not-in-the-compose-file).
 
+## A conversation, in four requests
+
+The Gateway is up and nothing has arrived, so nothing has happened. Four requests take it
+from a silent process to an answer, and each one below is followed by what it really
+answered.
+
+**One: a User**, created out of band on the **Agent** server. `POST /users` takes a password
+and nothing else, and the id it answers with is the one thing you have to keep, because a
+User has no natural key: no email, no username, nothing to match on later.
+
+```sh
+curl -s -XPOST localhost:7411/users -H 'content-type: application/json' \
+  -d '{"password":"correct horse battery staple"}'
+```
+
+```json
+{"id":"3a577cbb-da46-44d1-8032-e2549fcd1507","attributes":{},"createdAt":"2026-08-02T16:37:09.756Z"}
+```
+
+**Two: a Token**, bought with that password on the **Public** server. This is the only
+response that will ever carry its plaintext:
+
+```sh
+curl -s -XPOST localhost:8080/auth/tokens -H 'content-type: application/json' \
+  -d '{"user":"3a577cbb-da46-44d1-8032-e2549fcd1507","password":"correct horse battery staple"}'
+```
+
+```json
+{"token":"saf_qEfrXGS-ld51ieI3atp3E6sG6cwzQHk4Csj5iPhUfGY",
+ "expiresAt":"2026-09-01T16:37:15.517Z",
+ "user":{"id":"3a577cbb-…","attributes":{},"createdAt":"2026-08-02T16:37:09.756Z"}}
+```
+
+**Three: a Message**, posted with that Token. `POST /messages` on the Public server is the
+whole of a person's way in. The body is `{ "text": … }` and it takes nothing else: the sender
+is the User the Token named, so there is no field a client could put a person in and
+therefore nothing to guard.
+
+```sh
+TOKEN=saf_qEfrXGS-ld51ieI3atp3E6sG6cwzQHk4Csj5iPhUfGY
+curl -s -XPOST localhost:8080/messages -H "authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' -d '{"text":"Is anything waiting for me?"}'
+```
+
+A **201**, carrying the Message as it was stored, which is the same record shape every other
+surface of this part answers with:
+
+```json
+{"id":"50c52d4d-d1b2-4ef5-bfe2-da1bc8247bc5","userId":"3a577cbb-…","direction":"inbound",
+ "seq":1,"text":"Is anything waiting for me?","createdAt":"2026-08-02T16:37:20.172Z"}
+```
+
+By the time that response reaches you the Signal is already queued. The Message row and the
+Signal that wakes the worker for it are **one transaction**, so what somebody said and the
+fact that anybody was told about it commit together or neither does, and now the Gateway has
+something to say, one JSON line at a time:
+
+```
+Signal claimed     {"signalId":"641c2f87-…","kind":"message.received"}
+Run started        {"runId":"7f1a08a4-…","session":"user_3a577cbb-da46-44d1-8032-e2549fcd1507"}
+Run finished       {"runId":"7f1a08a4-…","session":"user_3a577cbb-da46-44d1-8032-e2549fcd1507"}
+Signal finished    {"signalId":"641c2f87-…","state":"done"}
+```
+
+The `kind` is the constant the Messenger exports, `message.received`, and it is the only one
+this deployment has a Handler for. The Session name is the deployment's own choice, made by
+that Handler in `gateway.ts`: `user_<the User's id>`, which is why everything one person says
+goes to one Session and the agent remembers them between Messages.
+
+**Four: the answer**, read back with `after=` the last `seq` you have seen:
+
+```sh
+curl -s "localhost:8080/messages?after=1" -H "authorization: Bearer $TOKEN"
+```
+
+```json
+{"messages":[{"id":"a0804873-…","userId":"3a577cbb-…","direction":"outbound","seq":2,
+  "text":"Nothing is waiting, and I have written it down for you.",
+  "createdAt":"2026-08-02T16:37:21.538Z"}]}
+```
+
+That Message was written by the agent, from inside its container, with `curl` against the
+Agent server. `POST /messages` there is the only thing in this deployment that reaches a
+person at all, and both the Prompt and
+[`../example/AGENTS.md`](../example/AGENTS.md) tell it so: a Run records that it finished and
+not what the agent said, so an answer written into its own conversation or into a file in the
+Workspace arrives nowhere. Until it makes that call your poll answers `{"messages":[]}`, and
+[a client keeps asking](#three-things-about-messages-and-none-of-them-is-a-bug).
+
+### Three motions, and no fourth
+
+One route serves the whole conversation, both directions, and every page comes back
+**ascending by `seq`**, so a client concatenates pages without reversing anything:
+
+| Request | What a client is doing with it |
+| --- | --- |
+| `GET /messages` | opening: the newest `limit` Messages, which is the end of the conversation |
+| `GET /messages?before=N` | scrolling up: the newest `limit` strictly below `seq` N |
+| `GET /messages?after=N` | polling: everything above `seq` N, oldest first, capped at `limit` |
+
+Ask five more times and there is a log to page through. Against twelve Messages, with
+`limit=3` so the paging is visible at all:
+
+```sh
+curl -s "localhost:8080/messages?limit=3"           -H "authorization: Bearer $TOKEN"   # seq 10, 11, 12
+curl -s "localhost:8080/messages?before=10&limit=3" -H "authorization: Bearer $TOKEN"   # seq  7,  8,  9
+curl -s "localhost:8080/messages?before=7&limit=3"  -H "authorization: Bearer $TOKEN"   # seq  4,  5,  6
+curl -s "localhost:8080/messages?after=10"          -H "authorization: Bearer $TOKEN"   # seq 11, 12
+```
+
+The first line is what a client asks on open, the next two are one scroll continued upwards by
+passing the lowest `seq` of the page it already has, and the last is the poll it repeats
+forever. Both cursors are strict, so the two directions from one number partition the log
+around it and neither returns the Message it names: paging up and then polling forward
+reconstructs a conversation exactly once, with nothing dropped and nothing repeated.
+
+Seven things about that surface, and most of them are refusals:
+
+- **`seq` is one person's own numbering**, from 1, across both directions. Nothing about how
+  busy the agent is with anybody else is legible in it, and the pair `(user, seq)` is unique,
+  which is what enforces that rather than a convention.
+- **Both cursors at once is a 400.** `after` and `before` describe two different windows, so
+  neither quietly wins: *"pass after to walk forwards, before to walk backwards, or neither
+  for the newest page."*
+- **An unknown query parameter is a 400**, not a request answered with everything: *"A
+  Message log is read by cursor and cannot be searched or filtered."* There is no text
+  matching, no field matching, and no `direction` parameter either. A client that wants one
+  side of the conversation filters the page it already has.
+- **No Token is a 401**, and it is the User Directory's own single refusal rather than
+  anything of the Messenger's: both Public routes take `users.requireUser` as one option and
+  this part authenticates nobody.
+- **An empty `text` is a 400**, so a stray keypress does not start a Run. There is no maximum
+  and there will not be one: Fastify's 1 MB `bodyLimit` is already the bound and it is yours
+  to raise on the server you constructed.
+- **`after=0` asks for the log from its beginning**, oldest first, which no other spelling
+  expresses: no cursor at all means the *newest* page, and `after=1` would skip the first
+  Message.
+- **`limit` defaults to 50 and caps at 200**, and there is no `hasMore` in the envelope
+  because `messages.length === limit` says it.
+
 ## Seeing what happened
 
 The Gateway's own record lives in PostgreSQL, and the agent reads it over HTTP. So can
@@ -106,11 +240,17 @@ you:
 ```sh
 curl -s http://127.0.0.1:7411/signals | jq
 curl -s http://127.0.0.1:7411/runs | jq
+curl -s "http://127.0.0.1:7411/messages?user=3a577cbb-…" | jq
 ```
 
 A Run row carries the exact Prompt the agent was given, its Session, its state, its
 timings, and — if it failed — why, in the provider's own words. That `error` column is
 the first place to look when something goes wrong, and usually the only place you need.
+
+The third of those is the same log the person read in step four, from the side the agent
+reads it. Every route on this server is unauthenticated and unscoped, so it needs no Token to
+see somebody's conversation, and `user` is nonetheless **required** on it: `seq` is per
+person, so there is no such thing as a page of everybody's Messages at once.
 
 The Run also leaves things on disk, under `example/state/`:
 
@@ -141,8 +281,8 @@ to `<agent directory>/sessions`, and the one thing that shards that shards it by
 so that is **one directory for the whole deployment**:
 
 ```
-example/state/agent/sessions/--workspace--/2026-08-02T13-55-13-175Z_user_42.jsonl
-example/state/agent/sessions/--workspace--/2026-08-02T14-02-44-901Z_run_51b54b31-….jsonl
+example/state/agent/sessions/--workspace--/2026-08-02T16-37-21-400Z_user_3a577cbb-….jsonl
+example/state/agent/sessions/--workspace--/2026-08-02T17-02-44-901Z_run_51b54b31-….jsonl
 ```
 
 The number that matters is what a Run reads: resolving `--session-id` calls
@@ -266,8 +406,9 @@ for a Run that never finishes.
 
 All JSON, all on the Agent server, and **all unscoped**. Which of them exist is a
 consequence of which parts your entry point handed that server to: the first four are the
-Signal Worker's, and the last three are there because the reference deployment hands the
-Agent server to the User Directory as well.
+Signal Worker's, the next three are there because the reference deployment hands the Agent
+server to the User Directory as well, and the last two because it hands it to the HTTP
+Messenger.
 
 | Route | Answers |
 | --- | --- |
@@ -278,6 +419,8 @@ Agent server to the User Directory as well.
 | `GET /users?limit=` | `{ "users": [ … ] }`, newest first |
 | `GET /users/<id>` | one User, or 404 |
 | `POST /users` | the User it created |
+| `GET /messages?user=&after=&before=&limit=` | `{ "messages": [ … ] }`, ascending by `seq` |
+| `POST /messages` | the Message it sent to one User, or 404 |
 
 A **Signal** is `{ id, kind, payload, emittedAt, state, error }`. `payload` is arbitrary
 JSON, exactly as the Producer wrote it. `emittedAt` is an ISO 8601 string, because JSON
@@ -296,24 +439,39 @@ and so is its Signal.
 A **User** is `{ id, attributes, createdAt }`. `attributes` is arbitrary JSON that the
 deployment's own code put there and is the whole of what anything means by authorization.
 
+A **Message** is `{ id, userId, direction, seq, text, createdAt }`, where `direction` is
+`inbound` (from the person) or `outbound` (from the agent) and `seq` numbers one person's
+Messages from 1 across both directions. In this deployment a Signal's `payload` **is** one of
+these, so a Signal the agent reads is something somebody said with the person it came from
+attached. What those two routes mean to an agent, and the four things the API will not let it
+do with them, are stated where the agent actually reads them: *Reaching a person* in
+[`../example/AGENTS.md`](../example/AGENTS.md). They are deliberately not restated here,
+because two copies of one paragraph drift.
+
 Four facts about the surface that an agent's instructions should carry, because each of
 them is a request that would otherwise be written and quietly misunderstood:
 
 - **There is no credential.** Reaching the port is access. Nothing to send, nothing to
   obtain, nothing to rotate.
-- **Reads are not scoped.** Every Signal, every Run and every User, whatever Session the
-  Run asking is in. There is no `session` parameter and no `user` parameter on any route,
-  and an unknown query parameter is a **400** rather than a request answered with
-  everything — so a deployment that believed it was scoping something finds out at once.
+- **Reads are not scoped.** Every Signal, every Run, every User and any person's Message log,
+  whatever Session the Run asking is in. There is no `session` parameter anywhere, and an
+  unknown query parameter is a **400** rather than a request answered with everything — so a
+  deployment that believed it was scoping something finds out at once. The Message log's
+  required `user` is the one apparent exception and is not one: it narrows nothing the agent
+  could otherwise have seen, and it is required because `seq` is per person and cannot cursor
+  an interleaved result.
 - **`limit` defaults to 50 and caps at 200.** Asking for more is refused rather than
-  quietly reduced. There is no cursor and no offset, so records past the cap are reached
-  by narrowing with `kind` or `signalId` and not by paging.
-- **The one thing here that writes creates a User with nothing.** The Signal Worker has
-  nothing an agent may change at all: a Signal is immutable but for the state the worker
-  gives it, and a Run is the worker's record of its own work. `POST /users` takes a
-  password and no attributes, so an agent talked into creating a User cannot make it a
-  privileged one, and setting attributes, replacing a password, issuing a Token and
-  revoking one are methods on the User Directory and no route at all.
+  quietly reduced. The Message log is the only thing here with a cursor at all, so records
+  past the cap are otherwise reached by narrowing with `kind` or `signalId` and not by
+  paging.
+- **Two things here write, and neither is a lever.** `POST /users` takes a password and no
+  attributes, so an agent talked into creating a User cannot make it a privileged one.
+  `POST /messages` addresses exactly one User and is always `outbound`, decided by the server
+  it arrived on, so no instruction the agent is given can broadcast or put words in somebody's
+  mouth. Everything else is immutable: a Signal but for the state the worker gives it, a Run
+  which is the worker's record of its own work, and a Message once written. Setting
+  attributes, replacing a password, issuing a Token and revoking one are methods on the User
+  Directory and no route at all.
 
 `pi` ships no HTTP client, so the agent calls this with its shell tool and `curl` — which
 is why `curl` is one of the [three things the agent's image
@@ -340,10 +498,10 @@ being out of date.
 
 ## What the entry point actually does
 
-Read [`../example/gateway.ts`](../example/gateway.ts) — seventy-five lines of code under
-two hundred and ninety-nine with the comments, and the best documentation this project
-has. Twelve of those lines are imports; the rest are the Agent Container above, the two
-directories it creates, the parts themselves, and the two things at the bottom the
+Read [`../example/gateway.ts`](../example/gateway.ts) — ninety-one lines of code under
+three hundred and ninety-seven with the comments, and the best documentation this project
+has. Eighteen of those lines are imports; the rest are the Agent Container above, the two
+directories it creates, the parts themselves, and the one thing at the bottom the
 framework does not ship. Nothing in the framework represents the Gateway: there is no
 object to construct, no registry to add parts to and no plugin system. The file *is* the
 Gateway, and every line of it is a part being constructed and handed to another part.
@@ -363,16 +521,16 @@ third of them is the one thing about that file that is not arbitrary.
 
 One word before them. A **Component** is a part with something to run: a `name`, a
 `start` and a `stop`, and nothing else at all. Four things here are Components — the Db,
-the two servers and the Signal Worker — and the User Directory is deliberately not one,
-having nothing to start and nothing to release. It is not a plugin contract: nothing
-declares a dependency, nothing is resolved, and parts still hold each other because you
-passed them to each other.
+the two servers and the Signal Worker — and two parts deliberately are not: the User
+Directory and the HTTP Messenger, neither of which has anything to start or anything to
+release. It is not a plugin contract: nothing declares a dependency, nothing is resolved,
+and parts still hold each other because you passed them to each other.
 
 1. **Construct.** The Db from one PostgreSQL URL, two `Fastify()` instances as Components,
-   the Runtime, the User Directory and the Signal Worker with its Handler map,
-   each handed what it needs as an ordinary constructor option. Construction is also the
-   whole of the wiring: a part handed a server registers its routes on that server, and a
-   part with tables of its own registers its migration descriptor with the Db, so there is
+   the Runtime, the User Directory, the Signal Worker with its Handler map and the HTTP
+   Messenger, each handed what it needs as an ordinary constructor option. Construction is
+   also the whole of the wiring: a part handed a server registers its routes on that server,
+   and a part with tables of its own registers its migration descriptor with the Db, so there is
    no third item on a checklist for you to forget
    ([ADR-0032](./adr/0032-components-wire-themselves-at-construction.md)). Nothing here
    touches the network. Constructing the Runtime does settle the Agent Container on the
@@ -402,8 +560,75 @@ passed them to each other.
    in step 1 with no framework default behind either — see
    ["Where each server binds is yours to state"](#where-each-server-binds-is-yours-to-state).
 
-Then two things the framework does not do for you, both at the bottom of the file:
-**shutdown** and **emitting Signals**.
+Then the one thing the framework does not do for you, at the bottom of the file:
+**shutdown**. Emitting Signals used to be the second of two, and the last line of the file
+used to be a loop that made up a user id because nothing there could hold a real person. The
+HTTP Messenger is the Producer now.
+
+### The HTTP Messenger is one more object, with one placement that matters
+
+Messaging is one call and five options, and every one of them is required:
+
+```ts
+const messenger = createHttpMessenger({ db, users, worker, publicServer, agentServer });
+```
+
+That call registers its own migration descriptor with the Db and its two route groups at
+`/messages`, the Public pair behind the Directory's `requireUser` and the Agent pair behind
+no credential at all, which is the whole of the wiring. Nothing here is a capability to leave
+out, unlike the User Directory's servers: a Messenger with no Public server cannot be reached
+by the people it exists for, and one with no Agent server cannot be answered, so each is a
+broken Messenger rather than a smaller one and both are unconstructable instead of documented.
+No route plugin is exported and no prefix is configurable either, which is this part's one
+stated departure from the door-out pattern every other part follows: these routes are half of
+a contract whose other half is the Signal `kind`, the record shape and a client written
+against both, so an Operator who needs them somewhere else wants a messaging part of their own
+([ADR-0034](./adr/0034-the-http-messenger-is-an-opinionated-messenger.md),
+[ADR-0021](./adr/0021-the-framework-has-no-plugin-system.md)).
+
+Two more things are exported beside the constructor, and they are the Signal contract a
+Handler is written against: **`messageReceivedKind`**, so that a Handler map is not a string
+literal that can drift, and **`MessageRecord`**, because the payload *is* the Message record
+flat, so `templateHandler<MessageRecord>` type-checks a template's data function against the
+same shape every surface of this part answers with. Registering no Handler for that `kind` is
+a 201 followed by a permanently failed Signal: the Message is stored and readable, the agent
+never sees it, and the failure is visible only on the Signal row. That is not guarded, and it
+is the one thing to check first if Messages arrive and nothing runs.
+
+Two things about where that line goes, and only one of them is a matter of taste.
+
+**It is in no start order.** The Messenger is not a Component: no timers, no connection of its
+own, nothing to start and nothing to release, so a place in that list would imply its position
+mattered when it does not
+([ADR-0031](./adr/0031-parts-that-run-are-components.md)). The day delivery stops being
+polling it becomes one, with a `LISTEN` registration and a `stop` that closes open responses.
+
+**It is constructed after the User Directory, and that one is load-bearing.**
+`messages.user_id` is a foreign key onto `saf_users.users.id`
+([ADR-0036](./adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)), `db.migrate()`
+applies descriptors in registration order, and registration order is construction order, so
+the other way round fails on this part's first migration with `schema "saf_users" does not
+exist`. In *this* file the wrong order cannot be written at all, and by nothing clever: the
+Directory is an argument to the call, so putting it first is a TypeScript error about a
+variable used before its declaration. That is the whole of the check, and it is a property of
+taking the object rather than something the framework does. Where descriptors are registered
+by hand instead, as [a migration job of its own](#migrations-as-a-separate-step) does, there
+is no such argument and no such error, and the failure at `migrate` is the only thing that
+says so.
+
+What the object itself carries, once the wiring has happened, is the two things no request can
+express. `send(tx, userId, text)` writes an outbound Message from inside a transaction of
+yours, so answering somebody and recording in your own tables why cannot come apart, and it
+returns the record because `history` takes no transaction and therefore cannot see your own
+uncommitted write. `history(userId, options?)` reads any person's whole log, with the same
+cursor the routes take, so a Handler can build a Prompt from more than the one Message that
+woke it. There is deliberately no method that writes an **inbound** Message: `direction` is
+decided by the server a request arrived on, and trusted code gets no path that puts words in a
+User's mouth. The reference deployment holds the object for the first of the two, and for one
+purpose: its Handler's `post` phase tells the person when the Run failed, which is otherwise
+the one event nothing in a Gateway can report, since a failed Run is never retried and
+somebody is waiting. A deployment whose Handlers neither send nor read may call
+`createHttpMessenger` and drop the result.
 
 ## Things that will bite you
 
@@ -604,30 +829,36 @@ demo; a real deployment supplies its own through `DATABASE_URL` and does not pub
 PostgreSQL's port at all. And the agent's network is worth having as one layer, not as the
 boundary.
 
-### The Public server carries logins and nothing else, and that is finished work
+### Three things about Messages, and none of them is a bug
 
-The only thing on it is the User Directory's `/auth` group, because the entry point hands
-it that server. Nothing on it accepts a submission and nothing on it emits a Signal. This
-is a **scope boundary, not an unimplemented feature.**
+Each of these is a consequence of a decision rather than something unfinished, and each is
+cheaper to read here than to meet in production.
 
-The Public server is the surface the outside world reaches, and in this framework users
-talk to two parts and no others: the **User Directory**, which authenticates them, and
-the **Messenger**, which accepts what they send and holds their outboxes. The User
-Directory is built and wired up here. The Messenger is designed and deliberately not built
-yet, so the half of the surface that would accept anything from a User is missing, and
-that is the whole of what is missing.
+**Nothing deletes a Message.** No route, no TTL, no sweeper, and nothing to configure: the
+`messages` table grows forever, exactly as `tokens` does. An Operator who needs it bounded
+writes the delete themselves, and should write it knowing what they are deleting. A Session is
+a **lossy cache** of this log and not a second copy of it, so history removed here is history
+the agent can no longer recover: the transcript it drops when it compacts is the copy that was
+never durable. That is also why there is nothing to configure. A retention default would be a
+number the framework picked for a log whose value it cannot see.
 
-The server would be in the entry point regardless, for two reasons. It is part of the
-Gateway's shape: what the world can reach and what the agent can reach are different
-servers, kept apart by what you register on each and by where each one binds. And it is
-where your own routes go — `publicServer.fastify.register(yourPlugin, { prefix: "/api" })`,
-which is Fastify's own plugin mechanism and the only extension mechanism there is.
+**A retried POST is a second Message, a second Signal and a second Run**, and nothing in the
+Gateway notices. There is no request id, no deduplication and no window. Because a Run can act,
+a duplicate here can act twice, which is a different cost from a duplicate row. So a client
+should not blind-retry a POST: a submission whose response was lost is one to show a person and
+let them decide about, not one to send again on a timer. An `Idempotency-Key` **header** stays
+addable later at no cost to the fixed body shape, which is exactly why this is a note rather
+than a feature today.
 
-The same is true in the other direction: nothing emits Signals in this slice either,
-because the Messenger was the only shipped thing that would. That is why the last line
-of the entry point calls `worker.emit` directly — and that is not a stand-in for a real
-Producer, it *is* one. Anything inside the Gateway that emits a Signal is a Producer,
-including a loop you write.
+**Delivery is polling.** `?after=<seq>` is the whole of the resume mechanism, so a chat with a
+two-second poll is a chat with up to a two-second delay. That is usually invisible next to a
+Run: the worker is serial globally, one Run at a time for the whole Gateway, and *that* is the
+real latency story. It is nonetheless the first thing an Operator will want to change, and the
+answer today is the poll interval, because SSE or long-polling means the Messenger becoming a
+Component with a `LISTEN` registration and a `stop` that closes open responses
+([ADR-0035](./adr/0035-a-users-messages-are-one-log-read-by-cursor.md)). Nothing about the
+data model has to change on the day that arrives, which is why it is deferred rather than
+designed around.
 
 ### Shutdown is two lines, and the policy is yours
 
@@ -758,13 +989,20 @@ its descriptor with the Db, and `db.migrate()` applies everything registered, so
 registers the descriptors by hand instead, through the same call the constructors use:
 
 ```ts
-db.registerMigrations(signalsMigrations, usersMigrations);
+db.registerMigrations(signalsMigrations, usersMigrations, httpMessagesMigrations);
 await db.migrate();
 ```
 
 The identical descriptor registered twice is one registration. Two *different* folders
 naming one tracking table still throw, because that is the failure where Drizzle silently
 skips the older folder's migrations and reports success.
+
+**The order of that list is load-bearing, and it is the one thing here that nothing checks.**
+Descriptors are applied in registration order, and the HTTP Messenger's first migration adds a
+foreign key onto `saf_users.users`, so the User Directory's descriptor comes before it or the
+migration fails with `schema "saf_users" does not exist`. In `gateway.ts` that order comes for
+free, out of the Messenger taking the Directory as a constructor argument; here they are three
+values in a list, and there is nothing in a list that could hold them in order.
 
 **Nothing goes unnoticed if you forget the step.** `db.start()` compares, for every
 registered descriptor, the newest migration in the folder shipped beside it against the
@@ -859,13 +1097,15 @@ publicServer.fastify.post("/ask", { preHandler: users.requireUser }, async (requ
 });
 ```
 
-That is the whole integration surface, and it is what the Messenger will use too. Four
-things about it are decisions rather than omissions, and are cheaper to learn now than to
-discover:
+That is the whole integration surface, and it is the same one the HTTP Messenger's own Public
+routes use: `requireUser` as one option, `request.safUser` in the handler, and no
+authentication of its own anywhere in that part. Four things about it are decisions rather than
+omissions, and are cheaper to learn now than to discover:
 
 - **Seeding the first User is yours, and it happens once.** A User has no natural key — no
   email, no username, nothing to match on — so "create this User if absent" cannot be
-  written. Create one out of band against the Agent server and keep the id it returns:
+  written. Create one out of band against the Agent server and keep the id it returns, which
+  is [step one of the walkthrough](#a-conversation-in-four-requests):
   `curl -XPOST localhost:7411/users -H 'content-type: application/json' -d '{"password":"…"}'`.
   Do not put it in your entry point, where it would run again on every boot.
 - **The agent can create Users but can give them nothing.** `POST /users` on the Agent
@@ -882,7 +1122,9 @@ discover:
 **Your own Producer.** Anything that calls `worker.emit(tx, { kind, payload })`. A webhook
 route, a poller, a loop. Note the transaction: `emit` takes yours rather than finding one,
 so recording something in your own tables and telling the agent about it either both
-happen or neither does — and a rollback wakes nobody.
+happen or neither does — and a rollback wakes nobody. The HTTP Messenger is a Producer of
+exactly that kind and holds no privilege for being ours: it inserts a Message and emits
+`message.received` in one transaction, and a Producer of yours beside it is a peer.
 
 **Your own Component.** Anything with a `name`, a `start` and a `stop` goes in the list
 and starts and stops with everything else — a poller, a queue consumer, a metrics
@@ -982,10 +1224,15 @@ the container still runs, and the Run is recorded as **failed** carrying the pro
 message, which is worth seeing once because it is also what a real model error looks like:
 
 ```
-"error": "Session user_42 settled with stopReason \"error\" and exited successfully
+"error": "Session user_3a577cbb-… settled with stopReason \"error\" and exited successfully
           anyway: 401 {\"type\":\"error\", ... \"message\":\"invalid x-api-key\"} ...
           Its stderr said: ..."
 ```
+
+The person who asked is told, and by this deployment rather than by the framework: the
+Handler's `post` phase sends them a Message saying it went wrong and that nothing will retry
+it. That is what the `post` phase is for, and the whole of what it can say, since a Run reports
+`ok` or an error string and none of the agent's output.
 
 Two things in that string are deliberate. It names the **Session**, because the outcome
 reader is built per Run and closes over it, and that name is what tells you which
@@ -1186,9 +1433,14 @@ rm -rf example/state                             # the Workspace and the agent's
 
 So you do not go looking:
 
-- **The Messenger** — messages in both directions, and outboxes. Designed, not built. It is
-  why the Public server carries nothing but logins and why nothing but your entry point
-  emits Signals.
+- **Anything about a Message beyond one `text` string.** No attachments, no reactions, no
+  typing indicators, no read state, no unread count, no receipts, no editing, and no
+  conversation as a thing with a name: one implicit conversation per person, and no table,
+  column or field for it. A deployment that needs any of that writes a messaging Producer of
+  its own beside this one, which is
+  [the extension mechanism the framework has](#making-it-yours) rather than a gap.
+- **Push delivery, deduplication and deletion** on that log. All three refused today, with
+  [the reasons and what each costs](#three-things-about-messages-and-none-of-them-is-a-bug).
 - **Any way to remove a User**, any account-recovery flow, and any limit on password
   guessing. All three refused, with the reasoning above and in the ADRs.
 - **The Scheduler** — recurrence and future work. Designed, not built.

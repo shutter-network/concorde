@@ -49,9 +49,13 @@ shipped folder, the way the first one is.
 descriptors in registration order, which is construction order
 ([ADR-0032](./0032-components-wire-themselves-at-construction.md)), so the User Directory
 must be constructed before the HTTP Messenger. Nothing checks this. The failure is
-PostgreSQL's `relation "saf_users.users" does not exist`, which names the missing thing
-plainly enough to leave alone, and it is documented in the part's own header and in the
-quickstart. Before this ADR, construction order in an entry point was pure narrative.
+PostgreSQL's `schema "saf_users" does not exist`, because `db.migrate` creates each
+descriptor's schema immediately before applying that descriptor's folder, so a Directory that
+has not been reached yet has no schema either. `relation "saf_users.users" does not exist` is
+the same mistake against a database where that schema is already there and its table is not.
+Either message names the missing thing plainly enough to leave alone, and both are recorded
+in the part's own header and in the quickstart. Before this ADR, construction order in an
+entry point was pure narrative.
 
 **3. This part requires *our* User Directory**, at the schema level rather than the type
 level. `architecture.md`'s "replaceable by construction: don't build ours, build yours" no
