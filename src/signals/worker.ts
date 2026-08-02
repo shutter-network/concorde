@@ -81,8 +81,8 @@ export type SignalWorkerOptions = {
    * group is switched off (ADR-0010).
    *
    * Structural, and asks for nothing but the Fastify instance: what satisfies it is
-   * what `serverComponent` returns, and the `name`, `start` and `stop` beside it are
-   * the Operator's list's business rather than ours. A server built with
+   * what `serverComponent` returns, and the `start` and `stop` beside it are the
+   * Operator's record's business rather than ours. A server built with
    * `withTypeProvider` or with a logger of its own satisfies it too; one built on
    * http2 does not, and takes the plugin below instead.
    */
@@ -498,10 +498,6 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   }
 
   return {
-    // Read only where a Component is named in an error, and there is one worker: a
-    // second draining the same queue is what ADR-0012 rules out.
-    name: "signal worker",
-
     agentRoutes,
 
     async emit(tx, signal) {

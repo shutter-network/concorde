@@ -90,8 +90,8 @@ export type UsersOptions = {
    * User is denied wholesale (ADR-0010): there is no flag, and no route to guard.
    *
    * Structural, and asks for nothing but the Fastify instance: what satisfies it is
-   * what `serverComponent` returns, and the `name`, `start` and `stop` beside it are
-   * the Operator's list's business rather than ours. A server built with
+   * what `serverComponent` returns, and the `start` and `stop` beside it are the
+   * Operator's record's business rather than ours. A server built with
    * `withTypeProvider` or with a logger of its own satisfies it too; one built on
    * http2 does not, and takes `agentRoutes` below instead.
    */

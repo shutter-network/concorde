@@ -111,8 +111,8 @@ before(async () => {
   db.registerMigrations(signalsMigrations, usersMigrations);
   await db.migrate();
 
-  agentServer = serverComponent("agent server", Fastify(), { port: 0, host: "127.0.0.1" });
-  publicServer = serverComponent("public server", Fastify(), { port: 0, host: "127.0.0.1" });
+  agentServer = serverComponent(Fastify(), { port: 0, host: "127.0.0.1" });
+  publicServer = serverComponent(Fastify(), { port: 0, host: "127.0.0.1" });
 
   // Handed both servers, so `/users` and `/auth` are where the constructor put the two
   // plugins: nothing here registers either, and nothing here could forget to

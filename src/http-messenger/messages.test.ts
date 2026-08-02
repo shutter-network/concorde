@@ -53,8 +53,8 @@ before(async () => {
 
   // The framework constructs no server: two bare Fastify instances, the same calls an
   // Operator's entry point makes. Nothing here starts either — `inject` needs no socket.
-  agentServer = serverComponent("agent server", Fastify(), { port: 0, host: "127.0.0.1" });
-  publicServer = serverComponent("public server", Fastify(), { port: 0, host: "127.0.0.1" });
+  agentServer = serverComponent(Fastify(), { port: 0, host: "127.0.0.1" });
+  publicServer = serverComponent(Fastify(), { port: 0, host: "127.0.0.1" });
 
   // Required of the construction and never started, because nothing in this ticket's
   // surface emits: the agent's send is not an arrival and wakes nobody.

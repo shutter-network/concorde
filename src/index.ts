@@ -1,5 +1,5 @@
-export type { Component, ListeningServer } from "./components.ts";
-export { components, serverComponent } from "./components.ts";
+export type { Component, Gateway, ListeningServer } from "./components.ts";
+export { createGateway, serverComponent } from "./components.ts";
 export type {
   AgentContainer,
   AgentContainerRuntime,

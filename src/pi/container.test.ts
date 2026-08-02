@@ -64,7 +64,7 @@ import path from "node:path";
 import { after, before, describe, it, type TestContext } from "node:test";
 import { eq } from "drizzle-orm";
 import Fastify from "fastify";
-import { components, serverComponent } from "../components.ts";
+import { createGateway, serverComponent } from "../components.ts";
 import type { Mount } from "../container/index.ts";
 import { openDb } from "../db/index.ts";
 import type { SignalHandler } from "../signals/handlers.ts";
@@ -129,7 +129,7 @@ let image: string;
  * The throwaway database, and the Db that will drop it — which is deliberately **not**
  * the Gateway's.
  *
- * The Gateway's Db is a Component, so the list stops it, and a pool cannot be ended
+ * The Gateway's Db is a Component, so the record stops it, and a pool cannot be ended
  * twice. This one is opened by `createTestDatabase`, is never queried on, and exists to
  * hand the database back at the end.
  */
@@ -364,7 +364,7 @@ async function withGateway(
   // Bound beyond loopback on purpose — under a plain Linux daemon a container cannot
   // reach a loopback-bound server at all, and this test has to pass on both. Nothing
   // warns about it and nothing inspects what was bound (ADR-0004).
-  const agentServer = serverComponent("agent server", Fastify(), { port, host: "0.0.0.0" });
+  const agentServer = serverComponent(Fastify(), { port, host: "0.0.0.0" });
   const model = await startMockModel(reply);
 
   // The Operator's three files, every one of them something the framework used to write
@@ -421,7 +421,7 @@ async function withGateway(
   // the Db first so it stops last, the Agent server before the Worker so it closes after
   // the drain, and `start` in one call that binds the port the agent was already told
   // about (ADR-0031).
-  const gateway = components([db, agentServer, worker]);
+  const gateway = createGateway({ db, agentServer, worker });
   await gateway.start();
   try {
     await body(rig);

@@ -74,8 +74,8 @@ before(async () => {
   database = await createTestDatabase("http_messages_own");
   db = database.db;
 
-  agentServer = serverComponent("agent server", Fastify(), nowhere);
-  publicServer = serverComponent("public server", Fastify(), nowhere);
+  agentServer = serverComponent(Fastify(), nowhere);
+  publicServer = serverComponent(Fastify(), nowhere);
 
   // Required of the construction and never started: a post emits a Signal, and with nobody
   // draining the queue it stays `pending` and wakes nothing — which is exactly what a read
@@ -309,7 +309,7 @@ describe("an unauthenticated read", () => {
     // A Token from a Manager whose Tokens last a millisecond, over the same Db: the row
     // is there and only its `expires_at` is in the past, so an expired Token is reachable
     // without a test waiting for anything.
-    const briefly = serverComponent("public server", Fastify(), nowhere);
+    const briefly = serverComponent(Fastify(), nowhere);
     createUsers({ db, tokenTtl: 1, scrypt: cheap, publicServer: briefly });
     let expired: string;
     try {

@@ -77,7 +77,7 @@ before(async () => {
   // The framework constructs no server: this is a bare Fastify instance, the same call
   // an Operator's entry point makes. `serverComponent` adds only where it listens, and
   // it is what the Signal Worker below is given to register its routes on.
-  agentServer = serverComponent("agent server", Fastify(), { port: 0, host: "127.0.0.1" });
+  agentServer = serverComponent(Fastify(), { port: 0, host: "127.0.0.1" });
 
   const runtime = fakeRuntime(async (prompt) => {
     if (prompt.text === "doomed") {

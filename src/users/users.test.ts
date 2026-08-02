@@ -66,7 +66,7 @@ before(async () => {
   // The framework constructs no server: this is a bare Fastify instance, the same call
   // an Operator's entry point makes. `serverComponent` adds only where it listens, and
   // nothing here starts it — `inject` needs no socket — so those options go unused.
-  agentServer = serverComponent("agent server", Fastify(), { port: 0, host: "127.0.0.1" });
+  agentServer = serverComponent(Fastify(), { port: 0, host: "127.0.0.1" });
 
   // A Token lifetime is required of every construction, and nothing in this file
   // issues one: logging in is observable on the Public server, which is

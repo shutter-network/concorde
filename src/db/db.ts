@@ -112,9 +112,9 @@ export type Listening = {
  * close — while every connection below is one somebody has to hand back
  * (ADR-0022).
  *
- * A Component, and normally the first entry in the list: everything queries it,
+ * A Component, and normally the first entry in the record: everything queries it,
  * the drain queries it on the way down, so it starts first and stops last
- * (ADR-0031).
+ * (ADR-0031, ADR-0037).
  */
 export type Db = Component & {
   /**
@@ -223,9 +223,6 @@ export function openDb(url: string): Db {
   const registered: MigrationDescriptor[] = [];
 
   return {
-    // Read only where a Component is named in an error, and there is one Db.
-    name: "db",
-
     handle(schema) {
       return drizzle(pool, { schema });
     },

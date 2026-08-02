@@ -91,8 +91,8 @@ before(async () => {
   database = await createTestDatabase("http_messages_trusted");
   db = database.db;
 
-  agentServer = serverComponent("agent server", Fastify(), nowhere);
-  publicServer = serverComponent("public server", Fastify(), nowhere);
+  agentServer = serverComponent(Fastify(), nowhere);
+  publicServer = serverComponent(Fastify(), nowhere);
 
   // Constructed and never started, with its own Agent routes on the Agent server: this file
   // emits Signals inside the transactions it tests and reads them back over `GET /signals`,

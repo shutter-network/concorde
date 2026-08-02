@@ -90,8 +90,8 @@ before(async () => {
   db.registerMigrations(usersMigrations);
   await db.migrate();
 
-  agentServer = serverComponent("agent server", Fastify(), nowhere);
-  publicServer = serverComponent("public server", Fastify(), nowhere);
+  agentServer = serverComponent(Fastify(), nowhere);
+  publicServer = serverComponent(Fastify(), nowhere);
 
   // Handed both servers, so `POST /users` and `POST /auth/tokens` are registered by
   // the constructor: nothing here registers either plugin, and nothing here could
@@ -368,7 +368,7 @@ describe("the Token's lifetime", () => {
     // Operator chose. A lifetime of a millisecond is a Token that is expired by the
     // time the response is read, which is how the refusal of an expired one is
     // reachable without a test waiting for anything.
-    const server = serverComponent("public server", Fastify(), nowhere);
+    const server = serverComponent(Fastify(), nowhere);
     const briefly = createUsers({ db, tokenTtl: 1, scrypt: cheap, publicServer: server });
     try {
       const user = await admit({ password });
@@ -422,7 +422,7 @@ describe("the cost of a password", () => {
 
     // One Fastify instance passed as both servers, which is a deployment that runs one:
     // the two groups land under their own prefixes and nothing collides.
-    const server = serverComponent("server", Fastify(), nowhere);
+    const server = serverComponent(Fastify(), nowhere);
     createUsers({
       db,
       tokenTtl: hour,
@@ -456,7 +456,7 @@ describe("the cost of a password", () => {
     // The shipped parameters, run once. Everything else in this file is deliberately
     // cheap, so without this nothing would ever exercise the numbers an Operator
     // actually deploys, and a memory limit set wrongly for them would ship.
-    const server = serverComponent("server", Fastify(), nowhere);
+    const server = serverComponent(Fastify(), nowhere);
     createUsers({ db, tokenTtl: hour, agentServer: server, publicServer: server });
     try {
       const response = await server.fastify.inject({

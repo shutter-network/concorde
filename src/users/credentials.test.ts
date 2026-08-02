@@ -83,8 +83,8 @@ before(async () => {
   db.registerMigrations(usersMigrations);
   await db.migrate();
 
-  agentServer = serverComponent("agent server", Fastify(), { port: 0, host: "127.0.0.1" });
-  publicServer = serverComponent("public server", Fastify(), { port: 0, host: "127.0.0.1" });
+  agentServer = serverComponent(Fastify(), { port: 0, host: "127.0.0.1" });
+  publicServer = serverComponent(Fastify(), { port: 0, host: "127.0.0.1" });
 
   // Handed both servers, so `POST /users` and the credential routes under `/auth` are
   // registered by the constructor: nothing here registers either plugin, and nothing

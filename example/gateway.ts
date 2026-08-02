@@ -22,9 +22,9 @@
  *   2. **migrate** — explicitly, and after the construction above, because constructing
  *      a part is what registers the descriptor `db.migrate()` applies. `migrate.ts` is
  *      the same call as a deploy step of its own, which is what a second replica needs
- *   3. **order** — the list, which nothing checks and nothing can, since every position in
- *      it is reasoning about shutdown. Its comment is below and is worth reading
- *   4. **start** — one call, in list order, and `stop` in the reverse of it
+ *   3. **order** — the record, which nothing checks and nothing can, since every position
+ *      in it is reasoning about shutdown. Its comment is below and is worth reading
+ *   4. **start** — one call, in key order, and `stop` in the reverse of it
  *
  * One thing this file is deliberately on the hook for, because the framework ships none of
  * it: **shutdown**, the two-line loop at the bottom, whose exit code and escalation policy
@@ -46,7 +46,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import Fastify from "fastify";
 import {
-  components,
+  createGateway,
   createSignalWorker,
   openDb,
   type SignalHandler,
@@ -103,14 +103,14 @@ const db = openDb(process.env.DATABASE_URL ?? "postgres://saf:saf@localhost:5433
 // What makes them two different surfaces is what goes on each of them, and nothing else.
 // The two bind addresses are written side by side because the asymmetry between them is
 // the reason there are two servers at all.
-const publicServer = serverComponent("public server", Fastify(), {
+const publicServer = serverComponent(Fastify(), {
   port: 8080,
   // Every interface. This is the surface meant to be exposed, and a Public server on
   // loopback inside a container is reachable by nobody at all — a deployment that looks
   // healthy and serves no User. Behind a reverse proxy on this host, write "localhost".
   host: "0.0.0.0",
 });
-const agentServer = serverComponent("agent server", Fastify(), {
+const agentServer = serverComponent(Fastify(), {
   port: agentPort,
   // Loopback, which is also Fastify's own default and written out anyway because it is
   // the more consequential of the two: this server has no authentication, so reaching the
@@ -211,8 +211,8 @@ const runtime = createPiRuntime({
 // Messenger puts on its own Public routes rather than inventing an authentication of its
 // own, and the four things trusted code may do and the agent may not, which are setting
 // Attributes, replacing a password, issuing a Token and revoking (ADR-0029, ADR-0030). It
-// is **not** a Component and has no place in the list below: nothing to start, nothing to
-// release (ADR-0031).
+// is **not** a Component and has no place in the record below: nothing to start, nothing
+// to release (ADR-0031).
 //
 // Seeding the first User is out of band and not in this file, because a User has no natural
 // key and so "create if absent" cannot be written. In this deployment the first one is made
@@ -318,9 +318,9 @@ const worker = createSignalWorker({
 // is the only thing that says so.
 //
 // **In no start order.** It is not a Component: no timers, no connection of its own, nothing
-// to start and nothing to release, so a place in that list would imply its position mattered
-// when it does not (ADR-0031). The day delivery stops being polling it becomes one, with a
-// `LISTEN` registration and a `stop` that closes open responses (ADR-0035).
+// to start and nothing to release, so a place in that record would imply its position
+// mattered when it does not (ADR-0031). The day delivery stops being polling it becomes
+// one, with a `LISTEN` registration and a `stop` that closes open responses (ADR-0035).
 //
 // Held, because the Handler above answers a failed Run through `send`. A deployment whose
 // Handlers neither write a Message nor read a log can call this and drop the result: the three
@@ -339,8 +339,8 @@ const messenger = createHttpMessenger({ db, users, worker, publicServer, agentSe
 // goes unnoticed if you do, because `start` below refuses a schema the database is behind.
 await db.migrate();
 
-// The list, and the second thing in this file whose order is not arbitrary. `components`
-// starts in this order and stops in the reverse of it, so every position is a claim about
+// The record, and the second thing in this file whose order is not arbitrary. A Gateway
+// starts in key order and stops in the reverse of it, so every position is a claim about
 // what must still be working while the thing after it shuts down:
 //
 //   1. **the Db**, so it stops last. Everything queries it and the drain queries it on
@@ -353,11 +353,11 @@ await db.migrate();
 //      one: a Run abandoned halfway leaves effects nothing retries (ADR-0017).
 //   4. **the Public server**, last, so that it is first to stop accepting submissions.
 //
-// `[db, worker, agentServer, publicServer]` reads more naturally and groups the two
+// `{ db, worker, agentServer, publicServer }` reads more naturally and groups the two
 // servers together, and it is wrong for the reason in 2. **Nothing checks this and
 // nothing can**: whether the agent calls the Agent server mid-Run is the model's choice,
 // so the ordering is reasoning rather than a passing assertion (ADR-0031).
-const gateway = components([db, agentServer, worker, publicServer]);
+const gateway = createGateway({ db, agentServer, worker, publicServer });
 
 // Which opens the pool, refuses to serve if any registered schema is behind the migration
 // folder shipped beside it, and only then starts the worker and binds the two ports. A

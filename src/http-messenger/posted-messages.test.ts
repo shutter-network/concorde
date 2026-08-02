@@ -114,8 +114,8 @@ async function withGateway(
   handlers: SignalHandlers,
   body: (gateway: Gateway) => Promise<void>,
 ): Promise<void> {
-  const agentServer = serverComponent("agent server", Fastify(), nowhere);
-  const publicServer = serverComponent("public server", Fastify(), nowhere);
+  const agentServer = serverComponent(Fastify(), nowhere);
+  const publicServer = serverComponent(Fastify(), nowhere);
   const runtime = fakeRuntime();
   const worker = createSignalWorker({
     db,

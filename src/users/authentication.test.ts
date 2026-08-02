@@ -117,8 +117,8 @@ before(async () => {
   db.registerMigrations(usersMigrations);
   await db.migrate();
 
-  agentServer = serverComponent("agent server", Fastify(), nowhere);
-  publicServer = serverComponent("public server", Fastify(), nowhere);
+  agentServer = serverComponent(Fastify(), nowhere);
+  publicServer = serverComponent(Fastify(), nowhere);
 
   // Handed both servers, so `POST /users` and the Public plugin under `/auth` are
   // registered by the constructor: nothing here registers either, and nothing here
@@ -229,7 +229,7 @@ describe("refusing a request", () => {
     // the response is read, over the same Db, so the row is there and only its
     // `expires_at` is in the past. This is how the refusal of an expired Token is
     // reachable without a test waiting for anything.
-    const brieflyServer = serverComponent("public server", Fastify(), nowhere);
+    const brieflyServer = serverComponent(Fastify(), nowhere);
     createUsers({ db, tokenTtl: 1, scrypt: cheap, publicServer: brieflyServer });
     let expired: string;
     try {
@@ -303,7 +303,7 @@ describe("refusing a request", () => {
     // Tokens, it is that an expired Token is refused. `expires_at` is written from the
     // database's clock and compared against the database's clock, so this is the row
     // saying no rather than this process deciding.
-    const server = serverComponent("public server", Fastify(), nowhere);
+    const server = serverComponent(Fastify(), nowhere);
     createUsers({ db, tokenTtl: 1, scrypt: cheap, publicServer: server });
     try {
       const user = await admit();
