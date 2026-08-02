@@ -8,9 +8,10 @@
  *
  * `createHttpMessenger` is the whole of it for an Operator: hand it the Db, the User
  * Manager, the Signal Worker and both servers, and it registers `httpMessagesMigrations`
- * with that Db and its two route groups at `/messages` on the two servers (ADR-0032). It is
- * not a Component and goes in no start order: there is nothing here to start and nothing to
- * release.
+ * with that Db and its two route groups at `/messages` on the two servers (ADR-0032). Then
+ * put it in the Gateway's record like every other part: it is a Component whose `start` and
+ * `stop` do nothing today, keyed **before** the Signal Worker so that it is stopped after
+ * the drain, which is when a Signal Handler's post phase reaches it (ADR-0037, ADR-0038).
  *
  * What it answers with is worth holding, and it is two methods: `send`, which writes a
  * Message to one User from inside the caller's own transaction, and `history`, which reads

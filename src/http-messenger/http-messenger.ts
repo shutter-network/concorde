@@ -5,11 +5,15 @@
  * register it with. It wires itself the way every part does, registering its own migration
  * descriptor with the Db and its two plugins on the two servers it is handed (ADR-0032).
  *
- * It is **not a Component**. No timers and no connection of its own, so there is nothing
- * for a `start` to begin or a `stop` to release, and it goes in no start order (ADR-0031).
- * The day push delivery arrives it becomes one, with a `LISTEN` registration and a `stop`
- * that closes open responses; until then `?after=<seq>` is the whole of the resume
- * mechanism and delivery is polling (ADR-0035).
+ * It is a **Component whose `start` and `stop` do nothing**. No timers and no connection of
+ * its own, so there is nothing to begin and nothing to release; it is in the Gateway's
+ * record because that record is the Gateway's directory of its own parts, and membership is
+ * what puts this part in a **position** before it needs one (ADR-0037). The day push
+ * delivery arrives it grows a `LISTEN` registration and a `stop` that closes open responses
+ * (ADR-0035), and the position it will want then — after the Signal Worker's drain, since
+ * that is when a Signal Handler's post phase sends its failure notice — is the position it
+ * already has ([ADR-0038](../../docs/adr/0038-the-default-assembly-is-a-constructor.md)).
+ * Until then `?after=<seq>` is the whole of the resume mechanism and delivery is polling.
  *
  * It is the *HTTP* Messenger rather than *the* Messenger because it declines four freedoms
  * the framework offers, and all four are visible right here (ADR-0034):
@@ -63,6 +67,7 @@
  */
 
 import type { FastifyInstance } from "fastify";
+import type { Component } from "../components.ts";
 import type { Db, Handle } from "../db/index.ts";
 import { limitSchema } from "../route-conventions.ts";
 import type { SignalWorker } from "../signals/worker.ts";
@@ -164,7 +169,7 @@ export type HttpMessengerOptions = {
  * does not get a path that puts words in a User's mouth (ADR-0034). A Handler migrating a
  * history in, or a fixture that needs one, uses the Operator's own SQL.
  */
-export type HttpMessenger = {
+export type HttpMessenger = Component & {
   /**
    * Sends a Message to one User from inside the caller's transaction, and answers with the
    * record.
@@ -220,6 +225,25 @@ export type HttpMessenger = {
    * method's own: one list of cursor names in this part, not two that could drift.
    */
   history(userId: string, options?: Partial<MessageWindow>): Promise<MessageRecord[]>;
+
+  /**
+   * **Does nothing.** Written out here so that it is read rather than discovered.
+   *
+   * Delivery is polling, so there is no connection to open and no ticker to set going: a
+   * client resumes with `?after=<seq>` and the part holds nothing between requests
+   * (ADR-0035). Everything it needed was done at construction (ADR-0032).
+   */
+  start(): Promise<void>;
+
+  /**
+   * **Does nothing**, and is the one of the two that will stop being a no-op first: push
+   * delivery is what gives it open responses to close (ADR-0035).
+   *
+   * A Message submitted while the Gateway is shutting down is stored and its Signal
+   * commits with it and stays `pending`, which is the trade this part's position in the
+   * default order takes deliberately (ADR-0038).
+   */
+  stop(): Promise<void>;
 };
 
 export function createHttpMessenger(options: HttpMessengerOptions): HttpMessenger {
@@ -289,5 +313,10 @@ export function createHttpMessenger(options: HttpMessengerOptions): HttpMessenge
     // no response here.
     history: (userId, asked) =>
       readHistory(userId, { ...asked, limit: asked?.limit ?? limitSchema.default }),
+
+    // The two no-ops, whose reason is on the type above: membership in the Gateway's
+    // record, and the position that comes with it (ADR-0037).
+    start: async () => {},
+    stop: async () => {},
   };
 }

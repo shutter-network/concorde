@@ -341,8 +341,9 @@ function instructionsEntry(paths: Paths): Mount {
  * an assembly the reference entry point does not use would prove the wrong thing.
  *
  * What it does **not** prove is the ordering: it stops nothing mid-Run, so that the
- * Agent server must outlive the Signal Worker stays reasoning in a comment rather than
- * a passing assertion (ADR-0031).
+ * Agent server must outlive the Signal Worker is not asserted here. `whole-gateway.test.ts`
+ * is where it is, with a fake Runtime parked in flight while the Gateway shuts down around
+ * it (ADR-0038).
  */
 async function withGateway(
   t: TestContext,
@@ -417,10 +418,10 @@ async function withGateway(
     },
   };
 
-  // The reference deployment's order, minus the Public server this test has no use for:
-  // the Db first so it stops last, the Agent server before the Worker so it closes after
-  // the drain, and `start` in one call that binds the port the agent was already told
-  // about (ADR-0031).
+  // The reference deployment's order, minus the three parts this test has no use for: the
+  // Db first so it stops last, the Agent server before the Worker so it closes after the
+  // drain, and `start` in one call that binds the port the agent was already told about
+  // (ADR-0037, ADR-0038).
   const gateway = createGateway({ db, agentServer, worker });
   await gateway.start();
   try {

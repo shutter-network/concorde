@@ -809,14 +809,19 @@ try {
       "  const since: MessageRecord[] = await messenger.history(admitted.id, { after: answered.seq });",
       '  shipped.info({ said, answered, log: whole.length, since: since.length }, "a Message has one shape on every surface");',
       "  // One record, under the consumer's own words for its parts, that starts in key",
-      "  // order and stops in the reverse of it. The order is the consumer's own: the Db is",
-      "  // first so that it stops last, the Agent server is before the Signal Worker because",
-      "  // the agent calls it mid-Run, and the Public server is last so that submissions stop",
-      "  // being accepted first. Nothing in the framework can know any of it (ADR-0037). The",
-      "  // Signal Worker is in the record like everything else, so it has no lifecycle of the",
-      "  // consumer's to remember.",
+      "  // order and stops in the reverse of it. **Every** part is in it, the User Manager and",
+      "  // the HTTP Messenger included, and those two come off subpaths of their own — so this",
+      "  // record is also what proves the installed `.d.ts` files agree with the root's",
+      "  // `Component` (ADR-0037). The order is the consumer's own and comes from one rule: the",
+      "  // Signal Worker's `stop` is the only one that does work, so it is keyed after every part",
+      "  // its drain uses — the Db, both servers, and the Messenger its post phase reaches — and",
+      "  // the Db is keyed first so that it is closed last (ADR-0038). `ownLoop` is keyed after",
+      "  // the worker deliberately: a Producer of the consumer's own should stop producing before",
+      "  // the drain, and last in the record is what buys that. Nothing in the framework checks",
+      "  // any of it.",
       "  const gateway = createGateway({",
-      "    db, agentServer: agentComponent, worker: workerComponent, publicServer: publicComponent, ownLoop,",
+      "    db, agentServer: agentComponent, publicServer: publicComponent, users, messenger,",
+      "    worker: workerComponent, ownLoop,",
       "  });",
       "  // The record comes back with its types intact, so a part is reached by the key it was",
       "  // filed under and is still what was put there — and the Gateway is itself a Component,",
@@ -903,7 +908,9 @@ try {
         // construction is free of side effects beyond the two registrations it makes, and
         // that the object it answers with carries the **two** trusted-code methods and no
         // route plugin, because every other capability it has is a route it registered
-        // itself (ADR-0034).
+        // itself (ADR-0034). Beside them, on this part and on the User Manager both, the
+        // `start` and `stop` that do nothing: what an installed package has to carry for the
+        // two of them to be in a Gateway's record at all (ADR-0037).
         "const messengerWorker = createSignalWorker({ db: scratch, runtime: { run: async () => ({ ok: true }) }, handlers: {} });",
         "const messenger = createHttpMessenger({ db: scratch, users: directory, worker: messengerWorker, publicServer: { fastify: Fastify() }, agentServer: { fastify: Fastify() } });",
         "const encoder = new TextEncoder();",
@@ -926,8 +933,8 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword:saf_http_messages:history,send:message.received",
-    "all four subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Manager should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself",
+    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword,start,stop:saf_http_messages:history,send,start,stop:message.received",
+    "all four subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Manager should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself, and both of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record",
   );
 
   step("applying a shipped migration folder from inside the installed package");

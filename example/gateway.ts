@@ -211,8 +211,9 @@ const runtime = createPiRuntime({
 // Messenger puts on its own Public routes rather than inventing an authentication of its
 // own, and the four things trusted code may do and the agent may not, which are setting
 // Attributes, replacing a password, issuing a Token and revoking (ADR-0029, ADR-0030). It
-// is **not** a Component and has no place in the record below: nothing to start, nothing
-// to release (ADR-0031).
+// has a `start` and a `stop` that do nothing and is in the record below all the same: that
+// record holds every part, and a part outside it is one the Gateway cannot reach
+// (ADR-0037).
 //
 // Seeding the first User is out of band and not in this file, because a User has no natural
 // key and so "create if absent" cannot be written. In this deployment the first one is made
@@ -317,10 +318,11 @@ const worker = createSignalWorker({
 // registers them, there is no such argument and no such error, and the failure at `migrate`
 // is the only thing that says so.
 //
-// **In no start order.** It is not a Component: no timers, no connection of its own, nothing
-// to start and nothing to release, so a place in that record would imply its position
-// mattered when it does not (ADR-0031). The day delivery stops being polling it becomes
-// one, with a `LISTEN` registration and a `stop` that closes open responses (ADR-0035).
+// **In the record below**, with a `start` and a `stop` that do nothing: no timers and no
+// connection of its own today (ADR-0037). The day delivery stops being polling it grows a
+// `LISTEN` registration and a `stop` that closes open responses (ADR-0035) — and the
+// position it will want then, stopped after the drain because that is when the post phase
+// below reaches it, is the position it already has.
 //
 // Held, because the Handler above answers a failed Run through `send`. A deployment whose
 // Handlers neither write a Message nor read a log can call this and drop the result: the three
@@ -340,24 +342,27 @@ const messenger = createHttpMessenger({ db, users, worker, publicServer, agentSe
 await db.migrate();
 
 // The record, and the second thing in this file whose order is not arbitrary. A Gateway
-// starts in key order and stops in the reverse of it, so every position is a claim about
-// what must still be working while the thing after it shuts down:
+// starts in key order and stops in the reverse of it, and the whole of this order comes
+// from one rule: **the Signal Worker's `stop` is the only stop that does work.** Every
+// other one releases something. The worker's waits for the Run in flight and never cancels
+// it (ADR-0017), and that Run reads the Db, calls the Agent server that ./AGENTS.md gave it
+// the URLs for, and reaches the Messenger through the post phase above. So the drain goes
+// **first**, while everything it uses is still up, and every other position falls out of
+// that: the worker last in the record, and the Db first so that it is the last thing
+// closed.
 //
-//   1. **the Db**, so it stops last. Everything queries it and the drain queries it on
-//      the way down; closing it earlier pulls the `LISTEN` connection out from under a
-//      running Signal Worker, which then logs a dropped connection and retries forever.
-//   2. **the Agent server**, before the Worker so that it closes *after* the drain. The
-//      agent calls it during a Run — ./AGENTS.md is where it is given those URLs — so
-//      closing it first refuses the agent its own API mid-Run.
-//   3. **the Signal Worker**, whose `stop` waits for the Run in flight and never cancels
-//      one: a Run abandoned halfway leaves effects nothing retries (ADR-0017).
-//   4. **the Public server**, last, so that it is first to stop accepting submissions.
+// Which puts the two servers back together and leaves the Public server accepting
+// submissions throughout the drain. That is a trade taken deliberately rather than an
+// oversight (ADR-0038): a Message posted during shutdown is stored, its Signal commits with
+// it and stays `pending`, and the next boot picks it up, so what that person gets is
+// silence until the Gateway is back rather than a refused connection now.
 //
-// `{ db, worker, agentServer, publicServer }` reads more naturally and groups the two
-// servers together, and it is wrong for the reason in 2. **Nothing checks this and
-// nothing can**: whether the agent calls the Agent server mid-Run is the model's choice,
-// so the ordering is reasoning rather than a passing assertion (ADR-0031).
-const gateway = createGateway({ db, agentServer, worker, publicServer });
+// **Nothing in the framework checks this**, and nothing could: whether the agent calls the
+// Agent server mid-Run is the model's choice, so a Gateway has no way to know its own record
+// is wrong. Change a position here and nothing warns. What the framework does instead is pin
+// the order it recommends — this one — in a test of its own: ../src/whole-gateway.test.ts
+// stops a Gateway with a Run in flight and asserts what that Run can still reach.
+const gateway = createGateway({ db, agentServer, publicServer, users, messenger, worker });
 
 // Which opens the pool, refuses to serve if any registered schema is behind the migration
 // folder shipped beside it, and only then starts the worker and binds the two ports. A

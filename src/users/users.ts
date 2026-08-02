@@ -6,11 +6,12 @@
  * migration descriptor with the Db and its routes on whichever servers it is handed
  * (ADR-0032).
  *
- * It is **not a Component**. It has no timers and no connection of its own, so there is
- * nothing for a `start` to begin or a `stop` to release, and a pair of no-op methods put
- * in to earn a place in the Operator's list is the ceremony ADR-0031 refuses. It joins
- * that list the day it grows something to run — a sweeper for expired Tokens is the
- * likely occasion — and the only thing that changes then is the list.
+ * It is a **Component whose `start` and `stop` do nothing**. There are no timers and no
+ * connection of its own, so there is nothing to begin and nothing to release; what a
+ * place in the Gateway's record buys is membership, and a part that cannot be in the
+ * record cannot be reached through the Gateway at all (ADR-0037). It also has a position
+ * before it needs one, so the day it grows something to run — a sweeper for expired
+ * Tokens is the likely occasion — the only thing that changes is what `start` does.
  *
  * It is **not a Producer** either: it takes no reference to the Signal Worker and emits
  * no Signals, because the worker is serial globally and a Signal per User event would
@@ -41,6 +42,7 @@
 
 import { and, desc, eq, gt, sql } from "drizzle-orm";
 import type { FastifyInstance, FastifyPluginAsync, preHandlerAsyncHookHandler } from "fastify";
+import type { Component } from "../components.ts";
 import type { Db, Handle } from "../db/index.ts";
 import { limitSchema } from "../route-conventions.ts";
 import { usersMigrations } from "./migrations.ts";
@@ -125,7 +127,7 @@ export type UsersOptions = {
   readonly scrypt?: ScryptParameters;
 };
 
-export type Users = {
+export type Users = Component & {
   /**
    * The Agent server routes — create a User, read Users — as a Fastify plugin, for an
    * Operator who wants them somewhere other than where the `agentServer` option puts
@@ -339,6 +341,24 @@ export type Users = {
    * thousand Users is in.
    */
   list(options?: { readonly limit?: number }): Promise<UserRecord[]>;
+
+  /**
+   * **Does nothing.** Written out here so that it is read rather than discovered.
+   *
+   * This part is in the Gateway's record for its membership and not for its lifecycle
+   * (ADR-0037): the pool it queries on is the Db's, the routes it registered belong to
+   * the servers they went on, and there is no third thing. Everything it needs was done
+   * at construction (ADR-0032).
+   */
+  start(): Promise<void>;
+
+  /**
+   * **Does nothing**, for the reason `start` does not: there is nothing here to release.
+   *
+   * A Token outlives a shutdown, since what makes it valid is a row and the database's
+   * own clock, and nothing reaps the expired ones (ADR-0030).
+   */
+  stop(): Promise<void>;
 };
 
 export function createUsers(options: UsersOptions): Users {
@@ -403,6 +423,11 @@ export function createUsers(options: UsersOptions): Users {
     revoke: (tx, user) => deleteTokens(tx, user),
     get: (id) => selectUser(handle, id),
     list: (asked) => selectUsers(handle, asked?.limit ?? limitSchema.default),
+
+    // The two no-ops, whose reason is on the type above: membership in the Gateway's
+    // record, and nothing else (ADR-0037).
+    start: async () => {},
+    stop: async () => {},
   };
 }
 

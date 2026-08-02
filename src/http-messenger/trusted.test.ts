@@ -430,7 +430,11 @@ describe("the object the constructor answers with", () => {
     // list of names to probe: a method added later appears here and fails this. There is no
     // `receive`, no `submit` and no `direction` parameter anywhere on it, because trusted code
     // does not get a path that puts words in a User's mouth (ADR-0034).
-    assert.deepEqual(Object.keys(messenger).sort(), ["history", "send"]);
+    //
+    // `start` and `stop` are the two that do nothing, and they are here because this part is
+    // in the Gateway's record like every other one (ADR-0037). They are the whole of what
+    // membership added: two names, and no fourth capability.
+    assert.deepEqual(Object.keys(messenger).sort(), ["history", "send", "start", "stop"]);
 
     // Which is what makes the claim checkable from outside as well: every Message trusted code
     // can write is outbound, and the only inbound one in this log arrived on the Public server

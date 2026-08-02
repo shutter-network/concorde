@@ -9,8 +9,9 @@
  * `createUsers` is the whole of it for an Operator: hand it the Db, a Token lifetime
  * and the servers its two route groups belong on, and it registers `usersMigrations`
  * with that Db, `agentRoutes` under `/users` and `publicRoutes` under `/auth`
- * (ADR-0032). It is not a Component and goes in no start order: there is nothing here
- * to start and nothing to release.
+ * (ADR-0032). Then put it in the Gateway's record like every other part: it is a Component
+ * whose `start` and `stop` do nothing, because the record holds every part and not only the
+ * ones that run (ADR-0037).
  *
  * `usersMigrations` stays exported because a pre-deploy migration entry point should
  * not have to construct the part that owns the tables, and the two route plugins stay
