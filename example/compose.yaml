@@ -56,8 +56,8 @@ networks:
     name: saf_db
   # The agent's own network: only the agent and the Gateway are meant to be reachable
   # across it. Named explicitly rather than left to Compose's `<project>_<network>`
-  # prefixing, because the entry point passes this exact string to the Runtime as
-  # `network` and a mismatch is a container that will not start.
+  # prefixing, because the entry point passes this exact string to the Runtime in its
+  # `networks` list and a mismatch is a container that will not start.
   agent:
     name: saf_agent
 

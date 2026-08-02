@@ -80,11 +80,20 @@ type Reading = {
  * U+2028 is one. A subprocess's `stdout` is exactly this, and passing text instead
  * would move the decoding to the caller, where the streaming state has to be kept.
  *
+ * It also takes the **Session**, and names it in every failure. That is what a reader
+ * produced per Run buys, and it is most of what replaced the transcript path the debug
+ * line used to carry: the Run's `error` column is the only thing an Operator has to go
+ * on, and `Session user_42 produced no output at all` says where to look where "the Agent
+ * Implementation produced no output at all" did not (ADR-0025, ADR-0033).
+ *
  * The whole source is consumed even once the outcome is known. A subprocess whose
  * stdout stops being read blocks as soon as the pipe fills, which would turn a
  * finished Run into a hang — and there are no timeouts anywhere (ADR-0017).
  */
-export async function interpretPiOutput(source: AsyncIterable<Uint8Array>): Promise<RunOutcome> {
+export async function interpretPiOutput(
+  source: AsyncIterable<Uint8Array>,
+  session: string,
+): Promise<RunOutcome> {
   const reading: Reading = {
     pending: "",
     records: 0,
@@ -102,7 +111,7 @@ export async function interpretPiOutput(source: AsyncIterable<Uint8Array>): Prom
   }
   frameLines(reading, decoder.decode());
 
-  return outcomeOf(reading);
+  return outcomeOf(reading, session);
 }
 
 /** Cuts `text` into lines on LF, and on nothing else (trap 3). */
@@ -185,47 +194,43 @@ function answerIn(message: unknown): Answer | undefined {
  * records that did parse settled successfully: the missing half might have been the
  * one that mattered, and "some of it parsed" is not evidence.
  */
-function outcomeOf(reading: Reading): RunOutcome {
+function outcomeOf(reading: Reading, session: string): RunOutcome {
+  // Every failure below is this Session's, so it says so once here rather than six times.
+  // The Run's `error` column is the only thing an Operator has to go on, and the name is
+  // what tells them which transcript to open (ADR-0033).
+  const failed = (why: string): RunOutcome => ({ ok: false, error: `Session ${session} ${why}` });
+
   if (reading.unreadable !== undefined) {
     const { line, why } = reading.unreadable;
-    return {
-      ok: false,
-      error: `the Agent Implementation wrote a line that could not be read as a record — ${why} — so its output cannot be trusted: ${excerpt(line)}`,
-    };
+    return failed(
+      `wrote a line that could not be read as a record — ${why} — so its output cannot be trusted: ${excerpt(line)}`,
+    );
   }
   if (reading.pending.trim() !== "") {
-    return {
-      ok: false,
-      error: `the Agent Implementation's output ended mid-record after ${reading.records} records, so the Run did not finish: ${excerpt(reading.pending)}`,
-    };
+    return failed(
+      `ended mid-record after ${reading.records} records, so the Run did not finish: ${excerpt(reading.pending)}`,
+    );
   }
   if (reading.records === 0) {
-    return {
-      ok: false,
-      error:
-        "the Agent Implementation produced no output at all, so nothing says whether the Run happened",
-    };
+    return failed("produced no output at all, so nothing says whether the Run happened");
   }
   if (!reading.settled) {
-    return {
-      ok: false,
-      error: `the Agent Implementation's output ended after ${reading.records} records without an agent_settled record, so the Run did not finish. An agent_end is not the end: it can be followed by a retry or a compaction`,
-    };
+    return failed(
+      `ended after ${reading.records} records without an agent_settled record, so the Run did not finish. An agent_end is not the end: it can be followed by a retry or a compaction`,
+    );
   }
   const answer = reading.settledAnswer;
   if (answer === undefined) {
-    return {
-      ok: false,
-      error: `the Agent Implementation settled after ${reading.records} records with no assistant message, so there is nothing that says the Run succeeded`,
-    };
+    return failed(
+      `settled after ${reading.records} records with no assistant message, so there is nothing that says the Run succeeded`,
+    );
   }
   if (!answeredStopReasons.has(answer.stopReason)) {
-    // Named in the message because the exit code was zero and this string is the
-    // Run's `error` column — the only thing an Operator has to go on (trap 1).
-    return {
-      ok: false,
-      error: `the Agent Implementation settled with stopReason ${JSON.stringify(answer.stopReason)} and exited successfully anyway: ${answer.errorMessage ?? `the agent's last message was not an answer (${answer.stopReason})`}`,
-    };
+    // The stop reason is named because the exit code was zero and this string is all the
+    // Operator gets (trap 1).
+    return failed(
+      `settled with stopReason ${JSON.stringify(answer.stopReason)} and exited successfully anyway: ${answer.errorMessage ?? `the agent's last message was not an answer (${answer.stopReason})`}`,
+    );
   }
   return { ok: true };
 }

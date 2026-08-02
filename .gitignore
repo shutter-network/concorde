@@ -3,7 +3,8 @@
 /dist
 *.tgz
 
-# What the reference deployment writes: the Workspace, the agent's own directory, and
-# the Session transcripts. The agent's directory holds the credentials it wrote itself,
-# so this must not be committed.
+# What the reference deployment writes: the Workspace and the agent's own directory, which
+# is where the Session transcripts live too. The agent's directory holds the credentials it
+# wrote itself, so this must not be committed. `example/settings.json` beside it is the
+# Operator's own file and is committed.
 /example/state

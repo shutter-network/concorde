@@ -41,12 +41,14 @@ import {
   serverComponent,
   templateHandler,
 } from "shared-agent-framework";
-import { createPiAdapter } from "shared-agent-framework/pi";
+import { createPiRuntime } from "shared-agent-framework/pi";
 import { createUsers } from "shared-agent-framework/users";
 
-// Refused here rather than discovered later: a Run that fails is never retried, so a
-// Gateway that starts without a usable model turns every Signal it ever receives into a
-// permanently failed Run.
+// Refused here, by this file, because nothing else can: the framework no longer carries a
+// model or a credential, so it cannot tell a deployment that has neither from one whose
+// agent reads both out of the files below. A Run that fails is never retried, so a Gateway
+// that starts without a usable model turns every Signal it ever receives into a
+// permanently failed Run — which is what this line buys, for the one case it can see.
 const apiKey = process.env.ANTHROPIC_API_KEY;
 if (apiKey === undefined) throw new Error("set ANTHROPIC_API_KEY; the agent's model needs it");
 
@@ -59,19 +61,19 @@ if (apiKey === undefined) throw new Error("set ANTHROPIC_API_KEY; the agent's mo
 // See the quickstart's note on it.
 const agentPort = 7411;
 
-// Three directories, all of them this process's own, all bind-mounted into the agent's
-// container, and all three created here. The framework creates none of them (ADR-0028):
-// a directory a mount points at is the Operator's. Creating them is not a courtesy —
-// every entry of the Mount Table below is emitted as `--mount type=bind`, and the daemon
-// refuses a bind source that is not there, naming it. Each Session's own directory,
-// inside the third, is made by `pi` inside the container.
+// Two directories, both of them this process's own, both bind-mounted into the agent's
+// container, and both created here. The framework creates neither (ADR-0028): a directory
+// a mount points at is the Operator's. Creating them is not a courtesy — every entry of
+// the Mount Table below is emitted as `--mount type=bind`, and the daemon refuses a bind
+// source that is not there, naming it.
+//
+// Two rather than three: there is no Session root any more. `pi` keeps its transcripts
+// under its own agent directory and the framework names no path inside it, so a Session
+// survives because the second of these is mounted and for no other reason (ADR-0025).
 const state = path.join(import.meta.dirname, "state");
 const workspace = path.join(state, "workspace");
 const agentDir = path.join(state, "agent");
-const sessionRoot = path.join(state, "sessions");
-await Promise.all(
-  [workspace, agentDir, sessionRoot].map((directory) => mkdir(directory, { recursive: true })),
-);
+await Promise.all([workspace, agentDir].map((directory) => mkdir(directory, { recursive: true })));
 
 const db = openDb(process.env.DATABASE_URL ?? "postgres://saf:saf@localhost:5433/saf");
 
@@ -100,37 +102,45 @@ const agentServer = serverComponent("agent server", Fastify(), {
   host: "localhost",
 });
 
-const runtime = createPiAdapter({
+// The whole of what the framework is told about the agent: an image, and what the
+// container running it sees. There is no model here, no provider and no path inside the
+// container, because none of them is the framework's to carry — swapping `pi` for another
+// Agent Implementation is this import and this function name, and nothing below
+// (ADR-0033).
+const runtime = createPiRuntime({
+  // Built by compose.yaml, from ./agent/Dockerfile — which is where the two paths that
+  // used to be here now live, as `WORKDIR` and `ENV PI_CODING_AGENT_DIR`. An image that
+  // declares neither is one that starts and fails every Run, and nothing warns.
   image: "saf-agent:0.83.0",
-  model: "claude-sonnet-4-5",
-  provider: "anthropic",
   // The only environment the agent's container gets. This process's own environment is
   // not inherited, which is the whole reason the agent runs in a container: `pi` hands
   // its shell tool the parent environment wholesale, and this process holds DATABASE_URL.
+  //
+  // The credential is here because it is the shortest thing that works and the easiest to
+  // read. It does not have to be: `pi` reads an `auth.json` out of its own directory, so
+  // an Operator who would rather not have a secret in the file they paste into an issue
+  // puts one in `state/agent/` and deletes this line (ADR-0025).
   env: { ANTHROPIC_API_KEY: apiKey },
-  // The network compose.yaml declares, which holds the agent and nothing else it could
-  // usefully talk to. PostgreSQL is on another one, so the Db is not reachable by
-  // service name from inside a Run.
-  network: "saf_agent",
-  // Three paths *inside the container*, and that is all the adapter knows about the
-  // filesystem: a working directory, where `pi` keeps its own state, and the directory
-  // it puts one Session directory per Session under.
-  workspacePath: "/workspace",
-  agentDirPath: "/home/agent/.pi/agent",
-  sessionRootPath: "/sessions",
-  // The Mount Table: where each of those comes from on this machine, and who the
-  // container runs as — defaulted here to this process's own uid and gid, which is what
-  // makes a file the agent writes in the Workspace one a Signal Handler can read. It is
-  // an ordinary list, so a fourth directory is a fourth entry rather than a framework
-  // change, and an entry may name a single file and may be `readOnly`.
+  // The networks compose.yaml declares — a list, because a container can join several.
+  // This one holds the agent and nothing else it could usefully talk to: PostgreSQL is on
+  // another, so the Db is not reachable by service name from inside a Run.
+  networks: ["saf_agent"],
+  // The Mount Table: where the container's directories come from on this machine. It is
+  // an ordinary list, so a third directory is a third entry rather than a framework
+  // change, and an entry may name a single file and may be `readOnly`. Who the container
+  // runs as is not in it and is not configuration at all: always this process's own uid
+  // and gid, which is what makes a file the agent writes in the Workspace one a Signal
+  // Handler can edit in place (ADR-0028).
   mounts: {
     entries: [
       { containerPath: "/workspace", gatewayPath: workspace },
+      // Everything `pi` keeps between Runs, the Session transcripts included. Drop this
+      // entry and no Session survives its own container, every Run is a first Run, and
+      // nothing anywhere says so — the agent simply seems forgetful (ADR-0025).
       { containerPath: "/home/agent/.pi/agent", gatewayPath: agentDir },
-      { containerPath: "/sessions", gatewayPath: sessionRoot },
-      // The fourth entry, and the whole of what tells the agent about the Agent server:
-      // a file committed beside this one, mounted into its working directory, which `pi`
-      // finds by itself — the adapter passes no flag and has never read it (ADR-0025).
+      // The third entry, and the whole of what tells the agent about the Agent server: a
+      // file committed beside this one, mounted into its working directory, which `pi`
+      // finds by itself — the framework passes no flag and has never read it (ADR-0025).
       //
       // `readOnly`, and that is the point of it being a single-file entry: the Workspace
       // around it stays writable, so `pi`'s own tooling is unaffected, while a successful
@@ -146,6 +156,28 @@ const runtime = createPiAdapter({
       {
         containerPath: "/workspace/AGENTS.md",
         gatewayPath: path.join(import.meta.dirname, "AGENTS.md"),
+        readOnly: true,
+      },
+      // And the model, which used to be two fields of the Runtime's. `settings.json` is
+      // the Operator's file: `defaultModel` and `defaultProvider` in it are what `pi`
+      // falls back to when no flag names either, and the framework passes neither flag
+      // and has never read this file. Nothing refuses a deployment whose model is missing
+      // or wrong any more — that is a Gateway that starts, serves, and fails its first
+      // Run permanently (ADR-0017, ADR-0025).
+      //
+      // `readOnly`, for the same reason `AGENTS.md` is, and it must be the **file** and
+      // not the directory: `pi` takes a lock beside this file even to read it, and a
+      // write it is refused is recorded rather than thrown, so the Run survives being
+      // denied and the agent's own `/model` switch is dropped rather than persisted.
+      //
+      // And the same footnote as `AGENTS.md`: after the first Run an *empty*
+      // `settings.json` appears in `state/agent/` on this side, which is the daemon
+      // creating this entry's target. It is shadowed on every Run, so it is harmless
+      // while this entry is here and is exactly what an agent with no model reads if it
+      // is ever removed.
+      {
+        containerPath: "/home/agent/.pi/agent/settings.json",
+        gatewayPath: path.join(import.meta.dirname, "settings.json"),
         readOnly: true,
       },
     ],

@@ -4,11 +4,13 @@
  * That test is **opt-in and skipped**, which is a deliberate trade rather than
  * timidity. It needs a container runtime, an image built from the network, and about
  * ten seconds; `npm run check` is the inner loop and the command CI is measured by, so
- * a test that slow does not belong in it by default. Everything else about the adapter
- * is a fast test — the pure functions over captured output, and the stub container
- * runtime in `adapter.test.ts` — so what is being skipped is exactly the three things
- * nothing else can prove: that mounts resolve, that user ids match, and that a Session
- * resumes.
+ * a test that slow does not belong in it by default. Everything else about running an
+ * agent in a container is a fast test — the composed command line in
+ * `../pi/runtime.test.ts`, the pure functions over captured output in
+ * `../pi/output.test.ts`, and the stub container runtime in
+ * `../container/agent-container.test.ts` — so what is being skipped is exactly the three
+ * things nothing else can prove: that mounts resolve, that user ids match, and that a
+ * Session resumes.
  *
  * `npm run test:container` sets the variable. CI runs it as its own step.
  */

@@ -87,9 +87,16 @@ function chunks(text: string, size: number): AsyncIterable<Uint8Array> {
   })();
 }
 
-/** What the adapter would report for this output. */
+/**
+ * The Session every case here reads as, since a reader is made per Run and named after
+ * one. Which Session it is only ever shows in a failure, and `names the Session` below is
+ * where that is the subject.
+ */
+const session = "user_42";
+
+/** What a Run of that Session would report for this output. */
 async function outcomeOf(text: string, chunkSize = 4096): Promise<RunOutcome> {
-  return interpretPiOutput(chunks(text, chunkSize));
+  return interpretPiOutput(chunks(text, chunkSize), session);
 }
 
 /** The failure message, with an assertion that there was a failure at all. */
@@ -342,5 +349,16 @@ describe("output that cannot be read", () => {
     // completely must not be reported as a success on the strength of the records
     // that did parse.
     assert.match(await failureOf(`not json at all\n${await fixture("settled-ok")}`), /not json/);
+  });
+
+  it("names the Session, which is what a reader produced per Run buys", async () => {
+    // The Run's `error` column is the only thing an Operator has to go on, and until the
+    // reader was made per Run it could not say which transcript to open (ADR-0033). One
+    // case rather than every one, because the name is prefixed in one place and a failure
+    // that did not carry it would have to be written deliberately.
+    assert.equal(
+      await failureOf(""),
+      `Session ${session} produced no output at all, so nothing says whether the Run happened`,
+    );
   });
 });

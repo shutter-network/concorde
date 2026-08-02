@@ -174,6 +174,13 @@ describe("what the container runtime is told", () => {
     const podman = commandFor({ containerCommand: ["podman"] });
     assert.equal(podman.command, "podman");
     assert.equal(podman.args[0], "run");
+
+    // A list with nothing in it takes the default too, rather than being refused. `pi`'s
+    // own configuration used to refuse it at resolution, on the argument that everything
+    // holding a resolved configuration should have a command to run; there is no
+    // resolution step left to refuse it in, and "no container runtime named" and "the
+    // default container runtime" are the same statement (ADR-0033).
+    assert.equal(commandFor({ containerCommand: [] }).command, "docker");
   });
 
   it("takes a container runtime that needs arguments of its own", () => {

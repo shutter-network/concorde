@@ -48,7 +48,7 @@ const migrationsRoot = path.join(repoRoot, "migrations");
 /** The consumer's imports, spelled once: the type checker and Node see the same three. */
 const consumerImports = [
   'import { components, createAgentContainerRuntime, createSignalWorker, defaultLogger, openDb, resolveMountTable, serverComponent, signalsMigrations, templateHandler } from "shared-agent-framework";',
-  'import { composeInvocation, createPiAdapter, interpretPiOutput, resolvePiConfiguration } from "shared-agent-framework/pi";',
+  'import { createPiRuntime, interpretPiOutput, piRun } from "shared-agent-framework/pi";',
   'import { createUsers, usersMigrations } from "shared-agent-framework/users";',
 ];
 
@@ -119,12 +119,12 @@ try {
     "dist/components.d.ts",
     "dist/pi/index.js",
     "dist/pi/index.d.ts",
-    // The `pi` adapter's own modules. `dist/pi/` mirroring `src/pi/` is what makes the
-    // subpath resolve to the same relative imports in the repository and in the
-    // package, and the fixtures beside them must not come along.
-    "dist/pi/adapter.js",
-    "dist/pi/configuration.js",
-    "dist/pi/invocation.js",
+    // The `pi` Agent Implementation's own modules, which are now two. `dist/pi/`
+    // mirroring `src/pi/` is what makes the subpath resolve to the same relative imports
+    // in the repository and in the package, and the fixtures beside them must not come
+    // along.
+    "dist/pi/runtime.js",
+    "dist/pi/runtime.d.ts",
     "dist/pi/output.js",
     // The Agent Container and its Runtime, which belong to no Agent Implementation: they
     // ship under their own directory and are reachable from the package root, because
@@ -175,13 +175,24 @@ try {
     assert.ok(entries.has(file), `the tarball should ship ${file}`);
   }
 
-  // The modules whose subject was writing the agent's configuration. Named rather than
-  // left to the mirror check below, because "it is gone" is the claim: the framework
-  // writes no files, and a module that still shipped would be one an Operator could
-  // still import and call (ADR-0025, ADR-0028).
+  // The modules whose subject was writing or carrying the agent's configuration. Named
+  // rather than left to the mirror check below, because "it is gone" is the claim: the
+  // framework writes no files and carries no `pi`-shaped configuration, and a module that
+  // still shipped would be one an Operator could still import and call (ADR-0025,
+  // ADR-0028, ADR-0033).
   // Along with the process module's old home: it moved out of the adapter, and a copy
   // left behind under `dist/pi/` would be a second spawner an Operator could import.
-  for (const gone of ["dist/pi/run-files.js", "dist/pi/run-files.d.ts", "dist/pi/process.js"]) {
+  for (const gone of [
+    "dist/pi/run-files.js",
+    "dist/pi/run-files.d.ts",
+    "dist/pi/process.js",
+    "dist/pi/adapter.js",
+    "dist/pi/adapter.d.ts",
+    "dist/pi/configuration.js",
+    "dist/pi/configuration.d.ts",
+    "dist/pi/invocation.js",
+    "dist/pi/invocation.d.ts",
+  ]) {
     assert.ok(!entries.has(gone), `the tarball should no longer ship ${gone}`);
   }
 
@@ -368,15 +379,11 @@ try {
       "  TemplateHandlerOptions,",
       "  Transaction,",
       '} from "shared-agent-framework";',
-      // The `pi` adapter's own types, from its own subpath. Named separately because
-      // that is the point of the subpath: what a deployment depends on is legible from
-      // its imports, and nothing `pi`-shaped is reachable from the package root.
-      "import type {",
-      "  PiAdapterOptions,",
-      "  PiConfiguration,",
-      "  PiInvocation,",
-      "  ResolvedPiConfiguration,",
-      '} from "shared-agent-framework/pi";',
+      // The `pi` subpath exports **no type at all**, which is the shape ADR-0033 leaves
+      // it in: there is no configuration to name, and everything the Runtime it returns
+      // is made of — the Agent Container, the Run plan, the composed command line — comes
+      // from the package root, because none of it is `pi`-shaped. The three values it
+      // does export are in `consumerImports` above.
       // The User Directory's own types, from its own subpath, for the same reason:
       // a deployment with no identity in it imports nothing from there (ADR-0029).
       "import type {",
@@ -569,36 +576,23 @@ try {
       "// (ADR-0032).",
       "const workerRoutes: FastifyPluginAsync = worker.agentRoutes;",
       "",
-      "// The `pi` Runtime's configuration, every field of it, so a field that",
-      "// went missing from the declaration fails here rather than being ignored at the",
-      "// Operator's first Run. There is no field for the agent's own configuration and",
-      "// none for the Agent server's address: the framework writes no files, so what the",
-      "// agent reads is placed by the Operator in a directory they mount (ADR-0025).",
+      "// What a `pi` deployment declares, which is an Agent Container and nothing else.",
+      "// There is no configuration type on the `/pi` subpath any more: no model, no",
+      "// provider and no container path, because the agent reads all of those out of a",
+      "// `settings.json` the Operator mounts and a `Dockerfile` they build (ADR-0033).",
       "// The Mount Table comes from the package root, not from `/pi`: it knows nothing",
       "// about an Agent Implementation, and an entry may name a directory or a single",
-      "// file and may be read-only — which is how the `AGENTS.md` below is protected",
-      "// from the agent that reads it (ADR-0028).",
+      "// file and may be read-only — which is how the `AGENTS.md` below, and the",
+      "// `settings.json` beside it, are protected from the agent that reads them",
+      "// (ADR-0028).",
       'const workspace: Mount = { containerPath: "/workspace", gatewayPath: "/srv/saf/workspace" };',
       "const mounts: MountTable = {",
       "  entries: [",
       "    workspace,",
       '    { containerPath: "/home/agent/.pi/agent", gatewayPath: "/srv/saf/agent" },',
-      '    { containerPath: "/sessions", gatewayPath: "/srv/saf/sessions" },',
       '    { containerPath: "/workspace/AGENTS.md", gatewayPath: "/srv/saf/AGENTS.md", readOnly: true },',
+      '    { containerPath: "/home/agent/.pi/agent/settings.json", gatewayPath: "/srv/saf/settings.json", readOnly: true },',
       "  ],",
-      "};",
-      "const piConfig: PiConfiguration = {",
-      '  image: "saf/pi:latest",',
-      '  model: "claude-sonnet-4-5",',
-      '  provider: "anthropic",',
-      '  workspacePath: "/workspace",',
-      '  agentDirPath: "/home/agent/.pi/agent",',
-      '  sessionRootPath: "/sessions",',
-      "  mounts,",
-      '  env: { ANTHROPIC_API_KEY: "sk-not-a-key" },',
-      '  network: "saf-agent",',
-      '  extraArgs: ["--memory", "2g"],',
-      '  containerCommand: ["docker"],',
       "};",
       "export const piMounts: ResolvedMountTable = resolveMountTable(mounts);",
       "export const piWorkspace: ResolvedMount | undefined = piMounts.entries[0];",
@@ -641,33 +635,44 @@ try {
       '  session: "user_42",',
       '  text: "what happened?",',
       "});",
-      "export const piResolved: ResolvedPiConfiguration = resolvePiConfiguration(piConfig);",
-      "export const piInvocation: PiInvocation = composeInvocation(",
-      "  piConfig,",
-      '  { session: "user_42", text: "what happened?" },',
-      '  "6f1d2c3b-4a59-4e6f-8a1b-2c3d4e5f6a7b",',
-      ");",
+      "// The `pi` Runtime itself, which is what an Operator actually passes to the Signal",
+      "// Worker: one call taking one value, with no second call to remember and no type of",
+      "// its own to hold one. It contributes two defaults to the container — the entry",
+      "// point and `PI_OFFLINE` — and `piRun`, and nothing else (ADR-0033).",
+      "export const pi: AgentContainerRuntime = createPiRuntime({",
+      '  image: "saf/pi:latest",',
+      "  mounts,",
+      '  networks: ["saf-agent"],',
+      '  env: { ANTHROPIC_API_KEY: "sk-not-a-key" },',
+      '  extraArgs: ["--memory", "2g"],',
+      "  logger: log,",
+      "});",
+      "// Annotated as a Runtime because that is the seam the Signal Worker is given, and a",
+      "// `pi` Runtime is one like any other.",
+      "export const piAsRuntime: Runtime = pi;",
+      "export const piCommand: ComposedCommand = pi.commandFor({",
+      '  session: "user_42",',
+      '  text: "what happened?",',
+      "});",
       "",
-      "// The adapter itself, which is what an Operator actually passes to the Signal",
-      "// Worker: a plain Runtime, with no second call to remember and no type",
-      "// of its own to hold one (ADR-0028). Annotated as a Runtime because that is the seam",
-      "// the Signal Worker is given and the whole of what construction returns.",
-      "const piAdapterOptions: PiAdapterOptions = { ...piConfig, logger: log };",
-      "export const piAdapter: Runtime = createPiAdapter(piAdapterOptions);",
-      "",
-      "// A Runtime an Operator could write out of the pieces the subpath ships:",
-      "// compose the invocation, start the container, read the outcome out of the JSONL.",
-      "// Three steps and not four — there is nothing to write. The spawning is theirs",
-      "// here, which is what proves these compose.",
-      "export const piRuntime: Runtime = {",
-      "  async run(prompt: Prompt, id: string): Promise<RunOutcome> {",
-      "    const invocation: PiInvocation = composeInvocation(piConfig, prompt, id);",
+      "// The two pure functions the subpath ships beside it, which are the whole of what",
+      "// `pi` adds to a container. An Operator could spawn the container themselves out of",
+      "// these, and an author of a second Agent Implementation writes the equivalent of the",
+      "// first one and nothing else — which is what this pair is exported to demonstrate.",
+      "export const piByHand: Runtime = {",
+      "  async run(prompt: Prompt): Promise<RunOutcome> {",
+      "    const plan: RunPlan = piRun(prompt);",
       "    const stdout: AsyncIterable<Uint8Array> = (async function* () {",
-      '      yield new TextEncoder().encode(invocation.redactedArgs.join(" "));',
+      '      yield new TextEncoder().encode(plan.args.join(" ") + plan.stdin);',
       "    })();",
-      "    return interpretPiOutput(stdout);",
+      "    return plan.outcome(stdout);",
       "  },",
       "};",
+      "// The reader on its own, which takes the Session so a failure can name it.",
+      "export const piOutcome: Promise<RunOutcome> = interpretPiOutput(",
+      "  (async function* () {})(),",
+      '  "user_42",',
+      ");",
       "",
       "// A Producer of the Operator's own, told when something arrives on a channel",
       "// it shares with whoever notifies it. The connection is the Db's, so `pg`",
@@ -762,17 +767,17 @@ try {
         // installed package resolves it only if it is declared as a dependency, and
         // our own `node_modules` would hide a missing entry in every other check.
         //
-        // The `/pi` subpath, actually run rather than only resolved: `composeInvocation`
-        // reaches for `./configuration.ts` to settle the Session name and the mounts, so
-        // this is what proves a relative `.ts` import *inside* the subpath survives being
-        // compiled and installed — the thing the deleted placeholder used to stand for.
+        // The `/pi` subpath, actually run rather than only resolved: `createPiRuntime`
+        // reaches across to `../container/index.ts` for the generic half and down to
+        // `./output.ts` for the reader, so this is what proves a relative `.ts` import
+        // *inside and out of* the subpath survives being compiled and installed — the
+        // thing the deleted placeholder used to stand for.
         // The Mount Table, constructed and resolved from the package root the way an
         // Operator meets it: this is what proves `--mount type=bind` arguments come out
         // of an installed package rather than only out of this repository.
         "const mounts = { entries: [",
         "  { containerPath: '/workspace', gatewayPath: '/srv/saf/workspace' },",
         "  { containerPath: '/srv/saf/agent', gatewayPath: '/srv/saf/agent' },",
-        "  { containerPath: '/sessions', gatewayPath: '/srv/saf/sessions' },",
         "  { containerPath: '/workspace/AGENTS.md', gatewayPath: '/srv/saf/AGENTS.md', readOnly: true },",
         "] };",
         "const resolvedMounts = resolveMountTable(mounts);",
@@ -786,30 +791,33 @@ try {
         "  run: (asked) => ({ args: ['--session-id', asked.session ?? 'fresh'], stdin: asked.text, outcome: async () => ({ ok: true }) }),",
         "});",
         "const composed = generic.commandFor({ session: 'user_42', text: 'what happened?' });",
-        "const piConfig = {",
-        "  image: 'saf/pi:latest', model: 'sonnet', workspacePath: '/workspace',",
-        "  agentDirPath: '/srv/saf/agent', sessionRootPath: '/sessions', mounts,",
-        "};",
-        "const invocation = composeInvocation(piConfig, { session: null, text: 'what happened?' }, 'r1');",
-        // And the adapter itself, constructed as an Operator constructs it. It refuses a
-        // configuration it cannot work with at construction, so this also proves the
-        // check inside it runs from the installed package rather than only here.
-        "const adapter = createPiAdapter(piConfig);",
+        // And the `pi` Runtime itself, constructed the way an Operator constructs it:
+        // an image and what the container sees, with no model, no provider and no
+        // container path anywhere. It refuses a container it cannot work with at
+        // construction, so this also proves that check runs from the installed package.
+        "const pi = createPiRuntime({ image: 'saf/pi:latest', mounts, networks: ['saf-agent'], env: { ANTHROPIC_API_KEY: 'sk-not-a-key' } });",
+        "const piCommand = pi.commandFor({ session: 'user_42', text: 'what happened?' });",
+        // The one function `pi` adds, on its own, which is what an author of a second
+        // Agent Implementation writes the equivalent of.
+        "const plan = piRun({ session: 'user_42', text: 'what happened?' });",
         // The User Directory, constructed as an Operator constructs it. `openDb`
         // connects lazily, so this reaches the database not at all: what it proves is
         // that the subpath resolves at runtime and that construction is free of side
         // effects, like every other part's.
         "const directory = createUsers({ db: openDb('postgres://nobody@example.invalid/none'), tokenTtl: 60000 });",
         "const encoder = new TextEncoder();",
-        "const settled = await interpretPiOutput((async function* () {",
+        "const settled = await plan.outcome((async function* () {",
         "  yield encoder.encode(JSON.stringify({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop' } }) + '\\n');",
         "  yield encoder.encode(JSON.stringify({ type: 'agent_settled' }) + '\\n');",
         "})());",
+        // And the reader on its own, on a stream that says nothing, because naming the
+        // Session in the failure is what the per-Run reader is for (ADR-0033).
+        "const silent = await interpretPiOutput((async function* () {})(), 'user_7');",
         // Nothing writes anything: there is no call between composing and interpreting,
         // because the module that used to hold one is gone from the package, and the
-        // composed invocation names no file for the agent to read either — the Operator's
-        // `AGENTS.md` above is a mount and `pi` discovers it (ADR-0025).
-        "const built = [typeof openDb, typeof templateHandler, invocation.command, invocation.session, String(settled.ok), resolvedMounts.containerArguments()[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', resolvePiConfiguration(piConfig).containerCommand.join(' '), String(invocation.args.includes('--append-system-prompt')), typeof adapter.run, String(Object.keys(adapter)), usersMigrations.schema, String(Object.keys(directory).sort())];",
+        // composed command line names no file for the agent to read either — the
+        // Operator's `AGENTS.md` above is a mount and `pi` discovers it (ADR-0025).
+        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), resolvedMounts.containerArguments()[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersMigrations.schema, String(Object.keys(directory).sort())];",
         "process.stdout.write(built.join(':'));",
       ].join("\n"),
     ],
@@ -817,8 +825,8 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker:run_r1:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:docker:false:function:run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword",
-    "all three subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi adapter should construct as a plain Runtime — `run` and nothing else — settle its defaults, compose an invocation that passes no system-prompt flag, and read an outcome, and the User Directory should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included",
+    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword",
+    "all three subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Directory should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included",
   );
 
   step("applying a shipped migration folder from inside the installed package");
