@@ -51,7 +51,7 @@ const migrationsRoot = path.join(repoRoot, "migrations");
 
 /** The consumer's imports, spelled once: the type checker and Node see the same four. */
 const consumerImports = [
-  'import { createAgentContainerRuntime, createGateway, createSignalWorker, defaultLogger, openDb, resolveMountTable, serverComponent, signalsMigrations, templateHandler } from "shared-agent-framework";',
+  'import { createAgentContainerRuntime, createGateway, createGatewayWithDefaults, createSignalWorker, defaultLogger, openDb, resolveMountTable, serverComponent, signalsMigrations, templateHandler } from "shared-agent-framework";',
   'import { createPiRuntime, interpretPiOutput, piRun } from "shared-agent-framework/pi";',
   'import { createUsers, usersMigrations } from "shared-agent-framework/users";',
   'import { createHttpMessenger, httpMessagesMigrations, messageReceivedKind } from "shared-agent-framework/http-messenger";',
@@ -122,6 +122,11 @@ try {
     // source is gone, not a public module that failed to ship.
     "dist/components.js",
     "dist/components.d.ts",
+    // The default assembly, also at the package root and also named rather than left to the
+    // mirror check: it is the canonical path an Operator's entry point takes, and it is the
+    // one shipped module that imports a value from `fastify` (ADR-0038).
+    "dist/default-gateway.js",
+    "dist/default-gateway.d.ts",
     "dist/pi/index.js",
     "dist/pi/index.d.ts",
     // The `pi` Agent Implementation's own modules, which are now two. `dist/pi/`
@@ -262,29 +267,37 @@ try {
     );
   }
 
-  // `fastify` is a peer dependency, so nothing shipped may *run* an import of it:
-  // types are erased, and a value import would resolve out of a consumer's own tree
-  // or fail there outright. This is the `serverComponent` constraint held in place
-  // (ADR-0031) — a `FastifyListenOptions` written without `import type` would emit
-  // one of these and nothing else would notice, because the consumer below installs
+  // `fastify` is a peer dependency, and **one** shipped module runs an import of it. That
+  // module is `dist/default-gateway.js`, which constructs the two servers of the default
+  // assembly and cannot do it any other way (ADR-0038); everywhere else the framework names
+  // Fastify's types and never its runtime, which is what keeps `serverComponent`
+  // structural and the peer dependency honest (ADR-0031). So the check is not dropped but
+  // narrowed to an exact list: a `FastifyListenOptions` written without `import type` still
+  // emits one of these, and nothing else would notice, because the consumer below installs
   // Fastify and it would resolve.
-  step("checking no shipped module imports a value from fastify");
+  step("checking only the default assembly imports a value from fastify");
   const manifest: unknown = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
   assert.ok(
     !Object.hasOwn((manifest as { dependencies?: object }).dependencies ?? {}, "fastify"),
-    "fastify should stay a peer dependency; a `dependencies` entry brings a second copy into every consumer's tree",
+    "fastify should stay a peer dependency; a `dependencies` entry brings a second copy into every consumer's tree, and instances the framework built would then not be instances of the Fastify a consumer's own plugins were written against",
   );
+  const mayConstructAServer = new Set(["dist/default-gateway.js"]);
+  const importsFastify: string[] = [];
   for (const emitted of readdirSync(path.join(repoRoot, "dist"), {
     recursive: true,
     withFileTypes: true,
   })) {
     if (!emitted.isFile() || !emitted.name.endsWith(".js")) continue;
     const file = path.join(emitted.parentPath, emitted.name);
-    assert.ok(
-      !/from ["']fastify["']/.test(readFileSync(file, "utf8")),
-      `${path.relative(repoRoot, file)} imports a value from fastify; the framework may name its types and nothing else`,
-    );
+    if (/from ["']fastify["']/.test(readFileSync(file, "utf8"))) {
+      importsFastify.push(path.relative(repoRoot, file).replaceAll(path.sep, "/"));
+    }
   }
+  assert.deepEqual(
+    importsFastify.sort(),
+    [...mayConstructAServer].sort(),
+    "only the default assembly may import a value from fastify; everywhere else the framework names its types and nothing else",
+  );
 
   const migrationFolders = readdirSync(migrationsRoot, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
@@ -370,8 +383,11 @@ try {
       "  Component,",
       "  ComposedCommand,",
       "  Db,",
+      "  DefaultComponents,",
+      "  DefaultGatewayOptions,",
       "  EmittedSignal,",
       "  Gateway,",
+      "  GatewayExtension,",
       "  Handle,",
       "  Listening,",
       "  ListeningServer,",
@@ -641,6 +657,96 @@ try {
       "  createdAt: new Date().toISOString(),",
       "};",
       "",
+      "// A Handler factory of the consumer's own, and the shape the construction cycle takes",
+      "// in their code: it closes over the Db and the HTTP Messenger, and its post phase is the",
+      "// only path by which a failed Run reaches the person waiting (ADR-0017, ADR-0024). Both",
+      "// objects are constructed *after* the Signal Worker that dispatches to this Handler,",
+      "// which is why `handlers` below is a callback rather than a map (ADR-0038).",
+      "function notifier(db: Db, messenger: HttpMessenger): SignalHandler<MessageRecord> {",
+      "  return {",
+      "    handle: (signal: Signal<MessageRecord>): Prompt[] => [",
+      '      { session: "user_" + signal.payload.userId, text: signal.payload.text },',
+      "    ],",
+      "    post: async (signal: Signal<MessageRecord>, outcome: PostOutcome) => {",
+      "      if (!outcome.failed) return;",
+      "      await db.tx((tx: Transaction) =>",
+      '        messenger.send(tx, signal.payload.userId, "Something went wrong."),',
+      "      );",
+      "    },",
+      "  };",
+      "}",
+      "",
+      "// A Producer of the consumer's own, emitting into a Signal Worker the same call built —",
+      "// which is the reason `extend` is a callback rather than a record: there is no way to",
+      "// hold that Worker beforehand. It is also the case `extend` is *right* for: appended",
+      "// Components stop first, so this stops producing before the drain begins, while the",
+      "// worker still has everything it needs to finish what is in flight (ADR-0038).",
+      "function heartbeat(db: Db, worker: SignalWorker): Component {",
+      "  let ticking: ReturnType<typeof setInterval> | undefined;",
+      "  return {",
+      "    start: async () => {",
+      "      ticking = setInterval(() => {",
+      '        void db.tx((tx: Transaction) => worker.emit(tx, { kind: "loop.ticked", payload: {} }));',
+      "      }, 60_000);",
+      "    },",
+      "    stop: async () => {",
+      "      if (ticking !== undefined) clearInterval(ticking);",
+      "    },",
+      "  };",
+      "}",
+      "",
+      "// What `extend` may return, named: Components under keys of the consumer's own and none",
+      "// of the six. A `db` or a `messenger` in here is a **type error**, which is what keeps a",
+      "// default from being replaced silently — a spread overwrites the value and keeps the",
+      "// original key's position, so the substitute would start where ours would have and",
+      "// nothing would say so (ADR-0037).",
+      "export const ownExtension: GatewayExtension = { ownLoop };",
+      "",
+      "// The default assembly: the same six parts built by hand above, from one call, wired,",
+      "// ordered and handed back as a Gateway — the canonical path, with `createGateway` as the",
+      "// escape (ADR-0038). The Runtime is an option rather than a spec, which is why the one",
+      "// declared at the top of this file goes straight in and the package root imports no Agent",
+      "// Implementation of its own. The options are annotated separately, so a field that went",
+      "// missing from the declaration fails here rather than being silently ignored.",
+      "const assembly: DefaultGatewayOptions<{ ownLoop: Component }> = {",
+      '  databaseUrl: "postgres://nobody@example.invalid/none",',
+      "  runtime,",
+      "  // No default, because the trade a Token's lifetime settles is the deployment's, and a",
+      "  // convenience constructor is not a reason to reverse a deliberate refusal (ADR-0030).",
+      "  tokenTtl: 30 * 24 * 60 * 60 * 1000,",
+      '  agentListen: { port: 7411, host: "localhost" },',
+      '  publicListen: { port: 8080, host: "0.0.0.0" },',
+      "  // Appended, so the consumer's own Components start last and therefore stop **first**:",
+      "  // right for a Producer, wrong for a resource the drain uses, and the answer to the",
+      "  // second is `createGateway` (ADR-0038).",
+      "  extend: (defaults: DefaultComponents) => ({ ownLoop: heartbeat(defaults.db, defaults.worker) }),",
+      "  // Given the six *and* the extension, and this is where the cycle is broken: the map is",
+      "  // written into the Signal Worker after the Messenger the Handler needs was built. The",
+      "  // second entry is the extension's own Producer answered, which is only expressible",
+      "  // because `handlers` runs after `extend` (ADR-0038).",
+      "  handlers: (all) => ({",
+      "    [messageReceivedKind]: notifier(all.db, all.messenger),",
+      '    "loop.ticked": greeter("the loop ticked in " + typeof all.ownLoop),',
+      "  }),",
+      "  logger: log,",
+      "};",
+      "export const assembled: Gateway<DefaultComponents & { ownLoop: Component }> =",
+      "  createGatewayWithDefaults(assembly);",
+      "// The record comes back with its types intact and each part reachable by the key the",
+      "// framework filed it under — which is what proves the intersection behind",
+      "// `DefaultComponents & E` survived being written to a declaration file and installed. The",
+      "// consumer's own Component is in the same record and reached the same way.",
+      "export const assembledDb: Db = assembled.components.db;",
+      "export const assembledUsers: Users = assembled.components.users;",
+      "export const assembledMessenger: HttpMessenger = assembled.components.messenger;",
+      "export const assembledWorker: SignalWorker = assembled.components.worker;",
+      "export const assembledLoop: Component = assembled.components.ownLoop;",
+      "// The two servers the framework constructed, reachable so that the consumer's own",
+      "// routes, plugins and hooks go on the same instances ours did. Only their construction",
+      "// is ours, and `Fastify()`'s own options are what the default path puts out of reach.",
+      "export const assembledPublic: FastifyInstance = assembled.components.publicServer.fastify;",
+      "export const assembledAgent: FastifyInstance = assembled.components.agentServer.fastify;",
+      "",
       "// What a `pi` deployment declares, which is an Agent Container and nothing else.",
       "// There is no configuration type on the `/pi` subpath any more: no model, no",
       "// provider and no container path, because the agent reads all of those out of a",
@@ -829,6 +935,12 @@ try {
       "  const reached: Db = gateway.components.db;",
       "  const nested: Gateway<{ db: Db }> = createGateway({ db: reached });",
       "  const asComponent: Component = nested;",
+      "  // And the same six from one call, which is the path an Operator's entry point actually",
+      "  // takes: migrate between construction and start, because `start` refuses a schema the",
+      "  // database is behind and never applies one (ADR-0032, ADR-0038).",
+      "  await assembled.components.db.migrate();",
+      "  await assembled.start();",
+      "  await assembled.stop();",
       "  await gateway.start();",
       "  shipped.info(",
       "    { started: Object.keys(gateway.components), readSignal, readRun, states },",
@@ -913,6 +1025,22 @@ try {
         // two of them to be in a Gateway's record at all (ADR-0037).
         "const messengerWorker = createSignalWorker({ db: scratch, runtime: { run: async () => ({ ok: true }) }, handlers: {} });",
         "const messenger = createHttpMessenger({ db: scratch, users: directory, worker: messengerWorker, publicServer: { fastify: Fastify() }, agentServer: { fastify: Fastify() } });",
+        // And the same six from one call, which is the path an Operator's entry point takes.
+        // This is the one place anything proves the **value** import of `fastify` survives
+        // installation: `dist/default-gateway.js` constructs the two servers itself, and a
+        // peer dependency that failed to resolve would throw right here rather than at an
+        // Operator's first deploy (ADR-0038). Nothing connects and nothing listens — `openDb`
+        // is lazy and `Fastify()` binds nothing — so what comes back is the record, in the
+        // order the framework keyed it, with the consumer's own Component appended last.
+        "const assembled = createGatewayWithDefaults({",
+        "  databaseUrl: 'postgres://nobody@example.invalid/none',",
+        "  runtime: { run: async () => ({ ok: true }) },",
+        "  tokenTtl: 60000,",
+        "  agentListen: { port: 7411, host: 'localhost' },",
+        "  publicListen: { port: 8080, host: '0.0.0.0' },",
+        "  extend: (defaults) => ({ ownLoop: { start: async () => {}, stop: async () => defaults.worker.stop() } }),",
+        "  handlers: (all) => ({ 'message.received': { handle: () => [{ session: 'user_1', text: typeof all.messenger.send }] } }),",
+        "});",
         "const encoder = new TextEncoder();",
         "const settled = await plan.outcome((async function* () {",
         "  yield encoder.encode(JSON.stringify({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop' } }) + '\\n');",
@@ -925,7 +1053,7 @@ try {
         // because the module that used to hold one is gone from the package, and the
         // composed command line names no file for the agent to read either — the
         // Operator's `AGENTS.md` above is a mount and `pi` discovers it (ADR-0025).
-        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), resolvedMounts.containerArguments()[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersMigrations.schema, String(Object.keys(directory).sort()), httpMessagesMigrations.schema, String(Object.keys(messenger).sort()), messageReceivedKind];",
+        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), resolvedMounts.containerArguments()[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersMigrations.schema, String(Object.keys(directory).sort()), httpMessagesMigrations.schema, String(Object.keys(messenger).sort()), messageReceivedKind, String(Object.keys(assembled.components))];",
         "process.stdout.write(built.join(':'));",
       ].join("\n"),
     ],
@@ -933,8 +1061,8 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword,start,stop:saf_http_messages:history,send,start,stop:message.received",
-    "all four subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Manager should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself, and both of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record",
+    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword,start,stop:saf_http_messages:history,send,start,stop:message.received:db,agentServer,publicServer,users,messenger,worker,ownLoop",
+    "all four subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Manager should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself, and both of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and one call should assemble all six of them from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the consumer's own Component appended last",
   );
 
   step("applying a shipped migration folder from inside the installed package");

@@ -341,9 +341,9 @@ function instructionsEntry(paths: Paths): Mount {
  * an assembly the reference entry point does not use would prove the wrong thing.
  *
  * What it does **not** prove is the ordering: it stops nothing mid-Run, so that the
- * Agent server must outlive the Signal Worker is not asserted here. `whole-gateway.test.ts`
- * is where it is, with a fake Runtime parked in flight while the Gateway shuts down around
- * it (ADR-0038).
+ * Agent server must outlive the Signal Worker is not asserted here.
+ * `default-gateway.test.ts` is where it is, with a fake Runtime parked in flight while the
+ * Gateway shuts down around it (ADR-0038).
  */
 async function withGateway(
   t: TestContext,

@@ -359,9 +359,10 @@ await db.migrate();
 //
 // **Nothing in the framework checks this**, and nothing could: whether the agent calls the
 // Agent server mid-Run is the model's choice, so a Gateway has no way to know its own record
-// is wrong. Change a position here and nothing warns. What the framework does instead is pin
-// the order it recommends — this one — in a test of its own: ../src/whole-gateway.test.ts
-// stops a Gateway with a Run in flight and asserts what that Run can still reach.
+// is wrong. Change a position here and nothing warns. What the framework does instead is
+// assemble this same order itself, in `createGatewayWithDefaults`, and pin it in a test of
+// its own: ../src/default-gateway.test.ts stops a Gateway with a Run in flight and asserts
+// what that Run can still reach.
 const gateway = createGateway({ db, agentServer, publicServer, users, messenger, worker });
 
 // Which opens the pool, refuses to serve if any registered schema is behind the migration
