@@ -1,12 +1,17 @@
 export type { Component, ListeningServer } from "./components.ts";
 export { components, serverComponent } from "./components.ts";
 export type {
+  AgentContainer,
+  AgentContainerRuntime,
+  AgentContainerRuntimeSpec,
+  ComposedCommand,
   Mount,
   MountTable,
   ResolvedMount,
   ResolvedMountTable,
+  RunPlan,
 } from "./container/index.ts";
-export { resolveMountTable } from "./container/index.ts";
+export { createAgentContainerRuntime, resolveMountTable } from "./container/index.ts";
 export type {
   ChannelListener,
   Db,

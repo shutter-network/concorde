@@ -133,11 +133,10 @@ describe("the pi adapter", () => {
     assert.throws(() => createPiAdapter({ ...config, workspacePath: "relative" }), /workspacePath/);
     assert.throws(() => createPiAdapter({ ...config, image: "" }), /image/);
     // Including a Mount Table that cannot be resolved: the adapter resolves it at
-    // construction precisely so this is not discovered by a container (ADR-0028).
-    assert.throws(
-      () => createPiAdapter({ ...config, mounts: { entries: [] } }),
-      /Mount Table has no entries/,
-    );
+    // construction precisely so this is not discovered by a container (ADR-0028). An
+    // empty table is not one of those: an image that carries its own configuration and
+    // keeps nothing between Runs is a deployment, and the rule forbidding it is gone.
+    assert.doesNotThrow(() => createPiAdapter({ ...config, mounts: { entries: [] } }));
     assert.throws(
       () =>
         createPiAdapter({
@@ -262,10 +261,6 @@ describe("the pi adapter", () => {
     // The two values a mount problem is diagnosed from are both still there.
     assert.match(logged, /PI_CODING_AGENT_DIR=\/home\/agent\/\.pi\/agent/);
     assert.match(logged, /--mount/);
-    // And the Session's transcript as this process sees it, which is the question
-    // ADR-0025 says the forgetful-agent failure is diagnosed with and the only thing
-    // left that asks the Mount Table for a path on the Operator's own disk.
-    assert.equal(started.fields.sessionDirectory, path.join(adapter.sessionRoot, "user_42"));
     assert.equal(started.fields.runId, runId);
     assert.equal(started.fields.session, "user_42");
   });

@@ -52,17 +52,6 @@ export type PiInvocation = {
    * two implementations of the same rule.
    */
   readonly session: string;
-  /**
-   * Where that Session's own directory will be, as the Gateway sees it.
-   *
-   * Nothing creates it: the Agent Implementation does, inside the container, into the
-   * mounted Session root. This is here **for the adapter's debug line alone**. "Where
-   * is this Session's transcript on my disk" is the question asked while diagnosing
-   * the forgetful-agent failure ADR-0025 describes, and the container path in the logged
-   * argv does not answer it. The Mount Table answers it, and `undefined` is its honest
-   * answer where the Session root is not something the Operator mounted.
-   */
-  readonly sessionDirectory: string | undefined;
 };
 
 /**
@@ -101,7 +90,6 @@ export function composeInvocation(
     redactedArgs: redact(args),
     stdin: prompt.text,
     session,
-    sessionDirectory: sessionDirectoryFor(resolved, session).gatewayPath,
   };
 }
 
@@ -147,6 +135,12 @@ function containerArgs(config: ResolvedPiConfiguration): string[] {
   // anything here. `-v` appears nowhere, which is what makes the daemon refuse a source
   // that is not there instead of inventing it as `root` (ADR-0028).
   args.push(...config.mounts.containerArguments());
+  // The user the mounts are shared with. It used to come out of the Mount Table beside
+  // them and is no longer configuration at all: always this process's own, and nothing
+  // at all where the platform has neither, with `extraArgs` as the countermand since a
+  // later `--user` wins (ADR-0025, ADR-0028).
+  const user = ownUser();
+  if (user !== undefined) args.push("--user", user);
   if (config.network !== undefined) args.push("--network", config.network);
 
   for (const [name, value] of Object.entries(environment(config))) {
@@ -155,6 +149,14 @@ function containerArgs(config: ResolvedPiConfiguration): string[] {
   // Last, so an Operator can also override a flag the framework set.
   args.push(...config.extraArgs);
   return args;
+}
+
+/** This process's `uid:gid`, or nothing where the platform has no such thing. */
+function ownUser(): string | undefined {
+  if (typeof process.getuid !== "function" || typeof process.getgid !== "function") {
+    return undefined;
+  }
+  return `${process.getuid()}:${process.getgid()}`;
 }
 
 /** Everything after the image name: `pi`'s own flags. */
@@ -175,7 +177,7 @@ function agentArgs(config: ResolvedPiConfiguration, session: string): string[] {
     "--session-id",
     session,
     "--session-dir",
-    sessionDirectoryFor(config, session).containerPath,
+    sessionDirectoryFor(config, session),
     // No `--append-system-prompt`, and no other flag naming a file: the framework writes
     // none, so it has none to name. What tells the agent about the Agent server is an
     // `AGENTS.md` the Operator places in the Workspace, which `pi` finds by itself in its

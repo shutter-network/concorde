@@ -201,18 +201,13 @@ export function sessionFor(session: string | null, runId: string): string {
 }
 
 /**
- * Where a Session's own directory will sit, on both sides of the mount. Neither side is
- * created from here: `--session-dir` is given the container's, and the Gateway's is for
- * the log line that says where the transcript landed on the Operator's own disk.
+ * Where a Session's own directory will sit **inside the container**, which is what
+ * `--session-dir` is given. Nothing creates it: `pi` does, from inside the container.
  *
- * The Gateway's side comes back from the Mount Table and can be `undefined`, which is
- * honest rather than unfortunate: a Session root nobody mounted has no Gateway-side path
- * to name, and so does a Session name that climbs out of the one that was mounted.
+ * There is no Gateway-side answer beside it any more. The Mount Table's reverse lookup
+ * was deleted along with the debug line that was its only caller, which is the same
+ * subtraction on both sides of the mount (ADR-0025, ADR-0028).
  */
-export function sessionDirectoryFor(
-  config: ResolvedPiConfiguration,
-  session: string,
-): { readonly containerPath: string; readonly gatewayPath: string | undefined } {
-  const inContainer = path.posix.join(config.sessionRootPath, session);
-  return { containerPath: inContainer, gatewayPath: config.mounts.gatewayPathFor(inContainer) };
+export function sessionDirectoryFor(config: ResolvedPiConfiguration, session: string): string {
+  return path.posix.join(config.sessionRootPath, session);
 }

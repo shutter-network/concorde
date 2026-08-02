@@ -148,18 +148,9 @@ describe("the Mount Table", () => {
   });
 
   it("runs as this process's own user, so bind-mounted files are readable both ways", () => {
+    // No longer a Mount Table field, and no longer configuration at all: always this
+    // process's own, with `extraArgs` as the countermand (ADR-0025, ADR-0028).
     assert.equal(argumentAfter(invocationFor(), "--user"), ownUser());
-    assert.equal(
-      argumentAfter(invocationFor({ mounts: { entries, user: "1000:1000" } }), "--user"),
-      "1000:1000",
-    );
-  });
-
-  it("refuses a table with no entries, rather than starting a container that sees nothing", () => {
-    assert.throws(
-      () => resolvePiConfiguration({ ...minimal, mounts: { entries: [] } }),
-      /no entries/,
-    );
   });
 
   it("refuses a relative path on either side, naming the path", () => {
@@ -179,28 +170,6 @@ describe("the Mount Table", () => {
         }),
       /gatewayPath ".\/workspace".*absolute/s,
     );
-  });
-
-  it("says where a container path is on the Operator's disk, by longest prefix", () => {
-    const { mounts } = resolvePiConfiguration(minimal);
-
-    assert.equal(mounts.gatewayPathFor("/sessions"), "/srv/saf/sessions");
-    assert.equal(mounts.gatewayPathFor("/sessions/user_42"), "/srv/saf/sessions/user_42");
-    // The deeper entry wins, which is what makes a nested read-only file resolve to
-    // itself rather than to the directory it sits in.
-    const nested = resolvePiConfiguration({
-      ...minimal,
-      mounts: {
-        entries: [
-          ...entries,
-          { containerPath: "/workspace/AGENTS.md", gatewayPath: "/srv/saf/AGENTS.md" },
-        ],
-      },
-    });
-    assert.equal(nested.mounts.gatewayPathFor("/workspace/AGENTS.md"), "/srv/saf/AGENTS.md");
-    // And nothing is invented for a path nobody mounted.
-    assert.equal(mounts.gatewayPathFor("/etc/passwd"), undefined);
-    assert.equal(mounts.gatewayPathFor("/sessionsfoo"), undefined);
   });
 });
 
@@ -289,19 +258,6 @@ describe("a Gateway that is itself in a container", () => {
       "type=bind,source=/var/lib/docker/volumes/saf-workspace/_data,target=/workspace",
       "type=bind,source=/host/gateway/sessions,target=/sessions",
     ]);
-  });
-
-  it("keeps answering where a container path is on the Gateway's disk, not the host's", () => {
-    // The debug line asks "where is this Session's transcript on *my* disk", and the
-    // Operator reading it is inside the Gateway's container, not on the host. So the
-    // reverse lookup stays in this process's namespace while the daemon is told the
-    // host's, which is the reason the two are kept apart on a resolved entry at all.
-    const { mounts } = resolvePiConfiguration({
-      ...minimal,
-      mounts: { entries, hostPaths: { "/srv": "/host/gateway" } },
-    });
-
-    assert.equal(mounts.gatewayPathFor("/sessions/user_42"), "/srv/saf/sessions/user_42");
   });
 });
 
@@ -458,12 +414,7 @@ describe("what the agent is told", () => {
   });
 
   it("gives the Session a directory of its own under the Session root", () => {
-    const invocation = invocationFor();
-
-    assert.equal(argumentAfter(invocation, "--session-dir"), "/sessions/user_42");
-    // The same directory as the Gateway sees it, which only the Mount Table can say and
-    // which the adapter's debug line is the sole consumer of.
-    assert.equal(invocation.sessionDirectory, "/srv/saf/sessions/user_42");
+    assert.equal(argumentAfter(invocationFor(), "--session-dir"), "/sessions/user_42");
   });
 
   it("names no file of the framework's, because the framework writes none", () => {
@@ -549,25 +500,22 @@ describe("the Session a Prompt runs in", () => {
     // in the failed Run's `error` beside the name in its `session` — a diagnostic
     // that cannot go stale, unlike a transcribed pattern (ADR-0024, ADR-0016).
     //
-    // The Session directory follows the name wherever it goes, and the second column
-    // is why that is safe without a path-segment check of ours: it is a path inside a
-    // `--rm` container, so a name climbing out of the mounted Session root lands in
-    // the container's own filesystem and dies with it, touching nothing on the host
-    // (ADR-0025). The Gateway creates none of these.
-    for (const [session, sessionDirectory, onDisk] of [
-      // A name that climbs out of the Session root has no Gateway-side path at all, and
-      // the Mount Table says so rather than inventing one.
-      ["../escape", "/escape", undefined],
-      ["user:42", "/sessions/user:42", "/srv/saf/sessions/user:42"],
-      ["a/b", "/sessions/a/b", "/srv/saf/sessions/a/b"],
-      ["", "/sessions", "/srv/saf/sessions"],
+    // The Session directory follows the name wherever it goes, and that is safe
+    // without a path-segment check of ours: it is a path inside a `--rm` container, so
+    // a name climbing out of the mounted Session root lands in the container's own
+    // filesystem and dies with it, touching nothing on the host (ADR-0025). The Gateway
+    // creates none of these.
+    for (const [session, sessionDirectory] of [
+      ["../escape", "/escape"],
+      ["user:42", "/sessions/user:42"],
+      ["a/b", "/sessions/a/b"],
+      ["", "/sessions"],
     ] as const) {
       const invocation = invocationFor({}, { session, text: "hi" });
 
       assert.equal(invocation.session, session);
       assert.equal(argumentAfter(invocation, "--session-id"), session);
       assert.equal(argumentAfter(invocation, "--session-dir"), sessionDirectory);
-      assert.equal(invocation.sessionDirectory, onDisk);
     }
   });
 });

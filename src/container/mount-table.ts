@@ -1,12 +1,17 @@
 /**
- * The Mount Table: what the agent's container sees on disk, and who it runs as.
+ * The Mount Table: what the agent's container sees on disk.
  *
  * A value and a pure function, and that is the whole of it
  * ([ADR-0028](../../docs/adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)).
  * It creates nothing, writes nothing, starts nothing and checks nothing: resolution
- * fills in the user and refuses a declaration that cannot mean what it says, and emission
- * turns the result into container arguments. Nothing here stats a path, so an Operator
+ * refuses a declaration that cannot mean what it says, and emission turns the result
+ * into `--mount` arguments and nothing else. Nothing here stats a path, so an Operator
  * composing their own table needs no temporary directory and no container to test it.
+ *
+ * It used to carry the container's user too, on the argument that what is shared and
+ * who shares it are two halves of one fact. That argument is recorded and overruled in
+ * ADR-0028: the user stopped being configuration at all, and the Agent Container Runtime
+ * emits this process's own unconditionally.
  *
  * Nothing in it knows about `pi`, which is why it lives here and is exported from the
  * package root rather than the `./pi` subpath: a second Runtime would need exactly
@@ -49,21 +54,22 @@ export type Mount = {
 };
 
 /**
- * The whole of the agent container's filesystem, and the user that shares it.
+ * The whole of the agent container's filesystem.
  *
- * The user belongs here rather than with the Runtime because every reason it
- * exists is a filesystem reason: with bind mounts the files the agent writes are owned
- * by the container's user, so a mismatch leaves Signal Handlers unable to read what the
- * agent wrote in the shared Workspace and the agent unable to read theirs. What is
- * shared and who shares it are the two halves of one fact, and they cannot come apart if
- * they are declared together.
- *
- * `network`, `workdir`, `extraArgs`, the image and the container command deliberately
- * stay with the Runtime. The line is "the shared filesystem and who shares it",
- * not "every container flag".
+ * Everything else about the container — the image, the entry point, the networks, the
+ * environment, the flags the framework does not model — is the Agent Container's, which
+ * carries one of these or carries none. The line is "the shared filesystem", not "every
+ * container flag" and no longer "the shared filesystem and who shares it".
  */
 export type MountTable = {
-  /** At least one. An empty table is refused rather than producing a bare container. */
+  /**
+   * What the container sees, in the order it is declared.
+   *
+   * An empty list is a deployment too, and is not refused: an image that bakes in its
+   * own configuration and keeps no state between Runs mounts nothing. The cost is
+   * silent — nothing the agent writes outlives its `--rm` container, so every Run is a
+   * first Run — which is why ADR-0028 writes it down rather than guarding against it.
+   */
   readonly entries: readonly Mount[];
   /**
    * How this Gateway's own filesystem maps to the host's, for a Gateway in a container.
@@ -99,8 +105,6 @@ export type MountTable = {
    * exact mechanism that fails loudly, or none.
    */
   readonly hostPaths?: Readonly<Record<string, string>>;
-  /** The container's user, `uid:gid`. Defaults to this process's own. */
-  readonly user?: string;
 };
 
 /** An entry with its defaults settled. */
@@ -111,8 +115,8 @@ export type ResolvedMount = {
    * What the daemon is given as the bind source: the `gatewayPath` through `hostPaths`.
    *
    * The same string as `gatewayPath` for a Gateway on the host, and the two are kept
-   * apart anyway, because `gatewayPathFor` has to keep answering in *this* process's
-   * namespace while the daemon is told about the host's.
+   * apart anyway, because they are answers to different questions asked in different
+   * filesystem namespaces and only one of them is the daemon's.
    */
   readonly hostPath: string;
   readonly readOnly: boolean;
@@ -121,55 +125,36 @@ export type ResolvedMount = {
 /** A Mount Table that has been settled and found usable. */
 export type ResolvedMountTable = {
   readonly entries: readonly ResolvedMount[];
-  /** `undefined` only where the platform has no uid and no gid, which is Windows. */
-  readonly user: string | undefined;
-  /** The container-runtime arguments this table contributes: the mounts, and the user. */
-  containerArguments(): readonly string[];
   /**
-   * Where a path inside the container is on the Gateway's own disk, or `undefined`.
+   * The container-runtime arguments this table contributes: one `--mount` per entry,
+   * and nothing else at all.
    *
-   * Longest-prefix match, so a Session's own directory resolves through the entry that
-   * mounts the Session root. It exists for the Runtime's debug line, which is the only
-   * thing that can answer "where is this Session's transcript on my disk" — the question
-   * ADR-0025 records the forgetful-agent failure as being diagnosed with. A Runtime that
-   * still writes files of its own uses it for those too, and that is the whole of what a
-   * container path is ever turned back into.
+   * There is no reverse lookup beside it. One existed, for the Gateway-side path of a
+   * Session's transcript, and its only caller was a debug line that went with the
+   * Session root; an honest one is three-way anyway, since `hostPaths` gives every
+   * mount three names, and a two-way one silently picks an answer (ADR-0028).
    */
-  gatewayPathFor(containerPath: string): string | undefined;
+  containerArguments(): readonly string[];
 };
 
 /**
  * Settles a Mount Table, or refuses it.
  *
- * Pure and total: it applies `hostPaths`, defaults the user, refuses a relative path on
- * either side, refuses an entry no `hostPaths` prefix covers, and refuses a table with no
- * entries. It performs no I/O, so what it cannot tell you is whether any of these paths
- * exists — that is the daemon's answer at the first Run, and deliberately nobody else's
- * (ADR-0028).
+ * Pure and total: it applies `hostPaths`, refuses a relative path on either side, and
+ * refuses an entry no `hostPaths` prefix covers. It performs no I/O, so what it cannot
+ * tell you is whether any of these paths exists — that is the daemon's answer at the
+ * first Run, and deliberately nobody else's (ADR-0028).
  *
- * `createPiAdapter` calls it during construction, so a table that cannot work is refused
- * where the Operator wrote it rather than at the first Signal.
+ * `createAgentContainerRuntime` calls it during construction, so a table that cannot
+ * work is refused where the Operator wrote it rather than at the first Signal.
  */
 export function resolveMountTable(table: MountTable): ResolvedMountTable {
-  if (table.entries.length === 0) {
-    throw new Error(
-      "the Mount Table has no entries, so the agent's container would see none of the Operator's filesystem at all",
-    );
-  }
-
   const hostPaths = table.hostPaths ?? {};
   const entries = table.entries.map((entry) => resolveEntry(entry, hostPaths));
-  const user = table.user ?? ownUser();
 
   return {
     entries,
-    user,
-    containerArguments: () => {
-      const args = entries.flatMap((entry) => ["--mount", mountArgument(entry)]);
-      if (user !== undefined) args.push("--user", user);
-      return args;
-    },
-    gatewayPathFor: (containerPath) => gatewayPathIn(entries, containerPath),
+    containerArguments: () => entries.flatMap((entry) => ["--mount", mountArgument(entry)]),
   };
 }
 
@@ -249,38 +234,13 @@ function field(name: string, value: string): string {
   return `"${pair.replaceAll('"', '""')}"`;
 }
 
-function gatewayPathIn(
-  entries: readonly ResolvedMount[],
-  containerPath: string,
-): string | undefined {
-  let best: { readonly entry: ResolvedMount; readonly rest: string } | undefined;
-  for (const entry of entries) {
-    const rest = remainderUnder(containerPath, entry.containerPath);
-    if (rest === undefined) continue;
-    if (best === undefined || entry.containerPath.length > best.entry.containerPath.length) {
-      best = { entry, rest };
-    }
-  }
-  if (best === undefined) return undefined;
-
-  // The remainder is a container path and therefore POSIX; the answer is a path on this
-  // platform, so the two are joined with what this platform separates paths with.
-  const rest = best.rest.replace(/^\/+/, "");
-  return rest === ""
-    ? best.entry.gatewayPath
-    : path.join(best.entry.gatewayPath, ...rest.split("/"));
-}
-
 /**
  * What is left of `candidate` below `prefix`, or `undefined` if it is not below it. `""`
  * where the two name the same thing, and otherwise leading-separated.
  *
- * Both longest-prefix matches in this module ask this one question: the one turning a
- * Gateway path into a host path, and the one turning a container path back into a
- * Gateway path. They still choose their own winner among the matches, but what counts as
- * a match, and what is left over once one is taken, is settled here for both. A trailing
- * separator on the prefix means nothing, since a directory is the same directory either
- * way and an Operator writing one out is not making a different statement.
+ * A trailing separator on the prefix means nothing, since a directory is the same
+ * directory either way and an Operator writing one out is not making a different
+ * statement.
  */
 function remainderUnder(candidate: string, prefix: string): string | undefined {
   const withoutTrailing = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
@@ -288,17 +248,4 @@ function remainderUnder(candidate: string, prefix: string): string | undefined {
   return candidate.startsWith(`${withoutTrailing}/`)
     ? candidate.slice(withoutTrailing.length)
     : undefined;
-}
-
-/**
- * This process's `uid:gid`, or nothing where the platform has no such thing.
- *
- * The default rather than a documented step, because the failure a mismatch produces is
- * a Signal Handler that cannot read a file the agent definitely wrote.
- */
-function ownUser(): string | undefined {
-  if (typeof process.getuid !== "function" || typeof process.getgid !== "function") {
-    return undefined;
-  }
-  return `${process.getuid()}:${process.getgid()}`;
 }

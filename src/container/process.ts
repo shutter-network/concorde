@@ -1,9 +1,9 @@
 /**
  * Starting a container and reading what it wrote.
  *
- * The one place in the `pi` adapter that spawns anything, and it spawns one thing: a
- * Run, whose stdout is the Agent Implementation's JSONL event stream. Four things have
- * to be right — write stdin and close it, read stdout to the end, collect stderr without
+ * The one place in the framework that spawns anything, and it spawns one thing: a Run,
+ * whose stdout is whatever the Agent Implementation writes. Four things have to be
+ * right — write stdin and close it, read stdout to the end, collect stderr without
  * letting it fill, and wait for the process to be gone — and getting any of them wrong
  * produces a hang rather than a failure.
  *
@@ -14,20 +14,23 @@
  *    early turns a finished Run into a hang — and there are no timeouts anywhere
  *    ([ADR-0017](../../docs/adr/0017-failed-runs-are-not-retried.md)).
  *  - **stderr is drained for the same reason**, not because anything decides
- *    anything by it. `pi` warns on stderr about a Session it is creating and exits
- *    0, so stderr is diagnosis and never a verdict.
+ *    anything by it. An agent that warns on stderr about a Session it is creating
+ *    and then exits 0 is the ordinary case, so stderr is diagnosis and never a verdict.
  *  - **a write to stdin can fail**, with `EPIPE`, when the container exits before
  *    reading the Prompt. Unhandled, that is an error event on a stream nobody is
  *    listening to, which takes the Gateway's process down; the Run's real outcome
  *    is in the stream and is reported from there instead.
  *
- * Nothing here knows about `pi`, and nothing here interprets an exit code.
+ * Nothing here knows about any Agent Implementation, and nothing here interprets an
+ * exit code. That was true while this module lived under `src/pi/` and is why it now
+ * lives beside the Mount Table instead
+ * ([ADR-0033](../../docs/adr/0033-an-agent-is-a-container-and-one-function.md)).
  */
 
 import { spawn } from "node:child_process";
 import type { Readable } from "node:stream";
 
-/** Enough of a `PiInvocation` to start: a `PiInvocation` satisfies it. */
+/** Enough of a composed command to start one: a `ComposedCommand` satisfies it. */
 export type ContainerCommand = {
   readonly command: string;
   readonly args: readonly string[];
@@ -42,10 +45,11 @@ export type ContainerResult<T> = {
   /**
    * The exit status, or `null` when a signal ended it.
    *
-   * Reported, never interpreted: `pi --mode json` exits 0 on model and API errors,
-   * so an exit code cannot say whether a Run succeeded (ADR-0025). It is worth
-   * putting in the message of a failure that was decided elsewhere, and worth
-   * nothing else.
+   * Reported, never interpreted. An agent in machine-readable mode may well exit 0
+   * on a model or API error, so an exit code cannot say whether a Run succeeded, and
+   * only the Agent Implementation's own reader knows whether its agent's can
+   * (ADR-0025). It is worth putting in the message of a failure that was decided
+   * elsewhere, and worth nothing else.
    */
   readonly exitCode: number | null;
   /** The signal that ended it, if one did. */
@@ -68,8 +72,8 @@ const stderrLimit = 4000;
  * Runs one container to completion and hands its stdout to `read`.
  *
  * `read` is given the raw bytes rather than text, so a multi-byte character split
- * across two chunks is the reader's to reassemble — which is the whole point of
- * `interpretPiOutput` taking bytes.
+ * across two chunks is the reader's to reassemble — which is the whole point of an
+ * Agent Implementation's outcome reader taking bytes.
  *
  * There is no timeout, here or anywhere (ADR-0017). A Run that never returns halts
  * the Gateway, and that hole is accepted rather than papered over with a number the
@@ -91,7 +95,7 @@ export async function runContainer<T>(
   });
   if (failedToStart !== undefined) {
     throw new Error(
-      `the container runtime ${JSON.stringify(invocation.command)} could not be started: ${failedToStart.message}. It is the command the pi adapter runs the agent with — check that it is installed and on this process's PATH, or set containerCommand.`,
+      `the container runtime ${JSON.stringify(invocation.command)} could not be started: ${failedToStart.message}. It is the command the agent's container is run with — check that it is installed and on this process's PATH, or set containerCommand.`,
       { cause: failedToStart },
     );
   }

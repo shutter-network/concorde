@@ -28,13 +28,13 @@
  *    Run of every named Session.
  */
 
+import { runContainer } from "../container/process.ts";
 import { defaultLogger, type Logger } from "../logging.ts";
 import type { Prompt } from "../signals/handlers.ts";
 import type { RunOutcome, Runtime } from "../signals/runtime.ts";
 import { type PiConfiguration, resolvePiConfiguration } from "./configuration.ts";
 import { composeInvocation } from "./invocation.ts";
 import { interpretPiOutput } from "./output.ts";
-import { runContainer } from "./process.ts";
 
 /**
  * Everything the adapter is constructed with: the agent's configuration, plus the
@@ -88,10 +88,6 @@ export function createPiAdapter(options: PiAdapterOptions): Runtime {
         {
           runId,
           session: invocation.session,
-          // The one place this Session's transcript is named as a path on the
-          // Operator's own disk. The argv below carries the container's path, which
-          // answers a different question.
-          sessionDirectory: invocation.sessionDirectory,
           command: invocation.command,
           // `redactedArgs`, never `args`: the invocation carries whatever `env` holds,
           // which is where a provider API key goes. This is the log line story 50 asks

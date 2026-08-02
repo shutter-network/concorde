@@ -365,11 +365,12 @@ section.
 ### The agent's container runs as *your* uid
 
 With bind mounts, files the agent writes are owned by whoever the container runs as. So
-the Mount Table defaults its `user` to the Gateway process's own `uid:gid` — otherwise
-your Signal Handlers cannot read what the agent left in the Workspace, and the agent
-cannot read what they left for it. It sits beside the entries because it is the other
-half of the same fact: what is shared, and who shares it. Write `user: "1000:1000"` on the
-table to override it; it is a default and not a rule.
+the container always runs as the Gateway process's own `uid:gid` — otherwise your Signal
+Handlers cannot read what the agent left in the Workspace, and the agent cannot read what
+they left for it. There is no field for it: it used to be the Mount Table's and is no
+longer configuration at all
+([ADR-0028](./adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)). To
+countermand it, put `--user` in `extraArgs`, which is spliced last and so wins.
 
 The consequence: **the mounted directories must be writable by that uid.** In the
 reference deployment they are, trivially, because the Gateway runs as you on your own
@@ -436,12 +437,11 @@ Safe to keep in a log file: the argument list on that line has environment **val
 stripped out, because the real one carries your provider API key. The two values a mount
 problem is diagnosed from are kept.
 
-The same line carries one field the argv cannot: `sessionDirectory`, the Session's own
-directory **as this process sees it**, rather than as the container does. That is the
-answer to "the agent has forgotten everything" — go and look at whether the transcript is
-where you think it is. The Mount Table works the container path back through your entries
-to produce it, and reports nothing at all where the Session root is not something you
-mounted, which is itself the answer in that case.
+The line no longer says where the Session's transcript landed on your own disk. It used
+to, worked back through your entries by the Mount Table, and that reverse lookup is gone
+along with it ([ADR-0028](./adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)).
+For "the agent has forgotten everything", the argv's `--session-dir` names the directory
+as the container sees it, and your own entry for the Session root says where that is.
 
 ### The agent's network isolates less than it looks like
 
