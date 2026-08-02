@@ -1,7 +1,11 @@
 /**
  * A whole Gateway, assembled by hand.
  *
- *     node example/gateway.ts "what have I asked you before?"
+ *     node example/gateway.ts
+ *
+ * It takes no arguments, because there is nothing left to say to it from a shell: a
+ * person logs in over the Public server, posts a Message, and reads the agent's answer
+ * back. The quickstart walks that through with `curl`.
  *
  * Nothing here represents the Gateway. There is no framework object to construct, no
  * registry to add parts to, and no lifecycle to implement: this file *is* the Gateway,
@@ -9,21 +13,28 @@
  * an assembly is, whole, is four steps:
  *
  *   1. **construct** — the Db, two Fastify instances as Components, the Runtime, the
- *      User Directory and the Signal Worker with its Handlers. A part handed a
- *      server registers its routes on it and a part with tables registers its migration
- *      descriptor with the Db, so construction is also the whole of the wiring
- *      ([ADR-0032](../docs/adr/0032-components-wire-themselves-at-construction.md))
+ *      User Directory, the Signal Worker with its Handlers and the HTTP Messenger. A part
+ *      handed a server registers its routes on it and a part with tables registers its
+ *      migration descriptor with the Db, so construction is also the whole of the wiring
+ *      ([ADR-0032](../docs/adr/0032-components-wire-themselves-at-construction.md)). The
+ *      order is arbitrary but for one pair, the Messenger after the User Directory, which
+ *      migration order makes load-bearing and whose comment below says why
  *   2. **migrate** — explicitly, and after the construction above, because constructing
  *      a part is what registers the descriptor `db.migrate()` applies. `migrate.ts` is
  *      the same call as a deploy step of its own, which is what a second replica needs
- *   3. **order** — the list, which is the one thing in this file that is not arbitrary
- *      and the one thing nothing checks. Its comment is below and is worth reading
+ *   3. **order** — the list, which nothing checks and nothing can, since every position in
+ *      it is reasoning about shutdown. Its comment is below and is worth reading
  *   4. **start** — one call, in list order, and `stop` in the reverse of it
  *
- * Two things this file is deliberately on the hook for, because the framework ships
- * neither: **shutdown** (the two-line loop at the bottom, whose exit code and escalation
- * policy are this file's) and **emitting Signals** (the last line, which is a Producer —
- * a Producer is anything that emits, including a loop in an entry point).
+ * One thing this file is deliberately on the hook for, because the framework ships none of
+ * it: **shutdown**, the two-line loop at the bottom, whose exit code and escalation policy
+ * are this file's.
+ *
+ * **Emitting Signals** used to be the second, and it is not any more. The last line of this
+ * file used to be a Producer: a loop that made up a user id, standing in for a person
+ * because there was no way to have one. The HTTP Messenger is the Producer now, so every
+ * Signal this Gateway processes arrives because somebody with a Token posted a Message, and
+ * a Producer that lives in an entry point is a thing this file no longer demonstrates.
  *
  * Read ../docs/quickstart.md alongside this. It explains the parts that are load-bearing
  * and cannot be guessed from here: why the agent's container reaches this process at
@@ -38,9 +49,15 @@ import {
   components,
   createSignalWorker,
   openDb,
+  type SignalHandler,
   serverComponent,
   templateHandler,
 } from "shared-agent-framework";
+import {
+  createHttpMessenger,
+  type MessageRecord,
+  messageReceivedKind,
+} from "shared-agent-framework/http-messenger";
 import { createPiRuntime } from "shared-agent-framework/pi";
 import { createUsers } from "shared-agent-framework/users";
 
@@ -184,18 +201,24 @@ const runtime = createPiRuntime({
   },
 });
 
-// The User Directory, constructed and held by nobody, because handing it the two servers
-// is the whole of what this deployment asks of it: `POST /auth/tokens` on the Public one,
-// `POST /users` and the two reads on the Agent one. Omitting a server is how either group
-// is switched off — there is no flag and no route to guard (ADR-0010).
+// The User Directory, and the first part here that is **held** rather than constructed for
+// its wiring alone: the HTTP Messenger below takes it. Handing it the two servers is still
+// most of what this deployment asks of it (`POST /auth/tokens` on the Public one, `POST
+// /users` and the two reads on the Agent one), and omitting a server is how either group is
+// switched off, since there is no flag and no route to guard (ADR-0010).
 //
-// A deployment with routes of its own keeps the object instead. `requireUser` is on it,
-// and so are the four things trusted code may do and the agent may not: setting
-// Attributes, replacing a password, issuing a Token and revoking (ADR-0029, ADR-0030).
-// It is **not** a Component and has no place in the list below: nothing to start, nothing
-// to release (ADR-0031). Seeding the first User is out of band and not in this file,
-// because a User has no natural key and so "create if absent" cannot be written.
-createUsers({
+// What the object itself carries is what no request can express: `requireUser`, which the
+// Messenger puts on its own Public routes rather than inventing an authentication of its
+// own, and the four things trusted code may do and the agent may not, which are setting
+// Attributes, replacing a password, issuing a Token and revoking (ADR-0029, ADR-0030). It
+// is **not** a Component and has no place in the list below: nothing to start, nothing to
+// release (ADR-0031).
+//
+// Seeding the first User is out of band and not in this file, because a User has no natural
+// key and so "create if absent" cannot be written. In this deployment the first one is made
+// with `POST /users` on the Agent server, which takes a password and nothing else, and the
+// quickstart's walkthrough starts there.
+const users = createUsers({
   db,
   // Thirty days. No default, because the trade is the deployment's: longer is fewer
   // logins and a longer window for a stolen Token, and nothing in the framework can tell
@@ -205,33 +228,109 @@ createUsers({
   publicServer,
 });
 
+// The one Handler this deployment has, and the whole of what it does with a Message that
+// arrived: render a Prompt from it, in the Session that person's Prompts have always gone to.
+//
+// Typed `SignalHandler<MessageRecord>` rather than left to inference, because the payload
+// type is what makes the template's data function check. Both halves of the Messenger's
+// Signal contract are imported rather than restated here: the `kind` below, so a Handler map
+// is not a string literal that can drift, and this record, so nothing re-declares a payload
+// shape by hand (ADR-0034). The annotation is also what types `post`'s own arguments, since
+// the Worker's map is `Record<string, SignalHandler<unknown>>` and would otherwise hand a
+// literal written inline a payload of `unknown`.
+//
+// It closes over `messenger`, which is constructed *after* the Worker below, and the loop in
+// the text is not one at runtime: a Handler receives only the Signal and reaches everything
+// else through what it closed over (ADR-0024), so `post` reads that binding when a Run has
+// already failed and never at construction.
+const answering: SignalHandler<MessageRecord> = {
+  ...templateHandler<MessageRecord>({
+    template: new URL("./prompts/message-received.hbs", import.meta.url),
+    // One Session per User: one of the topologies ADR-0006 lists, chosen by this deployment,
+    // and the framework has no opinion about the name it produces. What is new is that the
+    // id inside it belongs to somebody. The Messenger wrote it from the Token the submission
+    // carried, and the Public route has no field a client could put a User in, so routing on
+    // it is trustworthy rather than merely convenient (ADR-0020).
+    session: (signal) => `user_${signal.payload.userId}`,
+    // The payload **is** the Message record, flat, so the template has the text, who sent
+    // it, its number in that person's log and when it arrived, with no second query.
+    data: (signal) => signal.payload,
+  }),
+  // The post phase, which runs once after every Run arising from the Signal has finished and
+  // is the whole of the framework's failure handling (ADR-0017). It is the only place this
+  // deployment answers a person from the Gateway's own code, and it is here because a failed
+  // Run is otherwise silent to the one party who is waiting: the Message is stored, the
+  // Signal row says `failed`, and nothing retries it.
+  //
+  // It deliberately does not carry the *answer*, because it cannot: a Run reports `ok` or an
+  // error string and none of the agent's output, by decision rather than omission. So the
+  // answer reaches this person the one way it can, which is the agent posting it itself
+  // during the Run over the Agent server, as ./AGENTS.md and the Prompt both tell it to.
+  // One path for an answer and one for a failure, and never two for the same thing.
+  async post(signal, outcome) {
+    if (!outcome.failed) return;
+    // `send` takes the caller's transaction rather than finding one (ADR-0023), so a Handler
+    // with tables of its own commits its record of a failure together with the words it sent
+    // about it, or neither. This one has no tables, so there is one statement in here.
+    await db.tx((tx) =>
+      messenger.send(
+        tx,
+        signal.payload.userId,
+        "Something went wrong while I was working on that, and nothing will retry it. Please ask again.",
+      ),
+    );
+  },
+};
+
 const worker = createSignalWorker({
   db,
   runtime,
-  // The primary extension point, and the only one that needs learning. A Handler is a
-  // plain object with a `handle` — this one is shipped, renders a Handlebars file per
-  // Run, and closes over its template and its Session-naming rule rather than being
-  // handed a context object. A Signal whose `kind` is not a key here fails permanently,
-  // which is why the map is a construction option: a Worker with no Handlers should not
-  // be constructible.
-  handlers: {
-    ask: templateHandler<{ user: string; text: string }>({
-      template: new URL("./prompts/ask.hbs", import.meta.url),
-      // One Session per user: one of the topologies ADR-0006 lists, chosen by this
-      // deployment, and the framework has no opinion about the name it produces.
-      session: (signal) => `user_${signal.payload.user}`,
-      data: (signal) => signal.payload,
-    }),
-  },
+  // The primary extension point, and the only one that needs learning. A Signal whose `kind`
+  // is not a key here fails permanently, which is why the map is a construction option: a
+  // Worker with no Handlers should not be constructible. This one has a single key, and it is
+  // the constant the Messenger exports rather than the string it stands for.
+  handlers: { [messageReceivedKind]: answering },
   // Which registers the Worker's read-only routes on it at no prefix — `/signals` and
   // `/runs`, the URLs ./AGENTS.md hands the agent. The exported `worker.agentRoutes` is
   // the door out of that default, for a prefix or an encapsulation of your own.
   agentServer,
 });
 
+// The HTTP Messenger: a way in for a person and a way back for the agent, which is what this
+// deployment had neither of. Both route groups land at `/messages` on the server they belong
+// to, the Public pair behind the Directory's `requireUser` and the Agent pair behind no
+// credential at all (ADR-0010). A submission is one transaction, the Message row and then the
+// Signal that wakes the Worker for it, so what somebody said and the fact that anybody was
+// told about it commit together or neither does (ADR-0034).
+//
+// **Constructed after the User Directory**, and that is not a matter of taste.
+// `messages.user_id` is a foreign key onto `saf_users.users.id`, `db.migrate()` applies
+// descriptors in registration order, and registration order is construction order, so the
+// other way round fails on this part's first migration with `schema "saf_users" does not
+// exist` (ADR-0036).
+//
+// In *this* file the wrong order is caught, and by nothing clever: the Directory is an
+// argument here, so putting this call first is a TypeScript error about a variable used
+// before its declaration rather than a Gateway that boots and cannot migrate. That is the
+// whole of the check, and it is a property of taking the object rather than something the
+// framework does. Where the descriptors are registered by hand instead, as migrate.ts
+// registers them, there is no such argument and no such error, and the failure at `migrate`
+// is the only thing that says so.
+//
+// **In no start order.** It is not a Component: no timers, no connection of its own, nothing
+// to start and nothing to release, so a place in that list would imply its position mattered
+// when it does not (ADR-0031). The day delivery stops being polling it becomes one, with a
+// `LISTEN` registration and a `stop` that closes open responses (ADR-0035).
+//
+// Held, because the Handler above answers a failed Run through `send`. A deployment whose
+// Handlers neither write a Message nor read a log can call this and drop the result: the three
+// acts of wiring happened either way, and what is on the object is only the two things no
+// request can express.
+const messenger = createHttpMessenger({ db, users, worker, publicServer, agentServer });
+
 // After construction, because a part registers its own migration descriptor with the Db
 // and `db.migrate()` applies whatever registered. migrate.ts is the entry point a deploy
-// runs instead of this one, and it registers the same two descriptors explicitly — the
+// runs instead of this one, and it registers the same three descriptors explicitly — the
 // identical descriptor twice is one registration.
 //
 // One process on one machine can do this here. More than one cannot: Drizzle's migrator
@@ -240,9 +339,9 @@ const worker = createSignalWorker({
 // goes unnoticed if you do, because `start` below refuses a schema the database is behind.
 await db.migrate();
 
-// The list, and the one thing in this file that is not arbitrary. `components` starts in
-// this order and stops in the reverse of it, so every position is a claim about what must
-// still be working while the thing after it shuts down:
+// The list, and the second thing in this file whose order is not arbitrary. `components`
+// starts in this order and stops in the reverse of it, so every position is a claim about
+// what must still be working while the thing after it shuts down:
 //
 //   1. **the Db**, so it stops last. Everything queries it and the drain queries it on
 //      the way down; closing it earlier pulls the `LISTEN` connection out from under a
@@ -291,9 +390,8 @@ for (const stopping of ["SIGINT", "SIGTERM"] as const) {
   process.once(stopping, () => void gateway.stop());
 }
 
-// A Producer: something inside the Gateway that puts a Signal in the queue. There is no
-// framework concept here beyond a function call, and it takes the transaction rather than
-// finding one — so recording something and telling the agent about it cannot come apart,
-// and a rollback wakes nobody. The Messenger will be one of these; so is this line.
-const asked = process.argv[2] ?? "Say hello, and tell me what has arrived recently.";
-await db.tx((tx) => worker.emit(tx, { kind: "ask", payload: { user: "42", text: asked } }));
+// And that is the end of the file, which used to have one more line: a Producer that emitted a
+// Signal for a user id nobody had, because nothing here could hold a real person. The HTTP
+// Messenger constructed above is the Producer now. `worker.emit` is still an ordinary call
+// taking an ordinary transaction, so a loop in an entry point remains a perfectly good
+// Producer; it is simply not what this deployment needs to demonstrate any more.

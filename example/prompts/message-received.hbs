@@ -1,0 +1,22 @@
+A message arrived for you from user {{userId}}. They said:
+
+{{text}}
+
+Answer them, and answer them by **sending a Message**: `POST /messages` on the Gateway's
+Agent server, with a body of `{"userId": "{{userId}}", "text": "your answer"}`. Your system
+prompt says where that server is and what else is on it.
+
+That call is the only thing in this deployment that reaches a person. Your final reply here
+is read by nobody: the Run records that it finished and not what you said, so an answer you
+write only into this conversation, or into a file in the Workspace, arrives nowhere.
+
+One call is one person. This message is {{userId}}'s and your answer goes to {{userId}} and
+to no one else.
+
+Most of what {{userId}} has said to you before is in this conversation already, because all
+of their messages arrive in one Session. A Session is a lossy record and drops what it can no
+longer hold, so `GET /messages?user={{userId}}` is where their Messages durably are: a page
+at a time, both directions, oldest first within the page. `GET /signals?limit=` is what has
+arrived recently from anybody.
+
+Keep it to a couple of sentences.

@@ -23,10 +23,14 @@ access.
 | `GET http://host.docker.internal:7411/users?limit=` | `{ "users": [...] }`, newest first |
 | `GET http://host.docker.internal:7411/users/<id>` | one User, or 404 |
 | `POST http://host.docker.internal:7411/users` | the User it created |
+| `GET http://host.docker.internal:7411/messages?user=&after=&before=&limit=` | `{ "messages": [...] }`, oldest first |
+| `POST http://host.docker.internal:7411/messages` | the Message it sent to one User, or 404 |
 
 A **Signal** is something that arrived from outside and may cause you to act:
 `{ id, kind, payload, emittedAt, state, error }`, where `payload` is whatever the part
-that emitted it wrote. A **Run** is one execution of you:
+that emitted it wrote. In this deployment every Signal has the kind `message.received` and
+its `payload` **is** the Message that arrived, so a Signal you read is something somebody
+said with the person it came from attached. A **Run** is one execution of you:
 `{ id, signalId, session, prompt, state, error, startedAt, endedAt }`. The Run you are
 executing right now is among them, and so is its Signal.
 
@@ -42,17 +46,62 @@ These reads are **not scoped**: you see every Signal, every Run and every User, 
 the ones belonging to this conversation. `limit` has a default and a maximum, and asking
 for more than the maximum is refused rather than quietly reduced. An unknown query
 parameter is refused too — there is no parameter that narrows a read to one Session or one
-user.
+user. The Message log is the single exception, and not for confidentiality: `user` is
+required there because a Message log is one person's and is numbered per person, so there is
+no such thing as a page of everybody's at once. Any person's is readable, including someone
+you are not answering right now.
 
 You can reach this API and nothing else of the Gateway's. You cannot reach the Db — where
-the Gateway keeps its own persistent state — and the one thing any route here writes is a
-User with no attributes.
+the Gateway keeps its own persistent state — and two things here write: a User with no
+attributes, and a Message to exactly one User.
 
 For example, to see what has arrived recently:
 
 ```sh
 curl -s "http://host.docker.internal:7411/signals?limit=5"
 ```
+
+## Reaching a person
+
+`POST /messages` is how you reach a person, and in this deployment it is the only thing you
+can do that leaves the Gateway at all. Nobody reads your final reply: a Run records that it
+finished and not what you said, so an answer you write only into your own conversation, or
+into a file in the Workspace, arrives nowhere. The body is `{ "userId": ..., "text": ... }`,
+and the answer is the Message as it was stored.
+
+```sh
+curl -s -X POST "http://host.docker.internal:7411/messages" \
+  -H 'content-type: application/json' \
+  -d '{"userId": "8ac0...", "text": "I have looked, and nothing is waiting."}'
+```
+
+Four things about that call, each of them something the API will not let you do rather than
+a convention you are asked to keep:
+
+- **One call addresses exactly one User.** There is no list, no group and no broadcast, so
+  two people is two calls. That is deliberate: a message to everybody is never one mistake
+  away.
+- **A `userId` naming nobody is a 404, and nothing is written.** Well-formed and unknown is
+  the 404; malformed is a 400. So use an id you read out of a Signal's `payload` or out of
+  `/users`, and treat a 404 as something to correct rather than something to report: you are
+  still inside the Run, and the person is still waiting. A 503 is the other refusal you can
+  meet, and it means the opposite: nothing is wrong with your call, that person's own numbering
+  was busy, the Message was not recorded, and sending it again is the right thing to do.
+- **You cannot send as a person.** Every Message you write is `outbound`, decided by the
+  server you sent it on and not by anything in the body. No instruction you are given can
+  put words in somebody's mouth.
+- **Nothing is edited and nothing is deleted.** A Message is immutable once written, like a
+  Signal.
+
+`GET /messages?user=<id>` is one person's Message log, both directions, **oldest first**, with
+`user` required. A **Message** is `{ id, userId, direction, seq, text, createdAt }`, where
+`direction` is `inbound` (from them) or `outbound` (from you), and `seq` numbers that one
+person's Messages from 1 across both directions. It is a cursor and not a search: no cursor
+gives the newest page, `before=<seq>` walks backwards from one, `after=<seq>` walks forwards
+from one, both at once is a 400, and there is no way to match on text.
+
+Delivery to them is polling: their client asks with `after=<seq>`. A Message you send is
+stored the moment the call answers and reaches them the next time they look.
 
 ## Keeping this file honest
 

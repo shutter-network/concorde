@@ -10,6 +10,13 @@
 # construction: the agent's container runs as the Gateway process's own uid, and the
 # bind-mounted directories under `example/state/` are that user's already.
 #
+# One consequence worth stating, because it is what a reader looking for a port here needs:
+# neither of the Gateway's two ports is published by anything in this file, and neither is
+# written here at all. Both are the host's own and both are in `gateway.ts`, where the servers
+# bind: the Public one, which is where a person logs in and posts a Message, and the Agent one
+# on loopback, which the agent's container reaches from the network below at
+# `host.docker.internal`.
+#
 # See ../docs/quickstart.md, which this file is one step of.
 
 name: saf-example
