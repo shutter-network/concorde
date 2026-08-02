@@ -4,9 +4,9 @@ Terminology is in [CONTEXT.md](../CONTEXT.md); rationale is in [docs/adr/](./adr
 
 The model splits along the Gateway's internal boundaries ([ADR-0020](./adr/0020-producers-are-trusted-components-of-the-gateway.md)): the **Signal Worker** owns Signals and Runs, the **User Directory** owns Users and their Tokens, the **Messenger** owns Messages and Outboxes. The Scheduler keeps its own model, not described here. The Workspace is files, not rows. Signal Handlers are code, not data.
 
-The split is literal: each part owns a PostgreSQL schema and migrates it independently, and no table references another part's ([ADR-0022](./adr/0022-the-store-is-postgresql-through-drizzle.md)).
+The split is literal: each part owns a PostgreSQL schema and migrates it independently, and no table references another part's ([ADR-0022](./adr/0022-the-store-is-postgresql-through-drizzle.md)). The Signal Worker's is **`saf_signals`** and the User Directory's is **`saf_users`** — each named for its subject rather than for the part, so that renaming a part is not a schema migration. Each carries its own migration tracking table, which is what stops one part's migrations being silently skipped, and a part registers its migration descriptor with the Db when it is constructed ([ADR-0032](./adr/0032-components-wire-themselves-at-construction.md)).
 
-## Signal Worker
+## Signal Worker (`saf_signals`)
 
 ### Signal
 
@@ -39,7 +39,7 @@ One Prompt executed in one Session.
 
 There is no `timed_out` state, because there are no timeouts ([ADR-0017](./adr/0017-failed-runs-are-not-retried.md)).
 
-## User Directory
+## User Directory (`saf_users`)
 
 ### User
 

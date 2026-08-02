@@ -14,6 +14,8 @@ Not every part is a Producer. The **User Directory** owns Users, their Attribute
 
 Nothing represents the Gateway itself. There is no plugin system and no registry of parts: the Operator's entry point constructs the Db, the two servers, the Signal Worker, and whichever Producers the deployment wants, wiring them by passing them to each other ([ADR-0021](./adr/0021-the-framework-has-no-plugin-system.md)).
 
+The parts with something to run are **Components** — a `name`, a `start` and a `stop`, and nothing else ([ADR-0031](./adr/0031-parts-that-run-are-components.md)). The entry point writes them as a list, which starts in that order and stops in the reverse of it; a failed start unwinds what had started. Nothing declares a dependency and nothing is resolved, because the parts already hold each other. The rest of the wiring is construction too: a part handed a server registers its routes on that server, and a part with tables registers its migration descriptor with the Db, so `db.migrate()` takes no arguments and `db.start()` refuses to serve a schema the database is behind ([ADR-0032](./adr/0032-components-wire-themselves-at-construction.md)). An assembly is therefore four steps — construct, migrate, order, start — and only the order is the Operator's to reason about.
+
 Users talk to the User Directory and the Messenger, and to nothing else. They never see a Signal. The Agent Runtime never reaches a User except through the Agent server. That, and nothing more, is what **Shielded** means.
 
 ```mermaid
@@ -43,22 +45,22 @@ flowchart LR
 
 ## Parts
 
-Two kinds of row below, and the distinction matters. **Objects** are things the entry point constructs. **Seams** are things supplied *to* an object — a function or a narrow interface, with no lifecycle and no routes of its own.
+Three kinds of row below, and the distinction matters. **Components** are things the entry point constructs *and* puts in its start order, because they have something to run and something to release. **Objects** are constructed and merely held. **Seams** are things supplied *to* an object — a function or a narrow interface, with no lifecycle and no routes of its own.
 
 | Part | Kind | Supplied by | Routes it contributes | Notes |
 | --- | --- | --- | --- | --- |
-| Db | object | framework | — | Signals, Runs, and whatever Producers keep |
-| Public server | object | Operator | — | the one surface exposed outside; a `Fastify()` the entry point constructs and states a bind address for |
-| Agent server | object | Operator | — | reachable only by the Agent Runtime; a second `Fastify()`, bound loopback in the reference deployment |
-| Signal Worker | object | framework | agent: read prior Signals, read Runs | owns the serial worker; one Run at a time, globally |
-| User Directory | object, replaceable | framework | public: log in, log out, change password, read self — agent: create and read Users | Users, their Attributes, and their Tokens. Not a Producer (ADR-0029) |
+| Db | Component | framework | — | Signals, Runs, and whatever Producers keep. Owns the pool, the `LISTEN` connections and the migrations |
+| Public server | Component | Operator | — | the one surface exposed outside; a `Fastify()` the entry point constructs, wrapped in a `serverComponent` that holds its bind address until `start` |
+| Agent server | Component | Operator | — | reachable only by the Agent Runtime; a second `Fastify()`, bound loopback in the reference deployment |
+| Signal Worker | Component | framework | agent: read prior Signals, read Runs | owns the serial worker; one Run at a time, globally |
+| User Directory | object, replaceable | framework | public: log in, log out, change password, read self — agent: create and read Users | Users, their Attributes, and their Tokens. Not a Producer (ADR-0029), and not a Component: nothing to start, nothing to release (ADR-0031) |
 | Messenger | object, replaceable | framework | public: submit, poll Outbox — agent: send Message, read the Message log | the Message log in both directions, Outboxes as a view over it, optional Conversations. Constructed with the User Directory; owns no Users |
 | Scheduler | object, replaceable | framework | agent: schedule future work | recurrence, cancellation, next-fire. **Deferred, not in v1** (ADR-0018) |
 | Runtime Adapter | seam | framework or Operator | — | narrow contract: Prompt + Session in, outcome out. The `pi` one spawns a confined process per Run (ADR-0025) |
 | Signal Handler | seam | Operator | — | arbitrary code; the primary extension point |
 | Workspace | directory | Operator | — | files shared by handlers and agent; global, not per Session |
 
-Anything not in this table an Operator adds themselves: routes as Fastify plugins on either server, and background work as ordinary code that calls the Signal Worker's emit method.
+Anything not in this table an Operator adds themselves: routes as Fastify plugins on either server, and background work as ordinary code that calls the Signal Worker's emit method. Work with a lifecycle of its own is a Component of the Operator's, written as two methods and a name and placed in the same list — nothing about the framework's own Components is privileged.
 
 ## The loop
 
@@ -93,7 +95,7 @@ Each is a deliberate decision, not an omission:
 - **Isolation of any kind.** A deployment needing real isolation runs two Shared Agents.
 - **Protection against a bad Producer.** Producers are trusted by construction (ADR-0020).
 - **Availability under a hostile User.** With no timeouts and a serial worker, a User who steers the agent into an unbounded tool loop halts it for every Party until an Operator restarts (ADR-0017).
-- **Authentication on the Agent server.** There is none, and reaching the port is access — so keeping it unreachable is the deployment's job, through the bind address its entry point states on `listen` (ADR-0004, ADR-0010).
+- **Authentication on the Agent server.** There is none, and reaching the port is access — so keeping it unreachable is the deployment's job, through the bind address its entry point states when it constructs that server's Component (ADR-0004, ADR-0010).
 - **Any limit on password guessing.** The login route is unthrottled and no lockout exists. Rate limiting belongs to the deployment's edge, where it survives a second Gateway process; per-User lockout was refused because it hands an attacker a cheaper attack than it prevents (ADR-0030).
 - **Account recovery.** No email, no reset flow, no security questions. A forgotten password is trusted code setting a new one (ADR-0014, ADR-0030).
 - **Removal of a User.** Nothing deletes or deactivates one. Revoking their Tokens is the whole of it (ADR-0029).

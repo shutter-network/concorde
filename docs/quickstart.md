@@ -51,13 +51,14 @@ Run finished                                {"session":"user_42", ...}
 Signal finished                             {"state":"done", ...}
 ```
 
-Nothing announces that either server started, because the framework starts neither: the
-`listen` calls are yours, in your entry point, and so is any line you want about them.
-Nothing announces startup at all, in fact — the first line above is the Signal the last
-line of the entry point emits, and it is the first sign the process got up.
+Nothing announces that either server started. One call binds both ports, opens the pool
+and starts the worker, and it says nothing about any of it — the framework logs no
+startup line anywhere, and any line you want about one is yours to write next to that
+call. The first line above is the Signal the last line of the entry point emits, and it
+is the first sign the process got up.
 
 `Ctrl-C` stops it — after the Run in flight has finished, which is not instant and is
-[the part of shutdown nothing can fix for you](#shutdown-handling-is-yours-to-write). It
+[the part of shutdown nothing can fix for you](#shutdown-is-two-lines-and-the-policy-is-yours). It
 keeps running because a Gateway is a server; ask it something else by restarting it with
 your question as an argument:
 
@@ -162,14 +163,20 @@ for a Run that never finishes.
 
 ### The routes
 
-All `GET`, all JSON, all on the Agent server, and **all unscoped**:
+All JSON, all on the Agent server, and **all unscoped**. Which of them exist is a
+consequence of which parts your entry point handed that server to: the first four are the
+Signal Worker's, and the last three are there because the reference deployment hands the
+Agent server to the User Directory as well.
 
 | Route | Answers |
 | --- | --- |
-| `/signals?limit=&kind=` | `{ "signals": [ … ] }`, newest first |
-| `/signals/<id>` | one Signal, or 404 |
-| `/runs?limit=&signalId=` | `{ "runs": [ … ] }`, newest first |
-| `/runs/<id>` | one Run, or 404 |
+| `GET /signals?limit=&kind=` | `{ "signals": [ … ] }`, newest first |
+| `GET /signals/<id>` | one Signal, or 404 |
+| `GET /runs?limit=&signalId=` | `{ "runs": [ … ] }`, newest first |
+| `GET /runs/<id>` | one Run, or 404 |
+| `GET /users?limit=` | `{ "users": [ … ] }`, newest first |
+| `GET /users/<id>` | one User, or 404 |
+| `POST /users` | the User it created |
 
 A **Signal** is `{ id, kind, payload, emittedAt, state, error }`. `payload` is arbitrary
 JSON, exactly as the Producer wrote it. `emittedAt` is an ISO 8601 string, because JSON
@@ -182,21 +189,27 @@ is one of `pending`, `running`, `done`, `failed`. The timings are ISO 8601 strin
 `null` for a Run that has not reached that point. The Run executing right now is in there,
 and so is its Signal.
 
+A **User** is `{ id, attributes, createdAt }`. `attributes` is arbitrary JSON that the
+deployment's own code put there and is the whole of what anything means by authorization.
+
 Four facts about the surface that an agent's instructions should carry, because each of
 them is a request that would otherwise be written and quietly misunderstood:
 
 - **There is no credential.** Reaching the port is access. Nothing to send, nothing to
   obtain, nothing to rotate.
-- **Reads are not scoped.** Every Signal and every Run, whatever Session the Run asking
-  is in. There is no `session` parameter and no `user` parameter on any route, and an
-  unknown query parameter is a **400** rather than a request answered with everything —
-  so a deployment that believed it was scoping something finds out at once.
+- **Reads are not scoped.** Every Signal, every Run and every User, whatever Session the
+  Run asking is in. There is no `session` parameter and no `user` parameter on any route,
+  and an unknown query parameter is a **400** rather than a request answered with
+  everything — so a deployment that believed it was scoping something finds out at once.
 - **`limit` defaults to 50 and caps at 200.** Asking for more is refused rather than
   quietly reduced. There is no cursor and no offset, so records past the cap are reached
   by narrowing with `kind` or `signalId` and not by paging.
-- **Nothing here writes.** The Signal Worker has nothing an agent may change: a Signal
-  is immutable but for the state the worker gives it, and a Run is the worker's record of
-  its own work.
+- **The one thing here that writes creates a User with nothing.** The Signal Worker has
+  nothing an agent may change at all: a Signal is immutable but for the state the worker
+  gives it, and a Run is the worker's record of its own work. `POST /users` takes a
+  password and no attributes, so an agent talked into creating a User cannot make it a
+  privileged one, and setting attributes, replacing a password, issuing a Token and
+  revoking one are methods on the User Directory and no route at all.
 
 `pi` ships no HTTP client, so the agent calls this with its shell tool and `curl` — which
 is why `curl` is one of the four things the agent's image needs:
@@ -222,14 +235,13 @@ being out of date.
 
 ## What the entry point actually does
 
-Read [`../example/gateway.ts`](../example/gateway.ts) — sixty-five lines of code under a
-hundred and ninety with the comments, and the best documentation this project has.
-Forty-three of those lines are the assembly itself; the rest are five lines of imports,
-the configuration literals, the three directories it creates, and the two things at the
-bottom the framework does not ship. Nothing in the framework represents the Gateway:
-there is no object to construct, no registry to add parts to, no lifecycle to implement,
-and no plugin system. The file *is* the Gateway, and every line of it is a part being
-constructed and handed to another part.
+Read [`../example/gateway.ts`](../example/gateway.ts) — seventy-nine lines of code under
+two hundred and sixty-seven with the comments, and the best documentation this project
+has. Twelve of those lines are imports; the rest are the configuration literals, the three
+directories it creates, the parts themselves, and the two things at the bottom the
+framework does not ship. Nothing in the framework represents the Gateway: there is no
+object to construct, no registry to add parts to and no plugin system. The file *is* the
+Gateway, and every line of it is a part being constructed and handed to another part.
 
 Two things in it are the framework's to describe and **yours to do**, and both are near
 the top. It `mkdir`s `state/workspace`, `state/agent` and `state/sessions`, because it is
@@ -240,25 +252,46 @@ which is the only thing that tells the agent the Agent server exists. The framew
 creates no directory and writes no file, ever
 ([ADR-0028](./adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)).
 
-Then **the ordering is yours**, and it is the one thing about that file that is
-not arbitrary:
+The whole of an assembly is four steps — **construct, migrate, order, start** — and the
+third of them is the one thing about that file that is not arbitrary.
 
-1. **Open the Db.** One PostgreSQL URL. Nothing touches the network yet.
-2. **Migrate.** An explicit call, never a side effect of construction — which is what
-   lets it also be [a deploy step of its own](#migrations-as-a-separate-step).
-3. **Construct, and register routes.** Two Fastify instances — the framework ships no
-   server, so `Fastify()` is what you call and everything Fastify offers is yours without
-   asking — then the Runtime Adapter and the Signal Worker, handing each what it needs,
-   and then its own routes onto the Agent one. Nothing constructed here has a side effect;
-   the registration is the only one. The adapter takes the Mount Table and settles it on
-   the spot, as a pure function of what you wrote: a relative path, or an entry no
-   `hostPaths` prefix covers, is refused **at this line** rather than at the first Signal.
-4. **Start the Signal Worker with its Handlers.** The Handler map is a parameter of
-   `start`, so a Gateway running with no Handlers registered is not something you can
-   express by accident.
-5. **Listen.** Last, because Fastify refuses a route registration after a server is
-   listening. Both bind addresses are stated here, next to each other, and there is no
-   framework default behind either — see
+One word before them. A **Component** is a part with something to run: a `name`, a
+`start` and a `stop`, and nothing else at all. Four things here are Components — the Db,
+the two servers and the Signal Worker — and the User Directory is deliberately not one,
+having nothing to start and nothing to release. It is not a plugin contract: nothing
+declares a dependency, nothing is resolved, and parts still hold each other because you
+passed them to each other.
+
+1. **Construct.** The Db from one PostgreSQL URL, two `Fastify()` instances as Components,
+   the Runtime Adapter, the User Directory and the Signal Worker with its Handler map,
+   each handed what it needs as an ordinary constructor option. Construction is also the
+   whole of the wiring: a part handed a server registers its routes on that server, and a
+   part with tables of its own registers its migration descriptor with the Db, so there is
+   no third item on a checklist for you to forget
+   ([ADR-0032](./adr/0032-components-wire-themselves-at-construction.md)). Nothing here
+   touches the network. The adapter does settle the Mount Table on the spot, as a pure
+   function of what you wrote: a relative path, or an entry no `hostPaths` prefix covers,
+   is refused **at this line** rather than at the first Signal.
+2. **Migrate.** `await db.migrate()`, which takes no arguments and applies whatever
+   registered — so it comes *after* the constructing, because constructing is what
+   registers. It is never a side effect of opening the Db and never a side effect of
+   starting one, which is what lets it also be
+   [a deploy step of its own](#migrations-as-a-separate-step) — and with more than one
+   replica it has to be.
+3. **Order.** `components([db, agentServer, worker, publicServer])`: a list you write,
+   started in that order and stopped in the reverse of it. Every position is a claim about
+   what must still be working while the thing after it shuts down, the reasoning for each
+   is in the comment above the list, and **nothing checks any of it**. The framework
+   cannot: whether the agent calls the Agent server mid-Run is the model's choice, not
+   something a test can produce
+   ([ADR-0031](./adr/0031-parts-that-run-are-components.md)). The listen-before-register
+   rule imposes nothing on this list, because registration already happened in step 1.
+4. **Start.** `await gateway.start()`. One call opens the pool, refuses to serve if any
+   registered schema is behind the migration folder shipped beside it, starts the worker
+   and binds the two ports. A part that throws stops everything that had already started,
+   in reverse, and then rethrows that part's own error — so a Gateway that could not boot
+   holds no pool open and tells you which part failed. Both bind addresses are stated back
+   in step 1 with no framework default behind either — see
    ["Where each server binds is yours to state"](#where-each-server-binds-is-yours-to-state).
 
 Then two things the framework does not do for you, both at the bottom of the file:
@@ -271,13 +304,18 @@ These are not edge cases. Every one of them is something you meet on day one.
 ### Where each server binds is yours to state
 
 The framework has no opinion about either bind address, and supplies no default for
-either. Both are arguments to the `listen` calls at the bottom of your own entry point,
-where the reference deployment writes them next to each other:
+either. Both are arguments to the `serverComponent` calls near the top of your own entry
+point, where the reference deployment writes them next to each other:
 
 ```ts
-await publicServer.listen({ port: 8080, host: "0.0.0.0" });   // the exposed surface
-await agentServer.listen({ port: 7411, host: "localhost" });  // loopback, deliberately
+const publicServer = serverComponent("public server", Fastify(), { port: 8080, host: "0.0.0.0" });
+const agentServer = serverComponent("agent server", Fastify(), { port: 7411, host: "localhost" });
 ```
+
+`serverComponent` constructs nothing and defaults nothing. You call `Fastify()` with your
+own options and hold the instance; it holds the address until `start`, because `Fastify()`
+takes none and `listen` is the call a `start` has to make. That third argument is
+Fastify's own `listen` options object, handed over unread.
 
 The asymmetry is the reason there are two servers. The Public server is the one meant to
 be reached, and a Public server on loopback inside a container answers nobody — a
@@ -289,7 +327,7 @@ out rather than inherited.
 Two details worth knowing. `localhost` and `127.0.0.1` are not the same instruction to
 Fastify — `localhost` binds both loopback addresses, IPv4 and IPv6, and `127.0.0.1` binds
 only the first, so `localhost` is the one to write. And `localhost` is also Fastify's own
-default, so a `listen` that says nothing about `host` is already on loopback; the
+default, so an options object that says nothing about `host` is already on loopback; the
 reference deployment states it anyway, because the most consequential value in a
 deployment should not be one you have to know a library's defaults to find.
 
@@ -297,7 +335,7 @@ deployment should not be one you have to know a library's defaults to find.
 
 Where the Agent server's socket **binds** and how the agent's container **reaches** it
 are two separate values, and nothing can compute either from the other. The framework
-holds neither. The first is the `host` and `port` you pass to `agentServer.listen`; the
+holds neither. The first is the `host` and `port` you hand `serverComponent`; the
 second is a **string in your own `AGENTS.md`**, and there is nowhere else for it to be —
 the adapter has no field for it, has never read it, and never sees that address at all.
 
@@ -318,8 +356,8 @@ On a shared Compose network where the Gateway is itself a service, neither is ne
 address is `http://<service-name>:7411` and the bind stays inside the network.
 
 If you get this wrong the symptom is at least legible: the agent's `curl` fails and the
-agent says so. The two values are in two files that sit next to each other — the `listen`
-call at the bottom of `gateway.ts`, and the URL in `AGENTS.md` beside it. Read them
+agent says so. The two values are in two files that sit next to each other — the
+`serverComponent` call in `gateway.ts`, and the URL in `AGENTS.md` beside it. Read them
 together; nothing else has to be consulted, and changing one always means changing the
 other, which is why the reference deployment's `AGENTS.md` says so in its own last
 section.
@@ -391,7 +429,7 @@ your system already logs through satisfies it without wrapping:
 ```ts
 const logger = pino({ level: "debug" });          // or your own object with those four
 const runtime = createPiAdapter({ /* ... */, logger });
-const worker = createSignalWorker({ db, runtime, logger });
+const worker = createSignalWorker({ db, runtime, handlers, logger });
 ```
 
 Safe to keep in a log file: the argument list on that line has environment **values**
@@ -426,24 +464,24 @@ demo; a real deployment supplies its own through `DATABASE_URL` and does not pub
 PostgreSQL's port at all. And the agent's network is worth having as one layer, not as the
 boundary.
 
-### The Public server has no routes, and that is finished work
+### The Public server carries logins and nothing else, and that is finished work
 
-The entry point constructs a second Fastify instance and puts nothing on it. This is a
-**scope boundary, not an unimplemented feature.**
+The only thing on it is the User Directory's `/auth` group, because the entry point hands
+it that server. Nothing on it accepts a submission and nothing on it emits a Signal. This
+is a **scope boundary, not an unimplemented feature.**
 
 The Public server is the surface the outside world reaches, and in this framework users
 talk to two parts and no others: the **User Directory**, which authenticates them, and
-the **Messenger**, which accepts what they send and holds their outboxes. The Messenger
-is designed and deliberately not built yet. The User Directory *is* built — this entry
-point simply does not construct it, because a deployment with authentication and no
-messaging is a real thing but not the thing this file demonstrates. Wiring it in is
-["Users and authentication"](#making-it-yours) below, and it is four lines.
+the **Messenger**, which accepts what they send and holds their outboxes. The User
+Directory is built and wired up here. The Messenger is designed and deliberately not built
+yet, so the half of the surface that would accept anything from a User is missing, and
+that is the whole of what is missing.
 
-It exists in the entry point anyway, for two reasons. It is part of the Gateway's shape:
-what the world can reach and what the agent can reach are different servers, kept apart
-by what you register on each and by where each one binds. And it is where your own routes
-go — `publicServer.register(yourPlugin, { prefix: "/api" })`, which is Fastify's own
-plugin mechanism and the only extension mechanism there is.
+The server would be in the entry point regardless, for two reasons. It is part of the
+Gateway's shape: what the world can reach and what the agent can reach are different
+servers, kept apart by what you register on each and by where each one binds. And it is
+where your own routes go — `publicServer.fastify.register(yourPlugin, { prefix: "/api" })`,
+which is Fastify's own plugin mechanism and the only extension mechanism there is.
 
 The same is true in the other direction: nothing emits Signals in this slice either,
 because the Messenger was the only shipped thing that would. That is why the last line
@@ -451,30 +489,50 @@ of the entry point calls `worker.emit` directly — and that is not a stand-in f
 Producer, it *is* one. Anything inside the Gateway that emits a Signal is a Producer,
 including a loop you write.
 
-### Shutdown handling is yours to write
+### Shutdown is two lines, and the policy is yours
 
-The framework ships **none**. No signal handling, no drain, no ordering — and the two
-servers are yours to close, because they are yours to have constructed. What is in the
-entry point is an example, and the ordering in it is the part that matters:
+The framework ships **no signal handling at all**: no `SIGINT` handler, no `SIGTERM`
+handler, no timeout on the drain and no exit code. What it does ship is the ordering, and
+that is what `components` is for — `gateway.stop()` stops in the exact reverse of the list
+you started. So the whole of shutdown in the entry point is this:
 
 ```ts
-process.on("SIGINT", async () => {
-  await worker.stop();                                          // first
-  await Promise.all([agentServer.close(), publicServer.close()]);
-  await db.close();                                             // last
-});
+for (const stopping of ["SIGINT", "SIGTERM"] as const) {
+  process.once(stopping, () => void gateway.stop());
+}
 ```
 
-`worker.stop()` **before** `db.close()`. The worker holds a dedicated PostgreSQL
-connection to be woken on, and the Db owns it — so closing the Db first pulls that
-connection out from under a running Signal Worker, which then logs a dropped connection
-and retries reconnecting forever.
+**Both signal names, and `SIGTERM` is the one that matters.** `SIGINT` is Ctrl-C, but
+`docker stop`, systemd and a Kubernetes eviction all send `SIGTERM` — so a Gateway that
+handles only the first never drains in the one situation the drain was written for, and a
+Signal left `processing` fails permanently on the next boot.
 
-And the part no ordering fixes: **a Run in flight when the signal arrives.** `worker.stop()`
-waits for it, which can be minutes. Killing the process instead leaves that Signal marked
-`processing`; the next start marks it `failed` and never re-runs it, because it may
-already have written the Workspace or made external calls, and replaying it would do all
-of that twice. Whether that is acceptable, and what to do about it, is a decision every
+**There is no `process.exit`, deliberately.** Once `stop` has returned, the pool is
+closed, the `LISTEN` connection is closed, the sweep interval is cleared and both servers
+are shut, so nothing holds the event loop open and the process ends by itself. An exit
+call would only be a way to cut the drain short.
+
+Two things follow from `once` rather than `on`. A *different* second signal — Ctrl-C and
+then a `docker stop` — calls `stop` again, which is harmless: it pops what it stopped, so
+the second call finds nothing to do. A *repeated* signal finds no listener left and gets
+Node's default, which kills the process mid-drain. That is an escalation policy, it is
+this file's choice, and `process.on` is how you decline it.
+
+The ordering the list encodes, from the reference deployment's
+`[db, agentServer, worker, publicServer]`: the **Public server** stops first, so it is
+first to stop accepting submissions. The **Signal Worker** next, draining the Run in
+flight. The **Agent server** after that, and it is placed before the worker in the start
+list precisely so that it closes after the drain — the agent calls its API during a Run,
+so closing it earlier refuses the agent its own API mid-Run. The **Db** last, because
+everything queries it and the drain queries it on the way down; closing it earlier pulls
+the `LISTEN` connection out from under a running Signal Worker, which then logs a dropped
+connection and retries forever.
+
+And the part no ordering fixes: **a Run in flight when the signal arrives.** The worker's
+`stop` waits for it, which can be minutes, and `gateway.stop()` does not return until it
+has. Killing the process instead leaves that Signal marked `processing`; the next start
+marks it `failed` and never re-runs it, because it may already have written the Workspace
+or made external calls, and replaying it would do all of that twice. Whether that is acceptable, and what to do about it, is a decision every
 deployment makes for itself.
 
 ### Nothing is bounded by time
@@ -499,13 +557,14 @@ notification and cleanup go.
 ### The Agent server is unauthenticated
 
 There is no credential on it. **Reaching the port is access**, and what it exposes is
-every Signal and every Run in the Db, unscoped by Session or by User.
+every Signal, every Run and — in the reference deployment, which hands it to the User
+Directory too — every User, unscoped by Session or by User.
 
 That is deliberate: a credential is no boundary against the agent, which is the only
 party meant to reach it at all. What follows is that keeping the port unreachable is
-your whole defence, and that defence is the `host` you pass to `listen` and nothing else.
-Nothing checks it and nothing warns about it: the framework never sees the address, and
-where a server binds is the deployment's to decide and this page's to explain.
+your whole defence, and that defence is the `host` you hand `serverComponent` and nothing
+else. Nothing checks it and nothing warns about it: the framework never sees the address,
+and where a server binds is the deployment's to decide and this page's to explain.
 
 The specific trap worth knowing: **publishing a container port inserts firewall rules
 that bypass your host's own.** A `ports:` entry that looks like it is behind `ufw` or
@@ -515,9 +574,9 @@ that can reach it can also reach whatever else you mounted there.
 
 ### Nothing limits password guessing
 
-If you register the User Directory's Public plugin, `POST /auth/tokens` can be hammered.
-There is no rate limit, no backoff, and no lockout after failed attempts, and none is
-coming from us.
+The reference deployment's Public server carries `POST /auth/tokens`, and it can be
+hammered. There is no rate limit, no backoff, and no lockout after failed attempts, and
+none is coming from us.
 
 Two reasons, and the second is the load-bearing one. A limiter in this process is the
 wrong layer: its counters live in memory, so a second Gateway process doubles every
@@ -537,29 +596,49 @@ of wrong passwords is also a load problem, not only a security one.
 
 ## Migrations as a separate step
 
-`gateway.ts` migrates at boot. It is idempotent, and for one process on one machine that
-is all you need.
+`gateway.ts` migrates at boot, and **one process on one machine can get away with that.
+More than one cannot.** Drizzle's PostgreSQL migrator takes no advisory lock: it reads the
+newest row of the tracking table, then opens a transaction and applies everything newer.
+Two replicas booting together both decide to apply the same DDL, and all but one die of a
+duplicate relation. A rolling deploy is exactly that situation.
 
-Applying migrations is an **explicit call** rather than something opening the Db does
-for you, and the reason is the deployment where those are two steps:
+So applying migrations is an **explicit call**, never a side effect of opening the Db and
+never a side effect of starting one. For more than one replica, run it as a step of its
+own and delete the `db.migrate()` line from your entry point:
 
 ```sh
 node example/migrate.ts       # against the new schema, before anything serves new code
 ```
 
-Same call, six lines, no Gateway involved. Each part of the framework exports a
-*migration descriptor* — inert data naming a folder, a PostgreSQL schema, and a tracking
-table — and your entry point hands them all to one `db.migrate(...)`. The Signal
-Worker's is `signalsMigrations`; add your own alongside it. Do add them to that one call
-rather than making a second: each part having its own tracking table is not tidiness, it
-is the only thing that stops one part's migrations being silently skipped, and the one
-call is where a collision can be caught.
+Same call, no Gateway involved, and — importantly — no model credential and no agent
+image. Each part with tables of its own exports a *migration descriptor*: inert data
+naming a folder, a PostgreSQL schema and a tracking table. Constructing a part registers
+its descriptor with the Db, and `db.migrate()` applies everything registered, so
+`gateway.ts` passes no arguments at all. A migration job constructs no parts, so it
+registers the descriptors by hand instead, through the same call the constructors use:
+
+```ts
+db.registerMigrations(signalsMigrations, usersMigrations);
+await db.migrate();
+```
+
+The identical descriptor registered twice is one registration. Two *different* folders
+naming one tracking table still throw, because that is the failure where Drizzle silently
+skips the older folder's migrations and reports success.
+
+**Nothing goes unnoticed if you forget the step.** `db.start()` compares, for every
+registered descriptor, the newest migration in the folder shipped beside it against the
+newest row of that descriptor's tracking table, and refuses to start if the table is
+missing or the database is older — naming the schema. A missed migration is therefore a
+startup error you can read rather than a `relation does not exist` from the first request
+that happens to touch it. A database that is *ahead* of the code starts normally, because
+that is what a rollback looks like.
 
 You never run a schema generation tool. The SQL ships inside the package.
 
 ## Making it yours
 
-Six things you will want, in the order you will want them.
+Seven things you will want, in the order you will want them.
 
 **Your own Signal Handler.** A Handler is a plain object with a `handle` that takes a
 Signal and returns Prompts. There is no base class, no context object, and no registration
@@ -575,7 +654,9 @@ function summarising(workspace: string): SignalHandler<{ file: string }> {
 }
 ```
 
-`worker.start({ "file.arrived": summarising("/workspace") })` puts it to work.
+`createSignalWorker({ db, runtime, handlers: { "file.arrived": summarising("/workspace") } })`
+puts it to work. The Handler map is a **construction option**, not an argument to `start`,
+so a Signal Worker with no Handlers is not something you can construct, let alone run.
 
 `session: null` asks for a fresh Session; a string continues a named one. One Session per
 user, one per Run, one for the whole agent, or a hybrid — all four are things you just
@@ -592,30 +673,47 @@ variable you did not supply **throws** rather than rendering empty. That second 
 the Signal permanently, which is the trade: a Prompt with a silent hole in it misleads the
 agent invisibly, and a failed Signal is in the log with a reason.
 
-**Your own routes.** `server.register(plugin, { prefix })`, on either instance. They are
-plain Fastify instances, so its plugin system is the extension mechanism and there is no
-contract of ours to satisfy. Register before `listen`.
+**Your own routes.** `publicServer.fastify.register(plugin, { prefix })`, on either
+Component. `.fastify` is exactly the instance your own `Fastify()` returned, so its plugin
+system is the extension mechanism and there is no contract of ours to satisfy. Register
+before `gateway.start()`: Fastify refuses a route registration once a server is listening,
+and `start` is what listens.
 
-**Users and authentication.** The reference deployment above constructs no Users at all —
-its one Signal carries a `user` that is a made-up string. A deployment with real people in
-it constructs the **User Directory** and registers its two plugins, one per server. Both
-are ordinary Fastify plugins with no prefix of their own, so you supply one; `/auth` and
-`/users` are convention rather than requirement, and nothing breaks if you disagree:
+**Users and authentication.** The reference deployment already does this: it constructs
+the **User Directory** and hands it both servers, which is the whole of the wiring. There
+is no separate registration call and no descriptor to remember, because handing a part a
+server *is* how its routes get registered:
 
 ```ts
-const users = createUsers({ db, tokenTtl: 30 * 24 * 60 * 60 * 1000 });
-await db.migrate(signalsMigrations, usersMigrations);   // the same one call, one more descriptor
-
-await publicServer.register(users.publicRoutes, { prefix: "/auth" });
-await agentServer.register(users.agentRoutes, { prefix: "/users" });
+const users = createUsers({
+  db,
+  tokenTtl: 30 * 24 * 60 * 60 * 1000,
+  agentServer,      // `POST /users` and the two reads, at `/users`
+  publicServer,     // logging in, logging out, reading and replacing your own credential, at `/auth`
+});
 ```
+
+**Omitting a server is how you switch that group off.** Leave `agentServer` out and the
+agent cannot create a User — there is no flag and no route to guard. Leave both out and
+you still have `users` in hand for your own routes.
+
+The prefixes are defaults rather than policy, and the way out of them is the exported
+plugins, which are ordinary Fastify plugins with no prefix of their own:
+
+```ts
+await publicServer.fastify.register(users.publicRoutes, { prefix: "/login" });
+```
+
+That is the escape hatch for a prefix of your own, for registering inside your own
+encapsulated plugin, or for putting a hook in front of the group. Do one or the other for
+a given group, not both, or the routes exist twice.
 
 A User logs in with `POST /auth/tokens` and gets a bearer Token back; every route of yours
 that should require one takes `users.requireUser` as a `preHandler` and reads
 `request.safUser`:
 
 ```ts
-publicServer.post("/ask", { preHandler: users.requireUser }, async (request) => {
+publicServer.fastify.post("/ask", { preHandler: users.requireUser }, async (request) => {
   const user = request.safUser;
   await db.tx((tx) => worker.emit(tx, { kind: "ask", payload: { user: user.id, text: "…" } }));
   return { accepted: true };
@@ -647,10 +745,33 @@ route, a poller, a loop. Note the transaction: `emit` takes yours rather than fi
 so recording something in your own tables and telling the agent about it either both
 happen or neither does — and a rollback wakes nobody.
 
+**Your own Component.** Anything with a `name`, a `start` and a `stop` goes in the list
+and starts and stops with everything else — a poller, a queue consumer, a metrics
+endpoint of your own. There is no base class and nothing to register:
+
+```ts
+let timer: ReturnType<typeof setInterval> | undefined;
+
+const sweeper: Component = {
+  name: "token sweeper",
+  start: async () => { timer = setInterval(sweep, HOUR); },
+  stop: async () => { clearInterval(timer); },
+};
+
+const gateway = components([db, agentServer, worker, sweeper, publicServer]);
+```
+
+Both methods are required, which is the rule that keeps the list to parts that actually
+run: a part with nothing to start and nothing to release stays out of it rather than
+carrying two empty methods. The User Directory is the worked example of that — it is not
+a Component and has no position in the order.
+
 **Your own tables.** `db.handle(yourSchema)` gives you a typed Drizzle handle through
 the same call the framework's own parts use, and `db.tx(cb)` a transaction you can pass
 into `worker.emit`. No privileged access and no special case. Give your part its own
-PostgreSQL schema and its own migration tracking table.
+PostgreSQL schema and its own migration tracking table, and register the descriptor with
+`db.registerMigrations(yourMigrations)` — after which `db.migrate()` applies yours with
+ours and `db.start()` refuses to serve if your schema is behind, on exactly the same terms.
 
 **Your own mount.** One more thing for the agent to see is one more entry in
 `mounts.entries`, and that is the whole of it — no framework change, no new field, and no
@@ -810,9 +931,8 @@ rm -rf example/state                             # the Workspace, the agent's di
 So you do not go looking:
 
 - **The Messenger** — messages in both directions, and outboxes. Designed, not built. It is
-  why the Public server is empty and why nothing but your entry point emits Signals.
-- **Users in *this* deployment.** The User Directory is built and shipped; this entry point
-  just doesn't construct it. See ["Users and authentication"](#making-it-yours).
+  why the Public server carries nothing but logins and why nothing but your entry point
+  emits Signals.
 - **Any way to remove a User**, any account-recovery flow, and any limit on password
   guessing. All three refused, with the reasoning above and in the ADRs.
 - **The Scheduler** — recurrence and future work. Designed, not built.
@@ -824,7 +944,9 @@ So you do not go looking:
   container runtime refuses a source that is not there, and that is the whole of it.
 - **Any file the framework writes.** It writes none, anywhere, ever — not the agent's
   settings, not its instructions, not a directory to put them in.
-- **Shutdown handling.** Yours.
+- **POSIX signal handling.** The framework installs none. `components` gives you the
+  ordering; the exit code, any timeout on the drain and what a second signal does are
+  yours.
 - **Any Agent Runtime but `pi`.** The adapter's contract is narrow enough that another is
   possible; none is written.
 - **Retention.** Session directories grow by one per fresh-Session Run and nothing prunes
