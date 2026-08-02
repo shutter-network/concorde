@@ -29,6 +29,7 @@ import assert from "node:assert/strict";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
+import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { usersMigrations } from "./migrations.ts";
@@ -59,17 +60,26 @@ const cheap: ScryptParameters = { logN: 12, blockSize: 8, parallelism: 1 };
 let database: TestDatabase;
 let db: Db;
 let directory: Users;
-/** The two servers, exactly as an Operator constructs them: two bare instances. */
-let agentServer: FastifyInstance;
-let publicServer: FastifyInstance;
+/**
+ * The two servers, exactly as an Operator holds them: two bare Fastify instances of
+ * their own, each given a place in a start order, and handed to the Directory so that
+ * it registers its two route groups itself. Nothing here starts either — `inject`
+ * needs no socket — so the listen options below go unused.
+ */
+let agentServer: Component & { readonly fastify: FastifyInstance };
+let publicServer: Component & { readonly fastify: FastifyInstance };
+
+/** Where a server that is never started would have listened, had it been. */
+const nowhere = { port: 0, host: "127.0.0.1" } as const;
 
 /**
- * Where the Operator put the Public plugin, and where they put it a second time.
+ * Where the constructor put the Public plugin, and where the Operator put it a second
+ * time.
  *
- * The first is the prefix the quickstart documents, so `POST /auth/tokens` is the URL
- * a reader will type. The plugin's own path is `/tokens`, and the prefix is Fastify's
- * mechanism rather than anything of ours, which the second registration is here to
- * show.
+ * The first is the prefix `createUsers` registers under when it is handed a Public
+ * server, so `POST /auth/tokens` is the URL a reader will type. The plugin's own path
+ * is `/tokens`, and the prefix is Fastify's mechanism rather than anything of ours,
+ * which the second registration is here to show.
  */
 const auth = "/auth";
 const alsoAt = "/sign-in";
@@ -80,19 +90,22 @@ before(async () => {
   db.registerMigrations(usersMigrations);
   await db.migrate();
 
-  directory = createUsers({ db, tokenTtl: hour, scrypt: cheap });
+  agentServer = serverComponent("agent server", Fastify(), nowhere);
+  publicServer = serverComponent("public server", Fastify(), nowhere);
 
-  agentServer = Fastify();
-  await agentServer.register(directory.agentRoutes, { prefix: "/users" });
+  // Handed both servers, so `POST /users` and `POST /auth/tokens` are registered by
+  // the constructor: nothing here registers either plugin, and nothing here could
+  // forget to (ADR-0032).
+  directory = createUsers({ db, tokenTtl: hour, scrypt: cheap, agentServer, publicServer });
 
-  publicServer = Fastify();
-  await publicServer.register(directory.publicRoutes, { prefix: auth });
-  await publicServer.register(directory.publicRoutes, { prefix: alsoAt });
+  // The second registration is the Operator's own, by hand, which is the door the
+  // exported plugin is.
+  await publicServer.fastify.register(directory.publicRoutes, { prefix: alsoAt });
 });
 
 after(async () => {
-  await agentServer.close();
-  await publicServer.close();
+  await agentServer.stop();
+  await publicServer.stop();
   await database.drop();
 });
 
@@ -100,8 +113,8 @@ after(async () => {
 async function admit(payload?: Record<string, unknown>): Promise<UserRecord> {
   const response =
     payload === undefined
-      ? await agentServer.inject({ method: "POST", url: "/users" })
-      : await agentServer.inject({ method: "POST", url: "/users", payload });
+      ? await agentServer.fastify.inject({ method: "POST", url: "/users" })
+      : await agentServer.fastify.inject({ method: "POST", url: "/users", payload });
   assert.equal(response.statusCode, 201, `POST /users should have answered: ${response.body}`);
   return response.json<UserRecord>();
 }
@@ -110,7 +123,7 @@ async function admit(payload?: Record<string, unknown>): Promise<UserRecord> {
 function attempt(
   payload: Record<string, unknown> | undefined,
   at = auth,
-  server = () => publicServer,
+  server = () => publicServer.fastify,
 ) {
   const url = `${at}/tokens`;
   return payload === undefined
@@ -123,7 +136,7 @@ async function logIn(
   user: string,
   password: string,
   at = auth,
-  server = () => publicServer,
+  server = () => publicServer.fastify,
 ): Promise<IssuedToken> {
   const response = await attempt({ user, password }, at, server);
   assert.equal(
@@ -142,7 +155,7 @@ async function logIn(
  * expired one is refused — without reading a row. What the preHandler does in general
  * is `authentication.test.ts`.
  */
-function present(token: string, at = auth, server = () => publicServer) {
+function present(token: string, at = auth, server = () => publicServer.fastify) {
   return server().inject({
     method: "GET",
     url: `${at}/me`,
@@ -339,7 +352,7 @@ describe("refusing a login", () => {
 
     // A credential in a URL is a credential in every access log between here and the
     // client, so a query parameter is refused rather than ignored.
-    const inTheUrl = await publicServer.inject({
+    const inTheUrl = await publicServer.fastify.inject({
       method: "POST",
       url: `${auth}/tokens?password=${password}`,
       payload: { user: user.id, password },
@@ -355,12 +368,11 @@ describe("the Token's lifetime", () => {
     // Operator chose. A lifetime of a millisecond is a Token that is expired by the
     // time the response is read, which is how the refusal of an expired one is
     // reachable without a test waiting for anything.
-    const briefly = createUsers({ db, tokenTtl: 1, scrypt: cheap });
-    const server = Fastify();
-    await server.register(briefly.publicRoutes, { prefix: auth });
+    const server = serverComponent("public server", Fastify(), nowhere);
+    const briefly = createUsers({ db, tokenTtl: 1, scrypt: cheap, publicServer: server });
     try {
       const user = await admit({ password });
-      const issued = await logIn(user.id, password, auth, () => server);
+      const issued = await logIn(user.id, password, auth, () => server.fastify);
       const expiry = Date.parse(issued.expiresAt);
       assert.ok(
         expiry < Date.now() + second,
@@ -376,7 +388,7 @@ describe("the Token's lifetime", () => {
       // refused where it was issued, the longer one is not, and the refusal is the
       // single 401 (User story 24). The comparison is the database's clock against
       // the value the database wrote, so no clock anywhere had to be moved.
-      const refused = await present(issued.token, auth, () => server);
+      const refused = await present(issued.token, auth, () => server.fastify);
       assert.equal(refused.statusCode, 401, refused.body);
       assert.deepEqual(refused.json(), {
         statusCode: 401,
@@ -385,7 +397,7 @@ describe("the Token's lifetime", () => {
       });
       assert.equal((await present(longer.token)).statusCode, 200);
     } finally {
-      await server.close();
+      await server.stop();
     }
   });
 
@@ -408,24 +420,26 @@ describe("the cost of a password", () => {
     // would be a reset for every User (ADR-0030).
     const written = await admit({ password });
 
-    const harder = createUsers({
+    // One Fastify instance passed as both servers, which is a deployment that runs one:
+    // the two groups land under their own prefixes and nothing collides.
+    const server = serverComponent("server", Fastify(), nowhere);
+    createUsers({
       db,
       tokenTtl: hour,
       scrypt: { logN: 13, blockSize: 8, parallelism: 2 },
+      agentServer: server,
+      publicServer: server,
     });
-    const server = Fastify();
-    await server.register(harder.agentRoutes, { prefix: "/users" });
-    await server.register(harder.publicRoutes, { prefix: auth });
     try {
       // A digest written under the old parameters still verifies under the new
       // construction, and is not rewritten by having been used.
-      const issued = await logIn(written.id, password, auth, () => server);
+      const issued = await logIn(written.id, password, auth, () => server.fastify);
       assert.deepEqual(issued.user, written);
       await logIn(written.id, password);
 
       // And the other direction, which is the same claim: a digest written under the
       // new parameters verifies through the Directory that knows nothing about them.
-      const laterResponse = await server.inject({
+      const laterResponse = await server.fastify.inject({
         method: "POST",
         url: "/users",
         payload: { password },
@@ -434,7 +448,7 @@ describe("the cost of a password", () => {
       const later = laterResponse.json<UserRecord>();
       assert.deepEqual((await logIn(later.id, password)).user, later);
     } finally {
-      await server.close();
+      await server.stop();
     }
   });
 
@@ -442,25 +456,24 @@ describe("the cost of a password", () => {
     // The shipped parameters, run once. Everything else in this file is deliberately
     // cheap, so without this nothing would ever exercise the numbers an Operator
     // actually deploys, and a memory limit set wrongly for them would ship.
-    const shipped = createUsers({ db, tokenTtl: hour });
-    const server = Fastify();
-    await server.register(shipped.agentRoutes, { prefix: "/users" });
-    await server.register(shipped.publicRoutes, { prefix: auth });
+    const server = serverComponent("server", Fastify(), nowhere);
+    createUsers({ db, tokenTtl: hour, agentServer: server, publicServer: server });
     try {
-      const response = await server.inject({
+      const response = await server.fastify.inject({
         method: "POST",
         url: "/users",
         payload: { password },
       });
       assert.equal(response.statusCode, 201, response.body);
       const user = response.json<UserRecord>();
-      assert.deepEqual((await logIn(user.id, password, auth, () => server)).user, user);
+      assert.deepEqual((await logIn(user.id, password, auth, () => server.fastify)).user, user);
       assert.equal(
-        (await attempt({ user: user.id, password: "wrong" }, auth, () => server)).statusCode,
+        (await attempt({ user: user.id, password: "wrong" }, auth, () => server.fastify))
+          .statusCode,
         401,
       );
     } finally {
-      await server.close();
+      await server.stop();
     }
   });
 });
@@ -475,7 +488,7 @@ describe("the Public server plugin", () => {
     // Nothing answers where the plugin was not put, including at the root, which is
     // where a plugin that named its own prefix would have put the route.
     for (const url of ["/tokens", "/", "/auth/token"]) {
-      const response = await publicServer.inject({
+      const response = await publicServer.fastify.inject({
         method: "POST",
         url,
         payload: { user: user.id, password },
@@ -485,7 +498,7 @@ describe("the Public server plugin", () => {
 
     // And the login is not on the Agent server, which has no authentication at all
     // and is not where a credential goes (ADR-0010).
-    const onTheAgentServer = await agentServer.inject({
+    const onTheAgentServer = await agentServer.fastify.inject({
       method: "POST",
       url: "/auth/tokens",
       payload: { user: user.id, password },

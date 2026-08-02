@@ -40,6 +40,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance, type FastifyPluginAsync } from "fastify";
+import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
 import type { Logger } from "../logging.ts";
 import { createSignalWorker, type SignalWorker, signalsMigrations } from "../signals/index.ts";
@@ -69,8 +70,14 @@ let database: TestDatabase;
 let db: Db;
 let directory: Users;
 let worker: SignalWorker;
-let agentServer: FastifyInstance;
-let publicServer: FastifyInstance;
+/**
+ * The two servers, exactly as an Operator holds them: two bare Fastify instances of
+ * their own, each given a place in a start order, and handed to the Directory so that
+ * it registers its two route groups itself. Nothing here starts either — `inject`
+ * needs no socket — so the listen options go unused.
+ */
+let agentServer: Component & { readonly fastify: FastifyInstance };
+let publicServer: Component & { readonly fastify: FastifyInstance };
 
 /** Nothing here starts the worker, so nothing should be printed by one. */
 const silent: Logger = {
@@ -104,7 +111,13 @@ before(async () => {
   db.registerMigrations(signalsMigrations, usersMigrations);
   await db.migrate();
 
-  directory = createUsers({ db, tokenTtl: hour, scrypt: cheap });
+  agentServer = serverComponent("agent server", Fastify(), { port: 0, host: "127.0.0.1" });
+  publicServer = serverComponent("public server", Fastify(), { port: 0, host: "127.0.0.1" });
+
+  // Handed both servers, so `/users` and `/auth` are where the constructor put the two
+  // plugins: nothing here registers either, and nothing here could forget to
+  // (ADR-0032).
+  directory = createUsers({ db, tokenTtl: hour, scrypt: cheap, agentServer, publicServer });
   // Constructed and never started: this file emits Signals and reads them back, and a
   // running worker would take them off the queue and try to handle them — so the
   // Handler map it is constructed with is empty and nothing dispatches.
@@ -115,25 +128,23 @@ before(async () => {
     logger: silent,
   });
 
-  agentServer = Fastify();
-  await agentServer.register(directory.agentRoutes, { prefix: users });
-  await agentServer.register(worker.agentRoutes);
-
-  publicServer = Fastify();
-  await publicServer.register(directory.publicRoutes, { prefix: auth });
-  await publicServer.register(operatorRoutes, { prefix: ops });
+  // The Signal Worker's own routes by hand, which is the door the exported plugin is,
+  // and the Operator's own beside ours on the same instance — which is what
+  // `serverComponent` carrying the Fastify instance is for.
+  await agentServer.fastify.register(worker.agentRoutes);
+  await publicServer.fastify.register(operatorRoutes, { prefix: ops });
 });
 
 after(async () => {
-  await agentServer.close();
-  await publicServer.close();
+  await agentServer.stop();
+  await publicServer.stop();
   await worker.stop();
   await database.drop();
 });
 
 /** Creates a User over the Agent server, with a password or deliberately without one. */
 async function admit(initial?: string): Promise<UserRecord> {
-  const response = await agentServer.inject({
+  const response = await agentServer.fastify.inject({
     method: "POST",
     url: users,
     ...(initial === undefined ? {} : { payload: { password: initial } }),
@@ -144,7 +155,7 @@ async function admit(initial?: string): Promise<UserRecord> {
 
 /** One User as the Agent server reports them. */
 async function readBack(id: string): Promise<UserRecord> {
-  const response = await agentServer.inject({ method: "GET", url: `${users}/${id}` });
+  const response = await agentServer.fastify.inject({ method: "GET", url: `${users}/${id}` });
   assert.equal(
     response.statusCode,
     200,
@@ -155,7 +166,7 @@ async function readBack(id: string): Promise<UserRecord> {
 
 /** One login attempt, whatever it answers. */
 function attempt(user: string, secret: string) {
-  return publicServer.inject({
+  return publicServer.fastify.inject({
     method: "POST",
     url: `${auth}/tokens`,
     payload: { user, password: secret },
@@ -175,7 +186,7 @@ async function logIn(user: string, secret = password): Promise<IssuedToken> {
 
 /** `GET /auth/me` with a Token, which is what "the Token works" means from outside. */
 function present(token: string, url = `${auth}/me`) {
-  return publicServer.inject({
+  return publicServer.fastify.inject({
     method: "GET",
     url,
     headers: { authorization: `Bearer ${token}` },
@@ -418,7 +429,7 @@ describe("issuing a Token from trusted code", () => {
     assert.deepEqual(Object.keys(minted).sort(), Object.keys(bought).sort());
 
     // Revoked by the same route a login's Token is, and by the same method.
-    const loggedOut = await publicServer.inject({
+    const loggedOut = await publicServer.fastify.inject({
       method: "DELETE",
       url: `${auth}/tokens/current`,
       headers: { authorization: `Bearer ${minted.token}` },
@@ -529,7 +540,7 @@ describe("the Agent server", () => {
       ["DELETE", users, {}],
     ];
     for (const [method, url, payload] of tried) {
-      const response = await agentServer.inject({ method, url, payload });
+      const response = await agentServer.fastify.inject({ method, url, payload });
       assert.equal(response.statusCode, 404, `${method} ${url} answered ${response.body}`);
     }
 
@@ -548,7 +559,7 @@ describe("the Agent server", () => {
     // The escalation the whole boundary exists to close, restated where the methods
     // that *can* set Attributes are: the route has no such parameter, so what a
     // talked-into agent posts reaches nothing (ADR-0029).
-    const escalated = await agentServer.inject({
+    const escalated = await agentServer.fastify.inject({
       method: "POST",
       url: users,
       payload: {
@@ -571,7 +582,10 @@ describe("the Agent server", () => {
 describe("a User and a Signal in one transaction", () => {
   /** The Signals the Signal Worker's own read route reports, newest first. */
   async function signals(kind: string): Promise<Array<{ payload: { user?: string } }>> {
-    const response = await agentServer.inject({ method: "GET", url: `/signals?kind=${kind}` });
+    const response = await agentServer.fastify.inject({
+      method: "GET",
+      url: `/signals?kind=${kind}`,
+    });
     assert.equal(response.statusCode, 200, response.body);
     return response.json<{ signals: Array<{ payload: { user?: string } }> }>().signals;
   }
@@ -616,7 +630,8 @@ describe("a User and a Signal in one transaction", () => {
 
     assert.ok(attempted !== undefined);
     assert.equal(
-      (await agentServer.inject({ method: "GET", url: `${users}/${attempted.id}` })).statusCode,
+      (await agentServer.fastify.inject({ method: "GET", url: `${users}/${attempted.id}` }))
+        .statusCode,
       404,
       "the User should not have been admitted",
     );

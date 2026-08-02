@@ -35,6 +35,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
+import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { usersMigrations } from "./migrations.ts";
@@ -57,15 +58,24 @@ const cheap: ScryptParameters = { logN: 12, blockSize: 8, parallelism: 1 };
 /** The password a User is admitted with, unless a test is about changing it. */
 const password = "correct horse battery staple";
 
-/** The prefixes the Operator chose, and the second one that proves they are theirs. */
+/**
+ * Where the constructor put the Public plugin, and the second registration that proves
+ * the prefix is still the Operator's.
+ */
 const auth = "/auth";
 const alsoAt = "/sign-in";
 
 let database: TestDatabase;
 let db: Db;
 let directory: Users;
-let agentServer: FastifyInstance;
-let publicServer: FastifyInstance;
+/**
+ * The two servers, exactly as an Operator holds them: two bare Fastify instances of
+ * their own, each given a place in a start order, and handed to the Directory so that
+ * it registers its two route groups itself. Nothing here starts either — `inject`
+ * needs no socket — so the listen options go unused.
+ */
+let agentServer: Component & { readonly fastify: FastifyInstance };
+let publicServer: Component & { readonly fastify: FastifyInstance };
 
 before(async () => {
   database = await createTestDatabase("users_credentials");
@@ -73,25 +83,28 @@ before(async () => {
   db.registerMigrations(usersMigrations);
   await db.migrate();
 
-  directory = createUsers({ db, tokenTtl: hour, scrypt: cheap });
+  agentServer = serverComponent("agent server", Fastify(), { port: 0, host: "127.0.0.1" });
+  publicServer = serverComponent("public server", Fastify(), { port: 0, host: "127.0.0.1" });
 
-  agentServer = Fastify();
-  await agentServer.register(directory.agentRoutes, { prefix: "/users" });
+  // Handed both servers, so `POST /users` and the credential routes under `/auth` are
+  // registered by the constructor: nothing here registers either plugin, and nothing
+  // here could forget to (ADR-0032).
+  directory = createUsers({ db, tokenTtl: hour, scrypt: cheap, agentServer, publicServer });
 
-  publicServer = Fastify();
-  await publicServer.register(directory.publicRoutes, { prefix: auth });
-  await publicServer.register(directory.publicRoutes, { prefix: alsoAt });
+  // The second registration is the Operator's own, by hand, which is the door the
+  // exported plugin is.
+  await publicServer.fastify.register(directory.publicRoutes, { prefix: alsoAt });
 });
 
 after(async () => {
-  await agentServer.close();
-  await publicServer.close();
+  await agentServer.stop();
+  await publicServer.stop();
   await database.drop();
 });
 
 /** Creates a User over the Agent server, with a password to log in with. */
 async function admit(initial = password): Promise<UserRecord> {
-  const response = await agentServer.inject({
+  const response = await agentServer.fastify.inject({
     method: "POST",
     url: "/users",
     payload: { password: initial },
@@ -102,7 +115,7 @@ async function admit(initial = password): Promise<UserRecord> {
 
 /** One login that is expected to succeed. */
 async function logIn(user: string, secret = password, at = auth): Promise<IssuedToken> {
-  const response = await publicServer.inject({
+  const response = await publicServer.fastify.inject({
     method: "POST",
     url: `${at}/tokens`,
     payload: { user, password: secret },
@@ -117,7 +130,7 @@ async function logIn(user: string, secret = password, at = auth): Promise<Issued
 
 /** One login attempt, whatever it answers. */
 function attempt(user: string, secret: string) {
-  return publicServer.inject({
+  return publicServer.fastify.inject({
     method: "POST",
     url: `${auth}/tokens`,
     payload: { user, password: secret },
@@ -129,7 +142,7 @@ function attempt(user: string, secret: string) {
  * outside: there is no other way to ask, and no row is read to answer it.
  */
 function present(token: string, at = auth) {
-  return publicServer.inject({
+  return publicServer.fastify.inject({
     method: "GET",
     url: `${at}/me`,
     headers: { authorization: `Bearer ${token}` },
@@ -145,8 +158,8 @@ function carrying(
 ) {
   const headers = { authorization: `Bearer ${token}` };
   return payload === undefined
-    ? publicServer.inject({ method, url, headers })
-    : publicServer.inject({ method, url, headers, payload });
+    ? publicServer.fastify.inject({ method, url, headers })
+    : publicServer.fastify.inject({ method, url, headers, payload });
 }
 
 /** Asserts a Token works, and answers with the User it belongs to. */
@@ -244,7 +257,7 @@ describe("logging out", () => {
   it("refuses to log out a request that presented nothing", async () => {
     // The route takes the preHandler, so there is no way to revoke a Token without
     // holding it: the credential is what names the row.
-    const anonymous = await publicServer.inject({
+    const anonymous = await publicServer.fastify.inject({
       method: "DELETE",
       url: `${auth}/tokens/current`,
     });
@@ -321,7 +334,10 @@ describe("revoking everything", () => {
   });
 
   it("refuses a request that presented nothing", async () => {
-    const anonymous = await publicServer.inject({ method: "DELETE", url: `${auth}/tokens` });
+    const anonymous = await publicServer.fastify.inject({
+      method: "DELETE",
+      url: `${auth}/tokens`,
+    });
     assert.equal(anonymous.statusCode, 401, anonymous.body);
     assert.deepEqual(anonymous.json(), {
       statusCode: 401,
@@ -474,7 +490,7 @@ describe("changing a password", () => {
     // The password is still the one it was: none of the above changed anything.
     await logIn(user.id, password);
 
-    const anonymous = await publicServer.inject({
+    const anonymous = await publicServer.fastify.inject({
       method: "PUT",
       url: `${auth}/password`,
       payload: { currentPassword: password, newPassword: replacement },
@@ -562,7 +578,7 @@ describe("the routes under the Operator's prefixes", () => {
     // And none of them is on the Agent server, which authenticates nobody at all
     // (ADR-0010) and is not where a credential goes.
     for (const url of [`${auth}/tokens`, "/tokens", "/users/tokens"]) {
-      const onTheAgentServer = await agentServer.inject({
+      const onTheAgentServer = await agentServer.fastify.inject({
         method: "DELETE",
         url,
         headers: { authorization: `Bearer ${second.token}` },

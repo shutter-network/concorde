@@ -31,6 +31,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance, type FastifyPluginAsync } from "fastify";
+import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { usersMigrations } from "./migrations.ts";
@@ -52,7 +53,10 @@ const cheap: ScryptParameters = { logN: 12, blockSize: 8, parallelism: 1 };
 
 const password = "correct horse battery staple";
 
-/** The prefixes the Operator chose, and the second one that proves they are theirs. */
+/**
+ * Where the constructor put the Public plugin, and the second registration that proves
+ * the prefix is still the Operator's.
+ */
 const auth = "/auth";
 const alsoAt = "/sign-in";
 /** Where the Operator put routes of their own: a sibling of ours, on the same server. */
@@ -61,8 +65,17 @@ const ops = "/ops";
 let database: TestDatabase;
 let db: Db;
 let directory: Users;
-let agentServer: FastifyInstance;
-let publicServer: FastifyInstance;
+/**
+ * The two servers, exactly as an Operator holds them: two bare Fastify instances of
+ * their own, each given a place in a start order, and handed to the Directory so that
+ * it registers its two route groups itself. Nothing here starts either — `inject`
+ * needs no socket — so the listen options go unused.
+ */
+let agentServer: Component & { readonly fastify: FastifyInstance };
+let publicServer: Component & { readonly fastify: FastifyInstance };
+
+/** Where a server that is never started would have listened, had it been. */
+const nowhere = { port: 0, host: "127.0.0.1" } as const;
 
 /**
  * Routes of the Operator's own, in a plugin of the Operator's own.
@@ -104,26 +117,30 @@ before(async () => {
   db.registerMigrations(usersMigrations);
   await db.migrate();
 
-  directory = createUsers({ db, tokenTtl: hour, scrypt: cheap });
+  agentServer = serverComponent("agent server", Fastify(), nowhere);
+  publicServer = serverComponent("public server", Fastify(), nowhere);
 
-  agentServer = Fastify();
-  await agentServer.register(directory.agentRoutes, { prefix: "/users" });
+  // Handed both servers, so `POST /users` and the Public plugin under `/auth` are
+  // registered by the constructor: nothing here registers either, and nothing here
+  // could forget to (ADR-0032).
+  directory = createUsers({ db, tokenTtl: hour, scrypt: cheap, agentServer, publicServer });
 
-  publicServer = Fastify();
-  await publicServer.register(directory.publicRoutes, { prefix: auth });
-  await publicServer.register(directory.publicRoutes, { prefix: alsoAt });
-  await publicServer.register(operatorRoutes, { prefix: ops });
+  // The second registration is the Operator's own, by hand, which is the door the
+  // exported plugin is — and the Operator's own routes go on the same instance ours
+  // are on, which is what `serverComponent` carrying the Fastify instance is for.
+  await publicServer.fastify.register(directory.publicRoutes, { prefix: alsoAt });
+  await publicServer.fastify.register(operatorRoutes, { prefix: ops });
 });
 
 after(async () => {
-  await agentServer.close();
-  await publicServer.close();
+  await agentServer.stop();
+  await publicServer.stop();
   await database.drop();
 });
 
 /** Creates a User over the Agent server, with a password to log in with. */
 async function admit(): Promise<UserRecord> {
-  const response = await agentServer.inject({
+  const response = await agentServer.fastify.inject({
     method: "POST",
     url: "/users",
     payload: { password },
@@ -133,7 +150,11 @@ async function admit(): Promise<UserRecord> {
 }
 
 /** One login that is expected to succeed, on whichever server the caller names. */
-async function logIn(user: string, at = auth, server = () => publicServer): Promise<IssuedToken> {
+async function logIn(
+  user: string,
+  at = auth,
+  server = () => publicServer.fastify,
+): Promise<IssuedToken> {
   const response = await server().inject({
     method: "POST",
     url: `${at}/tokens`,
@@ -149,7 +170,7 @@ async function logIn(user: string, at = auth, server = () => publicServer): Prom
 
 /** A GET carrying whatever `Authorization` header the caller wants sent, or none. */
 function present(url: string, authorization?: string) {
-  return publicServer.inject(
+  return publicServer.fastify.inject(
     authorization === undefined
       ? { method: "GET", url }
       : { method: "GET", url, headers: { authorization } },
@@ -208,14 +229,13 @@ describe("refusing a request", () => {
     // the response is read, over the same Db, so the row is there and only its
     // `expires_at` is in the past. This is how the refusal of an expired Token is
     // reachable without a test waiting for anything.
-    const briefly = createUsers({ db, tokenTtl: 1, scrypt: cheap });
-    const brieflyServer = Fastify();
-    await brieflyServer.register(briefly.publicRoutes, { prefix: auth });
+    const brieflyServer = serverComponent("public server", Fastify(), nowhere);
+    createUsers({ db, tokenTtl: 1, scrypt: cheap, publicServer: brieflyServer });
     let expired: string;
     try {
-      expired = (await logIn(user.id, auth, () => brieflyServer)).token;
+      expired = (await logIn(user.id, auth, () => brieflyServer.fastify)).token;
     } finally {
-      await brieflyServer.close();
+      await brieflyServer.stop();
     }
 
     const refusals = [
@@ -247,7 +267,7 @@ describe("refusing a request", () => {
       await bearing(`${ops}/whoami`, expired),
       // A wrong password, which is the same refusal on a different route: the claim
       // is one 401 across the surface, not one per route (ADR-0030).
-      await publicServer.inject({
+      await publicServer.fastify.inject({
         method: "POST",
         url: `${auth}/tokens`,
         payload: { user: user.id, password: "not the password" },
@@ -283,15 +303,14 @@ describe("refusing a request", () => {
     // Tokens, it is that an expired Token is refused. `expires_at` is written from the
     // database's clock and compared against the database's clock, so this is the row
     // saying no rather than this process deciding.
-    const briefly = createUsers({ db, tokenTtl: 1, scrypt: cheap });
-    const server = Fastify();
-    await server.register(briefly.publicRoutes, { prefix: auth });
+    const server = serverComponent("public server", Fastify(), nowhere);
+    createUsers({ db, tokenTtl: 1, scrypt: cheap, publicServer: server });
     try {
       const user = await admit();
-      const issued = await logIn(user.id, auth, () => server);
+      const issued = await logIn(user.id, auth, () => server.fastify);
       assert.ok(Date.parse(issued.expiresAt) <= Date.now() + 1000, issued.expiresAt);
 
-      const refused = await server.inject({
+      const refused = await server.fastify.inject({
         method: "GET",
         url: `${auth}/me`,
         headers: { authorization: `Bearer ${issued.token}` },
@@ -303,7 +322,7 @@ describe("refusing a request", () => {
       const lasting = await logIn(user.id);
       assert.equal((await bearing(`${auth}/me`, lasting.token)).statusCode, 200);
     } finally {
-      await server.close();
+      await server.stop();
     }
   });
 
@@ -361,7 +380,7 @@ describe("the Operator's own routes", () => {
     const user = await admit();
     const issued = await logIn(user.id);
 
-    const answered = await publicServer.inject({
+    const answered = await publicServer.fastify.inject({
       method: "POST",
       url: `${ops}/deep/ask`,
       headers: { authorization: `Bearer ${issued.token}` },
@@ -373,7 +392,7 @@ describe("the Operator's own routes", () => {
     // The route is the Operator's, and the refusal is ours.
     assert.equal(
       (
-        await publicServer.inject({
+        await publicServer.fastify.inject({
           method: "POST",
           url: `${ops}/deep/ask`,
           payload: { text: "what happened?" },
@@ -443,10 +462,10 @@ describe("the plugins under the Operator's prefixes", () => {
     // The Agent plugin honours its prefix too, and carries no `/me`: the Agent server
     // authenticates nobody at all (ADR-0010), so there is no presented User there to
     // answer with.
-    const read = await agentServer.inject({ method: "GET", url: `/users/${user.id}` });
+    const read = await agentServer.fastify.inject({ method: "GET", url: `/users/${user.id}` });
     assert.deepEqual(read.json(), user);
     for (const url of ["/me", "/users/me", "/tokens"]) {
-      const onTheAgentServer = await agentServer.inject({
+      const onTheAgentServer = await agentServer.fastify.inject({
         method: "GET",
         url,
         headers: { authorization: `Bearer ${issued.token}` },

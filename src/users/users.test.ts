@@ -22,6 +22,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
+import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { usersMigrations } from "./migrations.ts";
@@ -31,18 +32,22 @@ import { createUsers, type Users } from "./users.ts";
 let database: TestDatabase;
 let db: Db;
 let directory: Users;
-/** The Agent server: a bare Fastify instance, exactly as an Operator constructs one. */
-let agentServer: FastifyInstance;
+/**
+ * The Agent server: a bare Fastify instance an Operator constructed, given a place in
+ * a start order — and the thing the User Directory is handed to wire itself to.
+ */
+let agentServer: Component & { readonly fastify: FastifyInstance };
 
 /**
- * Where the Operator put the plugin, and where they put it a second time.
+ * Where the constructor put the plugin, and where the Operator put it a second time.
  *
- * The first is the prefix the quickstart documents, so the URLs asserted here are the
- * ones a reader will type: the plugin's own paths are `/`, `/` and `/:id`, and it is
- * the prefix that makes them `/users`, `/users` and `/users/:id`. The second is
- * nothing like it, because the claim is that the prefix is Fastify's own mechanism
- * and nothing of ours: the same routes answer under both, the same Users are visible
- * through both, and neither URL is baked in.
+ * The first is the prefix `createUsers` registers under when it is handed a server, so
+ * the URLs asserted here are the ones a reader will type: the plugin's own paths are
+ * `/`, `/` and `/:id`, and it is the prefix that makes them `/users`, `/users` and
+ * `/users/:id`. The second is nothing like it, because the claim is that the default
+ * is a default and not a policy: the exported plugin carries no prefix of its own, so
+ * the same routes answer under both, the same Users are visible through both, and
+ * neither URL is baked into the routes.
  */
 const prefix = "/users";
 const alsoAt = "/admin/people";
@@ -58,14 +63,24 @@ before(async () => {
   db.registerMigrations(usersMigrations);
   await db.migrate();
 
+  // The framework constructs no server: this is a bare Fastify instance, the same call
+  // an Operator's entry point makes. `serverComponent` adds only where it listens, and
+  // nothing here starts it — `inject` needs no socket — so those options go unused.
+  agentServer = serverComponent("agent server", Fastify(), { port: 0, host: "127.0.0.1" });
+
   // A Token lifetime is required of every construction, and nothing in this file
   // issues one: logging in is observable on the Public server, which is
-  // `login.test.ts`.
-  directory = createUsers({ db, tokenTtl: 60 * 60 * 1000 });
+  // `login.test.ts`. No Public server is passed, which is a deployment with no
+  // password login at all, and it changes nothing about what is asserted below.
+  //
+  // Handed the Agent server, so the User surface is registered on it under `/users` by
+  // the constructor: nothing here registers that plugin, and nothing here could forget
+  // to (ADR-0032).
+  directory = createUsers({ db, tokenTtl: 60 * 60 * 1000, agentServer });
 
-  agentServer = Fastify();
-  await agentServer.register(directory.agentRoutes, { prefix });
-  await agentServer.register(directory.agentRoutes, { prefix: alsoAt });
+  // The second registration is the Operator's own, by hand, which is the door the
+  // exported plugin is.
+  await agentServer.fastify.register(directory.agentRoutes, { prefix: alsoAt });
 
   // Sequential and awaited, because `created_at` is what the list is ordered by.
   fixture.push(await created());
@@ -74,7 +89,7 @@ before(async () => {
 });
 
 after(async () => {
-  await agentServer.close();
+  await agentServer.stop();
   await database.drop();
 });
 
@@ -85,14 +100,14 @@ after(async () => {
  * is the list and `/${id}` is one User.
  */
 function read(path: string, at = prefix) {
-  return agentServer.inject({ method: "GET", url: `${at}${path}` });
+  return agentServer.fastify.inject({ method: "GET", url: `${at}${path}` });
 }
 
 /** One `POST /users`, with whatever body the caller wants sent — or none at all. */
 function post(payload?: Record<string, unknown>, at = prefix) {
   return payload === undefined
-    ? agentServer.inject({ method: "POST", url: at })
-    : agentServer.inject({ method: "POST", url: at, payload });
+    ? agentServer.fastify.inject({ method: "POST", url: at })
+    : agentServer.fastify.inject({ method: "POST", url: at, payload });
 }
 
 /** Creates a User over HTTP and asserts only that it was created. */
@@ -169,7 +184,7 @@ describe("creating a User over the Agent server", () => {
 
     // There is nothing to pass here either, so asking is an error rather than a
     // request silently answered as though it had been honoured.
-    const scoped = await agentServer.inject({
+    const scoped = await agentServer.fastify.inject({
       method: "POST",
       url: `${prefix}?attributes=admin`,
     });
@@ -277,18 +292,24 @@ describe("creating a User from the Operator's own code", () => {
 describe("the Agent server plugin", () => {
   it("honours whatever prefix the Operator registers it under", async () => {
     // The prefix is Fastify's own mechanism and nothing of ours: the plugin carries
-    // none, so the URL layout stays the Operator's (ADR-0021).
+    // none, and `/users` is where the constructor put it rather than where the routes
+    // think they live, so the layout stays the Operator's through this plugin
+    // (ADR-0032).
     const user = await created(undefined, alsoAt);
     assert.deepEqual((await read(`/${user.id}`, alsoAt)).json(), user);
-    // And the same User through the other registration, because both are the same
-    // Directory over the same Db.
+    // And the same User through the registration the constructor made, because both
+    // are the same Directory over the same Db.
     assert.deepEqual(await readBack(user.id), user);
 
     // Nothing answers where the plugin was not put, including at the root, which is
     // where a plugin that named its own resource would have put the routes.
     for (const url of ["/", "/directory"]) {
-      assert.equal((await agentServer.inject({ method: "GET", url })).statusCode, 404, url);
-      assert.equal((await agentServer.inject({ method: "POST", url })).statusCode, 404, url);
+      assert.equal((await agentServer.fastify.inject({ method: "GET", url })).statusCode, 404, url);
+      assert.equal(
+        (await agentServer.fastify.inject({ method: "POST", url })).statusCode,
+        404,
+        url,
+      );
     }
   });
 });

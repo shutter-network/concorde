@@ -1,12 +1,21 @@
 /**
  * The User Directory: the part of the Gateway that owns Users.
  *
- * Constructed like every other part — one call, an ordinary object back, nothing to
- * register it with and no lifecycle (ADR-0021). It is **not a Producer**: it takes
- * no reference to the Signal Worker and emits no Signals, because the worker is serial
- * globally and a Signal per User event would put a Run behind one (ADR-0029). A
- * deployment that wants that Signal emits it itself, atomically, because `create`
- * takes the caller's transaction.
+ * Constructed like every other part — one call, an ordinary object back, and nothing
+ * to register it with. It wires itself the way every part does, registering its own
+ * migration descriptor with the Db and its routes on whichever servers it is handed
+ * (ADR-0032).
+ *
+ * It is **not a Component**. It has no timers and no connection of its own, so there is
+ * nothing for a `start` to begin or a `stop` to release, and a pair of no-op methods put
+ * in to earn a place in the Operator's list is the ceremony ADR-0031 refuses. It joins
+ * that list the day it grows something to run — a sweeper for expired Tokens is the
+ * likely occasion — and the only thing that changes then is the list.
+ *
+ * It is **not a Producer** either: it takes no reference to the Signal Worker and emits
+ * no Signals, because the worker is serial globally and a Signal per User event would
+ * put a Run behind one (ADR-0029). A deployment that wants that Signal emits it itself,
+ * atomically, because `create` takes the caller's transaction.
  *
  * Two things about the surface are decisions rather than omissions:
  *
@@ -31,9 +40,10 @@
  */
 
 import { and, desc, eq, gt, sql } from "drizzle-orm";
-import type { FastifyPluginAsync, preHandlerAsyncHookHandler } from "fastify";
+import type { FastifyInstance, FastifyPluginAsync, preHandlerAsyncHookHandler } from "fastify";
 import type { Db, Handle } from "../db/index.ts";
 import { limitSchema } from "../route-conventions.ts";
+import { usersMigrations } from "./migrations.ts";
 import {
   agentUserRoutes,
   type Credentials,
@@ -71,6 +81,39 @@ export type UsersOptions = {
    */
   readonly tokenTtl: number;
   /**
+   * The Agent server, if the agent is to create and read Users.
+   *
+   * Given one, the constructor registers `agentRoutes` on the Fastify instance it
+   * carries under **`/users`** — `POST /users`, `GET /users`, `GET /users/:id`, the
+   * layout every document about this part already writes (ADR-0032). Omitted, nothing
+   * is registered anywhere, and that omission is how the agent's ability to create a
+   * User is denied wholesale (ADR-0010): there is no flag, and no route to guard.
+   *
+   * Structural, and asks for nothing but the Fastify instance: what satisfies it is
+   * what `serverComponent` returns, and the `name`, `start` and `stop` beside it are
+   * the Operator's list's business rather than ours. A server built with
+   * `withTypeProvider` or with a logger of its own satisfies it too; one built on
+   * http2 does not, and takes `agentRoutes` below instead.
+   */
+  readonly agentServer?: {
+    readonly fastify: FastifyInstance;
+  };
+  /**
+   * The Public server, if Users are to trade a password for a Token.
+   *
+   * Given one, the constructor registers `publicRoutes` on the Fastify instance it
+   * carries under **`/auth`**, which is where `POST /auth/tokens` comes from.
+   *
+   * Omitting it is the load-bearing omission of this part: it is how a deployment
+   * replaces our password login with its own scheme — OIDC, a wallet signature, a
+   * corporate header — while keeping our Tokens, since `issueToken` is a method and
+   * there is no Authenticator interface to implement (ADR-0030). Nothing else about
+   * the User Directory changes when it is left out.
+   */
+  readonly publicServer?: {
+    readonly fastify: FastifyInstance;
+  };
+  /**
    * What a password derivation costs. Defaults to OWASP's 32 MiB row.
    *
    * A construction-time option that old digests **do not** follow: each digest
@@ -84,25 +127,33 @@ export type UsersOptions = {
 
 export type Users = {
   /**
-   * The Agent server routes — create a User, read Users — as a Fastify plugin:
-   * `agentServer.register(users.agentRoutes, { prefix: "/users" })`, on the Fastify
-   * instance the Operator constructed.
+   * The Agent server routes — create a User, read Users — as a Fastify plugin, for an
+   * Operator who wants them somewhere other than where the `agentServer` option puts
+   * them.
    *
-   * The plugin carries no prefix of its own, so the URL layout stays the Operator's,
-   * and not registering it is how the capability is switched off wholesale
-   * (ADR-0010, ADR-0021).
+   * The plugin carries no prefix of its own. `/users` is the default because the
+   * constructor supplies it, not because these routes know their own URL, so the
+   * layout stays the Operator's **via this plugin** (ADR-0032): hold it and you can
+   * register the routes under a prefix of your own, inside your own encapsulated
+   * plugin, or behind a hook you share with your own routes — which is Fastify's
+   * plugin system being the extension mechanism, and the reason ADR-0021 chose Fastify
+   * rather than inventing one. Passing no server and never registering this is still
+   * how the capability is switched off wholesale (ADR-0010).
    */
   readonly agentRoutes: FastifyPluginAsync;
 
   /**
-   * The Public server routes, the login, as a Fastify plugin:
-   * `publicServer.register(users.publicRoutes, { prefix: "/auth" })`, which is where
-   * `POST /auth/tokens` comes from.
+   * The Public server routes, the login, as a Fastify plugin, for an Operator who
+   * wants them somewhere other than where the `publicServer` option puts them.
    *
-   * Registering it is the whole of "the Gateway authenticates with passwords", and
-   * **not** registering it is how a deployment replaces that with its own scheme
-   * while keeping our Tokens: there is no Authenticator interface, because the useful
-   * extension point is issuance rather than verification (ADR-0030).
+   * The same prefix story `agentRoutes` carries: `/auth` is the constructor's default
+   * and `POST /auth/tokens` is where it puts the login, while this plugin is what
+   * registers the same routes anywhere else.
+   *
+   * Registering it either way is the whole of "the Gateway authenticates with
+   * passwords", and doing **neither** is how a deployment replaces that with its own
+   * scheme while keeping our Tokens: there is no Authenticator interface, because the
+   * useful extension point is issuance rather than verification (ADR-0030).
    */
   readonly publicRoutes: FastifyPluginAsync;
 
@@ -303,28 +354,44 @@ export function createUsers(options: UsersOptions): Users {
   // drift.
   const presentedUser = requireUser({ authenticate: (token) => userForToken(handle, token) });
 
-  return {
-    agentRoutes: agentUserRoutes({
-      // The route's create runs on the part's own handle: one insert is atomic by
-      // itself, and a request that creates a User has nothing else to keep it with.
-      create: ({ password }) => insertUser(handle, password, parameters),
-      get: (id) => selectUser(handle, id),
-      list: ({ limit }) => selectUsers(handle, limit),
-    }),
+  const agentRoutes = agentUserRoutes({
+    // The route's create runs on the part's own handle: one insert is atomic by
+    // itself, and a request that creates a User has nothing else to keep it with.
+    create: ({ password }) => insertUser(handle, password, parameters),
+    get: (id) => selectUser(handle, id),
+    list: ({ limit }) => selectUsers(handle, limit),
+  });
 
-    publicRoutes: publicUserRoutes(
-      {
-        logIn: (credentials) => logIn(handle, credentials, { dummy, tokenTtl }),
-        // The route's revocations run on the part's own handle, for the reason its
-        // create does: one statement is atomic by itself, and a request that revokes
-        // has nothing else to keep it with. The method below is where a caller with
-        // something to keep it with reaches the same statement.
-        revokeToken: (token) => deleteToken(handle, token),
-        revokeTokens: (user) => deleteTokens(handle, user),
-        changePassword: (change) => changePassword(handle, change, parameters),
-      },
-      presentedUser,
-    ),
+  const publicRoutes = publicUserRoutes(
+    {
+      logIn: (credentials) => logIn(handle, credentials, { dummy, tokenTtl }),
+      // The route's revocations run on the part's own handle, for the reason its
+      // create does: one statement is atomic by itself, and a request that revokes
+      // has nothing else to keep it with. The method below is where a caller with
+      // something to keep it with reaches the same statement.
+      revokeToken: (token) => deleteToken(handle, token),
+      revokeTokens: (user) => deleteTokens(handle, user),
+      changePassword: (change) => changePassword(handle, change, parameters),
+    },
+    presentedUser,
+  );
+
+  // The three acts of wiring, all of them here so that an Operator's entry point does
+  // none of them (ADR-0032). Registering the descriptor is bookkeeping the Db does
+  // nothing with until `migrate` or `start`, and it is the identical descriptor a
+  // pre-deploy migration entry point registers, which is one registration and not two.
+  options.db.registerMigrations(usersMigrations);
+  // Under the prefixes every document about this part already writes, and not awaited:
+  // Fastify defers a plugin until the server is ready, so this is a registration made
+  // at construction and loaded at `listen` — which is also why a server that is already
+  // listening refuses one. A server not passed is a route group that does not exist.
+  options.agentServer?.fastify.register(agentRoutes, { prefix: "/users" });
+  options.publicServer?.fastify.register(publicRoutes, { prefix: "/auth" });
+
+  return {
+    agentRoutes,
+
+    publicRoutes,
 
     requireUser: presentedUser,
 

@@ -6,10 +6,17 @@
  * package root and know nothing about Users, and a deployment with no identity in it
  * imports nothing from here (ADR-0029).
  *
- * `createUsers` is the whole of it for an Operator: hand it the Db and a Token
- * lifetime, register `usersMigrations` with that Db, and register `agentRoutes` on
- * the Agent server and `publicRoutes` on the Public one, each under a prefix of
- * your choosing.
+ * `createUsers` is the whole of it for an Operator: hand it the Db, a Token lifetime
+ * and the servers its two route groups belong on, and it registers `usersMigrations`
+ * with that Db, `agentRoutes` under `/users` and `publicRoutes` under `/auth`
+ * (ADR-0032). It is not a Component and goes in no start order: there is nothing here
+ * to start and nothing to release.
+ *
+ * `usersMigrations` stays exported because a pre-deploy migration entry point should
+ * not have to construct the part that owns the tables, and the two route plugins stay
+ * exported because a server option is a default rather than a policy: register either
+ * yourself, under your own prefix or inside your own encapsulated plugin, and omit the
+ * server it would have gone on.
  *
  * `IssuedToken` is here because `users.issueToken` answers with one, and that method is
  * the substitute for a pluggable Authenticator: a deployment's own OIDC route
