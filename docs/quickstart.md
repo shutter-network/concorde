@@ -17,7 +17,7 @@ the five words you need before you start are:
 | **Signal Handler** | your code, which turns a Signal into zero, one, or many Prompts |
 | **Run** | one execution of the agent: one Prompt, in one Session |
 | **Workspace** | a directory your Handlers and the agent both read and write |
-| **Mount Table** | your list of what the agent's container can see on disk, and who it runs as |
+| **Agent Container** | the container a Run happens in: an image, and what it sees on disk |
 
 ## Before you start
 
@@ -26,10 +26,11 @@ the five words you need before you start are:
 - **[mise](https://mise.jdx.dev)**, which provisions the pinned Node version. Anything
   else that gives you Node 24 also works.
 - **A model API key.** The reference deployment is written for Anthropic and reads
-  `ANTHROPIC_API_KEY` from your environment. Any provider `pi` supports works — the
-  environment variable's name and the `model`/`provider` fields in the entry point are
-  what change. See ["No key, or a different provider"](#no-key-or-a-different-provider)
-  below.
+  `ANTHROPIC_API_KEY` from your environment. Any provider `pi` supports works — what
+  changes is the variable's name in the entry point and two lines of
+  [`../example/settings.json`](../example/settings.json), which is a file you write and
+  the framework has never read. See ["Choosing a model is a file you
+  mount"](#choosing-a-model-is-a-file-you-mount) below.
 
 ## Five commands
 
@@ -115,24 +116,123 @@ The Run also leaves things on disk, under `example/state/`:
 
 ```
 example/state/workspace/            the Workspace: your Handlers and the agent share it
-example/state/agent/                the agent's own directory: credentials, trust, tooling
-example/state/sessions/user_42/     one directory per Session, holding its transcript
+example/state/agent/                the agent's own directory: credentials, trust, tooling,
+                                    and the Session transcripts
 ```
 
-Those three directories are **the entry point's**, `mkdir`ed by `gateway.ts` itself a few
+Those two directories are **the entry point's**, `mkdir`ed by `gateway.ts` itself a few
 lines before it opens the Db. The framework creates no directory anywhere, so creating
 what your mounts point at is the deployment's job rather than a courtesy —
-[a wrong path costs you a Signal](#a-wrong-path-costs-you-a-signal) is what happens when
-one is missing. What ends up inside them is the agent's, written as your own uid.
+[a mount source that is not there](#four-things-nothing-checks) is what happens when one
+is missing. What ends up inside them is the agent's, written as your own uid.
 
-Ask a second question in the same Session and the agent will remember the first: the
-Session directory is how, and it is why Sessions get a directory each.
+Two, not three. There is no Session root: the framework passes no `--session-dir` and
+names no path inside `pi`, so Sessions live wherever `pi` puts them, which is under the
+agent directory you mounted. Ask a second question in the same Session and the agent
+remembers the first — because that one mount survived the container, and for no other
+reason.
 
-One thing in there is not what it looks like. After the first Run you will find an **empty
-`example/state/workspace/AGENTS.md`**, and it is not the file the agent read. A mount's
-*target* is created by the daemon when it is not already there, and the real file is
-`example/AGENTS.md`, mounted over that path read-only on every Run. Editing the empty one
-changes nothing and deleting it changes nothing; the file to edit is the committed one.
+### Where the transcripts go, and what it costs
+
+`pi` chooses, and what it chooses is one directory. With no `--session-dir` it falls back
+to `<agent directory>/sessions`, and the one thing that shards that shards it by the
+*working directory* — one subdirectory named after the path, `--workspace--` for
+`/workspace`, with one `.jsonl` per Session inside it. Your image declares one `WORKDIR`,
+so that is **one directory for the whole deployment**:
+
+```
+example/state/agent/sessions/--workspace--/2026-08-02T13-55-13-175Z_user_42.jsonl
+example/state/agent/sessions/--workspace--/2026-08-02T14-02-44-901Z_run_51b54b31-….jsonl
+```
+
+The number that matters is what a Run reads: resolving `--session-id` calls
+`SessionManager.list`, which **reads and parses every `.jsonl` in that directory**,
+including each file's entire message text (verified in `pi@0.83.0`). So every Run parses
+every transcript the deployment has ever accumulated, on the hot path, growing without
+bound, and nothing prunes.
+
+**You cannot avoid it.** A `sessionDir` in your `settings.json` moves the directory;
+nothing shards it. This is the price of the framework naming no path inside a program it
+does not depend on, and
+[ADR-0025](./adr/0025-the-pi-adapter-spawns-one-confined-process-per-run.md) accepts it
+rather than mitigating it — every fix means carrying a `pi` path through the framework
+again. If your deployment accumulates Sessions faster than you expected, archiving old
+`.jsonl` files out of that directory is the whole of the remedy, and it is yours.
+
+### Two files in there are not what they look like
+
+After the first Run you will find an **empty `example/state/workspace/AGENTS.md`** and an
+**empty `example/state/agent/settings.json`**, and neither is the file the agent read. A
+mount's *target* is created by the daemon when it is not already there, and the real files
+are `example/AGENTS.md` and `example/settings.json`, mounted over those paths read-only on
+every Run. Editing the empty ones changes nothing and deleting them changes nothing; the
+files to edit are the committed ones.
+
+## What the framework is told about the agent
+
+One value, with one required field. An **Agent Container** is the container a Run happens
+in — an image, and what the container running it sees — and it is inert: it creates no
+directory, checks no path and starts nothing, resolving to container arguments and no
+more. The whole of the reference deployment's is one call:
+
+```ts
+const runtime = createPiRuntime({
+  image: "saf-agent:0.83.0",
+  env: { ANTHROPIC_API_KEY: apiKey },
+  networks: ["saf_agent"],
+  mounts: {
+    entries: [
+      { containerPath: "/workspace", gatewayPath: workspace },
+      { containerPath: "/home/agent/.pi/agent", gatewayPath: agentDir },
+      {
+        containerPath: "/workspace/AGENTS.md",
+        gatewayPath: path.join(import.meta.dirname, "AGENTS.md"),
+        readOnly: true,
+      },
+      {
+        containerPath: "/home/agent/.pi/agent/settings.json",
+        gatewayPath: path.join(import.meta.dirname, "settings.json"),
+        readOnly: true,
+      },
+    ],
+  },
+});
+```
+
+Eight fields, and seven of them are optional — a default, or a fact most deployments do
+not have:
+
+| Field | |
+| --- | --- |
+| `image` | **the only required field**, and the only one this deployment could not have left out |
+| `mounts` | the **Mount Table**: what the container sees on disk. Optional — an image that bakes in its own configuration and keeps nothing between Runs mounts nothing |
+| `entrypoint` | what to run inside the image, overriding its own `ENTRYPOINT`. `pi` defaults it to `["pi"]` |
+| `networks` | one `--network` each, plural because a container can join several. **No default**: say nothing and you get the container runtime's shared bridge |
+| `env` | the whole of the agent's environment. This process's own is deliberately **not** inherited, which is much of why the agent is in a container at all |
+| `extraArgs` | container flags the framework does not model, spliced **last**, so one here also overrides one the framework set |
+| `containerCommand` | `["docker"]`; `["podman"]` works |
+| `logger` | yours, if you want [the line that diagnoses a mount](#the-line-you-need-to-diagnose-a-mount-or-a-network-is-off-by-default) |
+
+The Mount Table is a **field of it**, not a peer. One entry is one `--mount type=bind`: a
+`containerPath`, the `gatewayPath` it comes from on this machine, and `readOnly` if the
+agent must be unable to change it. An entry may name a directory or a single file, and the
+declaration does not say which, because nothing in the Mount Table looks. Who the
+container runs as is not in the table and is not configuration at all — always this
+process's own `uid:gid`
+([ADR-0028](./adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)).
+
+Notice what is **not** in any of it: no model, no provider, no working directory, no agent
+directory, no Session root. Nothing in an Agent Container is `pi`-shaped, so reading one
+tells you about containers and not about an agent. The model and the provider are now
+[a file you mount](#choosing-a-model-is-a-file-you-mount); the working directory and the
+agent directory are [two lines of your Dockerfile](#no-agent-image-is-published); and the
+Session root is simply gone, because `pi` resolves its own.
+
+`createPiRuntime` turns that declaration into a **Runtime**: the single thing the Signal
+Worker is handed, with a single method on it, `run(prompt)`. Almost all of what it returns
+is generic — an **Agent Container Runtime**, which owns the argument assembly, the
+confinement flags, the process, the redaction and the diagnosis of a failure — and what
+`pi` contributes to it is [one function](#a-second-agent-implementation-is-one-function).
 
 ## Telling the agent about the Agent server
 
@@ -142,9 +242,10 @@ never calls it. Telling it is yours, and **this section is what you copy from.**
 
 The mechanism is `pi`'s own: it looks for `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md` or
 `CLAUDE.MD` in its working directory and that directory's ancestors, and its working
-directory is your `workspacePath`. So you put a file in the Workspace and it is found. The
-reference deployment commits [`../example/AGENTS.md`](../example/AGENTS.md) and mounts it
-there, **read-only**, as the fourth entry of its Mount Table:
+directory is the `WORKDIR` your image declares. So you point a mount at that path and put
+a file in it, and it is found. The reference deployment commits
+[`../example/AGENTS.md`](../example/AGENTS.md) and mounts it there, **read-only**, as the
+third entry of its Mount Table:
 
 ```ts
 {
@@ -215,7 +316,8 @@ them is a request that would otherwise be written and quietly misunderstood:
   revoking one are methods on the User Directory and no route at all.
 
 `pi` ships no HTTP client, so the agent calls this with its shell tool and `curl` — which
-is why `curl` is one of the four things the agent's image needs:
+is why `curl` is one of the [three things the agent's image
+needs](#no-agent-image-is-published):
 
 ```sh
 curl -s "http://host.docker.internal:7411/signals?limit=5"
@@ -238,21 +340,22 @@ being out of date.
 
 ## What the entry point actually does
 
-Read [`../example/gateway.ts`](../example/gateway.ts) — seventy-nine lines of code under
-two hundred and sixty-seven with the comments, and the best documentation this project
-has. Twelve of those lines are imports; the rest are the configuration literals, the three
+Read [`../example/gateway.ts`](../example/gateway.ts) — seventy-five lines of code under
+two hundred and ninety-nine with the comments, and the best documentation this project
+has. Twelve of those lines are imports; the rest are the Agent Container above, the two
 directories it creates, the parts themselves, and the two things at the bottom the
 framework does not ship. Nothing in the framework represents the Gateway: there is no
 object to construct, no registry to add parts to and no plugin system. The file *is* the
 Gateway, and every line of it is a part being constructed and handed to another part.
 
-Two things in it are the framework's to describe and **yours to do**, and both are near
-the top. It `mkdir`s `state/workspace`, `state/agent` and `state/sessions`, because it is
-about to declare all three as mounts and nothing else will create them. And an `AGENTS.md`
-sits committed beside it — not written by anything at runtime, just a file in the
-repository — which the Mount Table's fourth entry mounts into the Workspace read-only, and
-which is the only thing that tells the agent the Agent server exists. The framework
-creates no directory and writes no file, ever
+Three things in it are the framework's to describe and **yours to do**, and all three are
+near the top. It `mkdir`s `state/workspace` and `state/agent`, because it is about to
+declare both as mounts and nothing else will create them. An `AGENTS.md` sits committed
+beside it — not written by anything at runtime, just a file in the repository — which the
+Mount Table's third entry mounts into the Workspace read-only, and which is the only thing
+that tells the agent the Agent server exists. And a `settings.json` sits beside *that*,
+mounted the same way, which is the only thing that tells the agent which model to use. The
+framework creates no directory and writes no file, ever
 ([ADR-0028](./adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)).
 
 The whole of an assembly is four steps — **construct, migrate, order, start** — and the
@@ -272,9 +375,11 @@ passed them to each other.
    part with tables of its own registers its migration descriptor with the Db, so there is
    no third item on a checklist for you to forget
    ([ADR-0032](./adr/0032-components-wire-themselves-at-construction.md)). Nothing here
-   touches the network. The adapter does settle the Mount Table on the spot, as a pure
-   function of what you wrote: a relative path, or an entry no `hostPaths` prefix covers,
-   is refused **at this line** rather than at the first Signal.
+   touches the network. Constructing the Runtime does settle the Agent Container on the
+   spot, as a pure function of what you wrote: a missing image, a relative path on either
+   side of a mount entry, or an entry no `hostPaths` prefix covers is refused **at this
+   line** rather than at the first Signal. Those three are the whole of what can be — see
+   [what nothing checks](#four-things-nothing-checks).
 2. **Migrate.** `await db.migrate()`, which takes no arguments and applies whatever
    registered — so it comes *after* the constructing, because constructing is what
    registers. It is never a side effect of opening the Db and never a side effect of
@@ -340,7 +445,8 @@ Where the Agent server's socket **binds** and how the agent's container **reache
 are two separate values, and nothing can compute either from the other. The framework
 holds neither. The first is the `host` and `port` you hand `serverComponent`; the
 second is a **string in your own `AGENTS.md`**, and there is nowhere else for it to be —
-the adapter has no field for it, has never read it, and never sees that address at all.
+the Agent Container has no field for it, nothing has ever read it, and the Runtime never
+sees that address at all.
 
 The reference deployment uses `http://host.docker.internal:7411` with a loopback bind,
 and that works **on Docker Desktop**, which routes that name to the host including its
@@ -348,8 +454,8 @@ loopback interface.
 
 **On a plain Linux daemon it does not.** There, you need both of:
 
-- `--add-host=host.docker.internal:host-gateway` in the adapter's `extraArgs`, because
-  the name does not otherwise exist; and
+- `--add-host=host.docker.internal:host-gateway` in the Agent Container's `extraArgs`,
+  because the name does not otherwise exist; and
 - the Agent server bound somewhere the bridge can reach — so `host: "0.0.0.0"` or the
   bridge address, which means it is **no longer on loopback** and the warning in
   ["the Agent server is unauthenticated"](#the-agent-server-is-unauthenticated) now
@@ -385,36 +491,60 @@ Nothing checks it for you. The framework verifies no mount and starts no contain
 boot, so an unwritable directory is something the agent meets during a Run — with the
 consequence in the next section.
 
-### A wrong path costs you a Signal
+### Four things nothing checks
 
-Nothing verifies your mounts. There is no startup check, no throwaway container, and not
-even a `stat` of the paths you declared: the Mount Table performs no I/O at all, on
-purpose ([ADR-0028](./adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)).
-Resolving it catches what is wrong with what you *wrote* — a relative path, an entry your
-`hostPaths` does not cover — and nothing at all about what is on your disk.
+This is the whole bill for the framework carrying no model, no provider and no path inside
+the agent, and it is collected in one place because the person reading it is the person
+who pays it.
 
-What catches the rest is the container runtime, and it does catch it. Every entry is
-emitted as `--mount type=bind`, never `-v`, and the difference is the point: `-v` invents
-a missing source as a `root`-owned **directory**, even where you meant a file, and the
-agent then reads an empty Workspace perfectly happily. `--mount` refuses, naming the path:
+**Three things are refused where you wrote them**, at construction, as a pure function of
+the value: a missing `image`, a relative path on **either** side of a mount entry, and a
+`gatewayPath` no `hostPaths` prefix covers. That is the complete list. Everything below is
+a file the framework does not read, at a path it was told about rather than chose, for a
+program it does not depend on — so it cannot refuse any of it
+([ADR-0033](./adr/0033-an-agent-is-a-container-and-one-function.md)).
+
+| What you got wrong | What it looks like |
+| --- | --- |
+| **No usable model.** `settings.json` missing, not mounted where `pi` looks, or naming a model your key cannot reach | a **permanently failed first Run**, carrying the provider's own message |
+| **An agent directory `pi` will not look in.** Your mount's `containerPath` and the image's `PI_CODING_AGENT_DIR` disagree | a **permanently failed first Run**: the mounted `settings.json` is inside that directory too, so `pi` reads no model — and if nothing declares the variable at all, `HOME=/` makes the default `/.pi/agent`, which the agent cannot create |
+| **A mount source that is not there.** A typo, or a directory you did not create | a **permanently failed first Run**, refused by the daemon before the agent starts |
+| **No mounts at all.** A legitimate deployment, and also what you get by deleting one entry too many | **no failure whatsoever.** Every Run succeeds and the agent quietly forgets: nothing survives a `--rm` container, so every Session is empty every time, and no log line anywhere says so |
+
+The first three all arrive the same way, and the way is the expensive part. A failed Run is
+never retried ([ADR-0017](./adr/0017-failed-runs-are-not-retried.md)), so **the Signal that
+found your mistake is dead permanently**: fixing it and restarting does not bring that one
+back, and if it was a user's question, the user is owed a new one.
+
+Three things soften those three. The message is in the Run's `error` column verbatim, with
+the container's stderr appended and its exit code too when that was non-zero, so the first
+place you look is the place it is. There is nothing timing-dependent about which Runs fail:
+what is wrong is wrong for every Run, so the first Signal after a deploy tells you exactly
+what the hundredth would.
+And mounts are emitted as `--mount type=bind` and never as `-v`, which is what makes a
+missing source a refusal that names the path rather than a `root`-owned empty directory the
+daemon invented and the agent then read perfectly happily:
 
 ```
 docker: Error response from daemon: invalid mount config for type "bind":
 bind source path does not exist: /srv/saf/wokspace
 ```
 
-**The bill is that this arrives at the first Run, not at boot.** A failed Run is never
-retried ([ADR-0017](./adr/0017-failed-runs-are-not-retried.md)), so the Signal that found
-your typo is dead permanently: fixing the path and restarting does not bring it back, and
-if that Signal was a user's question, the user is owed a new one. This is the one real
-cost of nothing being checked, and it is worth knowing before you meet it rather than
-after.
+The fourth softens into nothing, and that is why it is worth reading twice. An empty Mount
+Table is deliberately allowed — an image that bakes in its own configuration and keeps
+nothing between Runs is the smallest deployment this framework can describe, so the rule
+that used to refuse one is gone rather than moved
+([ADR-0028](./adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)). The price
+is that the same shape reached by accident produces no signal at all: every Run answers,
+every Run is a first Run, and the only symptom is a model that seems to have amnesia.
 
-Two things soften it. The daemon's message is in the Run's `error` column, verbatim, with
-the exit code beside it — so the first place you look is the place it is. And there is
-nothing timing-dependent about which Runs fail: a mount that is wrong is wrong for every
-Run, so the first Signal after a deploy tells you, and it tells you the same thing the
-hundredth would.
+That symptom has one other cause worth knowing, and it is the second row above with its
+teeth pulled. The second row fails loudly only because the reference deployment keeps
+`settings.json` **inside** the agent directory, so a directory `pi` does not look in is
+also a model it never reads. Bake your settings into the image instead and the same
+mismatch stops failing and starts forgetting. So if the agent has amnesia: check that your
+mount's `containerPath` is exactly the image's `PI_CODING_AGENT_DIR`, then look for the
+`.jsonl` transcripts under it on disk.
 
 ### The line you need to diagnose a mount or a network is off by default
 
@@ -432,26 +562,33 @@ your system already logs through satisfies it without wrapping:
 
 ```ts
 const logger = pino({ level: "debug" });          // or your own object with those four
-const runtime = createPiAdapter({ /* ... */, logger });
+const runtime = createPiRuntime({ image: "saf-agent:0.83.0", mounts, logger });
 const worker = createSignalWorker({ db, runtime, handlers, logger });
 ```
 
-Safe to keep in a log file: the argument list on that line has environment **values**
-stripped out, because the real one carries your provider API key. The two values a mount
-problem is diagnosed from are kept.
+A second line follows every Run, carrying the two things nothing else records: the
+container's exit status, which is *not* the outcome, and its stderr, where a first Run in a
+named Session often warns.
 
-The line no longer says where the Session's transcript landed on your own disk. It used
-to, worked back through your entries by the Mount Table, and that reverse lookup is gone
-along with it ([ADR-0028](./adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)).
-For "the agent has forgotten everything", the argv's `--session-dir` names the directory
-as the container sees it, and your own entry for the Session root says where that is.
+Safe to keep in a log file: **every** environment value on that line is replaced, with no
+exceptions list, because a list of what is safe to log would have to be right about every
+provider's key name forever. The names survive and the values do not. What that costs is
+the one value a mount problem used to be diagnosed from — `PI_CODING_AGENT_DIR` is no
+longer readable there either, and you read it back out of your own Dockerfile instead.
+
+The line also no longer says where the Session's transcript landed on your own disk, and
+nothing does: the framework passes no `--session-dir` and holds no path inside `pi`, so the
+reverse lookup that produced it is gone along with the Session root
+([ADR-0028](./adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)). For "the
+agent has forgotten everything", the place to look is
+[under the agent directory you mounted](#where-the-transcripts-go-and-what-it-costs).
 
 ### The agent's network isolates less than it looks like
 
-`compose.yaml` puts the agent on `saf_agent` and PostgreSQL on `saf_db`, and the
-adapter passes `--network saf_agent`. So the agent **cannot resolve `postgres`**, which
-is the point: the Db holds the Gateway's own state and the agent is supposed to reach it
-only through the Agent server's read-only routes.
+`compose.yaml` puts the agent on `saf_agent` and PostgreSQL on `saf_db`, and the Agent
+Container's `networks: ["saf_agent"]` is what puts the agent there. So the agent **cannot
+resolve `postgres`**, which is the point: the Db holds the Gateway's own state and the
+agent is supposed to reach it only through the Agent server's read-only routes.
 
 What that does *not* do, and you should know it before you rely on it: a separate bridge
 network stops **service-name discovery**, not **host access**. The Gateway is on your host
@@ -783,58 +920,149 @@ privileged position for the Workspace, which is an ordinary entry like the rest:
 { containerPath: "/reference", gatewayPath: "/srv/handbook", readOnly: true }
 ```
 
-Both paths are absolute, and `containerPath` is POSIX however your own platform spells a
-path. An entry may name a directory or a single file, and the declaration does not say
-which, because nothing in the Mount Table looks. Create the source yourself before the
-first Run — nothing else will, and the daemon refuses what is not there.
+Both paths are absolute — a relative one on either side is refused where you wrote it — and
+`containerPath` is POSIX however your own platform spells a path. Create the source
+yourself before the first Run: nothing else will, and the daemon refuses what is not there.
 
-## No key, or a different provider
+## Choosing a model is a file you mount
 
-The reference deployment names Anthropic in two places — `model`/`provider` in the
-adapter's configuration, and `ANTHROPIC_API_KEY` in the `env` it passes into the
-container. Both are one-line edits, and `env` is the whole of what you put in the agent's
-environment: this process's own is deliberately **not** inherited, which is much of the
-reason the agent runs in a container at all. The adapter adds exactly two variables of its
-own — one turning off `pi`'s startup network calls, which you can override, and one
-pointing `pi` at the mounted agent directory, which you cannot, because an agent pointed
-anywhere else finds nothing you put there.
+There is no `model` field and no `provider` field. The framework carries neither, because
+`pi` reads both out of a `settings.json` in its own directory, and that directory is one
+you already mount — so a value the framework would only have handed back is a value it does
+not hold ([ADR-0016](./adr/0016-agent-configuration-is-opaque-to-the-framework.md),
+[ADR-0025](./adr/0025-the-pi-adapter-spawns-one-confined-process-per-run.md)).
 
-For another provider, change the model, the provider, and the variable name. For a local
-OpenAI-compatible server, leave `provider` off and put a `models.json` describing it in
-the agent's directory yourself. The framework will not carry it for you: it has no
-`models` field and no `settings` field, because writing out JSON it never reads is
-pass-through with a file write attached. Anything `pi` should read on disk is yours to
-place in a directory you mount, and the framework has never heard of any of it.
+The whole of [`../example/settings.json`](../example/settings.json):
 
-There is a second way in, worth knowing because it survives restarts: the agent's own
+```json
+{
+  "defaultModel": "claude-sonnet-4-5",
+  "defaultProvider": "anthropic"
+}
+```
+
+It goes at **`<the agent directory>/settings.json`** inside the container — for the
+reference deployment `/home/agent/.pi/agent/settings.json`, which is
+`PI_CODING_AGENT_DIR` plus a file name, and is the fourth entry of the Mount Table above.
+`pi` falls back to those two whenever no `--model` flag names one, and the framework passes
+no such flag (verified in `pi@0.83.0`: `SettingsManager` exposes `defaultModel` and
+`defaultProvider`, and `main.js` falls back to the saved default).
+
+So switching provider is two lines of that file plus the variable name in your entry
+point's `env` — and `env` is the whole of what the agent's container gets, since this
+process's own environment is deliberately not inherited. For a local OpenAI-compatible
+server, drop `defaultProvider` and put a `models.json` beside `settings.json` describing
+it. The framework has no field for any of that and will not carry it: writing out JSON it
+never reads is pass-through with a file write attached.
+
+The credential can move into that directory too, and this is worth knowing because it
+survives restarts and keeps a secret out of the file you paste into an issue: the agent's
 directory persists between Runs, so an `auth.json` you put there is picked up, and `pi`'s
 own documentation says a credential there takes priority over the environment. Credentials
 the agent refreshes mid-Run persist the same way — which is the point of that directory,
 and the reason nothing of ours writes into it.
 
-Everything in there persists, including whatever the agent did to its own settings. If you
-want a file the agent cannot durably change, the answer is a **read-only single-file
-entry** in the Mount Table, the same shape `AGENTS.md` uses; the framework no longer holds
-that property by rewriting anything. Two facts about doing it to `settings.json` in
-particular, both checked against `pi@0.83.0` rather than assumed: it must be the **file**
-that is read-only and not the directory, because `pi` takes a lock beside that file even
-to read it, and a write it is refused is recorded rather than thrown, so the Run survives
-being denied.
+### Mount `settings.json` read-only, and mount the file rather than the directory
 
-Without a usable key the Gateway still starts, the container still runs, and the Run is
-recorded as **failed** carrying the provider's own message — which is worth seeing once,
-because it is also what a real model error looks like:
+Everything in the agent's directory persists, including whatever the agent did to its own
+settings. If you want a file the agent cannot durably change, the answer is a **read-only
+single-file entry** in the Mount Table, the same shape `AGENTS.md` uses; the framework no
+longer holds that property by rewriting anything. Two facts about doing it to
+`settings.json` in particular, both checked against `pi@0.83.0` rather than assumed: it must
+be the **file** that is read-only and not the directory, because `pi` takes a lock beside
+that file even to read it, and a write it is refused is recorded rather than thrown, so the
+Run survives being denied and the agent's own `/model` switch is dropped rather than
+persisted.
+
+### What a bad key looks like
+
+Nothing refuses a deployment with no usable model — that is the first row of
+[the four things nothing checks](#four-things-nothing-checks). The Gateway still starts,
+the container still runs, and the Run is recorded as **failed** carrying the provider's own
+message, which is worth seeing once because it is also what a real model error looks like:
 
 ```
-"error": "the Agent Implementation settled with stopReason \"error\" and exited
-          successfully anyway: 401 {\"type\":\"error\", ... \"message\":\"invalid
-          x-api-key\"} ..."
+"error": "Session user_42 settled with stopReason \"error\" and exited successfully
+          anyway: 401 {\"type\":\"error\", ... \"message\":\"invalid x-api-key\"} ...
+          Its stderr said: ..."
 ```
 
-Note "exited successfully anyway". The Agent Implementation's machine-readable mode exits
-zero on model and API errors, so the outcome is read out of the event stream and never
-from the exit code. You do not have to do anything about that; it is here because seeing a
-successful exit next to a failed Run is otherwise alarming.
+Two things in that string are deliberate. It names the **Session**, because the outcome
+reader is built per Run and closes over it, and that name is what tells you which
+transcript to open. And "exited successfully anyway": `pi`'s machine-readable mode exits
+zero on model and API errors, so the outcome is read out of the event stream and never from
+the exit code — which is also why no exit code appears in that message, since the framework
+only appends one when it is non-zero. You do not have to do anything about that; it is here
+because seeing a successful exit next to a failed Run is otherwise alarming.
+
+## A second Agent Implementation is one function
+
+Everything above is generic. An Agent Container knows nothing about `pi`, and neither does
+the **Agent Container Runtime** built from one: the argument assembly, `--rm --interactive
+--user`, the networks, the environment, the entry point, spawning, stdin, draining stderr,
+the exit status and the diagnosis appended to a failure are all shared. What an **Agent
+Implementation** adds is one function — given a Prompt, what to put after the image name,
+what to write on stdin, and how to read what comes back:
+
+```ts
+import {
+  createAgentContainerRuntime,
+  type RunPlan,
+  type RunPrompt,
+} from "shared-agent-framework";
+
+function clawRun(prompt: RunPrompt): RunPlan {
+  return {
+    args: ["--json", "--thread", prompt.session],
+    stdin: prompt.text,
+    outcome: async (stdout) => {
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of stdout) chunks.push(chunk);
+      const said = Buffer.concat(chunks).toString("utf8");
+      return said.includes(`"refused"`)
+        ? { ok: false, error: `Session ${prompt.session} was refused: ${said}` }
+        : { ok: true };
+    },
+  };
+}
+
+const runtime = createAgentContainerRuntime({
+  container: { image: "openclaw:1", networks: ["saf_agent"], mounts },
+  run: clawRun,
+});
+```
+
+That `runtime` is a Runtime, so it goes straight into `createSignalWorker({ db, runtime,
+handlers })` and nothing else in the entry point changes. `createPiRuntime` is that same
+call with two defaults spread beneath the Operator's own, and it is under ten lines: the
+whole of the `pi` Agent Implementation is
+[`../src/pi/runtime.ts`](../src/pi/runtime.ts), which is that constructor and `piRun`, plus
+[`../src/pi/output.ts`](../src/pi/output.ts), which is the reader `piRun` hands back.
+
+Four things about the shape, each of which is a decision rather than an accident:
+
+- **`{ container, run }`, contained rather than flattened.** The declaration an Operator
+  writes and the behaviour you supply stay visibly apart, your defaults visibly apply to
+  the container, and a field written in the wrong half is a type error.
+- **Your defaults spread beneath the Operator's**, which is the entire extension mechanism
+  — no registration, no base class, no lifecycle. `pi` contributes exactly two,
+  `entrypoint: ["pi"]` and `PI_OFFLINE`, and an Operator who states either gets theirs:
+  `{ entrypoint: ["pi"], ...container, env: { PI_OFFLINE: "1", ...container.env } }`.
+- **`outcome` is produced per Run**, which is the only reason this is one function and not
+  two: it closes over the Session, so a failure can say `Session run_x produced no output
+  at all` instead of just "something produced no output". Your `run` is called once per
+  Run and its result used for both the command line and the reader, so an impure one
+  cannot be asked twice and disagree with itself.
+- **`commandFor(prompt)` is on what comes back**, giving you the composed command line —
+  and the redacted copy — without starting a container. That is what makes your argument
+  tests pure, and it is the seam to test on: composing argv from the parts instead means
+  restating the Runtime's own defaults, so a test could not observe the default it exists
+  to check.
+
+The Prompt arrives as a `RunPrompt`, whose `session` is a `string` and never `null`: the
+Signal Worker resolved a Handler's request for a fresh Session against the Run row before
+calling you, so there is no naming convention for you to invent
+([ADR-0033](./adr/0033-an-agent-is-a-container-and-one-function.md)).
 
 ## Why the Gateway is not in the compose file
 
@@ -861,7 +1089,7 @@ about your deployment** rather than a property of each mount. State it once, on 
 mounts: {
   entries: [
     { containerPath: "/workspace", gatewayPath: "/srv/state/workspace" },
-    { containerPath: "/sessions", gatewayPath: "/srv/state/sessions" },
+    { containerPath: "/home/agent/.pi/agent", gatewayPath: "/srv/state/agent" },
   ],
   // this container's /srv/state is the host's /var/lib/saf
   hostPaths: { "/srv/state": "/var/lib/saf" },
@@ -873,7 +1101,7 @@ coexist. Leave `hostPaths` out and every entry is its own source, which is what 
 example on this page has been doing.
 
 Once you write one it is **exhaustive**. An entry whose `gatewayPath` falls under no key
-is refused when you construct the adapter, with a message naming the path and listing the
+is refused when you construct the Runtime, with a message naming the path and listing the
 prefixes you declared. It deliberately does not fall back to identity: a fallback is what
 turns forgetting the third of three mappings into a deployment that starts, serves, and
 has one silently empty directory in it. And because resolution is a pure function of what
@@ -903,28 +1131,53 @@ than no path at all, because the wrong one is not refused.
 
 There is no official `pi` image; every deployment builds one.
 [`../example/agent/Dockerfile`](../example/agent/Dockerfile) is the reference, and it is
-four instructions under a page of comments. Four things the adapter needs of any image
-you substitute:
+six instructions under a page of comments. Three things any image you substitute has to
+have, and two lines it has to declare.
 
-1. **`pi` as the `ENTRYPOINT`** — the adapter appends `pi`'s flags after the image name.
-2. **A POSIX shell** — the agent's own shell tool needs one.
-3. **`curl`** — `pi` ships no HTTP client, so the agent reaching the Agent server is its
+The three:
+
+1. **A POSIX shell** — the agent's own shell tool needs one.
+2. **`curl`** — `pi` ships no HTTP client, so the agent reaching the Agent server is its
    shell plus `curl`.
-4. **No dependence on a passwd entry** — the container runs as a uid the image has never
+3. **No dependence on a passwd entry** — the container runs as a uid the image has never
    heard of, so nothing may need `/etc/passwd` or `$HOME` to name it.
 
+`pi` as the `ENTRYPOINT` used to be a fourth. It is not: `entrypoint` is a field of the
+Agent Container and `pi` defaults it to `["pi"]`, so an image that starts something else
+is a value rather than a workaround.
+
+The two lines are where the container paths went:
+
+```dockerfile
+WORKDIR /workspace
+ENV PI_CODING_AGENT_DIR=/home/agent/.pi/agent
+```
+
+They are in the image rather than in your entry point because **a path the framework does
+not carry is a path it cannot get wrong** — it would have taken both from you and handed
+both straight back, one as `--workdir` and one as an environment variable, which is
+pass-through with a chance to mistype. A path in the image is one **you** can still get
+wrong, silently, and that trade is the second row of
+[the four things nothing checks](#four-things-nothing-checks). Neither line is a
+convenience: `WORKDIR` is where `pi` runs and therefore where it looks for `AGENTS.md`, and
+`PI_CODING_AGENT_DIR` has to be stated because `pi`'s own default joins `.pi/agent` onto
+the home directory, and a container running as a uid with no passwd entry gets `HOME=/`, so
+the default resolves to `/.pi/agent`, which the agent cannot create. It is a default that
+never works rather than one that usually does. Both must agree with your Mount Table, and
+nothing checks that they do.
+
 The model, the key, the Workspace, and the agent's instructions are deliberately not in
-the image. The first two are passed in per Run and the last two are mounted, so changing
-any of them is an edit to your entry point, or to a file beside it, rather than an image
-rebuild. Nothing is *written* into the image or into a mount by the framework; the reason
-the instructions are mounted rather than baked in is that a mount can be read-only and can
-change without a rebuild.
+the image. The key is passed in per Run and the other three are mounted, so changing any of
+them is an edit to your entry point, or to a file beside it, rather than an image rebuild.
+Nothing is *written* into the image or into a mount by the framework; the reason the
+instructions and the settings are mounted rather than baked in is that a mount can be
+read-only and can change without a rebuild.
 
 ## Tearing it down
 
 ```sh
 docker compose -f example/compose.yaml down -v   # containers, networks, and the database volume
-rm -rf example/state                             # the Workspace, the agent's directory, the Sessions
+rm -rf example/state                             # the Workspace and the agent's directory
 ```
 
 `example/state/` is gitignored. It holds credentials the agent wrote, so do not commit it.
@@ -943,17 +1196,20 @@ So you do not go looking:
   above.
 - **Authentication on the Agent server.** Refused, with the consequences spelled out
   above.
-- **Any check on what you mounted.** Refused, with the cost spelled out above. The
-  container runtime refuses a source that is not there, and that is the whole of it.
+- **Any check on what you mounted, or on what the agent reads.** Refused, with the whole
+  cost in [four things nothing checks](#four-things-nothing-checks). The container runtime
+  refuses a source that is not there, and that is the whole of it.
 - **Any file the framework writes.** It writes none, anywhere, ever — not the agent's
   settings, not its instructions, not a directory to put them in.
 - **POSIX signal handling.** The framework installs none. `components` gives you the
   ordering; the exit code, any timeout on the drain and what a second signal does are
   yours.
-- **Any Agent Implementation but `pi`.** The Runtime contract is narrow enough that
-  another is possible; none is written.
-- **Retention.** Session directories grow by one per fresh-Session Run and nothing prunes
-  them.
+- **Any Agent Implementation but `pi`.** Writing one is
+  [a function and a call](#a-second-agent-implementation-is-one-function), which is the
+  point of the contract being this narrow; none is written.
+- **Retention.** Session transcripts accumulate in one directory that
+  [every Run parses in full](#where-the-transcripts-go-and-what-it-costs), and nothing
+  prunes them.
 
 The reasoning for each is in [`../docs/adr/`](./adr/), and the map of how the parts fit
 together is [`architecture.md`](./architecture.md). Neither is required reading to run

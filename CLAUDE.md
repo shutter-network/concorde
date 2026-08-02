@@ -41,11 +41,11 @@ that starts a **real container** running a real `pi` against the real Agent
 server. It builds its own image from `src/test-support/pi-image/Dockerfile`, so it
 needs Docker and the network, and it takes about ten seconds. `npm run check`
 skips it — the variable `SAF_CONTAINER_TESTS` is what opts in, and the skip
-reason says so — because everything else about the `pi` adapter is a fast test and
-the inner loop should stay one. CI runs it as its own step, so "skipped by
-default" does not become "never run". It needs no model credentials: the model is
-a scripted OpenAI-compatible server on localhost, and everything else about the
-Run is real.
+reason says so — because everything else about the container and about `pi` is a
+fast test and the inner loop should stay one. CI runs it as its own step, so
+"skipped by default" does not become "never run". It needs no model
+credentials: the model is a scripted OpenAI-compatible server on localhost, and
+everything else about the Run is real.
 
 `npm run format` applies Biome's fixes; `npm run check` fails on unformatted code
 rather than warning.
@@ -99,7 +99,21 @@ Conventions the build depends on:
 - **Nothing outside `src/db/` imports `pg`.** Enforced by a Biome override:
   parts obtain a handle with `db.handle(schema)`, and the one thing that needs a
   connection of its own — a `LISTEN` registration — with `db.listen(channel,
-  listener)`, which keeps that connection inside the Db too.
+  listener)`, which keeps that connection inside the Db too. The override is on
+  the whole tree but `src/db/**`, so a new directory is covered without being
+  listed.
+- **Nothing in `src/container/` knows about an Agent Implementation.** That
+  directory is the Agent Container, the Mount Table and the process handling —
+  what `docker run` takes and what to do with it — and it is exported from the
+  **package root**, because the whole point of it is that a second Agent
+  Implementation needs it unchanged
+  ([ADR-0033](./docs/adr/0033-an-agent-is-a-container-and-one-function.md)).
+  `src/pi/` is the other half and is one function plus two defaults; it imports
+  from `src/container/` and nothing imports back. Not enforced by a lint rule —
+  an import of `../pi/` from there is the thing to refuse in review.
+  Argument composition is tested in `src/container/agent-container.test.ts`
+  through `commandFor` on a constructed Runtime, and the one test that starts a
+  real container stays in `src/pi/container.test.ts`.
 
 ## Agent skills
 
