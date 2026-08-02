@@ -32,11 +32,11 @@ The Component that owns the Signal queue, Signal Handler dispatch, Run execution
 _Avoid_: core, engine, kernel, runner, signal processor, prompt worker
 
 **Producer**:
-Anything inside the Gateway that emits Signals into the Signal Worker's queue. A **role**, not a kind of thing: the Messenger and the Scheduler are Producers, and so is a loop the Operator writes. Privileged, in that whatever it writes into a payload the Signal Worker takes as fact.
+Anything inside the Gateway that emits Signals into the Signal Worker's queue. A **role**, not a kind of thing: the HTTP Messenger and the Scheduler are Producers, and so is a loop the Operator writes. Privileged, in that whatever it writes into a payload the Signal Worker takes as fact.
 _Avoid_: source, ingress, adapter, connector
 
 **Public server**:
-The HTTP server exposed outside the Gateway. Named for its exposure rather than its audience, because some of its routes serve no authenticated User. Users reach the User Directory and the Messenger through it, and reach nothing else.
+The HTTP server exposed outside the Gateway. Named for its exposure rather than its audience, because some of its routes serve no authenticated User. Users reach the User Directory and the HTTP Messenger through it, and reach nothing else.
 _Avoid_: user server, external API, frontend
 
 **Agent server**:
@@ -47,9 +47,9 @@ _Avoid_: internal API, private server, control plane
 The Component every other Part reaches PostgreSQL through: the pool, the schema-typed handle each Part queries on, transactions, `LISTEN` registrations, and migrations. The agent cannot touch it directly, only through the Agent server. Contrast the Workspace, which the agent reads and writes as files. Formerly the **Store**, which named the persistent state rather than the client, and persistent state has no lifecycle to start and stop. See [ADR-0022](./docs/adr/0022-the-store-is-postgresql-through-drizzle.md).
 _Avoid_: store, datastore, persistence layer, repository
 
-**Messenger**:
-The Producer that owns messaging — accepting Users' submissions, holding Outboxes, and any higher-level messaging concepts a deployment needs. Owns neither Users nor their authentication: it is constructed with the User Directory and reads an already-authenticated User off the request. See [ADR-0029](./docs/adr/0029-users-are-a-part-of-their-own.md).
-_Avoid_: message server, chat server, inbox service
+**HTTP Messenger**:
+The Producer that owns messaging: it accepts a User's submission, records it, emits a Signal from it in the same transaction, and holds the Message log the agent writes into and both sides read. Owns neither Users nor their authentication, being constructed with the User Directory and reading an already-authenticated User off the request. Named for the freedoms it declines rather than for its transport, since everything here is HTTP: the content is a `text` string, the Signal `kind` is fixed, both route prefixes are fixed, both servers are required, and no route plugin is exported. A deployment wanting any of those back writes a second messaging Producer as a peer, with its own schema, `kind` and tables. There is deliberately no unqualified **Messenger**: it was the designed name from [ADR-0007](./docs/adr/0007-messages-carry-arbitrary-json-payloads.md) onwards, and the qualifier is the one price paid up front for a peer that may never exist. See [ADR-0034](./docs/adr/0034-the-http-messenger-is-an-opinionated-messenger.md), [ADR-0029](./docs/adr/0029-users-are-a-part-of-their-own.md) and [ADR-0036](./docs/adr/0036-the-http-messengers-user-id-is-a-foreign-key.md).
+_Avoid_: Messenger, message server, chat server, inbox service
 
 **User Directory**:
 The part that owns Users and their credentials — management on the Agent server, authentication on the Public server. Not a Producer: it emits no Signals and holds no reference to the Signal Worker. Not a Component either, having nothing to start or stop. See [ADR-0029](./docs/adr/0029-users-are-a-part-of-their-own.md) and [ADR-0030](./docs/adr/0030-passwords-are-traded-for-bearer-tokens.md).
@@ -113,10 +113,10 @@ _Avoid_: scratch, working directory, shared state
 
 ## Identity
 
-Owned by the User Directory, not the Signal Worker and not the Messenger.
+Owned by the User Directory, not the Signal Worker and not the HTTP Messenger.
 
 **User**:
-An entity that authenticates against the User Directory, and may submit Messages and hold an Outbox. Named by an opaque Gateway-issued id, never by email or any other scheme. Nothing removes one. See [ADR-0014](./docs/adr/0014-users-are-opaque-ids-and-authentication-is-pluggable.md) and [ADR-0029](./docs/adr/0029-users-are-a-part-of-their-own.md).
+An entity that authenticates against the User Directory, and may submit Messages and read their own Message log. Named by an opaque Gateway-issued id, never by email or any other scheme. Nothing removes one. See [ADR-0014](./docs/adr/0014-users-are-opaque-ids-and-authentication-is-pluggable.md) and [ADR-0029](./docs/adr/0029-users-are-a-part-of-their-own.md).
 _Avoid_: account, member, client, party
 
 **Attributes**:
@@ -129,19 +129,15 @@ _Avoid_: session, JWT, API key, cookie
 
 ## Messaging
 
-Owned by the Messenger, not the Signal Worker.
+Owned by the HTTP Messenger, not the Signal Worker.
 
 **Message**:
-Something exchanged between the agent and exactly one User, in one direction or the other. Carries an arbitrary JSON payload. **Outbound** means agent to User; **inbound** means User to agent. Never involves two Users, and never a group. See [ADR-0007](./docs/adr/0007-messages-carry-arbitrary-json-payloads.md).
+Something exchanged between the agent and exactly one User, in one direction or the other. Carries a **`text` string**, fixed by the part rather than arbitrary JSON, and a `seq` that numbers it within that one User's log whichever direction it travelled. **Outbound** means agent to User; **inbound** means User to agent, and only a User can cause an inbound one. Never involves two Users, and never a group. Immutable once written, like a Signal, and nothing removes one. See [ADR-0034](./docs/adr/0034-the-http-messenger-is-an-opinionated-messenger.md) and [ADR-0035](./docs/adr/0035-a-users-messages-are-one-log-read-by-cursor.md).
 _Avoid_: notification, reply, response, event
 
 **Message log**:
-The Messenger's record of every Message in both directions. The **durable** record of what was said — a Session is a lossy cache of it, since compaction discards what it holds, and what another User said was never in a given Session at all. The agent queries it; Users see only their own.
-_Avoid_: history, transcript, archive
-
-**Outbox**:
-The append-only log of **outbound** Messages to one User, which that User fetches by cursor. Retained after reading and numbered per User. A view over the Message log rather than a separate store — a User polling it never receives their own inbound Messages back. See [ADR-0015](./docs/adr/0015-outboxes-are-cursor-read-logs.md).
-_Avoid_: queue, feed, inbox, notifications
+The HTTP Messenger's record of every Message in both directions. The **durable** record of what was said — a Session is a lossy cache of it, since compaction discards what it holds, and what another User said was never in a given Session at all. One User's slice of it is a single sequence across both directions, read by cursor: that one read serves a client's first page, its scroll backwards and its poll forwards alike. The agent queries any User's; a User reads only their own. See [ADR-0035](./docs/adr/0035-a-users-messages-are-one-log-read-by-cursor.md).
+_Avoid_: history, transcript, archive, outbox
 
 ## Properties
 
@@ -152,7 +148,7 @@ _Avoid_: protected, sandboxed, isolated, secured
 ## Rejected
 
 **Component**:
-No longer rejected, and kept here because it was. [ADR-0031](./docs/adr/0031-parts-that-run-are-components.md) reinstates it with a far narrower meaning than the one rejected: a lifecycle, and nothing else. What was rejected still is, and it is precisely why the interface is two methods and not a plugin system: there is no common contract that the Messenger, the Scheduler, an Authenticator and an Operator's own code all satisfy. "Service", "plugin", "module" and "extension" stay rejected as synonyms.
+No longer rejected, and kept here because it was. [ADR-0031](./docs/adr/0031-parts-that-run-are-components.md) reinstates it with a far narrower meaning than the one rejected: a lifecycle, and nothing else. What was rejected still is, and it is precisely why the interface is two methods and not a plugin system: there is no common contract that the HTTP Messenger, the Scheduler, an Authenticator and an Operator's own code all satisfy. "Service", "plugin", "module" and "extension" stay rejected as synonyms.
 
 **Authenticator**:
 Rejected, having been named in [ADR-0014](./docs/adr/0014-users-are-opaque-ids-and-authentication-is-pluggable.md) as the replaceable part that verifies a credential. Its own motivation was keeping authentication out of the core, and that is satisfied by the User Directory being a separate part: a deployment replaces our authentication by constructing the User Directory with no Public server ([ADR-0032](./docs/adr/0032-components-wire-themselves-at-construction.md)). Verification was also the wrong seam — an implementation of one still has to answer where the credential lives, so the useful extension point is **token issuance**, which is a public method and not an interface. See [ADR-0030](./docs/adr/0030-passwords-are-traded-for-bearer-tokens.md).
@@ -162,8 +158,12 @@ _Also rejected as synonyms_: identity provider, auth provider, IdP, credential v
 Rejected as a separate entity for what a User sends in. It is an **inbound Message**. A distinct entity would have made the agent's read of the Message log a union of two shapes, which is the one read it exists to serve. The verb "submit" is still the right word for the act.
 _Also rejected as synonyms_: request, input, utterance, post
 
+**Outbox**:
+Rejected, having been the term for the outbound-only view of one User's Messages that the User fetched by cursor ([ADR-0015](./docs/adr/0015-outboxes-are-cursor-read-logs.md)). **Absorbed rather than dropped**: `seq` now numbers both directions, so the cursored read it named is the Message log's own read and the filter it consisted of is gone. Everything ADR-0015 argued about cursors survives under **Message log**; only the outbound-only scope fell. The stored read position went with it, and there is no term for one.
+_Also rejected as synonyms_: queue, feed, inbox, notifications
+
 **Chat**:
-Rejected as a *framework* concept: it presumes free-text back-and-forth, is meaningless for a scheduled Signal, and overlaps both Session and Outbox. If the Messenger needs one, the term is **Conversation**, and it lives there.
+Rejected as a *framework* concept: it presumes free-text back-and-forth, is meaningless for a scheduled Signal, and overlaps both Session and Message log. A client renders a chat; what it renders is a Message log, and that is the domain term even now that the content is a string. If the HTTP Messenger ever needs to group Messages, the term is **Conversation**, and it lives there.
 
 **Mandate**:
 Named the agreed statement of what a Shared Agent is for. Real as a reason the framework exists, but with no operational role once agent configuration is opaque, and not needed to explain the framework either. See [ADR-0016](./docs/adr/0016-agent-configuration-is-opaque-to-the-framework.md).

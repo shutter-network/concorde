@@ -1,4 +1,26 @@
+---
+status: partially superseded by ADR-0034 and ADR-0035
+---
+
 # Messages carry arbitrary JSON payloads
+
+> **Partially superseded by
+> [ADR-0034](./0034-the-http-messenger-is-an-opinionated-messenger.md) and
+> [ADR-0035](./0035-a-users-messages-are-one-log-read-by-cursor.md).** Two claims fall.
+> **The arbitrary payload falls for the part that shipped**: an HTTP Messenger Message is a
+> `text` string, and ADR-0034 does not claim an exception to the reasoning below but inverts
+> its premise, since fixing the shape is what creates the generic client this ADR correctly
+> observed did not exist. **The last consequence falls entirely**: `seq` is carried by both
+> directions, is never null, and there is no Outbox to poll, so a User's read does return
+> their own Messages, which is the point of it (ADR-0035).
+>
+> What survives: one entity with a direction rather than two, and the reason for it; the
+> Gateway stamping no provenance onto the envelope; correlation being the agent's job; the
+> rule that no identifier or counter exposed to a User is influenced by another User's
+> activity, which ADR-0035's `seq` still satisfies; and the durable record living in the
+> Message log rather than the Session. The freedom itself also survives, one level up: a
+> deployment whose Messages are not text writes a second messaging Producer with a payload
+> of its own choosing (ADR-0034).
 
 A Message travels between one User and the agent, in either direction. An **outbound** Message is what the agent addresses to a User, and it lands in that User's Outbox; an **inbound** Message is what a User sends in, and the Messenger emits a Signal from it. Either way the payload is arbitrary JSON — no framework-defined schema, no registry of payload types.
 

@@ -1,4 +1,24 @@
+---
+status: partially superseded by ADR-0035
+---
+
 # Outboxes are cursor-read logs
+
+> **Partially superseded by
+> [ADR-0035](./0035-a-users-messages-are-one-log-read-by-cursor.md).** Three claims fall.
+> **The Outbox falls as a concept**, not merely as a route: `seq` is carried by both
+> directions, one cursored read serves both the poll and the render, and there is no
+> outbound-only view left to name. **The read position falls**: the stored cursor table is
+> deleted rather than moved, because nothing ever said who advances it and both answers are
+> things this ADR itself rejects, a server-advanced position being a destructive read one
+> layer up and a client-advanced one being an ack. **Retention configured per deployment
+> falls** for the HTTP Messenger, which has nothing to configure: nothing removes a Message.
+>
+> Everything this ADR argues about cursors survives, because none of it was about direction:
+> retention rather than destruction, no acks and no redelivery bookkeeping, idempotent
+> re-readable fetches, a per-User sequence rather than a global one, an Outbox never having
+> been a store of its own, and delivery by polling with SSE or long-polling addable later
+> without touching the data model.
 
 An Outbox is an append-only log. Messages are retained after being read, each User holds a read position, and fetching means "everything after cursor N". Fetching is therefore idempotent and safe to retry, and a client can re-read history without the Gateway tracking delivery attempts.
 

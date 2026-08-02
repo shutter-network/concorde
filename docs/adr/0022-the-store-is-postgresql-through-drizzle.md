@@ -1,3 +1,7 @@
+---
+status: partially superseded by ADR-0031, ADR-0032 and ADR-0036
+---
+
 # The Store is PostgreSQL, accessed through Drizzle
 
 > **Renamed and superseded in one detail.** The Store is now the **Db**: `openDb`,
@@ -14,6 +18,16 @@
 > Everything this ADR decides is unaffected: PostgreSQL only, per-part schemas, per-part
 > tracking tables mandatory for the reason given below, and `pg` staying out of the public
 > API.
+>
+> **Partially superseded by
+> [ADR-0036](./0036-the-http-messengers-user-id-is-a-foreign-key.md)** in one claim: "no
+> table references another part's" now has exactly one exception, the HTTP Messenger's
+> `messages.user_id`, which is a foreign key onto `saf_users.users.id`. Nothing else here is
+> affected: PostgreSQL only, a schema per part, a migration tracker per part, and migrations
+> shipped inside the package all stand. The exception costs the four things ADR-0036 records,
+> among them a hand-edit on every `drizzle-kit` regeneration, because the generator cannot
+> express a cross-schema reference without emitting the foreign part's DDL, and a
+> construction order that becomes load-bearing at `migrate`.
 
 The Store is PostgreSQL and nothing else. Schemas and queries are written with `drizzle-orm`'s `pg-core`, the whole surface is asynchronous, and there is no storage abstraction, no repository layer, and no second dialect.
 
