@@ -57,11 +57,14 @@
  * convenience. It reads no database and starts nothing — it walks the import graph from
  * `src/index.ts` and asserts what is *not* in it.
  *
- * **No password is anywhere in this file**, and that is the defaults constructor showing
- * through: it exposes no `scrypt` option, so a login here would derive at OWASP's 32 MiB
- * cost twice over for nothing this file is about. The one User is admitted and handed a
- * Token from trusted code instead, which is the same two calls an OIDC callback makes
- * (ADR-0030), and the four route groups are proven registered by reads that hash nothing.
+ * **One password is in this file, and one only.** The defaults constructor exposes no
+ * `scrypt` option, so every derivation here is at OWASP's 32 MiB cost, and the User this
+ * suite is otherwise built around is admitted and handed a Token from trusted code
+ * instead, which is the same two calls an OIDC callback makes (ADR-0030), so that four
+ * route groups are proven registered by reads that hash nothing. The exception is the round
+ * trip on an issued Token: `POST /auth/tokens` is the only route in the framework that
+ * answers one, and a login is the only way to reach it, so that assertion buys its
+ * derivations rather than being written somewhere cheaper.
  */
 
 import assert from "node:assert/strict";
@@ -83,7 +86,7 @@ import type { RunRecord, SignalHandler, SignalRecord } from "./signals/index.ts"
 import { createTestDatabase, type TestDatabase } from "./test-support/database.ts";
 import { fakeRuntime } from "./test-support/fake-runtime.ts";
 import { waitUntil } from "./test-support/wait.ts";
-import type { UserRecord } from "./users/index.ts";
+import type { IssuedToken, UserRecord } from "./users/index.ts";
 
 const hour = 60 * 60 * 1000;
 
@@ -126,22 +129,36 @@ function notebook(): Notebook {
 const callbacks: string[] = [];
 
 /**
+ * The awkward JSON both round trips carry, and the reason either of them nests anything.
+ *
+ * A Signal's `payload` and a User's `attributes` are both declared with an **empty
+ * schema**, precisely so that arbitrary JSON survives serialization byte intact
+ * ([ADR-0040](../docs/adr/0040-the-gateway-describes-its-own-http-api.md)), and a flat
+ * object of strings would not have shown it: a list of mixed types, a null inside it and
+ * an object below that are what a schema with an opinion would flatten or drop.
+ */
+const awkwardJson = { list: [1, "two", null, { deep: true }], nothing: null };
+
+/**
  * The Signal the round-trip assertions are about: a `kind` of its own, a Handler of its
- * own, and a payload with something nested in it.
+ * own, and that payload.
  *
  * A `kind` of its own so that reading it back proves nothing about the reference
  * deployment's convention, which is the Operator's and not the framework's, and so that
- * the Handler driving the drain below is left saying what it says. The payload is nested
- * on purpose: `payload` is declared with an empty schema precisely so that arbitrary JSON
- * survives serialization byte intact, and a flat object would not have shown it
- * ([ADR-0040](../docs/adr/0040-the-gateway-describes-its-own-http-api.md)).
+ * the Handler driving the drain below is left saying what it says.
  */
 const roundTripKind = "the.round.trip";
 const roundTripSession = "the round trip";
-const roundTripPayload = {
-  text: "say this back to me",
-  nested: { list: [1, "two", null, { deep: true }], nothing: null },
-};
+const roundTripPayload = { text: "say this back to me", nested: awkwardJson };
+
+/**
+ * The one password in this file, and the Attributes of the User that holds it.
+ *
+ * Attributes are also the field a *password hash* would have to be smuggled out beside,
+ * which is the other thing the round trip below reads them for.
+ */
+const theOnePassword = "the only password in this file";
+const roundTripAttributes = { groups: ["reviewers"], nested: awkwardJson };
 
 /** A Handler whose only job is to produce one Run for the round trip to read. */
 const roundTripping: SignalHandler<{ readonly text: string }> = {
@@ -436,6 +453,124 @@ describe("a whole deployment from one call", () => {
     assert.deepEqual(await agentJson<RunRecord>(`/runs/${run.id}`), run);
   });
 
+  it("answers a User and an issued Token as the User Manager recorded them, and drops nothing", async () => {
+    // The same hazard the Signal round trip above is about, on the one record where it
+    // cuts both ways. A field dropped from a `UserRecord` is an answer quietly missing
+    // something; a field *added* to the schema is the password hash on a wire ADR-0030
+    // says it never reaches. So the shape is asserted whole in both directions: against a
+    // record this process holds, and against the bytes that came back.
+    const created = await components.db.tx(async (tx) => {
+      const user = await components.users.create(tx);
+      await components.users.setAttributes(tx, user.id, roundTripAttributes);
+      await components.users.setPassword(tx, user.id, theOnePassword);
+      return user;
+    });
+    // Read back through the part's own method rather than reusing what `create` answered,
+    // since the Attributes and the password were written after it: this is the record the
+    // Manager holds, and it is what the wire is compared against.
+    const recorded = await components.users.get(created.id);
+    assert.ok(recorded !== undefined, "the User this test just created should be readable");
+
+    const read = await agentJson<UserRecord>(`/users/${created.id}`);
+    assert.deepEqual(read, {
+      id: created.id,
+      // Byte intact, nesting and nulls and all, which is what the empty schema on
+      // `attributes` is for: the Gateway never interpreted these and the wire does not
+      // start (ADR-0014).
+      attributes: roundTripAttributes,
+      // Compared against the in-process record rather than against itself, which is what
+      // a dropped field would survive: `undefined` on both sides of a `deepEqual` passes.
+      createdAt: recorded.createdAt,
+    } satisfies UserRecord);
+
+    // And the list route, which is a second response schema written separately: a field
+    // declared in one of the two and forgotten in the other differs here. `limit` is 2
+    // because `admitted()` made a User before this one. The create route's own schema is
+    // exercised where the create route is, in `src/users/routes.test.ts`.
+    const listed = await agentJson<{ users: UserRecord[] }>("/users?limit=2");
+    assert.deepEqual(listed.users, [read, await agentJson<UserRecord>(`/users/${client.id}`)]);
+
+    // The Token, which is the one record in the framework that **only a login answers
+    // with**, and that is what buys the two derivations this file otherwise refuses to pay.
+    // The in-process half is `issueToken`, the method an Operator's own OIDC route calls,
+    // and it builds the shape the login builds: a field added to `IssuedToken` and
+    // forgotten in the schema is a key on one side and not the other.
+    const minted = await components.db.tx((tx) => components.users.issueToken(tx, created.id));
+    const login = await postJson(`${publicUrl}/auth/tokens`, {
+      user: created.id,
+      password: theOnePassword,
+    });
+    const issuedBody = await login.text();
+    assert.equal(login.status, 201, issuedBody);
+    const issued: IssuedToken = JSON.parse(issuedBody);
+    assert.deepEqual(Object.keys(issued).sort(), Object.keys(minted).sort());
+    assert.deepEqual(issued, {
+      // Two Tokens for one User, and different ones: the plaintext is minted per issue and
+      // exists only in the response that carries it. Its length is checked against the
+      // in-process Token's below, which is what a truncating schema would fail.
+      token: issued.token,
+      expiresAt: issued.expiresAt,
+      // The whole User, embedded, and byte for byte what the Agent server answered, so a
+      // field declared in one of those two schemas and forgotten in the other differs here.
+      user: read,
+    } satisfies IssuedToken);
+    assert.equal(issued.token.length, minted.token.length);
+    assert.notEqual(issued.token, minted.token);
+    assert.equal(new Date(issued.expiresAt).toISOString(), issued.expiresAt);
+
+    // The presented User, over the Token just traded for, which is the fourth schema
+    // answering a `UserRecord` and the last one.
+    const presented = await fetch(`${publicUrl}/auth/me`, {
+      headers: { authorization: `Bearer ${issued.token}` },
+    });
+    const presentedBody = await presented.text();
+    assert.equal(presented.status, 200, presentedBody);
+    assert.deepEqual(JSON.parse(presentedBody), read);
+
+    // And nothing that could be a credential is on any of the four wires that carry a
+    // User. `asUserRecord` says "the password hash is not on this wire, ever" and the
+    // response schema is the second, independent enforcement of it; this is what notices
+    // if both are undone at once, and it reads the bytes rather than a parsed object,
+    // since a hash nested inside `attributes` would parse into a field that is supposed
+    // to be there.
+    for (const [what, body] of [
+      ["GET /users/:id", JSON.stringify(read)],
+      ["GET /users", JSON.stringify(listed)],
+      ["POST /auth/tokens", issuedBody],
+      ["GET /auth/me", presentedBody],
+    ] as const) {
+      assert.equal(/password|scrypt/i.test(body), false, `${what} carried a credential: ${body}`);
+    }
+
+    // And the three routes that answer nothing still answer nothing. A response schema is
+    // a serializer, so a 204 declared as a body is a route that answers 500 at
+    // serialization time; `type: "null"` is what keeps these empty and what keeps the
+    // document from promising a body nobody sends (ADR-0040). Ordered so that each has a
+    // Token that still works: the password change first, then the presented Token revoked,
+    // then every Token of that User revoked over the one `issueToken` minted.
+    const changing = { currentPassword: theOnePassword, newPassword: "and its replacement" };
+    for (const [method, path, token, body] of [
+      ["PUT", "/auth/password", issued.token, changing],
+      ["DELETE", "/auth/tokens/current", issued.token, undefined],
+      ["DELETE", "/auth/tokens", minted.token, undefined],
+    ] as const) {
+      const answered = await fetch(`${publicUrl}${path}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${token}`,
+          ...(body === undefined ? {} : { "content-type": "application/json" }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      const answeredBody = await answered.text();
+      assert.equal(answered.status, 204, `${method} ${path}: ${answeredBody}`);
+      assert.equal(answeredBody, "");
+      // No content type either, which is Fastify not serializing rather than serializing
+      // nothing: a declared body would have put one back.
+      assert.equal(answered.headers.get("content-type"), null);
+    }
+  });
+
   it("drains with everything still up, and closes it all once the drain is done", async () => {
     const posted = await postMessage(inFlightAtShutdown);
     assert.equal(posted.status, 201);
@@ -560,12 +695,12 @@ describe("the defaults on their own", () => {
  * further up: that suite's subject is what is listening and when, and `inject` answers on
  * a server that has been closed. This one never starts or stops a Gateway.
  *
- * **Responses arrive one part at a time.** The Signal Worker's four routes declare what
- * they answer with; the User Manager's and the HTTP Messenger's do not yet, and the tests
- * below read a `responses` object only for the paths whose part has been through. What no
- * test here can do is catch a *dropped* field, since a document and the wire it describes
- * are the same schema read twice. That is the round-trip assertion in the first suite,
- * which needs a record a real part recorded and therefore a real database.
+ * **Responses arrive one part at a time.** The Signal Worker's four routes and the User
+ * Manager's eight declare what they answer with; the HTTP Messenger's do not yet, and the
+ * tests below read a `responses` object only for the paths whose part has been through.
+ * What no test here can do is catch a *dropped* field, since a document and the wire it
+ * describes are the same schema read twice. That is the round-trip assertions in the first
+ * suite, which need records real parts recorded and therefore a real database.
  */
 describe("the description both servers serve", () => {
   /** Somewhere nothing resolves, since none of this connects. */
@@ -602,12 +737,23 @@ describe("the description both servers serve", () => {
   ];
 
   /** As much of an OpenAPI document as anything here reads. */
+  type Property = { readonly type?: string; readonly description?: string };
+  type Schema = {
+    readonly properties?: Readonly<Record<string, Property>>;
+    readonly required?: readonly string[];
+  };
+  /** Absent on a response that carries no body, which is the whole point of a 204. */
+  type Answered = {
+    readonly description: string;
+    readonly content?: Readonly<Record<string, { readonly schema: Schema }>>;
+  };
   type Operation = {
     readonly tags?: readonly string[];
     readonly summary?: string;
     readonly description?: string;
-    readonly responses: Readonly<Record<string, { readonly description: string }>>;
+    readonly responses: Readonly<Record<string, Answered>>;
   };
+  type Method = "get" | "post" | "put" | "delete";
   type Description = {
     readonly openapi: string;
     readonly info: {
@@ -615,7 +761,7 @@ describe("the description both servers serve", () => {
       readonly description: string;
       readonly version: string;
     };
-    readonly paths: Readonly<Record<string, { readonly get?: Operation }>>;
+    readonly paths: Readonly<Record<string, Partial<Record<Method, Operation>>>>;
   };
 
   let described: Gateway<DefaultComponents>;
@@ -730,6 +876,119 @@ describe("the description both servers serve", () => {
     }
   });
 
+  it("says what the User Manager's eight routes answer with, across both surfaces", async () => {
+    // Eight routes and two documents, which is the one part that spans both surfaces and
+    // therefore the one where "an Agent server route can never leak into the Public
+    // server's description" is a claim about a part rather than about a server (ADR-0040).
+    const documents = {
+      agent: await documentOf(described.components.agentServer.fastify),
+      public: await documentOf(described.components.publicServer.fastify),
+    };
+    // A path ending in a slash is a route registered at `""` under a prefix, which is how
+    // `POST /users` and `GET /users` are written.
+    const answers: readonly {
+      readonly surface: keyof typeof documents;
+      readonly path: string;
+      readonly method: Method;
+      readonly statuses: readonly string[];
+    }[] = [
+      { surface: "agent", path: "/users/", method: "post", statuses: ["201", "400"] },
+      { surface: "agent", path: "/users/", method: "get", statuses: ["200", "400"] },
+      { surface: "agent", path: "/users/{id}", method: "get", statuses: ["200", "400", "404"] },
+      { surface: "public", path: "/auth/tokens", method: "post", statuses: ["201", "400", "401"] },
+      { surface: "public", path: "/auth/me", method: "get", statuses: ["200", "400", "401"] },
+      {
+        surface: "public",
+        path: "/auth/tokens/current",
+        method: "delete",
+        statuses: ["204", "400", "401"],
+      },
+      {
+        surface: "public",
+        path: "/auth/tokens",
+        method: "delete",
+        statuses: ["204", "400", "401"],
+      },
+      { surface: "public", path: "/auth/password", method: "put", statuses: ["204", "400", "401"] },
+    ];
+
+    for (const { surface, path, method, statuses } of answers) {
+      const where = `${method.toUpperCase()} ${path}`;
+      const route = documents[surface].paths[path]?.[method];
+      assert.ok(route !== undefined, `${where} should be described`);
+      assert.deepEqual(Object.keys(route.responses).sort(), [...statuses].sort(), where);
+      for (const [status, answered] of Object.entries(route.responses)) {
+        // "Default Response" is what an undeclared response reads as, so this is the line
+        // that tells a described status from a status the plugin invented a sentence for.
+        assert.notEqual(answered.description, "Default Response", `${where} ${status}`);
+        // A 204 carries **no `content` at all**, which is what stops the document from
+        // promising a body nobody sends. That the route still answers 204 is the first
+        // suite's, since it needs a request that reaches a handler.
+        assert.equal(Object.hasOwn(answered, "content"), status !== "204", `${where} ${status}`);
+      }
+
+      assert.ok(route.tags !== undefined && route.tags.length > 0, `${where} should be tagged`);
+      assert.ok(route.summary !== undefined && route.summary.length > 0, where);
+      assert.ok(route.description !== undefined && route.description.length > 0, where);
+    }
+
+    // Tagged so that the two surfaces group separately rather than arriving as one list of
+    // eight: the routes an agent may call are Users, the routes a person's client calls are
+    // Authentication, and neither name appears in the other document.
+    assert.deepEqual(tagsOf(documents.agent, "/users/", "post"), ["Users"]);
+    assert.deepEqual(tagsOf(documents.public, "/auth/me", "get"), ["Authentication"]);
+    assert.equal(JSON.stringify(documents.agent.paths).includes("Authentication"), false);
+    assert.equal(JSON.stringify(documents.public.paths).includes('"Users"'), false);
+
+    // The sentence an Operator used to transcribe into the agent's instructions, and the
+    // one this route's whole security boundary is: there is no parameter, so there is
+    // nothing to bypass (ADR-0029).
+    const creating = String(documents.agent.paths["/users/"]?.post?.description);
+    assert.match(creating, /accepts no Attributes, and there is no parameter for them/);
+
+    // Which routes want a Token, said per route, because the useful thing to know is which
+    // one is the exception rather than that most of them do.
+    for (const [path, method] of [
+      ["/auth/me", "get"],
+      ["/auth/tokens/current", "delete"],
+      ["/auth/tokens", "delete"],
+      ["/auth/password", "put"],
+    ] as const) {
+      const route = documents.public.paths[path]?.[method];
+      assert.match(String(route?.description), /\*\*Requires a bearer Token\*\*/, path);
+    }
+    const trading = String(documents.public.paths["/auth/tokens"]?.post?.description);
+    assert.match(trading, /the one Public route that requires no Token/);
+
+    // The User as it is answered: exactly three fields, named rather than counted, because
+    // the schema being a **positive list** is what keeps a column added to `saf_users.users`
+    // off the wire. A hash reaching one is the first suite's assertion; that the document
+    // does not even describe one is this.
+    const user = schemaOf(documents.agent, "/users/{id}", "get", "200");
+    assert.deepEqual(Object.keys(user.properties ?? {}).sort(), ["attributes", "createdAt", "id"]);
+    assert.deepEqual([...(user.required ?? [])].sort(), ["attributes", "createdAt", "id"]);
+    for (const document of Object.values(documents)) {
+      assert.equal(JSON.stringify(document).includes("passwordHash"), false);
+      assert.equal(JSON.stringify(document).includes("password_hash"), false);
+    }
+
+    // `attributes` is declared with an **empty schema**, which is what passes arbitrary
+    // JSON through byte intact and renders in the page as "any". A `type` here would be
+    // the Gateway having an opinion about Attributes, and the round trip in the first
+    // suite is what proves the passthrough rather than this line.
+    assert.equal(user.properties?.attributes?.type, undefined);
+
+    // Property descriptions on the two fields whose name is not the whole story, and on
+    // neither of the two whose name is.
+    assert.match(String(user.properties?.attributes?.description), /where grouping/);
+    assert.equal(user.properties?.id?.description, undefined);
+    assert.equal(user.properties?.createdAt?.description, undefined);
+    const token = schemaOf(documents.public, "/auth/tokens", "post", "201");
+    assert.deepEqual(Object.keys(token.properties ?? {}).sort(), ["expiresAt", "token", "user"]);
+    assert.match(String(token.properties?.expiresAt?.description), /When the Token stops working/);
+    assert.equal(token.properties?.token?.description, undefined);
+  });
+
   it("serves a browsable page on both, at a path neither can be moved off", async () => {
     for (const server of [described.components.agentServer, described.components.publicServer]) {
       const page = await server.fastify.inject({ method: "GET", url: "/docs" });
@@ -819,6 +1078,27 @@ describe("the description both servers serve", () => {
     const answered = await fastify.inject({ method: "GET", url: "/openapi.json" });
     assert.equal(answered.statusCode, 200);
     return answered.json<Description>();
+  }
+
+  /** One operation's tags, asserted on rather than reached through an optional chain. */
+  function tagsOf(document: Description, path: string, method: Method): readonly string[] {
+    const tags = document.paths[path]?.[method]?.tags;
+    assert.ok(tags !== undefined, `${method} ${path} should be tagged`);
+    return tags;
+  }
+
+  /**
+   * The JSON schema one status of one operation is described by.
+   *
+   * Read out of the served document rather than off the schema object the route was
+   * declared with, because the document is the only part of this a consumer ever sees:
+   * anything the plugin drops on the way out is dropped from the answer here too.
+   */
+  function schemaOf(document: Description, path: string, method: Method, status: string): Schema {
+    const schema =
+      document.paths[path]?.[method]?.responses[status]?.content?.["application/json"]?.schema;
+    assert.ok(schema !== undefined, `${method} ${path} should describe a ${status} body`);
+    return schema;
   }
 });
 
@@ -984,11 +1264,12 @@ async function reaching(what: string, act: () => Promise<string>): Promise<strin
 /**
  * A User admitted from trusted code, holding a Token nobody traded a password for.
  *
- * The two calls an OIDC callback makes, and the reason this file needs no password at all:
- * `create` takes none and derives nothing, `issueToken` mints a Token for somebody who
- * presented nothing, and what comes back is indistinguishable from a Token a login bought
- * (ADR-0030). The defaults constructor exposes no `scrypt` option, so the alternative would
- * be two derivations at OWASP's 32 MiB cost for nothing this file asserts.
+ * The two calls an OIDC callback makes, and the reason every test here but one needs no
+ * password: `create` takes none and derives nothing, `issueToken` mints a Token for
+ * somebody who presented nothing, and what comes back is indistinguishable from a Token a
+ * login bought (ADR-0030). The defaults constructor exposes no `scrypt` option, so the
+ * alternative would be two derivations at OWASP's 32 MiB cost for nothing most of this
+ * file asserts. The one test that does assert something about them buys its own.
  */
 async function admitted(): Promise<{ id: string; token: string }> {
   const user: UserRecord = await components.db.tx((tx) => components.users.create(tx));

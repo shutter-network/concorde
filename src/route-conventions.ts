@@ -40,6 +40,18 @@ export const limitSchema = {
 } as const;
 
 /**
+ * The two numbers above as the sentence a list route's description carries.
+ *
+ * Written from the schema rather than beside it, because the numbers are the thing that
+ * moves: a part restating "capped at 200" in prose is a copy that goes stale the day
+ * `maxLimit` changes, and a document that promises a cap the schema does not enforce is
+ * worse than no sentence at all. What a part adds is what happens to the records *past*
+ * the cap, which depends on what that route offers to narrow by and is therefore the
+ * part's to say ([ADR-0040](../docs/adr/0040-the-gateway-describes-its-own-http-api.md)).
+ */
+export const cappedLimit = `\`limit\` defaults to ${limitSchema.default} and is capped at ${limitSchema.maximum}. A larger value is **refused with a 400** rather than quietly reduced.`;
+
+/**
  * The shape of an id in a path or a query.
  *
  * Validated rather than passed through, because PostgreSQL refuses to cast a
@@ -79,6 +91,9 @@ export const idParams = {
  *
  * The result is applied per route with the parameters that route does take:
  * `const rejectUnknownQuery = unknownQueryRefusal("…"); rejectUnknownQuery("limit")`.
+ *
+ * The behaviour itself, as the sentence a description carries, is `unknownParameter`
+ * below.
  */
 export function unknownQueryRefusal(explanation?: string) {
   return (...allowed: readonly string[]) =>
@@ -123,8 +138,9 @@ export function notFound(reply: FastifyReply, what: string, id: string): Fastify
  *
  * It lives here because `notFound` above does, and for the reason this whole module
  * does: three parts inventing three error schemas would contradict a uniformity that was
- * already deliberate. Internal like everything else here: a part writes
- * `response: { 404: errorSchema }`, and nothing outside the framework can.
+ * already deliberate. Internal like everything else here, and reached through `refused`
+ * below rather than named directly, since a described status is worth nothing without the
+ * sentence saying what reaches it.
  *
  * **A response schema is a serializer**, so this one decides what a refusal may carry
  * and not merely what it is documented as carrying. The three properties are what the
@@ -137,7 +153,7 @@ export function notFound(reply: FastifyReply, what: string, id: string): Fastify
  * It arrived with **no caller**, deliberately: the three parts declare their responses in
  * three tickets that would otherwise have chained behind whichever one invented this
  * first, and one shared shape invented three times is the thing this module exists to
- * prevent. The Signal Worker is the first of the three to reach for it.
+ * prevent.
  */
 export const errorSchema = {
   type: "object",
@@ -148,3 +164,30 @@ export const errorSchema = {
   },
   required: ["statusCode", "error", "message"],
 } as const;
+
+/**
+ * One refused status, in the shape above and with the sentence saying what reaches it
+ * *here*.
+ *
+ * The shape is the same on all sixteen routes and the sentence never is, which is the
+ * whole division of labour: a caller reading one route wants to know what it is about to
+ * be refused for, not what a refusal looks like. So this is what a part reaches for
+ * rather than `errorSchema` itself, and a status that cannot be described without saying
+ * why is one fewer place for `"Default Response"` to end up in the document.
+ */
+export function refused(why: string) {
+  return { ...errorSchema, description: why };
+}
+
+/**
+ * What a route says about a query parameter it does not have, in the document.
+ *
+ * The first bullet at the top of this module, as prose rather than as a hook. It is the
+ * same fact on every route of every part, since the refusal `unknownQueryRefusal` builds
+ * is this convention and no part's own decision, so a part restating it in its own words
+ * would be three parts describing one behaviour three ways, which is what this module
+ * exists to stop. What *is* each part's own is the sentence the refusal ends with, which
+ * is the argument to `unknownQueryRefusal` and belongs to the surface.
+ */
+export const unknownParameter =
+  "An unknown query parameter is a **400**, not a filter that did nothing and a request answered with everything.";

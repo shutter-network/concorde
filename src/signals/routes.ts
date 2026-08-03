@@ -49,11 +49,13 @@ import { desc, eq } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
 import type { Handle } from "../db/index.ts";
 import {
-  errorSchema,
+  cappedLimit,
   idParams,
   idSchema,
   limitSchema,
   notFound,
+  refused,
+  unknownParameter,
   unknownQueryRefusal,
 } from "../route-conventions.ts";
 import {
@@ -123,12 +125,15 @@ export type RunRecord = {
 const unscoped =
   "Reads are not scoped by Session or by User, so there is no such parameter to pass.";
 
-/** What a list route says about its `limit`, in the document rather than only in the schema. */
-const capped = `\`limit\` defaults to ${limitSchema.default} and is capped at ${limitSchema.maximum}. A larger value is **refused with a 400** rather than quietly reduced. There is no cursor and no offset, so the records past the cap are reachable only by narrowing.`;
-
-/** What every route here says about a parameter it does not have. */
-const unknownParameter =
-  "An unknown query parameter is a **400**, not a filter that did nothing and a request answered with everything.";
+/**
+ * What a list route here says about its `limit`: the shared two sentences, and the one
+ * this surface adds.
+ *
+ * Both lists offer a filter, so the records past the cap are reachable by narrowing with
+ * it rather than unreachable, which is the sentence the conventions module leaves to the
+ * part.
+ */
+const capped = `${cappedLimit} There is no cursor and no offset, so the records past the cap are reachable only by narrowing.`;
 
 /**
  * What the two single-record routes say, both of them being the same route with a
@@ -225,17 +230,6 @@ const runListSchema = {
   properties: { runs: { type: "array", items: runRecordSchema } },
   required: ["runs"],
 } as const;
-
-/**
- * One refused status, in the shape every refusal on either surface carries.
- *
- * `errorSchema` is that shape and nothing else, so what each use adds is the sentence
- * saying which mistakes reach *this* status on *this* route: a caller reading one route
- * wants to know what it is about to be refused for rather than what a refusal looks like.
- */
-function refused(why: string) {
-  return { ...errorSchema, description: why };
-}
 
 /**
  * The Signal Worker's read routes, over a handle to its own tables.
