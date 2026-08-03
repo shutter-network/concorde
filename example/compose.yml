@@ -1,43 +1,110 @@
-# The reference deployment's containers: PostgreSQL, the agent image, and the networks.
+# The reference deployment, whole: the Gateway, PostgreSQL, the agent image, two networks.
 #
-#     docker compose -f example/compose.yml up -d --build
+#     cd example && docker compose up -d --build
 #
-# Note what is *not* here: the Gateway. It runs on the host, as an ordinary Node
-# process (`node example/main.ts`), and that is a deliberate choice rather than a
-# gap. The Gateway starts a container per Run, so containerising it means handing it a
-# container runtime socket — which is root on the host, a far larger hole than the one
-# it would close. Running it on the host also makes the file ownership story true by
-# construction: the agent's container runs as the Gateway process's own uid, and the
-# bind-mounted directories under `example/state/` are that user's already.
+# **Run it from this directory.** Compose resolves `./state` against this file's own
+# directory, while `${PWD}` is wherever you invoked the command, and `HOST_EXAMPLE_DIR`
+# below has to name the same place those mounts do. Invoked from the repository root with
+# `-f example/compose.yml` the two are different directories, and the agent gets a
+# Workspace nobody is looking at.
 #
-# One consequence worth stating, because it is what a reader looking for a port here needs:
-# neither of the Gateway's two ports is published by anything in this file, and neither is
-# written here at all. Both are the host's own and both are in `main.ts`, where the servers
-# bind: the Public one, which is where a person logs in and posts a Message, and the Agent one
-# on loopback, which the agent's container reaches from the network below at
-# `host.docker.internal`.
+# ## The Gateway is in here, and it holds the host's Docker socket
+#
+# This file used to argue the opposite, and the argument is worth restating before it is
+# overruled: the Gateway starts a container per Run, so containerising it means handing it
+# a container runtime socket, which is root on the host. All of that is still true. What
+# changed is the conclusion, in ADR-0039: the Gateway holds container-creation authority
+# wherever it runs, and the only question is whose. This stack takes the host's, because
+# the alternatives cost more than they close. A socket proxy has to allow the one endpoint
+# that starts a container with arbitrary bind mounts, which is the whole hole. Rootless
+# Docker or Podman genuinely shrinks it, and `containerCommand` on the Agent Container is
+# the field that gets you there.
+#
+# So: **do not run this stack on a machine whose root you care about.** Anything that can
+# execute code in the Gateway process can execute code as root on your host.
+#
+# ## What is not published, and why the agent still cannot reach the Db
+#
+# The Public server's 8080 is published to loopback, because a person outside all of this
+# has to reach it. Nothing else is. The Agent server's 7411 binds `0.0.0.0` *inside* the
+# Gateway's container, which reaches only the two networks below, and PostgreSQL is not
+# published at all: the Gateway reaches it by service name over `saf_db`, and the agent is
+# not on that network.
+#
+# That last one used to be a caveat rather than a boundary. With the Gateway on the host,
+# PostgreSQL had to be published for it to connect, and the agent could then reach that
+# published port through `host.docker.internal` whatever network it was on, so what stood
+# between the agent and the Db was the password. Now there is no host port to reach.
 #
 # See ../docs/quickstart.md, which this file is one step of.
 
 name: saf-example
 
 services:
-  # The Db. Published on **5433**, not 5432, so that this deployment and the
-  # `saf-pg` container CLAUDE.md tells contributors to run for the test suite can be up
-  # at the same time. Bound to loopback: the Gateway is the only thing that needs it.
+  # The Gateway: the process that admits people, receives a Message, writes a Signal, and
+  # starts one agent container per Run. Not the agent, which is never a service here.
+  gateway:
+    build:
+      # The repository root, because this image compiles the framework rather than
+      # installing it. See example/gateway/Dockerfile, and .dockerignore beside it.
+      context: ..
+      dockerfile: example/gateway/Dockerfile
+    environment:
+      # Required, and refused here rather than in `main.ts`: `${VAR:?message}` fails the
+      # `up` before anything starts, which is earlier and easier to read than a Node throw
+      # inside a container you have to go and fetch the logs of.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set it in your shell; the agent's model needs it}
+      # The Db, by service name over `saf_db`. `createGatewayWithDefaults` reads this
+      # variable when it is given no `databaseUrl`, which is why `main.ts` says nothing
+      # about the database at all.
+      DATABASE_URL: postgres://saf:saf@postgres:5432/saf
+      # Where this directory is **on the host**, which is a fact no process inside a
+      # container can work out for itself. `main.ts` hands it to the Mount Table as
+      # `hostPaths`, and it is what lets the host's daemon resolve a mount that the Gateway
+      # declared in its own filesystem's terms. Absent, and `main.ts` refuses to start;
+      # wrong, and the agent silently gets a different directory than the one you are
+      # looking at.
+      HOST_EXAMPLE_DIR: ${PWD}
+    volumes:
+      # Root on the host, in one line. See the header.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # The two state directories, at the same place relative to `example/` inside the
+      # container as they sit outside it, which is what keeps `hostPaths` a single prefix.
+      # These mounts are also what **creates** them: Compose creates a missing bind source,
+      # and nothing in this deployment creates a directory anywhere (ADR-0028).
+      - ./state/workspace:/app/example/state/workspace
+      - ./state/agent:/app/example/state/agent
+    ports:
+      # Loopback only. This is a demo Gateway and it has no business on your network.
+      - "127.0.0.1:8080:8080"
+    networks: [db, agent]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # So that the first Run cannot arrive before the image it needs exists.
+      agent-image:
+        condition: service_completed_successfully
+    # **Not the default ten seconds.** `gateway.stop()` drains: it stops taking work and
+    # then waits for the Run in flight without cancelling it (ADR-0017), and a Run is an
+    # agent talking to a model. Killed mid-drain, the `docker run` client dies while the
+    # container it started keeps going, so the Run's outcome is read by nobody, its row
+    # stays `running` forever and its Signal never settles. Five minutes covers a long Run;
+    # `docker compose kill` is there for when you do not want to wait.
+    stop_grace_period: 300s
+
+  # The Db. Not published: the Gateway reaches it at `postgres:5432` over the network
+  # below, and nothing else has any business reaching it at all. `docker compose exec
+  # postgres psql -U saf saf` is the way in.
   postgres:
     image: postgres:17
     environment:
       POSTGRES_USER: saf
       POSTGRES_PASSWORD: saf
       POSTGRES_DB: saf
-    ports:
-      - "127.0.0.1:5433:5432"
     volumes:
       - db:/var/lib/postgresql/data
-    # Not the agent's network. The agent cannot resolve `postgres` at all, which is the
-    # point — read the network note in the quickstart for what that does and does not
-    # buy you.
+    # Not the agent's network. The agent cannot resolve `postgres`, and with nothing
+    # published there is no second way round.
     networks: [db]
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "saf", "-d", "saf"]
@@ -58,13 +125,16 @@ services:
     networks: [agent]
 
 networks:
-  # The Db's network, which the agent is not on.
+  # The Gateway and the Db.
   db:
     name: saf_db
-  # The agent's own network: only the agent and the Gateway are meant to be reachable
-  # across it. Named explicitly rather than left to Compose's `<project>_<network>`
-  # prefixing, because the entry point passes this exact string to the Runtime in its
-  # `networks` list and a mismatch is a container that will not start.
+  # The Gateway and the agent. Named explicitly rather than left to Compose's
+  # `<project>_<network>` prefixing, because `main.ts` passes this exact string to the
+  # Runtime in its `networks` list and a mismatch is a container that will not start.
+  #
+  # It is also what makes `http://gateway:7411` resolve from inside an agent container that
+  # Compose did not start: Compose gives a service its own name as a network alias, and the
+  # daemon's DNS answers for that alias to anything on the network.
   agent:
     name: saf_agent
 

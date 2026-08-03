@@ -10,21 +10,21 @@ careful.
 ## The Gateway's Agent server
 
 You are running inside a Gateway that mediates every interaction into and out of you.
-It exposes an HTTP API to you and to nothing else, at `http://host.docker.internal:7411`.
+It exposes an HTTP API to you and to nothing else, at `http://gateway:7411`.
 Reach it with `curl` from your shell tool. It takes **no credential**: reaching it is
 access.
 
 | Request | Answers |
 | --- | --- |
-| `GET http://host.docker.internal:7411/signals?limit=&kind=` | `{ "signals": [...] }`, newest first |
-| `GET http://host.docker.internal:7411/signals/<id>` | one Signal, or 404 |
-| `GET http://host.docker.internal:7411/runs?limit=&signalId=` | `{ "runs": [...] }`, newest first |
-| `GET http://host.docker.internal:7411/runs/<id>` | one Run, or 404 |
-| `GET http://host.docker.internal:7411/users?limit=` | `{ "users": [...] }`, newest first |
-| `GET http://host.docker.internal:7411/users/<id>` | one User, or 404 |
-| `POST http://host.docker.internal:7411/users` | the User it created |
-| `GET http://host.docker.internal:7411/messages?user=&after=&before=&limit=` | `{ "messages": [...] }`, oldest first |
-| `POST http://host.docker.internal:7411/messages` | the Message it sent to one User, or 404 |
+| `GET http://gateway:7411/signals?limit=&kind=` | `{ "signals": [...] }`, newest first |
+| `GET http://gateway:7411/signals/<id>` | one Signal, or 404 |
+| `GET http://gateway:7411/runs?limit=&signalId=` | `{ "runs": [...] }`, newest first |
+| `GET http://gateway:7411/runs/<id>` | one Run, or 404 |
+| `GET http://gateway:7411/users?limit=` | `{ "users": [...] }`, newest first |
+| `GET http://gateway:7411/users/<id>` | one User, or 404 |
+| `POST http://gateway:7411/users` | the User it created |
+| `GET http://gateway:7411/messages?user=&after=&before=&limit=` | `{ "messages": [...] }`, oldest first |
+| `POST http://gateway:7411/messages` | the Message it sent to one User, or 404 |
 
 A **Signal** is something that arrived from outside and may cause you to act:
 `{ id, kind, payload, emittedAt, state, error }`, where `payload` is whatever the part
@@ -58,7 +58,7 @@ attributes, and a Message to exactly one User.
 For example, to see what has arrived recently:
 
 ```sh
-curl -s "http://host.docker.internal:7411/signals?limit=5"
+curl -s "http://gateway:7411/signals?limit=5"
 ```
 
 ## Reaching a person
@@ -70,7 +70,7 @@ into a file in the Workspace, arrives nowhere. The body is `{ "userId": ..., "te
 and the answer is the Message as it was stored.
 
 ```sh
-curl -s -X POST "http://host.docker.internal:7411/messages" \
+curl -s -X POST "http://gateway:7411/messages" \
   -H 'content-type: application/json' \
   -d '{"userId": "8ac0...", "text": "I have looked, and nothing is waiting."}'
 ```
@@ -105,9 +105,10 @@ stored the moment the call answers and reaches them the next time they look.
 
 ## Keeping this file honest
 
-The address above is stated twice in this deployment and derived nowhere: here, and in
-`main.ts` where the Agent server binds. They are separate values and neither follows
-from the other, so changing one means changing the other.
+The address above is assembled from three places and derived nowhere: `gateway` is the
+service name in `compose.yml`, `7411` is the port `main.ts` binds the Agent server to,
+and this file is the only thing that puts them together and tells you they exist. None
+of the three follows from the others, so changing any one means changing this one.
 
 The routes and field shapes are the framework's, and this file is a copy of them. The
 framework does not write it and cannot keep it current: check it against the quickstart
