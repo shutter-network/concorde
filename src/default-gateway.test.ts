@@ -34,6 +34,15 @@
  * the Db and a Component that `extend` returned, all three of which are constructed after
  * the worker that will dispatch to it.
  *
+ * A third claim shares the first suite without being about the assembly at all, and it is
+ * here because there is nowhere cheaper: **what a part recorded and what the wire carries
+ * are the same record**. A response schema is a serializer, so a field the schema does not
+ * declare is dropped from the answer without a word
+ * ([ADR-0040](../docs/adr/0040-the-gateway-describes-its-own-http-api.md)), and catching
+ * that needs a record produced in this process and read back over a socket. Every other
+ * body comparison in this repository compares one HTTP response against another, where a
+ * uniformly stripped field is stripped on both sides and passes.
+ *
  * The tests run in order and share one Gateway, because a Gateway is stopped once. The
  * no-op stops are therefore exercised before the last test, by hand and while everything is
  * still running, which is the only way "this stop released nothing" is observable at all.
@@ -70,7 +79,7 @@ import {
 } from "./default-gateway.ts";
 import { type MessageRecord, messageReceivedKind } from "./http-messenger/index.ts";
 import type { Logger } from "./logging.ts";
-import type { SignalHandler } from "./signals/index.ts";
+import type { RunRecord, SignalHandler, SignalRecord } from "./signals/index.ts";
 import { createTestDatabase, type TestDatabase } from "./test-support/database.ts";
 import { fakeRuntime } from "./test-support/fake-runtime.ts";
 import { waitUntil } from "./test-support/wait.ts";
@@ -116,6 +125,38 @@ function notebook(): Notebook {
 /** Which callback ran when, since "`extend` before `handlers`" is a claim about order. */
 const callbacks: string[] = [];
 
+/**
+ * The Signal the round-trip assertions are about: a `kind` of its own, a Handler of its
+ * own, and a payload with something nested in it.
+ *
+ * A `kind` of its own so that reading it back proves nothing about the reference
+ * deployment's convention, which is the Operator's and not the framework's, and so that
+ * the Handler driving the drain below is left saying what it says. The payload is nested
+ * on purpose: `payload` is declared with an empty schema precisely so that arbitrary JSON
+ * survives serialization byte intact, and a flat object would not have shown it
+ * ([ADR-0040](../docs/adr/0040-the-gateway-describes-its-own-http-api.md)).
+ */
+const roundTripKind = "the.round.trip";
+const roundTripSession = "the round trip";
+const roundTripPayload = {
+  text: "say this back to me",
+  nested: { list: [1, "two", null, { deep: true }], nothing: null },
+};
+
+/** A Handler whose only job is to produce one Run for the round trip to read. */
+const roundTripping: SignalHandler<{ readonly text: string }> = {
+  handle: (signal) => [{ session: roundTripSession, text: signal.payload.text }],
+};
+
+/**
+ * The text of the Prompt whose Run is in flight when the Gateway is asked to stop.
+ *
+ * Named rather than written three times, because the fake Runtime tells that Run apart
+ * from every other one by it: this is the only Run that parks, and the round-trip Run
+ * above has to be able to start, finish and be read back while everything is still up.
+ */
+const inFlightAtShutdown = "are you still there?";
+
 let database: TestDatabase;
 let gateway: Gateway<DefaultComponents & { notes: Notebook }>;
 let components: DefaultComponents & { notes: Notebook };
@@ -149,8 +190,13 @@ const duringTheDrain: string[] = [];
  * It fails on purpose: a failed Run is what makes the Handler's post phase send a Message,
  * which is the last thing the drain does and the one that reaches the Messenger
  * (ADR-0017).
+ *
+ * One Prompt parks and every other Run is ordinary, which is what lets the round-trip
+ * assertions have a finished Run to read: the worker is serial globally (ADR-0012), so a
+ * Run parked before them would be a Gateway that never got to them at all.
  */
-const runtime = fakeRuntime(async () => {
+const runtime = fakeRuntime(async (prompt) => {
+  if (prompt.text !== inFlightAtShutdown) return { ok: true };
   await shuttingDown.promise;
   duringTheDrain.push(...(await whatIsStillUp()));
   return { ok: false, error: "this Run exists to be in flight while the Gateway shuts down" };
@@ -189,7 +235,7 @@ before(async () => {
       callbacks.push("handlers");
       // Given the six *and* the extension, which is the direction that makes a Handler able
       // to use an Operator's own Component.
-      return { [messageReceivedKind]: answering(all) };
+      return { [messageReceivedKind]: answering(all), [roundTripKind]: roundTripping };
     },
     logger: silent,
   });
@@ -319,18 +365,92 @@ describe("a whole deployment from one call", () => {
     assert.deepEqual(await components.messenger.history(client.id), []);
   });
 
+  it("answers a Signal and its Run as the Signal Worker recorded them, and drops nothing", async () => {
+    // A response schema is a **serializer**: Fastify compiles it with
+    // `fast-json-stringify`, which strips every field the schema does not declare and
+    // warns about none of it (ADR-0040). So a field added to `SignalRecord` and forgotten
+    // in the Signal Worker's schema simply stops reaching the agent, and every comparison
+    // of one HTTP response against another passes, because both sides lost it.
+    //
+    // This is the assertion that cannot: the record is produced through the part's own
+    // method, in this process, and the whole body is compared against a literal the type
+    // checker holds to the record type. Add a field to `SignalRecord` and this file stops
+    // compiling; declare it nowhere and the comparison below fails. Either way somebody
+    // finds out here rather than from an agent that read a field and saw nothing.
+    const signalId = await components.db.tx((tx) =>
+      components.worker.emit(tx, { kind: roundTripKind, payload: roundTripPayload }),
+    );
+    await waitUntil("the emitted Signal has been handled and its Run has finished", async () => {
+      const signal = await agentJson<SignalRecord>(`/signals/${signalId}`);
+      return signal.state === "done";
+    });
+
+    const signal = await agentJson<SignalRecord>(`/signals/${signalId}`);
+    assert.deepEqual(signal, {
+      id: signalId,
+      kind: roundTripKind,
+      // Byte intact, nesting and nulls and all, which is what the empty schema on
+      // `payload` is for: the Signal Worker never interpreted this and the wire does not
+      // start.
+      payload: roundTripPayload,
+      // The one field with nothing in process to compare against, so it is checked rather
+      // than copied, and the check is what closes the hole in copying it, since a
+      // dropped `emittedAt` is `undefined` on both sides of a `deepEqual` and passes.
+      emittedAt: signal.emittedAt,
+      state: "done",
+      error: null,
+    } satisfies SignalRecord);
+    assert.equal(new Date(signal.emittedAt).toISOString(), signal.emittedAt);
+
+    // And the same Signal through the list route, which is a second response schema
+    // written separately: a field declared in one and forgotten in the other differs here.
+    const listed = await agentJson<{ signals: SignalRecord[] }>(`/signals?kind=${roundTripKind}`);
+    assert.deepEqual(listed.signals, [signal]);
+
+    // The Run the Handler asked for, produced by the worker rather than by this test: its
+    // Session is the one the Prompt named and its Prompt text came out of the payload.
+    const runs = await agentJson<{ runs: RunRecord[] }>(`/runs?signalId=${signalId}`);
+    assert.equal(runs.runs.length, 1, "the round-trip Handler returned exactly one Prompt");
+    const [run] = runs.runs;
+    assert.ok(run !== undefined);
+    assert.deepEqual(run, {
+      id: run.id,
+      signalId,
+      session: roundTripSession,
+      prompt: roundTripPayload.text,
+      state: "done",
+      error: null,
+      startedAt: run.startedAt,
+      endedAt: run.endedAt,
+    } satisfies RunRecord);
+    // The two timings, checked rather than copied for the reason `emittedAt` was. The
+    // `String` is what makes a dropped one fail here instead of failing to compile: the
+    // field is `string | null` on a finished Run only because a row written before it
+    // started still holds `null`.
+    assert.equal(new Date(String(run.startedAt)).toISOString(), run.startedAt);
+    assert.equal(new Date(String(run.endedAt)).toISOString(), run.endedAt);
+
+    // The id copied above is a real one, and the other Run route says the same thing about
+    // this Run as the list route did: a 404 here is a dropped `id`, and a difference is two
+    // schemas that have come apart.
+    assert.deepEqual(await agentJson<RunRecord>(`/runs/${run.id}`), run);
+  });
+
   it("drains with everything still up, and closes it all once the drain is done", async () => {
-    const posted = await postMessage("are you still there?");
+    const posted = await postMessage(inFlightAtShutdown);
     assert.equal(posted.status, 201);
 
     // The Run is in flight and parked. Nothing else in this repository stops a Gateway from
-    // here, which is why the ordering has been reasoning in a comment until now.
-    await waitUntil("the Run has started", async () => runtime.recorded.length === 1);
+    // here, which is why the ordering has been reasoning in a comment until now. By text
+    // rather than by count, since the round-trip Run above it has been and gone.
+    await waitUntil("the Run of the submitted Message has started", async () =>
+      runtime.texts().includes(inFlightAtShutdown),
+    );
 
     // The Handler ran, and it reached the Component `extend` returned. That is the cycle
     // closed at runtime: this Handler was built by a callback taking objects the worker
     // holding it was constructed before (ADR-0038).
-    assert.deepEqual(components.notes.lines, ["are you still there?"]);
+    assert.deepEqual(components.notes.lines, [inFlightAtShutdown]);
 
     // Not awaited: `stop` pops the notebook and then the worker, and the worker waits for
     // this Run, so the Run is what has to move next. By the time this call has returned a
@@ -440,9 +560,12 @@ describe("the defaults on their own", () => {
  * further up: that suite's subject is what is listening and when, and `inject` answers on
  * a server that has been closed. This one never starts or stops a Gateway.
  *
- * **Responses are undescribed at this point**, deliberately. Every route documents its
- * request and says nothing useful about what comes back, which is what the three part
- * tickets after this one fix. So nothing below reads a `responses` object.
+ * **Responses arrive one part at a time.** The Signal Worker's four routes declare what
+ * they answer with; the User Manager's and the HTTP Messenger's do not yet, and the tests
+ * below read a `responses` object only for the paths whose part has been through. What no
+ * test here can do is catch a *dropped* field, since a document and the wire it describes
+ * are the same schema read twice. That is the round-trip assertion in the first suite,
+ * which needs a record a real part recorded and therefore a real database.
  */
 describe("the description both servers serve", () => {
   /** Somewhere nothing resolves, since none of this connects. */
@@ -479,6 +602,12 @@ describe("the description both servers serve", () => {
   ];
 
   /** As much of an OpenAPI document as anything here reads. */
+  type Operation = {
+    readonly tags?: readonly string[];
+    readonly summary?: string;
+    readonly description?: string;
+    readonly responses: Readonly<Record<string, { readonly description: string }>>;
+  };
   type Description = {
     readonly openapi: string;
     readonly info: {
@@ -486,7 +615,7 @@ describe("the description both servers serve", () => {
       readonly description: string;
       readonly version: string;
     };
-    readonly paths: Record<string, unknown>;
+    readonly paths: Readonly<Record<string, { readonly get?: Operation }>>;
   };
 
   let described: Gateway<DefaultComponents>;
@@ -550,6 +679,54 @@ describe("the description both servers serve", () => {
     // that is not there.
     for (const agentOnly of ["/signals", "/runs", "/users/", "/users/{id}"]) {
       assert.equal(Object.hasOwn(document.paths, agentOnly), false, `${agentOnly} is the agent's`);
+    }
+  });
+
+  it("says what the Signal Worker's four routes answer with, and how they behave", async () => {
+    // The sentences an Operator used to transcribe into the agent's instructions, in the
+    // document instead, and the statuses, which were never written down anywhere: an
+    // agent that cannot tell a 404 for an unknown Signal from a 400 for a mistyped one
+    // has to guess (ADR-0025, ADR-0040). Read out of the served document rather than off
+    // the schema objects, because the document is the only part of this a consumer sees.
+    const document = await documentOf(described.components.agentServer.fastify);
+    const answers: Readonly<Record<string, readonly string[]>> = {
+      "/signals": ["200", "400"],
+      "/signals/{id}": ["200", "400", "404"],
+      "/runs": ["200", "400"],
+      "/runs/{id}": ["200", "400", "404"],
+    };
+
+    for (const [path, statuses] of Object.entries(answers)) {
+      const route = document.paths[path]?.get;
+      assert.ok(route !== undefined, `${path} should be described`);
+      assert.deepEqual(Object.keys(route.responses), statuses, path);
+      for (const [status, response] of Object.entries(route.responses)) {
+        // "Default Response" is what an undeclared response reads as, so this is the
+        // line that tells a described status from a status the plugin invented a
+        // sentence for.
+        assert.notEqual(response.description, "Default Response", `${path} ${status}`);
+      }
+
+      // Tagged, so the browsable page groups them rather than listing sixteen routes
+      // flat, and summarised, so the list is readable before anything is expanded.
+      assert.ok(route.tags !== undefined && route.tags.length > 0, `${path} should be tagged`);
+      assert.ok(route.summary !== undefined && route.summary.length > 0, path);
+
+      // The two behaviours every route on this surface has and no reader would assume.
+      const description = String(route.description);
+      assert.match(description, /not scoped by Session or by User/, path);
+      assert.match(description, /unknown query parameter is a \*\*400\*\*/, path);
+    }
+
+    // And the third, which only the two list routes have: a `limit` past the cap is
+    // refused, so a caller that pages by asking for more finds out rather than reading a
+    // short answer as the end of the queue.
+    for (const path of ["/signals", "/runs"]) {
+      assert.match(
+        String(document.paths[path]?.get?.description),
+        /\*\*refused with a 400\*\* rather than quietly reduced/,
+        path,
+      );
     }
   });
 
@@ -817,6 +994,19 @@ async function admitted(): Promise<{ id: string; token: string }> {
   const user: UserRecord = await components.db.tx((tx) => components.users.create(tx));
   const issued = await components.db.tx((tx) => components.users.issueToken(tx, user.id));
   return { id: user.id, token: issued.token };
+}
+
+/**
+ * One read of the Agent server, over its own socket and with nothing to authenticate
+ * with, which is the whole of what reaching that port takes (ADR-0010).
+ */
+async function agentJson<T>(path: string): Promise<T> {
+  const response = await fetch(`${agentUrl}${path}`);
+  // The body is read once and parsed here, so a failure names what came back: a response
+  // consumed by the assertion's own message would leave nothing to parse.
+  const body = await response.text();
+  assert.equal(response.status, 200, `${path} should have answered: ${body}`);
+  return JSON.parse(body);
 }
 
 /** One `POST /messages` on the Public server, by the User the Token names. */

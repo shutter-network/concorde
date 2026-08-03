@@ -134,9 +134,10 @@ export function notFound(reply: FastifyReply, what: string, id: string): Fastify
  * which names the field, and one error shape across sixteen routes is worth more than a
  * machine-readable code no caller of ours branches on.
  *
- * It arrives with **no caller**, deliberately: the three parts declare their responses in
- * three tickets that would otherwise chain behind whichever one invented this first, and
- * one shared shape invented three times is the thing this module exists to prevent.
+ * It arrived with **no caller**, deliberately: the three parts declare their responses in
+ * three tickets that would otherwise have chained behind whichever one invented this
+ * first, and one shared shape invented three times is the thing this module exists to
+ * prevent. The Signal Worker is the first of the three to reach for it.
  */
 export const errorSchema = {
   type: "object",

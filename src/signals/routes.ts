@@ -36,19 +36,35 @@
  * written — the Messenger for Messages, the Scheduler for schedules — and the Signal
  * Worker has nothing an agent may change: a Signal is immutable but for the state the
  * worker gives it, and a Run is the worker's record of its own work.
+ *
+ * Every route also **describes what it answers with**, which is how an Agent
+ * Implementation learns the four paths, the two record shapes and the three surprising
+ * behaviours above without an Operator transcribing them into its instructions
+ * ([ADR-0040](../../docs/adr/0040-the-gateway-describes-its-own-http-api.md)). The
+ * sentences below are therefore load-bearing prose rather than commentary: they are what
+ * `/openapi.json` serves.
  */
 
 import { desc, eq } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
 import type { Handle } from "../db/index.ts";
 import {
+  errorSchema,
   idParams,
   idSchema,
   limitSchema,
   notFound,
   unknownQueryRefusal,
 } from "../route-conventions.ts";
-import { type RunState, runs, type SignalState, signals, type workerTables } from "./schema.ts";
+import {
+  type RunState,
+  runStates,
+  runs,
+  type SignalState,
+  signalStates,
+  signals,
+  type workerTables,
+} from "./schema.ts";
 
 /** A handle typed to the Signal Worker's own tables, and to no other part's (ADR-0022). */
 export type WorkerHandle = Handle<typeof workerTables>;
@@ -95,17 +111,131 @@ export type RunRecord = {
 };
 
 /**
+ * The one sentence this whole surface turns on, and the one an agent is likeliest to
+ * assume the opposite of.
+ *
+ * It is said in two places and written once: it is how the refusal below ends, and it is
+ * in the description of all four routes here. `?session=user_a` quietly returning
+ * every Session's Signals is the exact mistake ADR-0011 forbids designing for, so a
+ * deployment that believed it was scoping something finds out at the first request
+ * instead of never, and an agent that reads the document first never believes it at all.
+ */
+const unscoped =
+  "Reads are not scoped by Session or by User, so there is no such parameter to pass.";
+
+/** What a list route says about its `limit`, in the document rather than only in the schema. */
+const capped = `\`limit\` defaults to ${limitSchema.default} and is capped at ${limitSchema.maximum}. A larger value is **refused with a 400** rather than quietly reduced. There is no cursor and no offset, so the records past the cap are reachable only by narrowing.`;
+
+/** What every route here says about a parameter it does not have. */
+const unknownParameter =
+  "An unknown query parameter is a **400**, not a filter that did nothing and a request answered with everything.";
+
+/**
+ * What the two single-record routes say, both of them being the same route with a
+ * different table behind it.
+ */
+const noParameters = `This route takes no query parameters at all. ${unknownParameter}`;
+const malformedId = "The id in the path is not a uuid, or a query parameter was written.";
+
+/**
  * The refusal these routes answer an unknown query parameter with.
  *
  * The convention and its reasoning are in `route-conventions.ts`; what is this part's
- * own is the sentence the message ends with. `?session=user_a` quietly returning every
- * Session's Signals is the exact mistake ADR-0011 forbids designing for, so the
- * refusal says outright that there is no such parameter — a deployment that believed
- * it was scoping something finds out at the first request instead of never.
+ * own is the sentence the message ends with.
  */
-const rejectUnknownQuery = unknownQueryRefusal(
-  "Reads are not scoped by Session or by User, so there is no such parameter to pass.",
-);
+const rejectUnknownQuery = unknownQueryRefusal(unscoped);
+
+/**
+ * `SignalRecord` on the wire, and **the serializer the routes answer through** rather
+ * than a description of one.
+ *
+ * Fastify compiles a response schema with `fast-json-stringify`, which drops every field
+ * the schema does not declare and says nothing about it, so a field added to the type
+ * above and forgotten here is silently missing from the Agent server's answers
+ * ([ADR-0040](../../docs/adr/0040-the-gateway-describes-its-own-http-api.md)). That is
+ * why `default-gateway.test.ts` reads a Signal the Worker actually recorded and compares
+ * the whole body: the drift this shape can cause is invisible from either side alone.
+ *
+ * The property descriptions are only on the fields whose name is not the whole story.
+ * `id` and `kind` get none; `payload`, `emittedAt` and `state` are what an agent would
+ * otherwise have to be told by hand.
+ */
+const signalRecordSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    kind: { type: "string" },
+    // No `type` at all, which is an empty schema: it passes any JSON value through byte
+    // intact and renders in the document as "any". Constraining it would be the Signal
+    // Worker having an opinion about a payload it never interprets.
+    payload: {
+      description:
+        "Arbitrary JSON, exactly as the Producer wrote it. The Signal Worker never interprets a payload, so what a given `kind` carries is the Operator's convention and their Signal Handler is where it is stated.",
+    },
+    emittedAt: {
+      type: "string",
+      description:
+        "When the Signal was written, ISO 8601, since JSON has no date. It is also the queue's order: the oldest pending Signal is claimed first.",
+    },
+    state: {
+      type: "string",
+      // From the same array the type is, so a state added to one is added to both.
+      enum: signalStates,
+      description:
+        "How far the Signal got. One-way: nothing returns to `pending`, and a failed Signal is never re-run, so `error` is the whole of what happened to it.",
+    },
+    error: { type: "string", nullable: true },
+  },
+  required: ["id", "kind", "payload", "emittedAt", "state", "error"],
+} as const;
+
+/** `RunRecord` on the wire, with the same force and the same hazard as the shape above. */
+const runRecordSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    signalId: { type: "string" },
+    session: { type: "string", nullable: true },
+    prompt: { type: "string" },
+    state: {
+      type: "string",
+      enum: runStates,
+      description:
+        "How the Run ended, or that it has not. One-way, and there is no `timed_out`, because the framework imposes no timeouts of any kind.",
+    },
+    error: { type: "string", nullable: true },
+    startedAt: { type: "string", nullable: true },
+    endedAt: { type: "string", nullable: true },
+  },
+  required: ["id", "signalId", "session", "prompt", "state", "error", "startedAt", "endedAt"],
+} as const;
+
+/**
+ * A list answers in an envelope rather than as a bare array, which is the convention in
+ * `route-conventions.ts` and the place a cursor would go if paging is ever wanted.
+ */
+const signalListSchema = {
+  type: "object",
+  properties: { signals: { type: "array", items: signalRecordSchema } },
+  required: ["signals"],
+} as const;
+
+const runListSchema = {
+  type: "object",
+  properties: { runs: { type: "array", items: runRecordSchema } },
+  required: ["runs"],
+} as const;
+
+/**
+ * One refused status, in the shape every refusal on either surface carries.
+ *
+ * `errorSchema` is that shape and nothing else, so what each use adds is the sentence
+ * saying which mistakes reach *this* status on *this* route: a caller reading one route
+ * wants to know what it is about to be refused for rather than what a refusal looks like.
+ */
+function refused(why: string) {
+  return { ...errorSchema, description: why };
+}
 
 /**
  * The Signal Worker's read routes, over a handle to its own tables.
@@ -119,10 +249,22 @@ export function agentReadRoutes(handle: WorkerHandle): FastifyPluginAsync {
       "/signals",
       {
         schema: {
+          tags: ["Signals"],
+          summary: "Read prior Signals, newest first",
+          description: `Every Signal this Gateway has, in arrival order reversed, whichever Producer emitted it. ${unscoped} ${capped} ${unknownParameter}`,
           querystring: {
             type: "object",
             properties: { limit: limitSchema, kind: { type: "string" } },
             additionalProperties: false,
+          },
+          response: {
+            200: {
+              ...signalListSchema,
+              description: "The Signals that matched, newest first.",
+            },
+            400: refused(
+              "The `limit` is out of range or not an integer, or a parameter this route does not take was written.",
+            ),
           },
         },
         preValidation: rejectUnknownQuery("limit", "kind"),
@@ -148,7 +290,20 @@ export function agentReadRoutes(handle: WorkerHandle): FastifyPluginAsync {
       // No query parameters at all on a single record, and asking for one is refused
       // rather than ignored — for the same reason the list routes refuse: a
       // `?session=` that answers 200 reads as though it had been honoured.
-      { schema: { params: idParams }, preValidation: rejectUnknownQuery() },
+      {
+        schema: {
+          tags: ["Signals"],
+          summary: "Read one Signal by id",
+          description: `One Signal, whatever produced it and whatever Session the reader is in. ${unscoped} ${noParameters}`,
+          params: idParams,
+          response: {
+            200: { ...signalRecordSchema, description: "The Signal." },
+            400: refused(malformedId),
+            404: refused("No Signal has that id."),
+          },
+        },
+        preValidation: rejectUnknownQuery(),
+      },
       async (request, reply) => {
         const [row] = await handle.select().from(signals).where(eq(signals.id, request.params.id));
         if (row === undefined) return notFound(reply, "Signal", request.params.id);
@@ -160,10 +315,23 @@ export function agentReadRoutes(handle: WorkerHandle): FastifyPluginAsync {
       "/runs",
       {
         schema: {
+          tags: ["Runs"],
+          summary: "Read prior Runs, newest first",
+          description: `Every Run this Gateway has recorded, newest first, in every Session. ${unscoped} \`signalId\` narrows to the Runs one Signal produced. ${capped} ${unknownParameter}`,
           querystring: {
             type: "object",
             properties: { limit: limitSchema, signalId: idSchema },
             additionalProperties: false,
+          },
+          response: {
+            200: {
+              ...runListSchema,
+              description:
+                "The Runs that matched, newest first by `startedAt`, which puts a Run that has not started yet at the front, since it has no start time to order by.",
+            },
+            400: refused(
+              "The `limit` is out of range or not an integer, `signalId` is not a uuid, or a parameter this route does not take was written.",
+            ),
           },
         },
         preValidation: rejectUnknownQuery("limit", "signalId"),
@@ -195,7 +363,20 @@ export function agentReadRoutes(handle: WorkerHandle): FastifyPluginAsync {
       // No query parameters at all on a single record, and asking for one is refused
       // rather than ignored — for the same reason the list routes refuse: a
       // `?session=` that answers 200 reads as though it had been honoured.
-      { schema: { params: idParams }, preValidation: rejectUnknownQuery() },
+      {
+        schema: {
+          tags: ["Runs"],
+          summary: "Read one Run by id",
+          description: `One Run, in whatever Session it executed. ${unscoped} ${noParameters}`,
+          params: idParams,
+          response: {
+            200: { ...runRecordSchema, description: "The Run." },
+            400: refused(malformedId),
+            404: refused("No Run has that id."),
+          },
+        },
+        preValidation: rejectUnknownQuery(),
+      },
       async (request, reply) => {
         const [row] = await handle.select().from(runs).where(eq(runs.id, request.params.id));
         if (row === undefined) return notFound(reply, "Run", request.params.id);
