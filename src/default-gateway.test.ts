@@ -422,6 +422,76 @@ describe("the defaults on their own", () => {
   });
 });
 
+describe("the two options a deployment may leave out", () => {
+  // A database of this suite's own, because the Gateway above is shared and started and
+  // this one constructs another. Neither test can be written without a real server: what a
+  // defaulted `databaseUrl` opened is only visible in something connecting, and what a
+  // defaulted `tokenTtl` decided is only visible on a Token that was written down.
+  let elsewhere: TestDatabase;
+  let inherited: string | undefined;
+
+  before(async () => {
+    elsewhere = await createTestDatabase("default_gateway_defaults");
+    // `src/test-support/database.ts` read this at import time, so moving it now moves it
+    // only for the code under test. It is put back regardless in `after`.
+    inherited = process.env.DATABASE_URL;
+  });
+
+  after(async () => {
+    if (inherited === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = inherited;
+    await elsewhere.drop();
+  });
+
+  it("opens DATABASE_URL, and issues a Token that lives thirty days", async () => {
+    process.env.DATABASE_URL = elsewhere.url;
+
+    const gateway = createGatewayWithDefaults({
+      runtime,
+      agentListen: { port: 0, host: "127.0.0.1" },
+      publicListen: { port: 0, host: "127.0.0.1" },
+      handlers: () => ({}),
+    });
+    const { db, users } = gateway.components;
+
+    // Nothing is started: `migrate` is enough, and it is also the proof. It applies three
+    // folders against the database the environment named, so it cannot pass unless the URL
+    // arrived and named something real.
+    await db.migrate();
+
+    const user = await db.tx((tx) => users.create(tx));
+    const issued = await db.tx((tx) => users.issueToken(tx, user.id));
+    const lifetime = Date.parse(issued.expiresAt) - Date.now();
+
+    // A minute of slack for the round trip, against a value of thirty days: wide enough
+    // never to flake, and narrow enough that any other lifetime in the file fails it.
+    assert.ok(
+      Math.abs(lifetime - 30 * 24 * 60 * 60 * 1000) < 60_000,
+      `a defaulted tokenTtl should be thirty days, and this Token lives ${lifetime}ms`,
+    );
+
+    await db.stop();
+  });
+
+  it("refuses to construct when neither the option nor the environment says where", () => {
+    delete process.env.DATABASE_URL;
+
+    // At construction, which is the point: `openDb` is lazy, so a Gateway built with no
+    // database would otherwise start, listen, and fail on the first statement of the first
+    // Run with whatever `pg` makes of its own defaults.
+    assert.throws(
+      () =>
+        createGatewayWithDefaults({
+          runtime,
+          agentListen: { port: 0, host: "127.0.0.1" },
+          publicListen: { port: 0, host: "127.0.0.1" },
+          handlers: () => ({}),
+        }),
+      /DATABASE_URL/,
+    );
+  });
+});
+
 describe("the package root", () => {
   it("reaches no Agent Implementation, however far the imports go", () => {
     // `createGatewayWithDefaults` is what made the root import `./users` and

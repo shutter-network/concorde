@@ -65,10 +65,22 @@ uncommon one. `serverComponent` stays exported and the instances remain reachabl
 `gateway.components.publicServer.fastify`, so routes, plugins and hooks are unaffected;
 only what `Fastify()` itself takes is out of reach.
 
-**A `tokenTtl` default.** `src/users/users.ts` refuses one on the grounds that the trade is
-the deployment's, since a long lifetime is fewer re-authentications and a longer window for
-a stolen Token. A convenience constructor is not a reason to reverse a deliberate refusal,
-so the option is required and forwarded.
+**A `tokenTtl` default.** ~~`src/users/users.ts` refuses one on the grounds that the trade
+is the deployment's, since a long lifetime is fewer re-authentications and a longer window
+for a stolen Token. A convenience constructor is not a reason to reverse a deliberate
+refusal, so the option is required and forwarded.~~
+
+**Reversed, together with `databaseUrl`, when the reference deployment moved into its own
+Compose stack ([ADR-0039](./0039-the-reference-deployment-runs-in-a-compose-stack.md)).**
+`tokenTtl` defaults to thirty days and `databaseUrl` to `DATABASE_URL` in the environment;
+both options remain, and a deployment that states either gets what it asked for. What the
+original paragraph got wrong was not the trade but whose it is. `createUsers` still requires
+a lifetime, because a part is constructed by a caller who has already decided; this
+constructor exists to answer the questions whose answer is the same in every deployment
+using these parts, and it was requiring two callers in a row to type an answer they had no
+information to vary. The cost is recorded rather than defended: `createGatewayWithDefaults`
+became the only shipped module that reads `process.env`, which is an input its caller cannot
+see at the call site, and it is confined to one variable.
 
 **Migrations.** `start` does not apply them, and
 [ADR-0032](./0032-components-wire-themselves-at-construction.md) stands in full. The

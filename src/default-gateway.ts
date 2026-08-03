@@ -74,11 +74,29 @@
  * stays agnostic about the Agent Implementation
  * ([ADR-0033](../docs/adr/0033-an-agent-is-a-container-and-one-function.md)). **Fastify's
  * constructor options**, so there is no bring-your-own-instance escape and the only thing
- * stated is where each server listens. **A `tokenTtl` default**, which `src/users/users.ts`
- * refuses on the grounds that the trade is the deployment's, and a convenience constructor
- * is not a reason to reverse a deliberate refusal. And **migrations**: `start` does not
- * apply them, and the Operator calls `gateway.components.db.migrate()` between construction
- * and `start` ([ADR-0032](../docs/adr/0032-components-wire-themselves-at-construction.md)).
+ * stated is where each server listens. **Either bind address**, which is the one pair of
+ * values where a wrong default is worse than no default: a Public server on loopback
+ * serves nobody, and an Agent server anywhere else is an unauthenticated API on a
+ * reachable port. And **migrations**: `start` does not apply them, and the Operator calls
+ * `gateway.components.db.migrate()` between construction and `start`
+ * ([ADR-0032](../docs/adr/0032-components-wire-themselves-at-construction.md)).
+ *
+ * ## What it defaults, and why here rather than in the part
+ *
+ * **`tokenTtl`**, to thirty days, and **`databaseUrl`**, to `DATABASE_URL` in the
+ * environment. Neither reverses the refusal underneath it: `createUsers` still requires a
+ * Token lifetime and `openDb` still takes a URL and reads no environment, because a part
+ * is constructed by a caller who has already decided and has no business deciding for
+ * them. This constructor is the other thing. ADR-0038 says it exists to answer the
+ * questions whose answer is identical in every deployment that uses these parts, and
+ * "somewhere around a month" and "the variable every platform already sets" are two of
+ * them. A deployment for which either is load-bearing states it and gets what it asked
+ * for.
+ *
+ * The cost is one sentence long and worth writing down: this is the **only shipped module
+ * that reads `process.env`**, and a library reaching into the environment has an input its
+ * caller cannot see in the call. It is confined to this constructor and to one variable,
+ * and `createGateway` reaches nothing.
  *
  * ## The one shipped module that imports a value from `fastify`
  *
@@ -137,8 +155,16 @@ export type GatewayExtension = Record<string, Component> & {
 };
 
 export type DefaultGatewayOptions<E extends GatewayExtension> = {
-  /** Where the Db connects. The pool opens at `start`, not here. */
-  readonly databaseUrl: string;
+  /**
+   * Where the Db connects. The pool opens at `start`, not here.
+   *
+   * Defaults to `DATABASE_URL` in the environment, and construction throws naming both
+   * when there is neither. `pg`'s own fallbacks are deliberately not the default: with no
+   * connection string it reads `PGHOST` and friends and lands on `localhost:5432` with
+   * this process's login name as the user and the database, which is a confident answer
+   * to a question nobody asked.
+   */
+  readonly databaseUrl?: string;
   /**
    * Drives the Agent Implementation. An option and not a spec, which is why nothing here
    * imports `shared-agent-framework/pi`.
@@ -152,11 +178,15 @@ export type DefaultGatewayOptions<E extends GatewayExtension> = {
    */
   readonly runtime: Runtime;
   /**
-   * How long an issued Token lives, in milliseconds. Required and forwarded, because
-   * `src/users/users.ts` refuses a default on the grounds that the trade is the
-   * deployment's, and a convenience constructor is not a reason to reverse that.
+   * How long an issued Token lives, in milliseconds. Defaults to thirty days.
+   *
+   * `createUsers` requires this and says why: a long lifetime is fewer
+   * re-authentications and a longer window for a stolen Token, and the framework cannot
+   * tell which side of that a deployment is on. That is still true, and the default is
+   * not a claim to have resolved it. It is a claim that a deployment which has not
+   * thought about it is better served by a month than by a constructor it cannot call.
    */
-  readonly tokenTtl: number;
+  readonly tokenTtl?: number;
   /**
    * Where the Agent server binds. Loopback is the address to want: this server has no
    * authentication at all, so reaching the port is read-write access to everything on it
@@ -213,10 +243,22 @@ export type DefaultGatewayOptions<E extends GatewayExtension> = {
  * the registrations each part makes on the Db and on the two servers (ADR-0032). The
  * Operator calls `gateway.components.db.migrate()` next, and then `gateway.start()`.
  */
+/** Thirty days, in milliseconds: the `tokenTtl` a deployment that says nothing gets. */
+const defaultTokenTtl = 30 * 24 * 60 * 60 * 1000;
+
 export function createGatewayWithDefaults<E extends GatewayExtension = Record<string, never>>(
   options: DefaultGatewayOptions<E>,
 ): Gateway<DefaultComponents & E> {
-  const db = openDb(options.databaseUrl);
+  // The one environment read in the package, and it throws rather than falling through to
+  // `pg`'s defaults, which would open a pool against `localhost:5432` as this process's
+  // login name and fail somewhere later with a message about a database nobody named.
+  const databaseUrl = options.databaseUrl ?? process.env.DATABASE_URL;
+  if (databaseUrl === undefined) {
+    throw new Error(
+      "there is no database to open: pass databaseUrl, or set DATABASE_URL in the environment",
+    );
+  }
+  const db = openDb(databaseUrl);
 
   // Two bare instances, and the only thing stated about either is where it listens. There
   // is no bring-your-own-instance escape and that is a real limit rather than an oversight:
@@ -238,7 +280,7 @@ export function createGatewayWithDefaults<E extends GatewayExtension = Record<st
   // not expressible wrongly, which is most of what the path is for.
   const users = createUsers({
     db,
-    tokenTtl: options.tokenTtl,
+    tokenTtl: options.tokenTtl ?? defaultTokenTtl,
     agentServer,
     publicServer,
   });
