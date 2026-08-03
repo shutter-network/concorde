@@ -2,14 +2,21 @@
 
 [`docs/quickstart.md`](./docs/quickstart.md) takes a reader from a clone to a completed
 agent Run, and [`example/`](./example/) is the reference deployment it describes:
-`main.ts` is the worked entry point, `compose.yml` the containers, `agent/Dockerfile` the
-agent image. It is a **consumer** of `createGatewayWithDefaults` rather than a
-demonstration of the assembly it replaced
+`main.ts` is the worked entry point, `compose.yml` the whole stack, `gateway/Dockerfile`
+the Gateway image, `agent/Dockerfile` the agent image. It is a **consumer** of
+`createGatewayWithDefaults` rather than a demonstration of the assembly it replaced
 ([ADR-0038](./docs/adr/0038-the-default-assembly-is-a-constructor.md)), so what is left in
-it is the Runtime, one Signal Handler and shutdown. Nothing in `example/` ships in the
-tarball; `tsconfig.json` type-checks it against `src` through a `paths` mapping, while Node
-resolves the same imports to `dist` at runtime — so `node example/main.ts` needs a build
-first.
+it is the Runtime, one Signal Handler and shutdown.
+
+**It runs only as a Compose stack**, `cd example && docker compose up -d --build`, from
+that directory and not the repository root
+([ADR-0039](./docs/adr/0039-the-reference-deployment-runs-in-a-compose-stack.md)). The
+Gateway is a container holding the host's Docker socket, so `main.ts` requires
+`HOST_EXAMPLE_DIR` and declares `hostPaths`, and running it with `node` is not supported.
+The image builds the framework itself, from a context that is the repository root, which is
+what `.dockerignore` is for. Nothing in `example/` ships in the tarball; `tsconfig.json`
+type-checks it against `src` through a `paths` mapping, while the image resolves the same
+imports to the `dist` it just built.
 
 ## Toolchain and checks
 

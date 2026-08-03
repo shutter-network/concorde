@@ -1,6 +1,6 @@
 # Quickstart
 
-From a fresh clone to a conversation with the agent, on one machine, in five commands and
+From a fresh clone to a conversation with the agent, on one machine, in one command and
 four requests.
 
 Everything here is self-contained: you do not need to read an architecture document or
@@ -23,10 +23,14 @@ the six words you need before you start are:
 
 ## Before you start
 
-- **Docker**, running. The agent executes in a container, one fresh container per Run,
-  and the Gateway starts them itself.
-- **[mise](https://mise.jdx.dev)**, which provisions the pinned Node version. Anything
-  else that gives you Node 24 also works.
+- **Docker**, running, with the default socket available. Everything below is containers,
+  including the Gateway itself, and the Gateway starts one more container per Run. On
+  Docker Desktop, "Allow the default Docker socket to be used" must be on; it is by
+  default.
+- **A machine whose root you are relaxed about.** The Gateway is handed the host's Docker
+  socket, which is root on the host. That is a real cost, taken deliberately for a demo
+  stack and explained in ["The Gateway holds your Docker
+  socket"](#the-gateway-holds-your-docker-socket).
 - **A model API key.** The reference deployment is written for Anthropic and reads
   `ANTHROPIC_API_KEY` from your environment. Any provider `pi` supports works — what
   changes is the variable's name in the entry point and two lines of
@@ -34,63 +38,77 @@ the six words you need before you start are:
   the framework has never read. See ["Choosing a model is a file you
   mount"](#choosing-a-model-is-a-file-you-mount) below.
 
-## Five commands
+You do **not** need Node, `mise`, or `npm` on your machine. The Gateway's image compiles
+the framework from source during the build.
+
+## One command
 
 ```sh
-mise install                                         # Node 24
-npm ci                                               # dependencies
-npm run build                                        # the example imports the package by name
-docker compose -f example/compose.yml up -d --build  # PostgreSQL, the agent image, the networks
-ANTHROPIC_API_KEY=sk-ant-... node example/main.ts
+cd example
+export ANTHROPIC_API_KEY=sk-ant-...
+docker compose up -d --build
 ```
 
-**The last command prints nothing at all**, and that is what a healthy Gateway looks like.
-Nothing announces that either server started. One call binds both ports, opens the pool
-and starts the worker, and it says nothing about any of it — the framework logs no
-startup line anywhere, and any line you want about one is yours to write next to that
-call.
+**Run it from `example/`, not from the repository root.** Compose resolves `./state`
+against the compose file's own directory, while `${PWD}` is wherever you invoked the
+command, and the stack needs the two to be the same place. Running `docker compose -f
+example/compose.yml up` from the root starts a Gateway that works and hands the agent a
+Workspace nobody is looking at. This is the single sharpest edge in the whole file, and it
+comes from a mechanism that [does not exist yet](#if-you-containerise-your-own-gateway-hostpaths).
+
+The forgotten key fails immediately and says so, before anything starts:
+
+```
+error while interpolating services.gateway.environment.ANTHROPIC_API_KEY:
+required variable ANTHROPIC_API_KEY is missing a value: set it in your shell; the agent's model needs it
+```
+
+**A healthy Gateway then prints nothing at all.** `docker compose logs gateway` is empty
+after a successful start, and that is correct: nothing announces that either server
+started. One call binds both ports, opens the pool and starts the worker, and it says
+nothing about any of it — the framework logs no startup line anywhere, and any line you
+want about one is yours to write next to that call.
 
 Nothing else happens either, and that is the other half of the silence. This deployment's
 only Producer is the **HTTP Messenger**, so the first Signal this Gateway ever sees is a
 Message somebody posted, and until somebody posts one there is nothing to claim and nothing
-to run. `main.ts` takes no arguments, because there is nothing left to say to it from a
-shell: a person logs in over the Public server, posts a Message, and reads the agent's
+to run. A person logs in over the Public server, posts a Message, and reads the agent's
 answer back, which is [the next section](#a-conversation-in-four-requests).
 
-`Ctrl-C` stops it — after the Run in flight has finished, which is not instant and is
-[the part of shutdown nothing can fix for you](#shutdown-is-two-lines-and-the-policy-is-yours). It
-keeps running because a Gateway is a server, and you want it up for the four requests below.
+### What that command did
 
-### Why `npm run build` is in that list
-
-`example/main.ts` imports `shared-agent-framework` **by name**, exactly as your own
-entry point in your own repository would. Inside this repository that name resolves to
-`dist/`, which is generated and not committed — so the build has to have happened once.
-It is in the list rather than hidden in a script because the alternative was an example
-that reaches into `src/`, and then the reference for how to write an entry point would
-not look like an entry point.
-
-### What the one Docker command did
-
-Four things: built the agent image from
-[`../example/agent/Dockerfile`](../example/agent/Dockerfile), started PostgreSQL on
-**port 5433**, created two networks, and ran the agent image once so you can see that
-`pi` is really in it:
+Four things: **built the Gateway image** from
+[`../example/gateway/Dockerfile`](../example/gateway/Dockerfile), which compiles this
+framework from source; built the agent image from
+[`../example/agent/Dockerfile`](../example/agent/Dockerfile) and ran it once so you can see
+that `pi` is really in it; started PostgreSQL; and created two networks.
 
 ```sh
-docker compose -f example/compose.yml ps -a            # postgres healthy; agent-image Exited (0)
-docker compose -f example/compose.yml logs agent-image  # 0.83.0
+docker compose ps -a             # gateway and postgres up; agent-image Exited (0)
+docker compose logs agent-image  # 0.83.0
 ```
 
 That `Exited (0)` container is meant to be there. Real agent containers are started by
 the Gateway, one per Run, and are never services in this file.
 
-**5433, not 5432**, so that this deployment and the `saf-pg` container the test suite
-wants can be up at the same time. Set `DATABASE_URL` to override it.
+**Only one port is published: 8080, on loopback.** PostgreSQL publishes nothing, and
+neither does the Agent server. That is not tidiness, it is the network boundary the
+[agent's isolation](#the-agents-network-which-is-a-boundary-now) actually rests on
+now.
 
-Notice what is *not* in that compose file: **the Gateway**. It runs on your host as an
-ordinary Node process. That is deliberate — see
-["Why the Gateway is not in the compose file"](#why-the-gateway-is-not-in-the-compose-file).
+### Editing anything means rebuilding
+
+`docker compose up -d --build` again. The `npm ci` layer is cached, so a change under
+`src/` or to `example/main.ts` rebuilds in seconds rather than a minute. There is no
+supported way to run `example/main.ts` on your host: it reads `HOST_EXAMPLE_DIR` and
+refuses to start without it, and supporting both would put three conditionals into the
+shortest honest deployment this repository has
+([ADR-0039](./adr/0039-the-reference-deployment-runs-in-a-compose-stack.md)).
+
+Two files are the exception, and they are the two the *agent* reads: `example/AGENTS.md`
+and `example/settings.json` are mounted into the agent's container from your checkout, so
+editing either takes effect on the very next Run with no rebuild at all. The reason is in
+["Two files are not in the Gateway's image"](#two-files-are-not-in-the-gateways-image).
 
 ## A conversation, in four requests
 
@@ -102,10 +120,20 @@ answered.
 and nothing else, and the id it answers with is the one thing you have to keep, because a
 User has no natural key: no email, no username, nothing to match on later.
 
+That server is not published to your host, so this request is made from inside the
+Gateway's own container. `wget` is BusyBox's, already in the image, and there is no `curl`
+in there to use instead:
+
 ```sh
-curl -s -XPOST localhost:7411/users -H 'content-type: application/json' \
-  -d '{"password":"correct horse battery staple"}'
+docker compose exec gateway wget -qO- \
+  --header='content-type: application/json' \
+  --post-data='{"password":"correct horse battery staple"}' \
+  http://127.0.0.1:7411/users
 ```
+
+**`127.0.0.1`, not `localhost`.** The Agent server binds `0.0.0.0`, which is IPv4 only,
+while `localhost` inside that container may resolve to `::1` first and be refused. It is the
+one place in this document where the distinction bites.
 
 ```json
 {"id":"3a577cbb-da46-44d1-8032-e2549fcd1507","attributes":{},"createdAt":"2026-08-02T16:37:09.756Z"}
@@ -147,7 +175,7 @@ surface of this part answers with:
 By the time that response reaches you the Signal is already queued. The Message row and the
 Signal that wakes the worker for it are **one transaction**, so what somebody said and the
 fact that anybody was told about it commit together or neither does, and now the Gateway has
-something to say, one JSON line at a time:
+something to say, one JSON line at a time, in `docker compose logs -f gateway`:
 
 ```
 Signal claimed     {"signalId":"641c2f87-…","kind":"message.received"}
@@ -235,12 +263,19 @@ Seven things about that surface, and most of them are refusals:
 ## Seeing what happened
 
 The Gateway's own record lives in PostgreSQL, and the agent reads it over HTTP. So can
-you:
+you, from inside the Gateway's container, since that server is published to nobody:
 
 ```sh
-curl -s http://127.0.0.1:7411/signals | jq
-curl -s http://127.0.0.1:7411/runs | jq
-curl -s "http://127.0.0.1:7411/messages?user=3a577cbb-…" | jq
+docker compose exec gateway wget -qO- http://127.0.0.1:7411/signals
+docker compose exec gateway wget -qO- http://127.0.0.1:7411/runs
+docker compose exec gateway wget -qO- "http://127.0.0.1:7411/messages?user=3a577cbb-…"
+```
+
+Or in SQL, which is often easier to read for the one column that matters most:
+
+```sh
+docker compose exec postgres psql -U saf saf -c \
+  'select state, session, error from saf_signals.runs order by started_at desc limit 5'
 ```
 
 A Run row carries the exact Prompt the agent was given, its Session, its state, its
@@ -260,11 +295,18 @@ example/state/agent/                the agent's own directory: credentials, trus
                                     and the Session transcripts
 ```
 
-Those two directories are **the entry point's**, `mkdir`ed by `main.ts` itself a few
-lines before it declares them as mounts. The framework creates no directory anywhere, so creating
-what your mounts point at is the deployment's job rather than a courtesy —
-[a mount source that is not there](#four-things-nothing-checks) is what happens when one
-is missing. What ends up inside them is the agent's, written as your own uid.
+Those two directories are **Compose's**, created because `compose.yml` bind-mounts them
+into the Gateway and Compose creates a missing bind source. The framework creates no
+directory anywhere, and `main.ts` does not either: creating what your mounts point at is the
+deployment's job rather than a courtesy, and
+[a mount source that is not there](#four-things-nothing-checks) is what happens when one is
+missing. What ends up inside them is the agent's, written as the uid the Gateway container
+runs as, which [is root](#the-agents-container-runs-as-the-gateways-uid-which-is-root).
+
+They are mounted into the Gateway as well as declared to the agent, and both halves earn
+their keep: the mount is what creates the directory and what lets a Signal Handler read what
+the agent wrote, and the declaration is what the agent gets. This deployment's one Handler
+reads nothing, so here it is the creating that matters.
 
 Two, not three. There is no Session root: the framework passes no `--session-dir` and
 names no path inside `pi`, so Sessions live wherever `pi` puts them, which is under the
@@ -308,6 +350,23 @@ are `example/AGENTS.md` and `example/settings.json`, mounted over those paths re
 every Run. Editing the empty ones changes nothing and deleting them changes nothing; the
 files to edit are the committed ones.
 
+### Two files are not in the Gateway's image
+
+Those same two, and this is why editing them needs no rebuild while editing `main.ts` does.
+
+A bind mount's source is resolved **by the daemon, on the host**. The daemon cannot see
+inside the Gateway's container, so anything the agent receives as a mount has to exist on
+your host, and a copy baked into the Gateway image could never be the copy anybody reads.
+`example/gateway/Dockerfile` therefore does not copy them in at all, and the Mount Table
+names two paths that do not exist in the Gateway's own filesystem. That is legal because
+[resolving a Mount Table performs no
+I/O](./adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md), which turns out to
+be the property that makes a containerised Gateway expressible.
+
+Baking them into the **agent's** image is the alternative and does not work: `/workspace` and
+the agent directory are bind-mounted, and a bind mount shadows whatever the image had
+underneath it.
+
 ## What the framework is told about the agent
 
 One value, with one required field. An **Agent Container** is the container a Run happens
@@ -318,12 +377,18 @@ more. The whole of the reference deployment's is one call:
 ```ts
 const runtime = createPiRuntime({
   image: "saf-agent:0.83.0",
-  env: { ANTHROPIC_API_KEY: apiKey },
+  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "" },
   networks: ["saf_agent"],
   mounts: {
     entries: [
-      { containerPath: "/workspace", gatewayPath: workspace },
-      { containerPath: "/home/agent/.pi/agent", gatewayPath: agentDir },
+      {
+        containerPath: "/workspace",
+        gatewayPath: path.join(import.meta.dirname, "state", "workspace"),
+      },
+      {
+        containerPath: "/home/agent/.pi/agent",
+        gatewayPath: path.join(import.meta.dirname, "state", "agent"),
+      },
       {
         containerPath: "/workspace/AGENTS.md",
         gatewayPath: path.join(import.meta.dirname, "AGENTS.md"),
@@ -335,9 +400,16 @@ const runtime = createPiRuntime({
         readOnly: true,
       },
     ],
+    hostPaths: { [import.meta.dirname]: hostExampleDir },
   },
 });
 ```
+
+`hostPaths` is the one line this deployment needs and yours may not: it is what a Gateway
+that is **itself in a container** has to say, because a `gatewayPath` is resolved by the
+daemon on the *host* and not in this process's filesystem. One entry, one fact, "this
+directory, over there", and every entry above falls under it. See ["If you containerise
+your own Gateway"](#if-you-containerise-your-own-gateway-hostpaths).
 
 Eight fields, and seven of them are optional — a default, or a fact most deployments do
 not have:
@@ -358,7 +430,7 @@ The Mount Table is a **field of it**, not a peer. One entry is one `--mount type
 agent must be unable to change it. An entry may name a directory or a single file, and the
 declaration does not say which, because nothing in the Mount Table looks. Who the
 container runs as is not in the table and is not configuration at all — always this
-process's own `uid:gid`
+process's own `uid:gid`, which in this stack means [root](#the-agents-container-runs-as-the-gateways-uid-which-is-root)
 ([ADR-0028](./adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)).
 
 Notice what is **not** in any of it: no model, no provider, no working directory, no agent
@@ -478,10 +550,10 @@ is why `curl` is one of the [three things the agent's image
 needs](#no-agent-image-is-published):
 
 ```sh
-curl -s "http://host.docker.internal:7411/signals?limit=5"
+curl -s "http://gateway:7411/signals?limit=5"
 ```
 
-That host name is the reference deployment's, and it is
+That host name is the reference deployment's Compose service, and it is
 [not derivable from where the server binds](#where-the-agent-reaches-you-is-not-derivable-from-where-the-server-binds).
 
 ### This copy can go stale
@@ -498,22 +570,28 @@ being out of date.
 
 ## What the entry point actually does
 
-Read [`../example/main.ts`](../example/main.ts) — seventy-three lines of code under two
-hundred and ninety-two with the comments, and the best documentation this project has.
-Fourteen of those lines are imports and most of the rest is the Agent Container above; the
+Read [`../example/main.ts`](../example/main.ts) — seventy-odd lines including the comments,
+and the best documentation this project has. Most of it is the Agent Container above; the
 deployment itself is three calls, one Signal Handler, and the loop at the bottom the
 framework does not ship. It is a **consumer** of the framework's own assembly rather than
 a demonstration of one, which is why there is so little of it.
 
 Three things in it are the framework's to describe and **yours to do**, and all three are
-near the top. It `mkdir`s `state/workspace` and `state/agent`, because it is about to
-declare both as mounts and nothing else will create them. An `AGENTS.md` sits committed
-beside it — not written by anything at runtime, just a file in the repository — which the
-Mount Table's third entry mounts into the Workspace read-only, and which is the only thing
-that tells the agent the Agent server exists. And a `settings.json` sits beside *that*,
-mounted the same way, which is the only thing that tells the agent which model to use. The
-framework creates no directory and writes no file, ever
+near the top. It reads `HOST_EXAMPLE_DIR` and refuses to start without it, because a Gateway
+in a container cannot work out where it is on the host and a wrong answer is silent. An
+`AGENTS.md` sits committed beside it — not written by anything at runtime, just a file in
+the repository — which the Mount Table's third entry mounts into the Workspace read-only,
+and which is the only thing that tells the agent the Agent server exists. And a
+`settings.json` sits beside *that*, mounted the same way, which is the only thing that tells
+the agent which model to use. The framework creates no directory and writes no file, ever
 ([ADR-0028](./adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)).
+
+Two things that used to be in it are **gone**, and both are defaults now. There is no
+`databaseUrl`, because `createGatewayWithDefaults` reads `DATABASE_URL` when it is given
+none, and `compose.yml` sets it. There is no `tokenTtl` either, because it defaults to
+thirty days. Both remain options, and a deployment for which either is load-bearing states
+it and gets exactly what it asked for
+([ADR-0038](./adr/0038-the-default-assembly-is-a-constructor.md)).
 
 Those three calls are **construct, migrate, start**, in that order and no other.
 
@@ -625,7 +703,7 @@ is Fastify's own `listen` options object handed over unread:
 ```ts
 const gateway = createGatewayWithDefaults({
   publicListen: { port: 8080, host: "0.0.0.0" },
-  agentListen: { port: 7411, host: "localhost" },
+  agentListen: { port: 7411, host: "0.0.0.0" },
   // …
 });
 ```
@@ -644,16 +722,23 @@ own split: `Fastify()` takes no port, and `listen` is the call a `start` has to 
 The asymmetry is the reason there are two servers. The Public server is the one meant to
 be reached, and a Public server on loopback inside a container answers nobody — a
 deployment that looks healthy and serves no User. The Agent server is the opposite: it
-has no authentication, so **reaching the port is access**, and loopback is what keeps
-that true. Moving it should be something you did on purpose, which is why it is written
-out rather than inherited.
+has no authentication, so **reaching the port is access**. Moving it should be something
+you did on purpose, which is why it is written out rather than inherited.
 
-Two details worth knowing. `localhost` and `127.0.0.1` are not the same instruction to
-Fastify — `localhost` binds both loopback addresses, IPv4 and IPv6, and `127.0.0.1` binds
-only the first, so `localhost` is the one to write. And `localhost` is also Fastify's own
-default, so an options object that says nothing about `host` is already on loopback; the
-reference deployment states it anyway, because the most consequential value in a
-deployment should not be one you have to know a library's defaults to find.
+**Both are `0.0.0.0` here, and that is not the same as exposing them.** This Gateway is in a
+container, so a bind reaches the networks that container joined and nothing else. What
+decides exposure is `ports:` in `compose.yml`, which publishes 8080 to loopback and publishes
+7411 to nobody at all. The unauthenticated server is therefore reachable from the agent's
+network and from no host anywhere, which is a tighter position than a loopback bind on your
+machine ever managed — there,
+[`host.docker.internal` reaches your loopback interface](#the-agents-network-which-is-a-boundary-now).
+
+Two details worth knowing. **`0.0.0.0` is IPv4 only**, so `localhost` inside the Gateway's
+container may resolve to `::1` and be refused; use `127.0.0.1` when you `exec` into it. And
+if you go back to a loopback bind, `localhost` and `127.0.0.1` are not the same instruction
+to Fastify: `localhost` binds both loopback addresses and `127.0.0.1` binds only the IPv4
+one, so `localhost` is the one to write. `localhost` is also Fastify's own default, so an
+options object that says nothing about `host` is already on loopback.
 
 ### Where the agent reaches you is not derivable from where the server binds
 
@@ -664,48 +749,55 @@ second is a **string in your own `AGENTS.md`**, and there is nowhere else for it
 the Agent Container has no field for it, nothing has ever read it, and the Runtime never
 sees that address at all.
 
-The reference deployment uses `http://host.docker.internal:7411` with a loopback bind,
-and that works **on Docker Desktop**, which routes that name to the host including its
-loopback interface.
+The reference deployment uses **`http://gateway:7411`**, which is three facts that have to
+agree and are stated in three files: `gateway` is the service name in `compose.yml`, `7411`
+is the port in `main.ts`, and `AGENTS.md` is the only place the two are ever written
+together.
 
-**On a plain Linux daemon it does not.** There, you need both of:
+It works because Compose gives each service its own name as a **network alias** on
+`saf_agent`, and the daemon's DNS answers for that alias to anything on that network —
+including the agent containers, which Compose knows nothing about, since the Gateway starts
+them itself. Nothing in the framework guarantees that; it was verified against a real Run,
+and if it ever stops being true the fallback is the container's own name.
 
-- `--add-host=host.docker.internal:host-gateway` in the Agent Container's `extraArgs`,
-  because the name does not otherwise exist; and
-- the Agent server bound somewhere the bridge can reach — so `host: "0.0.0.0"` or the
-  bridge address, which means it is **no longer on loopback** and the warning in
-  ["the Agent server is unauthenticated"](#the-agent-server-is-unauthenticated) now
-  applies to you.
-
-On a shared Compose network where the Gateway is itself a service, neither is needed: the
-address is `http://<service-name>:7411` and the bind stays inside the network.
+**If your Gateway is not in the stack**, the address is a different problem.
+`http://host.docker.internal:7411` reaches a Gateway on your host, and that works on Docker
+Desktop, which routes that name to the host including its loopback interface. On a plain
+Linux daemon it needs both `--add-host=host.docker.internal:host-gateway` in the Agent
+Container's `extraArgs` and an Agent server bound somewhere the bridge can reach, which
+means it is no longer on loopback and
+["the Agent server is unauthenticated"](#the-agent-server-is-unauthenticated) starts applying
+to you. That is much of why the reference deployment stopped doing it that way.
 
 If you get this wrong the symptom is at least legible: the agent's `curl` fails and the
-agent says so. The two values are in two files that sit next to each other — the
-`agentListen` option in `main.ts`, and the URL in `AGENTS.md` beside it. Read them
-together; nothing else has to be consulted, and changing one always means changing the
-other, which is why the reference deployment's `AGENTS.md` says so in its own last
-section.
+agent says so.
 
-### The agent's container runs as *your* uid
+### The agent's container runs as the Gateway's uid, which is root
 
-With bind mounts, files the agent writes are owned by whoever the container runs as. So
-the container always runs as the Gateway process's own `uid:gid` — otherwise your Signal
+With bind mounts, files the agent writes are owned by whoever the container runs as. So the
+container always runs as the Gateway process's own `uid:gid` — otherwise your Signal
 Handlers cannot read what the agent left in the Workspace, and the agent cannot read what
-they left for it. There is no field for it: it used to be the Mount Table's and is no
-longer configuration at all
+they left for it. There is no field for it: it used to be the Mount Table's and is no longer
+configuration at all
 ([ADR-0028](./adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)). To
 countermand it, put `--user` in `extraArgs`, which is spliced last and so wins.
 
-The consequence: **the mounted directories must be writable by that uid.** In the
-reference deployment they are, trivially, because the Gateway runs as you on your own
-machine and the directories are under `example/state/`. In a deployment where those
-directories come from somewhere else — a volume, a provisioned path, another
-container — making them writable by that uid is your job.
+**In this stack that uid is root**, because reaching `/var/run/docker.sock` inside a
+container means being uid 0 or being in the host's `docker` group, whose gid differs from
+machine to machine. So every agent container runs as root, and everything under
+`example/state/` is owned by root.
 
-Nothing checks it for you. The framework verifies no mount and starts no container at
-boot, so an unwritable directory is something the agent meets during a Run — with the
-consequence in the next section.
+On Docker Desktop you will not notice: the file sharing layer remaps ownership and those
+directories show up as yours. On Linux they are genuinely root-owned, and `rm -rf
+example/state` wants `sudo`. That is a papercut in a gitignored throwaway directory, traded
+against a second machine-specific variable that would work on the author's machine and fail
+on yours ([ADR-0039](./adr/0039-the-reference-deployment-runs-in-a-compose-stack.md)).
+
+The general consequence outlives the demo: **the mounted directories must be writable by
+that uid.** Where those directories come from somewhere else — a volume, a provisioned path,
+another container — making them writable is your job, and nothing checks it for you. The
+framework verifies no mount and starts no container at boot, so an unwritable directory is
+something the agent meets during a Run, with the consequence in the next section.
 
 ### Four things nothing checks
 
@@ -800,26 +892,30 @@ reverse lookup that produced it is gone along with the Session root
 agent has forgotten everything", the place to look is
 [under the agent directory you mounted](#where-the-transcripts-go-and-what-it-costs).
 
-### The agent's network isolates less than it looks like
+### The agent's network, which is a boundary now
 
 `compose.yml` puts the agent on `saf_agent` and PostgreSQL on `saf_db`, and the Agent
 Container's `networks: ["saf_agent"]` is what puts the agent there. So the agent **cannot
-resolve `postgres`**, which is the point: the Db holds the Gateway's own state and the
-agent is supposed to reach it only through the Agent server's read-only routes.
+resolve `postgres`**, which is the point: the Db holds the Gateway's own state and the agent
+is supposed to reach it only through the Agent server's read-only routes.
 
-What that does *not* do, and you should know it before you rely on it: a separate bridge
-network stops **service-name discovery**, not **host access**. The Gateway is on your host
-and the agent has to be able to reach it, so on Docker Desktop — where
-`host.docker.internal` reaches the host's loopback interface, which is the whole reason
-the Agent server works on `127.0.0.1` — the agent can reach *anything* bound there,
-PostgreSQL on 5433 included. What stands between the agent and the Db on this machine
-is the password, not the network. (Under a plain Linux daemon a loopback-bound port is
-genuinely out of reach, which is the one way that platform is the stricter of the two.)
+This section used to carry a confession, and the confession is worth reading even though it
+no longer applies, because it is the failure mode to look for in your own topology. A
+separate bridge network stops **service-name discovery**, not **host access**. When the
+Gateway ran on the host, PostgreSQL had to publish a port for it to connect to, and on Docker
+Desktop `host.docker.internal` reaches the host's loopback interface — so the agent could
+reach anything bound there, the published PostgreSQL included, whatever network it was on.
+What stood between the agent and the Db was the password.
 
-Two things follow. The credentials in `compose.yml` are `saf:saf` because this is a local
-demo; a real deployment supplies its own through `DATABASE_URL` and does not publish
-PostgreSQL's port at all. And the agent's network is worth having as one layer, not as the
-boundary.
+**PostgreSQL now publishes nothing.** The Gateway reaches it by service name over `saf_db`,
+there is no host port, and the network separation is load-bearing rather than decorative.
+
+Three things still worth knowing. The credentials in `compose.yml` are `saf:saf` because this
+is a local demo; a real deployment supplies its own through `DATABASE_URL`. The agent can
+reach the **Public** server, because one bind covers both of the Gateway's networks, and that
+is fine because the Public server wants a Token the agent does not have. And `postgres` can
+reach the Agent server for the same reason, which is harmless and is not nothing; preventing
+it would need per-network binds, which Fastify does not express.
 
 ### Three things about Messages, and none of them is a bug
 
@@ -898,6 +994,15 @@ marks it `failed` and never re-runs it, because it may already have written the 
 or made external calls, and replaying it would do all of that twice. Whether that is acceptable, and what to do about it, is a decision every
 deployment makes for itself.
 
+**Which is why `compose.yml` says `stop_grace_period: 300s`.** Compose's default is ten
+seconds, and then SIGKILL. If your deployment is a container, that number is now part of
+your shutdown policy whether you wrote it or not, and the default one truncates the drain.
+The symptom is worth memorising because its cause is nowhere near it: a `runs` row stuck in
+`running` **forever**, its Signal never settling, and an agent container that outlived the
+Gateway, finished its work and reported the outcome to a process that was no longer there.
+Nothing logs any of that. If you ever see a permanently `running` Run, look at your
+orchestrator's grace period before you look at anything in this framework.
+
 ### Nothing is bounded by time
 
 **There are no timeouts anywhere.** Not on a Run, not on a Signal Handler, not on a tool
@@ -971,7 +1076,7 @@ import { openDb, signalsMigrations } from "shared-agent-framework";
 import { httpMessagesMigrations } from "shared-agent-framework/http-messenger";
 import { usersMigrations } from "shared-agent-framework/users";
 
-const db = openDb(process.env.DATABASE_URL ?? "postgres://saf:saf@localhost:5433/saf");
+const db = openDb(process.env.DATABASE_URL ?? "postgres://saf:saf@postgres:5432/saf");
 db.registerMigrations(signalsMigrations, usersMigrations, httpMessagesMigrations);
 await db.migrate();
 await db.stop();
@@ -1053,7 +1158,7 @@ makes for you is this one:
 ```ts
 const users = createUsers({
   db,
-  tokenTtl: 30 * 24 * 60 * 60 * 1000,   // yours to state; `tokenTtl` is a required option
+  tokenTtl: 30 * 24 * 60 * 60 * 1000,   // required here; only the defaults constructor defaults it
   agentServer,      // `POST /users` and the two reads, at `/users`
   publicServer,     // logging in, logging out, reading and replacing your own credential, at `/auth`
 });
@@ -1324,26 +1429,57 @@ Signal Worker resolved a Handler's request for a fresh Session against the Run r
 calling you, so there is no naming convention for you to invent
 ([ADR-0033](./adr/0033-an-agent-is-a-container-and-one-function.md)).
 
-## Why the Gateway is not in the compose file
+## The Gateway holds your Docker socket
 
-It runs on your host, and containerising it would cost more than it buys.
+`compose.yml` mounts `/var/run/docker.sock` into the Gateway, and that is root on your
+host. Anything that can execute code in the Gateway process can execute code as root
+outside it. Do not run this stack on a machine you would mind losing.
 
-The Gateway starts a container per Run, so a containerised Gateway needs a container
-runtime socket — which is root on the host, a far bigger hole than the one it closes.
-Running on the host also makes the file-ownership story true by construction: the agent's
-container runs as the Gateway process's uid, and the directories under `example/state/`
-belong to that user already.
+This file used to argue the other way, and the argument was: a containerised Gateway needs
+a container runtime socket, which is a far bigger hole than the one it closes, so run it on
+the host instead. The hazard was right and the conclusion was wrong. **The Gateway holds
+container-creation authority wherever it runs** — on your host it reaches the same socket,
+the same way, with the same blast radius — so containerising does not create the hole, and
+running on the host does not close it. The only real question is *whose* authority it holds.
 
-### If you containerise it anyway: `hostPaths`
+Two answers change that, and one of them is worth your time:
+
+- **A socket proxy** allowlisting what `docker run` needs. It has to allow the endpoint that
+  starts a container with arbitrary bind mounts, which is on its own enough to mount `/`
+  somewhere writable. It adds a service and closes approximately nothing.
+- **Rootless Docker, or Podman.** This genuinely shrinks the hole rather than moving it, and
+  the framework already supports it:  `containerCommand: ["podman"]` on the Agent Container.
+  It is not what the reference deployment does, only because the quickstart's whole promise
+  is that a clean clone runs on a stock Docker Desktop install.
+
+If you take this design to production, rootless is the first thing to change.
+[ADR-0039](./adr/0039-the-reference-deployment-runs-in-a-compose-stack.md) has the rest.
+
+### If you containerise your own Gateway: `hostPaths`
 
 A Mount Table entry is two values — where a directory or file appears **to the agent**,
 and where it is **as this process sees it** — and the second is what the container
 runtime's daemon resolves, **on the host**. Three processes are naming the same directory
 and only two of the names are in that entry. They are the same string while the Gateway
-runs on the host, which is the case this deployment is, so the third name never comes up.
+runs on the host, and they part company the moment it does not.
 
-It comes up the moment the Gateway is itself in a container, and then it is **one fact
-about your deployment** rather than a property of each mount. State it once, on the table:
+That is **one fact about your deployment** rather than a property of each mount, so it is
+stated once, on the table. Here is the reference deployment's, which is as small as one gets:
+
+```ts
+mounts: {
+  entries: [
+    /* … */
+  ],
+  // this container's /app/example is the host's ${PWD}, passed in by compose.yml
+  hostPaths: { [import.meta.dirname]: hostExampleDir },
+}
+```
+
+The key is `import.meta.dirname` rather than a literal, so the path is derived rather than
+stated twice, and every entry sits under it because the state directories were deliberately
+put *inside* `example/` instead of beside it. One prefix is the whole mapping. A more
+typical one, with the state somewhere of its own:
 
 ```ts
 mounts: {
@@ -1356,9 +1492,14 @@ mounts: {
 }
 ```
 
+A `gatewayPath` **does not have to exist in your container**, and the reference deployment
+relies on it: `AGENTS.md` and `settings.json` are named at paths that are not in the
+Gateway's image at all, because the daemon resolves them on the host where they really are.
+Resolving a Mount Table performs no I/O, so nothing ever looks.
+
 Keys are matched **longest prefix first**, so a general mapping and a specific exception
-coexist. Leave `hostPaths` out and every entry is its own source, which is what every
-example on this page has been doing.
+coexist. Leave `hostPaths` out and every entry is its own source, which is what a Gateway
+running on a host wants.
 
 Once you write one it is **exhaustive**. An entry whose `gatewayPath` falls under no key
 is refused when you construct the Runtime, with a message naming the path and listing the
@@ -1436,11 +1577,17 @@ read-only and can change without a rebuild.
 ## Tearing it down
 
 ```sh
-docker compose -f example/compose.yml down -v   # containers, networks, and the database volume
-rm -rf example/state                             # the Workspace and the agent's directory
+docker compose down -v   # from example/: containers, networks, and the database volume
+rm -rf state             # the Workspace and the agent's directory
 ```
 
 `example/state/` is gitignored. It holds credentials the agent wrote, so do not commit it.
+On Linux its contents are owned by root, because
+[that is what the agent's container runs as](#the-agents-container-runs-as-the-gateways-uid-which-is-root),
+so that second command wants `sudo`.
+
+Agent containers are `--rm` and are started by the Gateway rather than by Compose, so
+`down` does not touch them; one that outlives the Gateway removes itself when it finishes.
 
 ## What is not here
 
