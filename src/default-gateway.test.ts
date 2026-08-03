@@ -160,6 +160,16 @@ const roundTripPayload = { text: "say this back to me", nested: awkwardJson };
 const theOnePassword = "the only password in this file";
 const roundTripAttributes = { groups: ["reviewers"], nested: awkwardJson };
 
+/**
+ * The one Message in this file that a *User* wrote, and the reason the notebook below ends
+ * up with two lines rather than one.
+ *
+ * There is no trusted-code method that writes an inbound Message and that is deliberate
+ * (ADR-0034), so the Public submission route is the only way a log has both directions in
+ * it, and that is what makes the numbering worth reading back at all.
+ */
+const roundTripSubmission = "and one from me, while everything is still up";
+
 /** A Handler whose only job is to produce one Run for the round trip to read. */
 const roundTripping: SignalHandler<{ readonly text: string }> = {
   handle: (signal) => [{ session: roundTripSession, text: signal.payload.text }],
@@ -571,6 +581,99 @@ describe("a whole deployment from one call", () => {
     }
   });
 
+  it("answers a Message log as the HTTP Messenger recorded it, and pages it three ways", async () => {
+    // A User of this test's own, because `seq` is per User and every number below is an
+    // assertion: the User the rest of the file shares has a Message posted into their log by
+    // the drain test underneath this one.
+    const reader = await admitted();
+
+    // Four Messages in one log and in both directions, written the only two ways a Message
+    // can be. `send` is the part's own method, which is what a Signal Handler calls and what
+    // the agent's route reaches; the Public submission is the only way an inbound Message
+    // exists at all, since there is deliberately no method that writes one (ADR-0034).
+    const first = await sending(reader.id, "the first thing the agent said");
+    const submitted = await postJson(
+      `${publicUrl}/messages`,
+      { text: roundTripSubmission },
+      reader.token,
+    );
+    const submittedBody = await submitted.text();
+    assert.equal(submitted.status, 201, submittedBody);
+    const second: MessageRecord = JSON.parse(submittedBody);
+    const third = await sending(reader.id, "and the answer to it");
+    const fourth = await sending(reader.id, "and one more, unasked");
+
+    // The log as the part holds it: in this process, never serialized, and therefore the one
+    // side of every comparison below that a response schema cannot have taken anything out
+    // of (ADR-0040). One numbered sequence across both directions is the whole of ADR-0035,
+    // and it is what makes a single cursor able to serve a poll and a render alike.
+    const recorded = await components.messenger.history(reader.id);
+    assert.deepEqual(
+      recorded.map((message) => message.seq),
+      [1, 2, 3, 4],
+    );
+    const [, held] = recorded;
+    assert.ok(held !== undefined);
+
+    // The whole body of the submitted Message against a literal the type checker holds to
+    // the record type, with its id and its timestamp taken from the record the part holds
+    // rather than from itself: add a field to `MessageRecord` and this file stops compiling,
+    // leave it out of the response schema and this comparison fails.
+    assert.deepEqual(second, {
+      id: held.id,
+      // From the Token and from nowhere a client can write: the body was `{ text }`.
+      userId: reader.id,
+      // Inbound because it arrived on the Public server, which is the only thing that
+      // decides a direction, and there is no field for one on either route.
+      direction: "inbound",
+      // Numbered after the outbound Message before it, which is what "one log" means.
+      seq: 2,
+      text: roundTripSubmission,
+      createdAt: held.createdAt,
+    } satisfies MessageRecord);
+    assert.equal(new Date(second.createdAt).toISOString(), second.createdAt);
+
+    // And the Signal that submission emits in the same transaction, which is this part's
+    // other contract and carries the same record: the Handler wrote its text into the
+    // Operator's own Component, so waiting on that is waiting for the whole path.
+    await waitUntil("the submitted Message has woken its Handler", async () =>
+      components.notes.lines.includes(roundTripSubmission),
+    );
+
+    // The agent's read, which names the User in a query parameter, and the User's own, which
+    // has no parameter for one at all. Two surfaces, one query, and the same four records
+    // out of both, compared against what the part holds rather than against each other,
+    // which is what a field stripped from both sides would survive.
+    const agentRead = await agentJson<{ messages: MessageRecord[] }>(`/messages?user=${reader.id}`);
+    assert.deepEqual(agentRead.messages, recorded);
+    assert.deepEqual((await ownLog(reader.token, "")).messages, recorded);
+
+    // The three cursor cases, on the surface a person writes a client against, and all three
+    // ascending (ADR-0035). No cursor is the **newest** page and not the oldest, which is the
+    // case a client has no way to guess and the description is now what tells it.
+    assert.deepEqual(await ownTexts(reader.token, "?limit=2"), [third.text, fourth.text]);
+    assert.deepEqual(await ownTexts(reader.token, "?before=3&limit=2"), [first.text, second.text]);
+    assert.deepEqual(await ownTexts(reader.token, "?after=2"), [third.text, fourth.text]);
+    // And `after=0`, which is the only spelling of "from the beginning": no cursor means the
+    // newest page instead, and nothing is numbered 0.
+    assert.deepEqual(
+      await ownTexts(reader.token, "?after=0"),
+      recorded.map((message) => message.text),
+    );
+
+    // Both cursors at once describes two windows, so it is refused rather than one of them
+    // quietly winning. The body is read whole because a 400 is serialized through the shared
+    // error schema now: a route declaring it drops any field that schema does not have, and
+    // the useful part of this refusal is the sentence naming what to pass instead.
+    const bothCursors = await bearing(`${publicUrl}/messages?after=1&before=4`, reader.token);
+    const refusal: { statusCode: number; error: string; message: string } = JSON.parse(
+      await bothCursors.text(),
+    );
+    assert.equal(bothCursors.status, 400);
+    assert.deepEqual(Object.keys(refusal).sort(), ["error", "message", "statusCode"]);
+    assert.match(refusal.message, /after and before describe two different windows/);
+  });
+
   it("drains with everything still up, and closes it all once the drain is done", async () => {
     const posted = await postMessage(inFlightAtShutdown);
     assert.equal(posted.status, 201);
@@ -584,8 +687,9 @@ describe("a whole deployment from one call", () => {
 
     // The Handler ran, and it reached the Component `extend` returned. That is the cycle
     // closed at runtime: this Handler was built by a callback taking objects the worker
-    // holding it was constructed before (ADR-0038).
-    assert.deepEqual(components.notes.lines, [inFlightAtShutdown]);
+    // holding it was constructed before (ADR-0038). Two lines and not one, because the round
+    // trip above submitted a Message too, and both went through this Handler.
+    assert.deepEqual(components.notes.lines, [roundTripSubmission, inFlightAtShutdown]);
 
     // Not awaited: `stop` pops the notebook and then the worker, and the worker waits for
     // this Run, so the Run is what has to move next. By the time this call has returned a
@@ -695,12 +799,11 @@ describe("the defaults on their own", () => {
  * further up: that suite's subject is what is listening and when, and `inject` answers on
  * a server that has been closed. This one never starts or stops a Gateway.
  *
- * **Responses arrive one part at a time.** The Signal Worker's four routes and the User
- * Manager's eight declare what they answer with; the HTTP Messenger's do not yet, and the
- * tests below read a `responses` object only for the paths whose part has been through.
- * What no test here can do is catch a *dropped* field, since a document and the wire it
- * describes are the same schema read twice. That is the round-trip assertions in the first
- * suite, which need records real parts recorded and therefore a real database.
+ * **All sixteen routes declare what they answer with**, one part at a time and now
+ * complete: the Signal Worker's four, the User Manager's eight and the HTTP Messenger's
+ * four. What no test here can do is catch a *dropped* field, since a document and the wire
+ * it describes are the same schema read twice. That is the round-trip assertions in the
+ * first suite, which need records real parts recorded and therefore a real database.
  */
 describe("the description both servers serve", () => {
   /** Somewhere nothing resolves, since none of this connects. */
@@ -737,10 +840,22 @@ describe("the description both servers serve", () => {
   ];
 
   /** As much of an OpenAPI document as anything here reads. */
-  type Property = { readonly type?: string; readonly description?: string };
+  type Property = {
+    readonly type?: string;
+    readonly description?: string;
+    readonly enum?: readonly string[];
+    /** Present on an array, which the one envelope read below is. */
+    readonly items?: Schema;
+  };
   type Schema = {
     readonly properties?: Readonly<Record<string, Property>>;
     readonly required?: readonly string[];
+  };
+  /** One query parameter, which is where a `querystring` schema's properties end up. */
+  type Parameter = {
+    readonly name: string;
+    readonly required?: boolean;
+    readonly description?: string;
   };
   /** Absent on a response that carries no body, which is the whole point of a 204. */
   type Answered = {
@@ -751,6 +866,10 @@ describe("the description both servers serve", () => {
     readonly tags?: readonly string[];
     readonly summary?: string;
     readonly description?: string;
+    readonly parameters?: readonly Parameter[];
+    readonly requestBody?: {
+      readonly content: Readonly<Record<string, { readonly schema: Schema }>>;
+    };
     readonly responses: Readonly<Record<string, Answered>>;
   };
   type Method = "get" | "post" | "put" | "delete";
@@ -989,6 +1108,159 @@ describe("the description both servers serve", () => {
     assert.equal(token.properties?.token?.description, undefined);
   });
 
+  it("says what the HTTP Messenger's four routes answer with, and how a log is paged", async () => {
+    // The other part that spans both surfaces, and the one whose two surfaces are likeliest
+    // to be conflated: submitting and reading are the same pair of routes on each, differing
+    // in exactly one thing, which is where the User comes from (ADR-0035, ADR-0040).
+    const documents = {
+      agent: await documentOf(described.components.agentServer.fastify),
+      public: await documentOf(described.components.publicServer.fastify),
+    };
+    // One path on both, ending in a slash because both plugins register at `""` under the
+    // prefix the constructor supplies.
+    const messages = "/messages/";
+
+    // The 404 is the agent's alone, and its absence from the Public submission is the
+    // document following the code: nothing removes a User (ADR-0029), so the id on that
+    // route is the one the Manager's hook just read a User by and the status is unreachable.
+    // The 503 is on both submissions, since a busy log is busy from either direction.
+    const answers: readonly {
+      readonly surface: keyof typeof documents;
+      readonly method: Method;
+      readonly statuses: readonly string[];
+    }[] = [
+      { surface: "agent", method: "post", statuses: ["201", "400", "404", "503"] },
+      { surface: "agent", method: "get", statuses: ["200", "400"] },
+      { surface: "public", method: "post", statuses: ["201", "400", "401", "503"] },
+      { surface: "public", method: "get", statuses: ["200", "400", "401"] },
+    ];
+
+    for (const { surface, method, statuses } of answers) {
+      const where = `${method.toUpperCase()} ${messages} on the ${surface} server`;
+      const route = documents[surface].paths[messages]?.[method];
+      assert.ok(route !== undefined, `${where} should be described`);
+      assert.deepEqual(Object.keys(route.responses).sort(), [...statuses].sort(), where);
+      for (const [status, answered] of Object.entries(route.responses)) {
+        // "Default Response" is what an undeclared response reads as, so this is the line
+        // that tells a described status from a status the plugin invented a sentence for.
+        assert.notEqual(answered.description, "Default Response", `${where} ${status}`);
+        // Every one of these carries a body, unlike the User Manager's three 204s.
+        assert.ok(Object.hasOwn(answered, "content"), `${where} ${status}`);
+      }
+
+      assert.ok(route.tags !== undefined && route.tags.length > 0, `${where} should be tagged`);
+      assert.ok(route.summary !== undefined && route.summary.length > 0, where);
+      assert.ok(route.description !== undefined && route.description.length > 0, where);
+    }
+
+    // Tagged so that the Messenger's routes are a group of their own on each page rather
+    // than mixed into the Signal Worker's four or the login routes. The word is the same on
+    // both surfaces and does not need to differ: these are two documents, so which surface a
+    // reader is on is the one they fetched rather than a label inside it.
+    assert.deepEqual(tagsOf(documents.agent, messages, "post"), ["Messages"]);
+    assert.deepEqual(tagsOf(documents.public, messages, "get"), ["Messages"]);
+    assert.equal(tagsOf(documents.agent, "/signals", "get").includes("Messages"), false);
+    assert.equal(tagsOf(documents.public, "/auth/me", "get").includes("Messages"), false);
+
+    // **The cursor semantics, which no schema conveys any part of**: `after` and `before` are
+    // two optional integers, and nothing about that shape says which of them is the newest
+    // page or that all three cases answer the same way up (ADR-0035). Asserted on both reads
+    // and in the same words, because the two are one query asked about a User named in a
+    // different place and a client written against either pages identically.
+    for (const surface of ["agent", "public"] as const) {
+      const reading = String(documents[surface].paths[messages]?.get?.description);
+      assert.match(reading, /\*\*Three cursor cases, one order\.\*\*/, surface);
+      assert.match(reading, /No cursor answers the newest page/, surface);
+      assert.match(reading, /`before=N` answers the newest page strictly below `N`/, surface);
+      assert.match(reading, /`after=N` walks forwards from `N`/, surface);
+      assert.match(reading, /All three answer \*\*ascending by `seq`\*\*/, surface);
+      assert.match(reading, /Passing `after` and `before` together is a \*\*400\*\*/, surface);
+      // And the flag the envelope deliberately does not carry, with what to do instead.
+      assert.match(reading, /no more-results flag/, surface);
+      assert.match(reading, /`messages\.length === limit`/, surface);
+      // The cap, which is the one list in the framework a caller can page past.
+      assert.match(reading, /\*\*refused with a 400\*\* rather than quietly reduced/, surface);
+    }
+
+    // **The two surfaces differing rather than blurring**, on the submission: the agent names
+    // the User in a required field, and the Public route has no such field and nowhere for
+    // one to arrive, which is what makes the attribution in the Signal payload trustworthy.
+    const agentSend = bodyOf(documents.agent, messages, "post");
+    assert.deepEqual(Object.keys(agentSend.properties ?? {}).sort(), ["text", "userId"]);
+    assert.deepEqual([...(agentSend.required ?? [])].sort(), ["text", "userId"]);
+    const submission = bodyOf(documents.public, messages, "post");
+    assert.deepEqual(Object.keys(submission.properties ?? {}), ["text"]);
+    assert.deepEqual(submission.required, ["text"]);
+    assert.match(
+      String(documents.public.paths[messages]?.post?.description),
+      /no field for the submitting User and nowhere for one to arrive/,
+    );
+
+    // And the same difference on the reads, where it is a parameter rather than a field: one
+    // required `user` on the agent's, and no parameter naming a User on the other at all.
+    const agentWindow = parametersOf(documents.agent, messages, "get");
+    assert.deepEqual(
+      agentWindow.filter((parameter) => parameter.required).map((parameter) => parameter.name),
+      ["user"],
+    );
+    assert.deepEqual(
+      parametersOf(documents.public, messages, "get")
+        .map((parameter) => parameter.name)
+        .sort(),
+      ["after", "before", "limit"],
+    );
+
+    // The Message as it is answered, one shape on all four routes, and the two property
+    // descriptions this record needs: `seq` is the cursor and its name does not say so, and
+    // `direction` is a field a caller would expect to be able to set and cannot.
+    const fields = ["createdAt", "direction", "id", "seq", "text", "userId"];
+    const message = schemaOf(documents.agent, messages, "post", "201");
+    assert.deepEqual(Object.keys(message.properties ?? {}).sort(), fields);
+    assert.deepEqual([...(message.required ?? [])].sort(), fields);
+    assert.match(String(message.properties?.seq?.description), /It is the cursor/);
+    assert.deepEqual(message.properties?.direction?.enum, ["inbound", "outbound"]);
+    assert.match(
+      String(message.properties?.direction?.description),
+      /Decided by the server the request arrived on/,
+    );
+    // And none on the three whose name is their whole story.
+    assert.equal(message.properties?.id?.description, undefined);
+    assert.equal(message.properties?.userId?.description, undefined);
+    assert.equal(message.properties?.createdAt?.description, undefined);
+
+    // The same shape under the envelope on a read, which is where a client meets it most:
+    // one `messages` array and no `hasMore` beside it.
+    const page = schemaOf(documents.public, messages, "get", "200");
+    assert.deepEqual(Object.keys(page.properties ?? {}), ["messages"]);
+    assert.deepEqual(
+      Object.keys(page.properties?.messages?.items?.properties ?? {}).sort(),
+      fields,
+    );
+
+    // The two failures that are this part's own, and the reason each is worth a sentence: a
+    // 404 that came from the write rather than from a lookup in front of it, and a 5xx whose
+    // correct handling is to send the same thing again.
+    assert.match(
+      String(documents.agent.paths[messages]?.post?.responses["404"]?.description),
+      /foreign key onto the User Manager's table/,
+    );
+    for (const surface of ["agent", "public"] as const) {
+      assert.match(
+        String(documents[surface].paths[messages]?.post?.responses["503"]?.description),
+        /\*\*was not recorded\*\*, and sending it again is the right thing to do/,
+        surface,
+      );
+    }
+
+    // Which Public routes want a Token, in the User Manager's own words: this part holds no
+    // scheme of its own, so restating them would be two descriptions of one hook.
+    for (const method of ["post", "get"] as const) {
+      const route = documents.public.paths[messages]?.[method];
+      assert.match(String(route?.description), /\*\*Requires a bearer Token\*\*/, method);
+      assert.match(String(route?.responses["401"]?.description), /Authentication failed/, method);
+    }
+  });
+
   it("serves a browsable page on both, at a path neither can be moved off", async () => {
     for (const server of [described.components.agentServer, described.components.publicServer]) {
       const page = await server.fastify.inject({ method: "GET", url: "/docs" });
@@ -1099,6 +1371,24 @@ describe("the description both servers serve", () => {
       document.paths[path]?.[method]?.responses[status]?.content?.["application/json"]?.schema;
     assert.ok(schema !== undefined, `${method} ${path} should describe a ${status} body`);
     return schema;
+  }
+
+  /** The JSON schema of one operation's request body, read the same way and for the same reason. */
+  function bodyOf(document: Description, path: string, method: Method): Schema {
+    const schema =
+      document.paths[path]?.[method]?.requestBody?.content?.["application/json"]?.schema;
+    assert.ok(schema !== undefined, `${method} ${path} should describe a body`);
+    return schema;
+  }
+
+  /**
+   * One operation's query parameters, which is where a `querystring` schema's properties
+   * end up: a parameter absent from this list is one a client has no way to know exists.
+   */
+  function parametersOf(document: Description, path: string, method: Method): readonly Parameter[] {
+    const parameters = document.paths[path]?.[method]?.parameters;
+    assert.ok(parameters !== undefined, `${method} ${path} should describe its parameters`);
+    return parameters;
   }
 });
 
@@ -1295,9 +1585,39 @@ function postMessage(text: string): Promise<Response> {
   return postJson(`${publicUrl}/messages`, { text }, client.token);
 }
 
+/**
+ * One outbound Message written through the part's own method, which is what a Signal
+ * Handler calls and the half of a round trip that never touches a wire.
+ */
+function sending(userId: string, text: string): Promise<MessageRecord> {
+  return components.db.tx((tx) => components.messenger.send(tx, userId, text));
+}
+
+/**
+ * One User's own Message log over the Public server, by their Token and with no parameter
+ * naming them: the whole difference from the agent's read of the same query.
+ */
+async function ownLog(token: string, window: string): Promise<{ messages: MessageRecord[] }> {
+  const response = await bearing(`${publicUrl}/messages${window}`, token);
+  const body = await response.text();
+  assert.equal(response.status, 200, `GET /messages${window} should have answered: ${body}`);
+  return JSON.parse(body);
+}
+
+/** One page of that log as its texts, which is how the three cursor cases are read. */
+async function ownTexts(token: string, window: string): Promise<string[]> {
+  const page = await ownLog(token, window);
+  return page.messages.map((message) => message.text);
+}
+
 /** One GET on the Public server, with the Token the one User holds. */
 function authenticated(url: string): Promise<Response> {
-  return fetch(url, { headers: { authorization: `Bearer ${client.token}` } });
+  return bearing(url, client.token);
+}
+
+/** One GET with a Token presented, which is how anything reaches a Public route at all. */
+function bearing(url: string, token: string): Promise<Response> {
+  return fetch(url, { headers: { authorization: `Bearer ${token}` } });
 }
 
 /** One JSON POST, with a Token when the route behind it wants one. */

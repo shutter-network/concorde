@@ -230,8 +230,14 @@ const noPublicParameters = `${credentialsAreNotInUrls} ${unknownParameter}`;
  * a sentence per route rather than one in `info.description`: `POST /auth/tokens` is the
  * one that does not, and a reader who has to work out which route is the exception has
  * been told nothing.
+ *
+ * Exported for the HTTP Messenger's Public routes, which take `requireUser` as one option
+ * of their own and therefore want this Token presented in exactly this way (ADR-0030).
+ * Restating it there would be two sentences about one hook, which is the thing
+ * `route-conventions.ts` exists to prevent. This one is not a convention every part shares:
+ * it is *this* part's hook described, so it lives here and travels rather than moving.
  */
-const bearerRequired =
+export const bearerRequired =
   "**Requires a bearer Token**, presented as `Authorization: Bearer <token>` and obtained from `POST /auth/tokens`. The User acted on is the one that Token names, and no parameter anywhere names another.";
 
 /**
@@ -242,8 +248,12 @@ const bearerRequired =
  * one that has expired are **one status and one message**. Enumeration is worth refusing
  * because Attributes govern authorization, so learning that an id names somebody is
  * learning where to point the guessing that nothing rate limits (ADR-0030).
+ *
+ * Exported for the reason `bearerRequired` above is: the HTTP Messenger's Public routes are
+ * refused by `unauthorized` too, since they take this part's hook rather than a scheme of
+ * their own, and a second description of one refusal is a second thing to keep true.
  */
-const authenticationFailed =
+export const authenticationFailed =
   "Authentication failed, which is the whole of what is said: a wrong password, an id nobody holds, a User with no password, and a Token that is missing, malformed, unknown or expired are one status and one message, so nothing here answers who exists (ADR-0030).";
 
 /**

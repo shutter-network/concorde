@@ -11,13 +11,13 @@
  *
  * | Agent server | Answers |
  * | --- | --- |
- * | `POST /messages` | 201, the created outbound `MessageRecord`; 404 if no such User |
- * | `GET /messages?user=&after=&before=&limit=` | `{ messages: [...] }`, ascending by `seq` |
+ * | `POST /messages` | 201, the created outbound `MessageRecord`; 404 if no such User; 503 |
+ * | `GET /messages?user=&after=&before=&limit=` | `{ messages: [...] }`, ascending by `seq`; 400 |
  *
  * | Public server | Answers |
  * | --- | --- |
- * | `POST /messages` | 201, the created inbound `MessageRecord`, and a Signal; or 401 |
- * | `GET /messages?after=&before=&limit=` | `{ messages: [...] }`, ascending by `seq`, or 401 |
+ * | `POST /messages` | 201, the created inbound `MessageRecord`, and a Signal; 401; 503 |
+ * | `GET /messages?after=&before=&limit=` | `{ messages: [...] }`, ascending by `seq`; 400; 401 |
  *
  * Nothing here authenticates anybody. The Agent server has no authentication at all
  * (ADR-0010), and both Public routes take the User Manager's `requireUser` as **one option
@@ -39,16 +39,44 @@
  * The capped limit, the envelope, the pattern-validated id, the refusal of an unknown query
  * parameter and the 404 body are the conventions in `route-conventions.ts` that every
  * part's routes share; only the sentence a refusal ends with is this part's.
+ *
+ * Every route also **describes what it answers with**, which is how a person writing a
+ * client learns how to submit a Message and how to page a log without reading the
+ * quickstart, and how an Agent Implementation learns the same for its own two
+ * ([ADR-0040](../../docs/adr/0040-the-gateway-describes-its-own-http-api.md)). The
+ * sentences below are load-bearing prose rather than commentary: they are what
+ * `/openapi.json` serves. **The cursor rules are the sharpest of them**, because no schema
+ * conveys any of them: `after` and `before` are two optional integers, and nothing about
+ * that shape says which of them is the newest page, that all three cases answer ascending,
+ * or that passing both is refused. A client that guesses wrong renders a conversation
+ * backwards and nothing anywhere reports it.
+ *
+ * The two Public routes describe their 401 and their Token in the **User Manager's own
+ * words**, imported rather than restated, because it is the Manager's hook that refuses
+ * them and this part still authenticates nobody (ADR-0030). Note the asymmetry that
+ * creates: the hook arrives as an argument and its description as an import. A third
+ * parameter carrying two strings would make that tidy and the constructor's call site
+ * worse, and the sentences are the Manager's under either spelling.
  */
 
 import type { FastifyPluginAsync, FastifyReply, preHandlerAsyncHookHandler } from "fastify";
-import { idSchema, limitSchema, notFound, unknownQueryRefusal } from "../route-conventions.ts";
+import {
+  cappedLimit,
+  idSchema,
+  limitSchema,
+  notFound,
+  refused,
+  unknownParameter,
+  unknownQueryRefusal,
+} from "../route-conventions.ts";
+import { authenticationFailed, bearerRequired } from "../users/routes.ts";
 import {
   type MessageRecord,
   type MessageWindow,
   SeqContentionError,
   UnknownUserError,
 } from "./messages.ts";
+import { messageDirections } from "./schema.ts";
 
 /**
  * The read **both** surfaces need of the part, and the reason it is a type of its own.
@@ -91,16 +119,87 @@ export type OwnMessageOperations = MessageHistory & {
 };
 
 /**
- * The refusal these routes answer an unknown query parameter with.
+ * What these routes say about there being nothing to search by.
  *
  * The convention and its reasoning are in `route-conventions.ts`; the sentence is this
  * part's. It says outright that there is nothing to search by, because the alternative —
  * `?text=hello` quietly returning the newest fifty Messages — reads as though a filter had
- * been applied.
+ * been applied. Said in two places and written once: it is how the refusal below ends, and
+ * it is in the description of both read routes, so the sentence a caller is refused with
+ * and the sentence the document carries cannot come apart.
  */
-const rejectUnknownQuery = unknownQueryRefusal(
-  "A Message log is read by cursor and cannot be searched or filtered: the parameters are a window over one User's `seq`, and there is no full-text or field matching of any kind.",
-);
+const notSearchable =
+  "A Message log is read by cursor and cannot be searched or filtered: the parameters are a window over one User's `seq`, and there is no full-text or field matching of any kind.";
+
+/**
+ * The refusal these routes answer an unknown query parameter with.
+ *
+ * The convention and its reasoning are in `route-conventions.ts`; the sentence the message
+ * ends with is this part's, and it is the one above.
+ */
+const rejectUnknownQuery = unknownQueryRefusal(notSearchable);
+
+/**
+ * The three cursor cases, the one order they all answer in, and why both at once is a 400.
+ *
+ * The one paragraph in this file that no schema conveys any part of
+ * ([ADR-0035](../../docs/adr/0035-a-users-messages-are-one-log-read-by-cursor.md)), and the
+ * same paragraph on both reads, since the two are one query asked about a User named in a
+ * different place. Written once for that reason: two copies of this are two chances to
+ * disagree about what `before` means, which is a thing no client could report.
+ */
+const cursorCases =
+  "**Three cursor cases, one order.** No cursor answers the newest page, which is what a client opening a conversation wants. `before=N` answers the newest page strictly below `N`, which is scrolling back. `after=N` walks forwards from `N`, which is polling, and `after=0` is how a log is read from its beginning, since nothing is numbered 0 and no cursor at all means the newest page instead. All three answer **ascending by `seq`**, so a client concatenates pages without reversing anything. Passing `after` and `before` together is a **400**, because it describes two windows rather than one.";
+
+/**
+ * How a client knows to ask again, which is the question the envelope deliberately does not
+ * answer with a field.
+ *
+ * A `hasMore` would be a second thing to keep true about a page whose length already says
+ * it, and there is no read state anywhere for it to be computed against (ADR-0035). That
+ * absence is only safe if it is written down, which is what this is for.
+ */
+const fullPageMeansMore =
+  "The envelope carries **no more-results flag**, because a full page is one: `messages.length === limit` means there may be more, and the next request is this one with the cursor moved on, `after` set to the largest `seq` received when walking forwards and `before` set to the smallest when walking back. A short page is the end of that direction for now. There is no read state of any kind (no stored position, no unread count and no receipts), so the cursor a client needs is one it already holds, because it is holding the Messages.";
+
+/**
+ * What both reads say about the `limit`: the shared two sentences, and the one this part
+ * adds.
+ *
+ * The Signal Worker's records past the cap are reachable only by narrowing and the User
+ * Manager's are not reachable at all. This is the one list in the framework with a cursor,
+ * so the honest sentence here is the cheerful one.
+ */
+const capped = `${cappedLimit} The Messages past the cap are reachable by paging rather than lost: this is the one list in the framework with a cursor.`;
+
+/**
+ * The 404, which describes the **referenced User** rather than the route.
+ *
+ * What is worth a client's attention is where it comes from: there is no lookup in front of
+ * the write, so this status is a constraint refusing rather than a check failing, and it is
+ * the only thing anywhere that says whether a `userId` names somebody (ADR-0036).
+ */
+const noSuchUser =
+  "No User has that id, and nothing was stored. There is deliberately no lookup in front of the write: `userId` is a foreign key onto the User Manager's table, so a well-formed uuid naming nobody reaches the insert and the constraint is what refuses it (ADR-0036). A malformed one never gets that far: the pattern on `userId` refuses it as a 400 first, which is what keeps a typo from being a 500 out of PostgreSQL.";
+
+/**
+ * The 503, which is this part's other failure and the one a caller should act on.
+ *
+ * It is worth describing rather than leaving as a generic server error precisely because
+ * the right response to it is to send the same thing again, which is not what a 5xx usually
+ * means (ADR-0035).
+ */
+const lostTheRace =
+  "The Message **was not recorded**, and sending it again is the right thing to do. Nothing is wrong with the request and the log is intact: `seq` is computed per User inside the insert and a unique constraint makes a lost race visible, so this is one User's own concurrent writers outrunning a bounded retry (ADR-0035). A 503 and not a 500 for that reason.";
+
+/**
+ * The 401, which is the User Manager's and is described in its words.
+ *
+ * The imported sentence is the whole of what the refusal says; what this part adds is where
+ * it comes from, since a client reading a Message route should not have to discover that
+ * the hook belongs to another part to know that the answer is identical there (ADR-0030).
+ */
+const notAuthenticated = `${authenticationFailed} This part authenticates nobody: the refusal is the User Manager's \`requireUser\`, taken as one option on the route, so it is the same 401 the routes under \`/auth\` answer.`;
 
 /**
  * A cursor: one `seq`, or the 0 no Message has.
@@ -113,6 +212,27 @@ const rejectUnknownQuery = unknownQueryRefusal(
  * no cursor at all means the newest page, and `after=1` would skip the first Message.
  */
 const cursorSchema = { type: "integer", minimum: 0 } as const;
+
+/**
+ * The same cursor twice, described as the two different motions it is.
+ *
+ * One `cursorSchema` for the validation and two descriptions over it, because what `after`
+ * and `before` share is their shape and nothing else: a single description on the constant
+ * would have to be true of both and would therefore say nothing about either. The route's
+ * own description still carries all three cases together, since the third is the one a
+ * parameter list cannot show, being the *absence* of both of these.
+ */
+const afterCursor = {
+  ...cursorSchema,
+  description:
+    "Walk **forwards** from this `seq`, exclusive: the poll. `after=0` reads the log from its beginning, oldest first, which no other spelling expresses.",
+} as const;
+
+const beforeCursor = {
+  ...cursorSchema,
+  description:
+    "The newest page strictly **below** this `seq`: scrolling back. Answers ascending like every other case, so the page before the one in hand arrives the same way up.",
+} as const;
 
 /**
  * The text of a Message: non-empty, and with **no upper bound**.
@@ -157,7 +277,7 @@ const submitSchema = {
 /** The agent's read: one User, required, and the window. */
 const agentHistorySchema = {
   type: "object",
-  properties: { user: idSchema, after: cursorSchema, before: cursorSchema, limit: limitSchema },
+  properties: { user: idSchema, after: afterCursor, before: beforeCursor, limit: limitSchema },
   required: ["user"],
   additionalProperties: false,
 } as const;
@@ -172,16 +292,98 @@ const agentHistorySchema = {
  */
 const ownHistorySchema = {
   type: "object",
-  properties: { after: cursorSchema, before: cursorSchema, limit: limitSchema },
+  properties: { after: afterCursor, before: beforeCursor, limit: limitSchema },
   additionalProperties: false,
 } as const;
+
+/**
+ * `MessageRecord` on the wire, and **the serializer both surfaces answer through** rather
+ * than a description of one.
+ *
+ * Fastify compiles a response schema with `fast-json-stringify`, which drops every field the
+ * schema does not declare and says nothing about it, so a field added to the type in
+ * `messages.ts` and forgotten here is silently missing from every answer of this part,
+ * including the Signal payload's twin, which is the same record and reaches a Handler
+ * unserialized ([ADR-0040](../../docs/adr/0040-the-gateway-describes-its-own-http-api.md)).
+ * That is why `default-gateway.test.ts` reads a log the Messenger actually recorded and
+ * compares the whole thing.
+ *
+ * One shape for all four routes, as there is one shape for all six surfaces of this part:
+ * the 201 of either submission and the items of either read are the same object, and a
+ * projection per surface would be the parallel pair ADR-0034 keeps refusing.
+ *
+ * The property descriptions are on the two fields whose name is not the whole story.
+ * `id`, `userId` and `createdAt` get none; `seq` is the cursor and does not say so, and
+ * `direction` is the one field a caller cannot set and would otherwise expect to.
+ */
+const messageRecordSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    userId: { type: "string" },
+    direction: {
+      type: "string",
+      // From the same array the type and the database's CHECK constraint are, so a
+      // direction added to one is added to all three.
+      enum: messageDirections,
+      description:
+        "Which way it travelled. **`inbound`** is the User to the agent and **`outbound`** is the agent to the User, and only a User can cause an inbound one. Decided by the server the request arrived on rather than by any field, so there is nothing anywhere for a caller to set.",
+    },
+    seq: {
+      type: "integer",
+      description:
+        "This Message's number in **one User's** log, from 1, counting both directions. It is the cursor: the largest one held is what `after` takes to read whatever has arrived since. It is not global and no other User's activity moves it, so two Users' Messages are not orderable against each other by it.",
+    },
+    text: { type: "string" },
+    createdAt: { type: "string" },
+  },
+  required: ["id", "userId", "direction", "seq", "text", "createdAt"],
+} as const;
+
+/**
+ * A list answers in an envelope rather than as a bare array, which is the convention in
+ * `route-conventions.ts`. Here it is also where a cursor would have gone had one been
+ * wanted. None is: the largest `seq` in the page is already it (ADR-0035).
+ */
+const messageListSchema = {
+  type: "object",
+  properties: { messages: { type: "array", items: messageRecordSchema } },
+  required: ["messages"],
+} as const;
+
+/**
+ * What both reads answer with, and what both submissions do, each written once.
+ *
+ * The two surfaces differ in where the User comes from and in nothing about what comes
+ * back, so a sentence per surface would be two copies of one fact under the same policy
+ * `notSearchable` above is written once for.
+ */
+const theWindow =
+  "The window that matched, ascending by `seq`, with both directions interleaved as the one log they are.";
+const theStoredMessage = "The Message as it was stored, including the `seq` it was given.";
 
 /** The agent's Message routes, over the operations above. */
 export function agentMessageRoutes(messageLog: MessageOperations): FastifyPluginAsync {
   return async (fastify) => {
     fastify.post<{ Body: { userId: string; text: string } }>(
       "/",
-      { schema: { body: agentSendSchema }, preValidation: rejectUnknownQuery() },
+      {
+        schema: {
+          tags: ["Messages"],
+          summary: "Send a Message to one User",
+          description: `An **outbound** Message: the agent to the User \`userId\` names. There is no \`direction\` field and no way to write an inbound Message from this server: which way a Message travelled is decided by the server the request arrived on, so an agent talked into speaking as somebody has nowhere to say so, and a \`direction\` written into the body is stripped before the handler and reaches nothing (ADR-0034). The Message is numbered as it is written, with the next \`seq\` in that User's log across both directions, and the record answered is the stored one, so there is no read-back to do. ${unknownParameter}`,
+          body: agentSendSchema,
+          response: {
+            201: { ...messageRecordSchema, description: theStoredMessage },
+            400: refused(
+              "`userId` is not a uuid, `text` is missing or empty, or a query parameter was written. A well-formed id naming nobody is a 404 rather than a 400, since only the write can tell.",
+            ),
+            404: refused(noSuchUser),
+            503: refused(lostTheRace),
+          },
+        },
+        preValidation: rejectUnknownQuery(),
+      },
       async (request, reply) => {
         // Outbound because this is the Agent server. The agent cannot write an inbound
         // Message, and the refusal is the absence of a parameter rather than a check: a
@@ -191,7 +393,7 @@ export function agentMessageRoutes(messageLog: MessageOperations): FastifyPlugin
             .code(201)
             .send(await messageLog.send(request.body.userId, request.body.text));
         } catch (error) {
-          return refused(reply, error, request.body.userId);
+          return refuseSend(reply, error, request.body.userId);
         }
       },
     );
@@ -199,7 +401,18 @@ export function agentMessageRoutes(messageLog: MessageOperations): FastifyPlugin
     fastify.get<{ Querystring: MessageWindow & { user: string } }>(
       "/",
       {
-        schema: { querystring: agentHistorySchema },
+        schema: {
+          tags: ["Messages"],
+          summary: "Read one User's Message log",
+          description: `One User's Messages, both directions, in the single numbered sequence that is their log. **\`user\` is required.** Not for confidentiality, since reads are not scoped and the agent may read every log there is (ADR-0011), but because \`seq\` numbers one person's log and nothing else: a log belongs to one person, and an interleaved read would have no cursor to page by. ${cursorCases} ${fullPageMeansMore} ${capped} ${notSearchable} ${unknownParameter}`,
+          querystring: agentHistorySchema,
+          response: {
+            200: { ...messageListSchema, description: theWindow },
+            400: refused(
+              "`user` is missing or not a uuid, a cursor or `limit` is not an integer or is out of range, both cursors were passed, or a parameter this route does not take was written.",
+            ),
+          },
+        },
         preValidation: rejectUnknownQuery("user", "after", "before", "limit"),
       },
       // The whole difference between this read and a User's own is the line below: where
@@ -231,7 +444,21 @@ export function publicMessageRoutes(
     fastify.post<{ Body: { text: string } }>(
       "/",
       {
-        schema: { body: submitSchema },
+        schema: {
+          tags: ["Messages"],
+          summary: "Submit a Message",
+          description: `An **inbound** Message from the User the presented Token names. There is **no field for the submitting User and nowhere for one to arrive**: the id comes from the Token and from nothing a client can write, which is what makes the attribution trustworthy, and a \`userId\` written into the body is stripped before the handler and reaches nothing. The Message and the Signal that wakes the agent for it are one transaction, so a Message that was stored always has one. What the agent makes of it is **not this response**: an answer arrives on the log as an outbound Message whenever it arrives, which is what \`after=<seq>\` is for. ${bearerRequired} ${unknownParameter}`,
+          body: submitSchema,
+          response: {
+            201: {
+              ...messageRecordSchema,
+              description: `${theStoredMessage} That number is the cursor to poll from for the answer.`,
+            },
+            400: refused("`text` is missing or empty, or a query parameter was written."),
+            401: refused(notAuthenticated),
+            503: refused(lostTheRace),
+          },
+        },
         preHandler: presentedUser,
         preValidation: rejectUnknownQuery(),
       },
@@ -245,7 +472,7 @@ export function publicMessageRoutes(
             .code(201)
             .send(await messageLog.submit(request.safUser.id, request.body.text));
         } catch (error) {
-          return refused(reply, error, request.safUser.id);
+          return refuseSend(reply, error, request.safUser.id);
         }
       },
     );
@@ -253,7 +480,19 @@ export function publicMessageRoutes(
     fastify.get<{ Querystring: MessageWindow }>(
       "/",
       {
-        schema: { querystring: ownHistorySchema },
+        schema: {
+          tags: ["Messages"],
+          summary: "Read your own Message log",
+          description: `The presented User's own Messages, both directions, in the single numbered sequence that is their log. There is **no user parameter and nothing to omit**: the log read is the one the Token names, so no User can read another's by any spelling of the request, and \`?user=\` is refused as the unknown parameter it is. ${cursorCases} ${fullPageMeansMore} ${capped} ${notSearchable} ${bearerRequired} ${unknownParameter}`,
+          querystring: ownHistorySchema,
+          response: {
+            200: { ...messageListSchema, description: theWindow },
+            400: refused(
+              "A cursor or `limit` is not an integer or is out of range, both cursors were passed, or a parameter this route does not take was written, `user` among them, since this route has none.",
+            ),
+            401: refused(notAuthenticated),
+          },
+        },
         preHandler: presentedUser,
         preValidation: rejectUnknownQuery("after", "before", "limit"),
       },
@@ -303,9 +542,15 @@ async function answerHistory(
  *
  * Both surfaces refuse through this one function, and only the agent can meet the 404: a
  * User's own post carries the id the Manager's hook just looked a User up by, and nothing
- * removes a User (ADR-0029). The contention a busy log can lose is reachable from either.
+ * removes a User (ADR-0029). So the Public route **does not describe a 404**, which is the
+ * document following the code rather than this function: describing one would be a branch a
+ * client writes and never takes. The contention a busy log can lose is reachable from
+ * either, and both describe the 503.
+ *
+ * Named for the act rather than for the status, since `refused` is the conventions module's
+ * word for describing one in the document and this is the one answering it.
  */
-function refused(reply: FastifyReply, error: unknown, userId: string): FastifyReply {
+function refuseSend(reply: FastifyReply, error: unknown, userId: string): FastifyReply {
   if (error instanceof UnknownUserError) return notFound(reply, "User", userId);
   if (error instanceof SeqContentionError) {
     // A 503 and not a 500: nothing is wrong with the request, and retrying it is exactly
