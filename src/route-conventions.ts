@@ -10,7 +10,8 @@
  * - an unknown query parameter is a **400**, not a request answered with everything;
  * - an id in a path is **pattern-validated** before it reaches PostgreSQL;
  * - a list takes a **capped limit** with a default, and answers in an **envelope**;
- * - a 404 body matches **Fastify's own error shape**.
+ * - a 404 body matches **Fastify's own error shape**, and every refusal is described
+ *   with the one schema below rather than with a shape per part.
  *
  * Each has a reason, and the reason is written beside it below.
  */
@@ -114,3 +115,35 @@ export function notFound(reply: FastifyReply, what: string, id: string): Fastify
     .code(404)
     .send({ statusCode: 404, error: "Not Found", message: `no ${what} ${id} exists` });
 }
+
+/**
+ * That same body as a **response schema**: the one shape every refusal on either surface
+ * is described with, so a client writes one error path rather than one per part
+ * ([ADR-0040](../docs/adr/0040-the-gateway-describes-its-own-http-api.md)).
+ *
+ * It lives here because `notFound` above does, and for the reason this whole module
+ * does: three parts inventing three error schemas would contradict a uniformity that was
+ * already deliberate. Internal like everything else here: a part writes
+ * `response: { 404: errorSchema }`, and nothing outside the framework can.
+ *
+ * **A response schema is a serializer**, so this one decides what a refusal may carry
+ * and not merely what it is documented as carrying. The three properties are what the
+ * framework's own refusals send; Fastify's *validation* failures send a fourth,
+ * `code: "FST_ERR_VALIDATION"`, and a route declaring this for its 400 drops it. That is
+ * the trade taken knowingly: the useful part of a validation refusal is its `message`,
+ * which names the field, and one error shape across sixteen routes is worth more than a
+ * machine-readable code no caller of ours branches on.
+ *
+ * It arrives with **no caller**, deliberately: the three parts declare their responses in
+ * three tickets that would otherwise chain behind whichever one invented this first, and
+ * one shared shape invented three times is the thing this module exists to prevent.
+ */
+export const errorSchema = {
+  type: "object",
+  properties: {
+    statusCode: { type: "integer" },
+    error: { type: "string" },
+    message: { type: "string" },
+  },
+  required: ["statusCode", "error", "message"],
+} as const;

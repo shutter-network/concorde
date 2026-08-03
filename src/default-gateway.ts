@@ -68,6 +68,23 @@
  * a `messenger` with no `send` on it. A callback gives the Handler's *author* every part,
  * named and precisely typed, one step earlier and at no cost.
  *
+ * ## The third reason the order is load-bearing
+ *
+ * Both servers describe themselves, in OpenAPI at `/openapi.json` and as a browsable page
+ * at `/docs`, and **this constructor is the only party that can arrange it**
+ * ([ADR-0040](../docs/adr/0040-the-gateway-describes-its-own-http-api.md)).
+ * `@fastify/swagger` discovers routes through an `onRoute` hook, so a route registered
+ * before it is invisible to it, and every part registers its routes inside its own
+ * constructor. By the time an Operator holds `gateway.components.agentServer.fastify` the
+ * three route plugins are already queued, and there is no window in which registering the
+ * description themselves would work.
+ *
+ * So it goes at the top of the function, ahead of the first part, and construction order
+ * here is now load-bearing for a **third** reason alongside the migration registration
+ * order ([ADR-0036](../docs/adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)) and
+ * the worker-before-Messenger cycle above. This one fails the most quietly of the three:
+ * get it wrong and both documents are empty, with no error anywhere.
+ *
  * ## What it declines to construct
  *
  * **The Runtime**, which is an option, so nothing here imports `./pi/` and the package root
@@ -109,6 +126,8 @@
  * Fastify a consumer's own plugins were written against (ADR-0021).
  */
 
+import fastifySwagger from "@fastify/swagger";
+import fastifySwaggerUi from "@fastify/swagger-ui";
 import type { FastifyInstance, FastifyListenOptions } from "fastify";
 import Fastify from "fastify";
 import { type Component, createGateway, type Gateway, serverComponent } from "./components.ts";
@@ -228,6 +247,67 @@ export type DefaultGatewayOptions<E extends GatewayExtension> = {
   readonly logger?: Logger;
 };
 
+/** Thirty days, in milliseconds: the `tokenTtl` a deployment that says nothing gets. */
+const defaultTokenTtl = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * The `version` both documents declare, and a constant in source rather than a read of
+ * the package manifest.
+ *
+ * OpenAPI requires the field and it **describes the wrong thing** however it is obtained:
+ * the document covers a *deployment's* API, including whatever routes the Operator
+ * registered themselves, so the framework's own version is a category error. Reading
+ * `package.json` at runtime was rejected for buying a more precisely wrong answer at the
+ * price of a file read inside a constructor documented as doing no I/O, and a second reach
+ * outside the call in the one module that already confesses one for `DATABASE_URL`
+ * ([ADR-0040](../docs/adr/0040-the-gateway-describes-its-own-http-api.md)).
+ *
+ * A hand-maintained value with no reader is exactly the thing that drifts, so
+ * `default-gateway.test.ts` asserts this against the manifest.
+ */
+export const describedVersion = "0.0.0";
+
+/**
+ * Registers one server's description: the OpenAPI document, the browsable page, and the
+ * conventional path the document answers on.
+ *
+ * Called **before the first part is constructed**, for the reason this file's header
+ * gives. Neither route is configurable and neither can be switched off. An Operator who
+ * objects to a public `/docs` leaves this constructor; an Operator who already owns either
+ * path collides at `ready()`, which is loud (ADR-0040).
+ *
+ * `/openapi.json` is added even though `@fastify/swagger-ui` already serves the document
+ * at `/docs/json`, because the agent's instructions should name a guessable URL rather
+ * than an implementation detail of a UI package that may later be swapped. Both of these
+ * routes, and the UI's own, are **absent from the document they serve**: this one is
+ * declared directly on the instance, where Fastify fires `onRoute` synchronously and the
+ * queued plugin has therefore not added its hook yet, and the UI's are registered by a
+ * plugin of its own. That is correct rather than a bug: a description of itself is the
+ * one thing a reader of it does not need.
+ *
+ * The same fact has a sharper edge for an Operator, and it is worth knowing before it is
+ * discovered. A route written straight onto the instance,
+ * `gateway.components.publicServer.fastify.get("/ask", …)`, is invisible to the document
+ * when it is written in the same unbooted stretch this constructor returned into, because
+ * the hook is added by a registration that has not run yet. The same route inside a
+ * `register` call is discovered, whenever it is written, since the plugin's own body runs
+ * at boot and the hook is there by then. **Register, and it is documented**, which is the
+ * door [ADR-0032](../docs/adr/0032-components-wire-themselves-at-construction.md) already
+ * points at. `default-gateway.test.ts` pins both spellings, because the difference between
+ * them is a Fastify fact rather than a choice of ours and the failure it produces is
+ * silent.
+ */
+function describeSurface(fastify: FastifyInstance, title: string, description: string): void {
+  fastify.register(fastifySwagger, {
+    openapi: { openapi: "3.0.3", info: { title, description, version: describedVersion } },
+  });
+  fastify.register(fastifySwaggerUi, { routePrefix: "/docs" });
+  // `fastify.swagger` is decorated on by the plugin above at boot, so this reads it per
+  // request rather than closing over it: at the moment this route is declared there is no
+  // such method, and the constructor is synchronous by design (ADR-0038).
+  fastify.get("/openapi.json", async () => fastify.swagger());
+}
+
 /**
  * Builds the six, wires them, orders them, and answers with a Gateway.
  *
@@ -243,9 +323,6 @@ export type DefaultGatewayOptions<E extends GatewayExtension> = {
  * the registrations each part makes on the Db and on the two servers (ADR-0032). The
  * Operator calls `gateway.components.db.migrate()` next, and then `gateway.start()`.
  */
-/** Thirty days, in milliseconds: the `tokenTtl` a deployment that says nothing gets. */
-const defaultTokenTtl = 30 * 24 * 60 * 60 * 1000;
-
 export function createGatewayWithDefaults<E extends GatewayExtension = Record<string, never>>(
   options: DefaultGatewayOptions<E>,
 ): Gateway<DefaultComponents & E> {
@@ -269,8 +346,25 @@ export function createGatewayWithDefaults<E extends GatewayExtension = Record<st
   const agentServer = serverComponent(Fastify(), options.agentListen);
   const publicServer = serverComponent(Fastify(), options.publicListen);
 
-  // Construction order from here on is load-bearing twice over, and neither reason is
-  // visible in the record below.
+  // **Before the first part**, and that is the whole of why these two calls are here
+  // rather than anywhere an Operator could put them: route discovery is an `onRoute` hook,
+  // every part registers its routes inside its own constructor, and a route queued before
+  // the hook is invisible to it. Both documents would be empty, with no error anywhere
+  // (ADR-0040).
+  describeSurface(
+    agentServer.fastify,
+    "Shared Agent Gateway: Agent server",
+    "The HTTP surface only the Agent Implementation reaches. It has no authentication of any kind: reaching this port is read-write access to everything described here, and there is no credential to find or to present (ADR-0010).",
+  );
+  describeSurface(
+    publicServer.fastify,
+    "Shared Agent Gateway: Public server",
+    "The HTTP surface exposed outside the Gateway. A User trades a password for a bearer Token at `POST /auth/tokens` and presents it as `Authorization: Bearer …` on every route that acts as somebody (ADR-0030).",
+  );
+
+  // Construction order from here on is load-bearing three times over, and none of the
+  // reasons is visible in the record below. The first is above: the description goes ahead
+  // of every part, or it describes nothing.
   //
   // The User Manager is first of the three because registering a migration descriptor is
   // what a constructor does and `db.migrate()` applies them in registration order:

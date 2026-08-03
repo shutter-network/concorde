@@ -447,6 +447,13 @@ try {
       // declarations and quietly leave the Signal Worker's route plugin `any`.
       'import Fastify from "fastify";',
       'import type { FastifyInstance, FastifyPluginAsync } from "fastify";',
+      // The two plugins the default assembly registers on both servers. They are the
+      // framework's own `dependencies` rather than the consumer's, and this project asked
+      // npm for the tarball, `@types/node` and `fastify` and nothing else, so an import
+      // resolving here at all is what proves the two entries are declared rather than
+      // merely present in our own tree (ADR-0040).
+      'import fastifySwagger from "@fastify/swagger";',
+      'import fastifySwaggerUi from "@fastify/swagger-ui";',
       "",
       "// Annotated throughout, so a declaration that resolved to `any` fails here.",
       "export const descriptor: MigrationDescriptor = signalsMigrations;",
@@ -500,6 +507,14 @@ try {
       '  serverComponent(publicServer, { port: 8080, host: "0.0.0.0" });',
       "export const agentComponent: Component & { readonly fastify: FastifyInstance } =",
       '  serverComponent(agentServer, { port: 7411, host: "localhost" });',
+      "",
+      "// And what the by-hand path has to do for itself that the default assembly does for",
+      "// you: register the description **before** any route plugin, since discovery is an",
+      "// `onRoute` hook and a route queued before it is invisible to it (ADR-0040). Nothing",
+      "// in this file runs, so what these two lines prove is that the plugins' declarations",
+      "// resolve and accept these options; that they can be *called* is the runtime step's.",
+      'agentServer.register(fastifySwagger, { openapi: { openapi: "3.0.3", info: { title: "by hand", version: "0.0.0" } } });',
+      'agentServer.register(fastifySwaggerUi, { routePrefix: "/docs" });',
       "",
       "// `ListeningServer` is structural, and this is the whole of what the framework asks",
       "// of a server: a real Fastify instance satisfies it by having the two methods, which",
@@ -970,6 +985,11 @@ try {
         // constructing it at all needs two instances and there is no default of ours behind
         // either (ADR-0031, ADR-0034).
         'import Fastify from "fastify";',
+        // The two description plugins, imported directly and called below. They arrive in
+        // this project only because the framework declares them, so the import is half the
+        // proof and the registration is the other half (ADR-0040).
+        'import fastifySwagger from "@fastify/swagger";',
+        'import fastifySwaggerUi from "@fastify/swagger-ui";',
         // `templateHandler` is here because importing it loads `handlebars`: an
         // installed package resolves it only if it is declared as a dependency, and
         // our own `node_modules` would hide a missing entry in every other check.
@@ -1041,6 +1061,24 @@ try {
         "  extend: (defaults) => ({ ownLoop: { start: async () => {}, stop: async () => defaults.worker.stop() } }),",
         "  handlers: (all) => ({ 'message.received': { handle: () => [{ session: 'user_1', text: typeof all.messenger.send }] } }),",
         "});",
+        // The Agent server's own description, generated inside the installed package and
+        // fetched the way an Agent Implementation fetches it. `ready` boots the plugins and
+        // binds nothing, so this reaches no database and no socket; what it proves is that
+        // the two plugins resolve from a consumer's tree, that the assembly registered them
+        // ahead of all three parts, and that the seven paths the framework's own routes make
+        // are in the document rather than an empty `paths` (ADR-0040).
+        "await assembled.components.agentServer.fastify.ready();",
+        "const description = (await assembled.components.agentServer.fastify.inject({ method: 'GET', url: '/openapi.json' })).json();",
+        // And both plugins called directly, which is the by-hand path and the rule for a new
+        // runtime dependency: imported *and* called. `/docs/json` is the UI package's own
+        // route, so reading the document back through it exercises the second one rather
+        // than only the first.
+        "const byHand = Fastify();",
+        "byHand.register(fastifySwagger, { openapi: { openapi: '3.0.3', info: { title: 'by hand', version: '0.0.0' } } });",
+        "byHand.register(fastifySwaggerUi, { routePrefix: '/docs' });",
+        "byHand.register(async (f) => { f.get('/healthz', async () => ({ ok: true })); });",
+        "await byHand.ready();",
+        "const byHandDocument = (await byHand.inject({ method: 'GET', url: '/docs/json' })).json();",
         "const encoder = new TextEncoder();",
         "const settled = await plan.outcome((async function* () {",
         "  yield encoder.encode(JSON.stringify({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop' } }) + '\\n');",
@@ -1053,7 +1091,7 @@ try {
         // because the module that used to hold one is gone from the package, and the
         // composed command line names no file for the agent to read either — the
         // Operator's `AGENTS.md` above is a mount and `pi` discovers it (ADR-0025).
-        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), resolvedMounts.containerArguments()[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersMigrations.schema, String(Object.keys(directory).sort()), httpMessagesMigrations.schema, String(Object.keys(messenger).sort()), messageReceivedKind, String(Object.keys(assembled.components))];",
+        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), resolvedMounts.containerArguments()[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersMigrations.schema, String(Object.keys(directory).sort()), httpMessagesMigrations.schema, String(Object.keys(messenger).sort()), messageReceivedKind, String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(',')];",
         "process.stdout.write(built.join(':'));",
       ].join("\n"),
     ],
@@ -1061,8 +1099,8 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword,start,stop:saf_http_messages:history,send,start,stop:message.received:db,agentServer,publicServer,users,messenger,worker,ownLoop",
-    "all four subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Manager should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself, and both of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and one call should assemble all six of them from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the consumer's own Component appended last",
+    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword,start,stop:saf_http_messages:history,send,start,stop:message.received:db,agentServer,publicServer,users,messenger,worker,ownLoop:Shared Agent Gateway: Agent server describes 7 paths:by hand /healthz",
+    "all four subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Manager should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself, and both of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and one call should assemble all six of them from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the consumer's own Component appended last, and that assembly's Agent server should answer a description of its own seven paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand",
   );
 
   step("applying a shipped migration folder from inside the installed package");

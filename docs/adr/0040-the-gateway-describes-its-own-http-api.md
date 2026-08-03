@@ -157,6 +157,18 @@ groups rather than as one list.
   and a second reach outside the call in the one module that already confesses one for
   `DATABASE_URL`. A test asserts the constant matches `package.json`, because a
   hand-maintained value with no reader is exactly the thing that drifts.
+- **An Operator's own route is described only if it was `register`ed.** Found while building
+  this and recorded rather than fixed. Fastify fires `onRoute` *as a route is declared*, so a
+  route written straight onto the instance in the stretch this constructor returns into,
+  `publicServer.fastify.get("/ask", …)`, is declared before the queued plugin has added its
+  hook and never reaches the document; the same route inside a `register` call is declared at
+  boot, by which time the hook is there. The route is served either way and only the
+  description differs, which is what makes it quiet. `register` is already the door
+  [ADR-0032](./0032-components-wire-themselves-at-construction.md) points at and the
+  quickstart's first spelling, so what this costs is one sentence there rather than a
+  mechanism; `default-gateway.test.ts` pins both spellings so the difference cannot change
+  unnoticed. Closing it would mean running the plugin's body synchronously, which is reaching
+  inside a package to save a sentence.
 - **`docs/quickstart.md` stops carrying the third copy.** Its route table and field shapes
   were a second hand-made transcription, and its section headed "This copy can go stale"
   described a problem that is now answered. Both shrink to a pointer, or the trade is two

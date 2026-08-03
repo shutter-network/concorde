@@ -54,6 +54,8 @@
     "typescript": "7.0.2"
   },
   "dependencies": {
+    "@fastify/swagger": "^9.8.1",
+    "@fastify/swagger-ui": "^6.1.1",
     "handlebars": "^4.7.9",
     "pg": "^8.22.0",
     "pino": "^10.3.1"

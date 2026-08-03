@@ -60,9 +60,14 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import type { FastifyInstance } from "fastify";
 import type { Component, Gateway } from "./components.ts";
 import type { Db } from "./db/index.ts";
-import { createGatewayWithDefaults, type DefaultComponents } from "./default-gateway.ts";
+import {
+  createGatewayWithDefaults,
+  type DefaultComponents,
+  describedVersion,
+} from "./default-gateway.ts";
 import { type MessageRecord, messageReceivedKind } from "./http-messenger/index.ts";
 import type { Logger } from "./logging.ts";
 import type { SignalHandler } from "./signals/index.ts";
@@ -420,6 +425,224 @@ describe("the defaults on their own", () => {
       "notes",
     ]);
   });
+});
+
+/**
+ * Both servers describing themselves, which is a claim no part can make on its own: a part
+ * knows its own routes and nothing about which surface it shares them with, and the plugin
+ * that discovers them is registered by this constructor before any part exists at all
+ * ([ADR-0040](../docs/adr/0040-the-gateway-describes-its-own-http-api.md)).
+ *
+ * Nothing here reaches PostgreSQL. The Gateways are constructed against the database URL
+ * that resolves to nothing, the same one the two tests above it use, and never started:
+ * `openDb` connects lazily, `ready()` boots the plugins without listening, and `inject`
+ * answers without a socket. `inject` is right here for the reason real sockets are right
+ * further up: that suite's subject is what is listening and when, and `inject` answers on
+ * a server that has been closed. This one never starts or stops a Gateway.
+ *
+ * **Responses are undescribed at this point**, deliberately. Every route documents its
+ * request and says nothing useful about what comes back, which is what the three part
+ * tickets after this one fix. So nothing below reads a `responses` object.
+ */
+describe("the description both servers serve", () => {
+  /** Somewhere nothing resolves, since none of this connects. */
+  const nowhere = "postgres://nobody@example.invalid/none";
+
+  /**
+   * What each surface serves, sorted, and the whole of it.
+   *
+   * Written out rather than counted, because the two facts worth pinning are which routes
+   * a deployment assembled the default way ends up with and, more sharply, that neither
+   * list contains a single entry of the other's: one plugin instance per server is what
+   * makes an Agent server route unable to leak into the Public server's description
+   * (ADR-0040).
+   *
+   * A path ending in a slash is a route registered at `""` under a prefix, which is how
+   * `POST /users` and both Message routes are written. Cosmetic, carried by a generated
+   * client, and not worth changing a route over.
+   */
+  const agentPaths = [
+    "/messages/",
+    "/runs",
+    "/runs/{id}",
+    "/signals",
+    "/signals/{id}",
+    "/users/",
+    "/users/{id}",
+  ];
+  const publicPaths = [
+    "/auth/me",
+    "/auth/password",
+    "/auth/tokens",
+    "/auth/tokens/current",
+    "/messages/",
+  ];
+
+  /** As much of an OpenAPI document as anything here reads. */
+  type Description = {
+    readonly openapi: string;
+    readonly info: {
+      readonly title: string;
+      readonly description: string;
+      readonly version: string;
+    };
+    readonly paths: Record<string, unknown>;
+  };
+
+  let described: Gateway<DefaultComponents>;
+
+  before(async () => {
+    described = unstarted();
+    // `ready` and not `start`: booting is what runs the queued plugins, and it is the
+    // whole of what a document needs. Nothing binds a port.
+    await described.components.agentServer.fastify.ready();
+    await described.components.publicServer.fastify.ready();
+  });
+
+  after(async () => {
+    // Never started, so this is not the Gateway's `stop`. It is the two instances let go
+    // of, which is what keeps `@fastify/swagger-ui`'s static handler from outliving the
+    // file.
+    await described.components.agentServer.fastify.close();
+    await described.components.publicServer.fastify.close();
+  });
+
+  it("describes the Agent server, and nothing the Public server serves", async () => {
+    const document = await documentOf(described.components.agentServer.fastify);
+
+    assert.equal(document.openapi, "3.0.3");
+    assert.equal(document.info.title, "Shared Agent Gateway: Agent server");
+    assert.equal(document.info.version, describedVersion);
+    // The one sentence about this surface that is true of every route on it, and the one
+    // an Agent Implementation would otherwise be told by hand: there is no credential here
+    // (ADR-0010, ADR-0025).
+    assert.match(document.info.description, /no authentication of any kind/);
+
+    assert.deepEqual(Object.keys(document.paths).sort(), agentPaths);
+    // And the separation stated the other way round, so that a route group moving between
+    // surfaces fails this rather than passing on a path set that happens to be a superset.
+    assert.deepEqual(
+      Object.keys(document.paths).filter((path) => path.startsWith("/auth/")),
+      [],
+    );
+
+    // Neither the document nor the page it is browsed in appears in the document. That is
+    // the `onRoute` hook again: `/openapi.json` is declared straight onto the instance, so
+    // the queued plugin has not added its hook yet, and the UI's own routes are a plugin's.
+    // Correct rather than a bug, and asserted so that a later change that made them appear
+    // is a decision rather than a surprise.
+    assert.equal(Object.hasOwn(document.paths, "/openapi.json"), false);
+    assert.equal(Object.hasOwn(document.paths, "/docs"), false);
+  });
+
+  it("describes the Public server, and nothing only the Agent server serves", async () => {
+    const document = await documentOf(described.components.publicServer.fastify);
+
+    assert.equal(document.openapi, "3.0.3");
+    assert.equal(document.info.title, "Shared Agent Gateway: Public server");
+    assert.equal(document.info.version, describedVersion);
+    assert.match(document.info.description, /bearer Token/);
+
+    assert.deepEqual(Object.keys(document.paths).sort(), publicPaths);
+    // The reverse of the assertion above, and the one that matters most: `/signals`,
+    // `/runs` and `/users` are the unauthenticated Agent server's, and a description
+    // promising them to whoever can reach the Public server would be advertising a surface
+    // that is not there.
+    for (const agentOnly of ["/signals", "/runs", "/users/", "/users/{id}"]) {
+      assert.equal(Object.hasOwn(document.paths, agentOnly), false, `${agentOnly} is the agent's`);
+    }
+  });
+
+  it("serves a browsable page on both, at a path neither can be moved off", async () => {
+    for (const server of [described.components.agentServer, described.components.publicServer]) {
+      const page = await server.fastify.inject({ method: "GET", url: "/docs" });
+      assert.equal(page.statusCode, 200);
+      assert.match(String(page.headers["content-type"]), /text\/html/);
+    }
+  });
+
+  it("puts a route registered after the constructor returned into that server's document", async () => {
+    // The single most breakable thing in the change, and the reason this test exists: the
+    // description plugin is registered ahead of every part, so an Operator's own routes are
+    // discovered along with the framework's. Register it after the parts and this fails
+    // with an empty document, which is the only symptom there is (ADR-0040).
+    const { agentServer, publicServer } = unstarted().components;
+
+    // Both spellings, in the stretch an Operator writes them in: nothing is awaited between
+    // the constructor and these two lines, which is what makes the difference between them
+    // observable at all.
+    //
+    // Through `register`, which is the door ADR-0032 already points at and the one the
+    // quickstart names first. The plugin's body runs at boot, by which time the description
+    // plugin has added its `onRoute` hook, so this route is discovered.
+    publicServer.fastify.register(async (fastify) => {
+      fastify.get("/ask", async () => ({ ok: true }));
+    });
+
+    // And straight onto the instance, which is the other spelling and is **not**. Fastify
+    // fires `onRoute` synchronously as a route is declared, and here that is before
+    // anything has booted, so the hook this route would have been seen by does not exist
+    // yet. Pinned rather than left to be discovered: it is a Fastify fact and not a choice
+    // of ours, the failure it produces is a route missing from a document with no error
+    // anywhere, and the day it stops being true this line is where somebody finds out.
+    publicServer.fastify.get("/quietly", async () => ({ ok: true }));
+
+    await agentServer.fastify.ready();
+    await publicServer.fastify.ready();
+    try {
+      const theirs = await documentOf(publicServer.fastify);
+      assert.deepEqual(Object.keys(theirs.paths).sort(), [...publicPaths, "/ask"].sort());
+      // Served all the same, which is what makes its absence above worth a line: the route
+      // works and only the description is missing it.
+      assert.equal((await publicServer.fastify.inject("/quietly")).statusCode, 200);
+
+      // On that server and not the other, since the two documents are two plugin instances.
+      assert.deepEqual(
+        Object.keys((await documentOf(agentServer.fastify)).paths).sort(),
+        agentPaths,
+      );
+    } finally {
+      await agentServer.fastify.close();
+      await publicServer.fastify.close();
+    }
+  });
+
+  it("declares the version the package is at", () => {
+    // A hand-maintained constant with no reader is the thing that drifts, and this is its
+    // reader. Reading the manifest here rather than in the constructor is the whole of the
+    // trade ADR-0040 makes: the cost of the constant is paid by a test rather than by a
+    // file read inside a constructor documented as doing no I/O.
+    const manifest: unknown = JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+    );
+    assert.equal(describedVersion, (manifest as { version?: string }).version);
+  });
+
+  /**
+   * A whole assembly, constructed and left alone: no pool opened, no port bound and no
+   * Handler that could do anything if one were.
+   *
+   * Called twice: once for the pair every test below reads, and once by the test that
+   * needs a Gateway of its own, since a route has to be registered before the instance
+   * boots and the shared pair booted in `before`.
+   */
+  function unstarted(): Gateway<DefaultComponents> {
+    return createGatewayWithDefaults({
+      databaseUrl: nowhere,
+      runtime,
+      tokenTtl: hour,
+      agentListen: { port: 0 },
+      publicListen: { port: 0 },
+      handlers: () => ({}),
+    });
+  }
+
+  /** One server's document, fetched the way a consumer fetches it. */
+  async function documentOf(fastify: FastifyInstance): Promise<Description> {
+    const answered = await fastify.inject({ method: "GET", url: "/openapi.json" });
+    assert.equal(answered.statusCode, 200);
+    return answered.json<Description>();
+  }
 });
 
 describe("the two options a deployment may leave out", () => {

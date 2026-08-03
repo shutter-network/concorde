@@ -1149,6 +1149,15 @@ the extension mechanism and there is no contract of ours to satisfy. Register be
 constructor and `gateway.start()`: Fastify refuses a route registration once a server is
 listening, and `start` is what listens.
 
+**Use `register`, and your routes are described too.** Both servers publish an OpenAPI
+description of themselves at `/openapi.json` and a browsable page at `/docs`, generated from
+the running route table, so whatever you register appears in it alongside ours. The one
+spelling that does *not* appear is a route written straight onto the instance in the same
+stretch the constructor returned into: `publicServer.fastify.get("/ask", …)` is served and is
+missing from the document, because Fastify fires the discovery hook as a route is declared
+and the plugin adding that hook has not run yet. The route works either way; only the
+description differs, and wrapping it in a `register` call is the whole fix.
+
 **Users and authentication.** The assembly already does this: it constructs the **User
 Manager** and hands it both servers, which is the whole of the wiring, and gives it back at
 `gateway.components.users`. There is no separate registration call and no descriptor to
