@@ -100,7 +100,7 @@ now.
 
 `docker compose up -d --build` again. The `npm ci` layer is cached, so a change under
 `src/` or to `example/main.ts` rebuilds in seconds rather than a minute. There is no
-supported way to run `example/main.ts` on your host: it reads `HOST_EXAMPLE_DIR` and
+supported way to run `example/main.ts` on your host: it reads `HOST_DIR` and
 refuses to start without it, and supporting both would put three conditionals into the
 shortest honest deployment this repository has
 ([ADR-0039](./adr/0039-the-reference-deployment-runs-in-a-compose-stack.md)).
@@ -400,7 +400,7 @@ const runtime = createPiRuntime({
         readOnly: true,
       },
     ],
-    hostPaths: { [import.meta.dirname]: hostExampleDir },
+    hostPaths: { [import.meta.dirname]: hostDir },
   },
 });
 ```
@@ -577,7 +577,7 @@ framework does not ship. It is a **consumer** of the framework's own assembly ra
 a demonstration of one, which is why there is so little of it.
 
 Three things in it are the framework's to describe and **yours to do**, and all three are
-near the top. It reads `HOST_EXAMPLE_DIR` and refuses to start without it, because a Gateway
+near the top. It reads `HOST_DIR` and refuses to start without it, because a Gateway
 in a container cannot work out where it is on the host and a wrong answer is silent. An
 `AGENTS.md` sits committed beside it — not written by anything at runtime, just a file in
 the repository — which the Mount Table's third entry mounts into the Workspace read-only,
@@ -1472,7 +1472,7 @@ mounts: {
     /* … */
   ],
   // this container's /app/example is the host's ${PWD}, passed in by compose.yml
-  hostPaths: { [import.meta.dirname]: hostExampleDir },
+  hostPaths: { [import.meta.dirname]: hostDir },
 }
 ```
 
@@ -1528,12 +1528,46 @@ have caught a bad guess, and that round trip is exactly what has been removed.
 filesystem, a btrfs subvolume, or a Docker Desktop VM; a confident wrong path is worse
 than no path at all, because the wrong one is not refused.
 
+## What the Gateway's own image needs
+
+[`../example/gateway/Dockerfile`](../example/gateway/Dockerfile) is two stages: one that
+runs `npm ci && npm run build`, and one that runs the result. Five things in it are
+requirements rather than choices, and four of them are easy to leave out and hard to
+diagnose:
+
+1. **The Docker CLI.** The framework runs `docker` as a **process**, not through an API
+   client, so the binary has to be in the image and on `PATH`. `containerCommand` on the
+   Agent Container is what names something else, `["podman"]` included.
+2. **`node_modules` including dev dependencies.** `drizzle-orm` and `fastify` are peer
+   dependencies of this package and pinned devDependencies of this repository, which is how
+   it builds and tests against them. `npm ci --omit=dev` produces an image whose Gateway
+   dies on its first import. Copying the whole tree keeps every version stated once.
+3. **`migrations/` beside `dist/`.** Each part resolves its own migration folder relative to
+   its own module: `dist/users/migrations.js` looks for `../../migrations/users`. Leave the
+   folder out and `db.migrate()` fails on a directory that is not there.
+4. **`package.json`.** `main.ts` imports the framework **by name**, which Node resolves by
+   self-reference through the `exports` map, so the manifest is what makes
+   `shared-agent-framework` resolvable from inside the package with no `node_modules` entry
+   of its own.
+5. **The entry point as PID 1.** `CMD ["node", "example/main.ts"]` puts Node at PID 1, so
+   the SIGTERM from `docker compose down` reaches the handler at the bottom of the file
+   directly, with no shell in between to swallow it.
+
+What is deliberately **not** copied in is `AGENTS.md` and `settings.json`, for the reason in
+["Two files are not in the Gateway's image"](#two-files-are-not-in-the-gateways-image).
+
+The build context is the **repository root** rather than `example/`, since the image
+compiles the framework rather than installing it, and `.dockerignore` at the root is what
+keeps that context from carrying `node_modules`, `dist` and the state directory into the
+daemon. When there is a published base image to build on, the second stage's `FROM` is the
+one line that changes.
+
 ## No agent image is published
 
 There is no official `pi` image; every deployment builds one.
-[`../example/agent/Dockerfile`](../example/agent/Dockerfile) is the reference, and it is
-six instructions under a page of comments. Three things any image you substitute has to
-have, and two lines it has to declare.
+[`../example/agent/Dockerfile`](../example/agent/Dockerfile) is the reference, and it is six
+instructions. Three things any image you substitute has to have, and two lines it has to
+declare.
 
 The three:
 
@@ -1546,6 +1580,10 @@ The three:
 `pi` as the `ENTRYPOINT` used to be a fourth. It is not: `entrypoint` is a field of the
 Agent Container and `pi` defaults it to `["pi"]`, so an image that starts something else
 is a value rather than a workaround.
+
+The version is pinned exactly, and worth keeping pinned: every fact the Runtime relies on
+about `pi` — the flag names, the JSONL record types, the terminal record, and what the exit
+code does and does not mean — was read out of that exact version.
 
 The two lines are where the container paths went:
 

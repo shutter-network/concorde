@@ -40,10 +40,16 @@ The two ways to change the answer were both considered:
   quickstart's first command fail on a stock Docker Desktop install, and the quickstart's
   entire claim is clone-to-Run.
 
-So the demo stack takes the host's socket and says so, in the compose file and in the
-quickstart, next to the sentence telling you not to run it on a machine whose root you care
+So the demo stack takes the host's socket, and the quickstart says so before the first
+command, next to the sentence telling you not to run it on a machine whose root you care
 about. A deployment that is not a demo answers this differently, and rootless is the answer
 it should reach for first.
+
+**`example/` carries no comments**, and the socket is the one exception: a single line beside
+that mount, pointing at the quickstart section. Everything the four files used to explain
+about themselves now lives in the documentation, which is where a reader of a reference
+deployment is going anyway, and the files are short enough to read whole. The cost is that a
+reader who opens `compose.yml` alone learns nothing about why any of it is the way it is.
 
 ## `hostPaths` stops being hypothetical
 
@@ -54,7 +60,7 @@ were previously only written down.
 
 **The Gateway cannot discover its own host path.** ADR-0028 deferred automatic discovery and
 set the bar for picking it up: an exact mechanism that fails loudly, or none. Nothing has
-changed, so the path arrives as `HOST_EXAMPLE_DIR` in the environment, `${PWD}` in the
+changed, so the path arrives as `HOST_DIR` in the environment, `${PWD}` in the
 compose file, and `main.ts` refuses to start without it. That refusal is the one guard in the
 entry point, and it is there because this is the deployment's one genuinely **silent**
 failure: a wrong value resolves to a directory that may exist, and the agent then works in a
@@ -129,7 +135,7 @@ up --build` rather than a `node` invocation, cached to the `tsc` layer but not i
 
 ## Consequences
 
-- **`example/` is bound to the checkout it runs from.** `HOST_EXAMPLE_DIR` is `${PWD}`, so
+- **`example/` is bound to the checkout it runs from.** `HOST_DIR` is `${PWD}`, so
   the stack must be brought up from `example/` and cannot be moved to a host that does not
   have the source. Compose resolves `./state` against the compose file's directory while
   `${PWD}` is the invocation's, and the two diverge under `-f example/compose.yml` from the

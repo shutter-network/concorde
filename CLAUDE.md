@@ -12,7 +12,7 @@ it is the Runtime, one Signal Handler and shutdown.
 that directory and not the repository root
 ([ADR-0039](./docs/adr/0039-the-reference-deployment-runs-in-a-compose-stack.md)). The
 Gateway is a container holding the host's Docker socket, so `main.ts` requires
-`HOST_EXAMPLE_DIR` and declares `hostPaths`, and running it with `node` is not supported.
+`HOST_DIR` and declares `hostPaths`, and running it with `node` is not supported.
 The image builds the framework itself, from a context that is the repository root, which is
 what `.dockerignore` is for. Nothing in `example/` ships in the tarball; `tsconfig.json`
 type-checks it against `src` through a `paths` mapping, while the image resolves the same

@@ -1,9 +1,3 @@
-# The build context for `example/gateway/Dockerfile` is this directory, because that image
-# compiles the framework from source. Everything below would be sent to the daemon on every
-# build and used by none of it.
-#
-# `dist` in particular is excluded rather than reused: the image builds its own inside the
-# container, so a stale one from the host would be silently preferred to nothing at all.
 .git
 node_modules
 dist
