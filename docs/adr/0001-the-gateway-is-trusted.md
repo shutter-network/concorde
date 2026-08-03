@@ -1,5 +1,13 @@
 # The Gateway is trusted
 
+> **Amended by [ADR-0041](./0041-the-shared-agent-has-a-signing-identity.md).** A Shared Agent
+> now holds a signing identity, so one **output** is portable and undeniable outside the
+> Gateway's API. This ADR's argument is intact and its trust boundary has not moved: a
+> signature proves that the Operator committed to a string on the agent's behalf, and nothing
+> whatever about the agent's conduct. Non-repudiation remains a non-goal **for the
+> conversation** — no Party can prove what the agent was told or what it replied. What was
+> rejected below was making *the shield* verifiable without trust, and that is still rejected.
+
 A Shared Agent must be shielded so that no single Party can control it or converse with it privately. We considered making that shield verifiable without trust — cryptographic audit logs, remote attestation, threshold or multi-party control of the agent's configuration — and rejected it. The Gateway is a trusted component: every Party accepts its Operator as neutral.
 
 ## One trusted role, two kinds of power

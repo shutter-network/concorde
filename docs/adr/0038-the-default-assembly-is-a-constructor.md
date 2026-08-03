@@ -65,6 +65,25 @@ uncommon one. `serverComponent` stays exported and the instances remain reachabl
 `gateway.components.publicServer.fastify`, so routes, plugins and hooks are unaffected;
 only what `Fastify()` itself takes is out of reach.
 
+> **The last clause of that paragraph is wrong**, and
+> [ADR-0040](./0040-the-gateway-describes-its-own-http-api.md) is the second demonstration.
+> Plugins are *not* unaffected: a plugin that must be registered **before** the routes it
+> concerns is unreachable from `gateway.components.*.fastify`, because every part registers
+> its routes inside its own constructor and those are already queued by the time this
+> function returns. `@fastify/swagger` is exactly such a plugin, and so are
+> `@fastify/cors`, `@fastify/helmet` and `@fastify/rate-limit`. `trustProxy` was the first
+> case and was named here; the class is larger than the one member.
+>
+> The limit is also smaller than this paragraph implies. It is not architectural:
+> `createGateway` takes a record of Components and knows nothing about servers, and
+> `serverComponent` explicitly takes an instance the caller constructed, which is what its
+> own doc comment says it is for. Bring-your-own-instance is already supported one layer
+> down. What stands in the way is two lines of this function calling `Fastify()` itself.
+>
+> ADR-0040 routes around it rather than reversing it, by registering the one plugin it needs
+> from inside the constructor. That closes its own case and leaves the class open, which is
+> recorded as an open question there rather than resolved here.
+
 **A `tokenTtl` default.** ~~`src/users/users.ts` refuses one on the grounds that the trade
 is the deployment's, since a long lifetime is fewer re-authentications and a longer window
 for a stolen Token. A convenience constructor is not a reason to reverse a deliberate

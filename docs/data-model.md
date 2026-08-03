@@ -2,11 +2,11 @@
 
 Terminology is in [CONTEXT.md](../CONTEXT.md); rationale is in [docs/adr/](./adr/).
 
-The model splits along the Gateway's internal boundaries ([ADR-0020](./adr/0020-producers-are-trusted-components-of-the-gateway.md)): the **Signal Worker** owns Signals and Runs, the **User Manager** owns Users and their Tokens, the **HTTP Messenger** owns Messages. The Scheduler keeps its own model, not described here. The Workspace is files, not rows. Signal Handlers are code, not data.
+The model splits along the Gateway's internal boundaries ([ADR-0020](./adr/0020-producers-are-trusted-components-of-the-gateway.md)): the **Signal Worker** owns Signals and Runs, the **User Manager** owns Users and their Tokens, the **HTTP Messenger** owns Messages, and **Decisions** owns Decisions. The Scheduler keeps its own model, not described here. **Signatures appears nowhere below**: it stores nothing at all, holding a key and answering three routes ([ADR-0042](./adr/0042-a-signature-is-a-compact-jws.md)). The Workspace is files, not rows. Signal Handlers are code, not data.
 
 The split is literal: each part owns a PostgreSQL schema and migrates it independently, and no table references another part's ([ADR-0022](./adr/0022-the-store-is-postgresql-through-drizzle.md)), with **exactly one exception**: the HTTP Messenger's `user_id`, which is a foreign key onto the User Manager's `users.id` and is the only enforcement that a Message names a real User ([ADR-0036](./adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)). A second exception is an ADR of its own.
 
-The Signal Worker's schema is **`saf_signals`**, the User Manager's is **`saf_users`** and the HTTP Messenger's is **`saf_http_messages`**. A schema is named for its subject rather than for the part, so that renaming a part is not a schema migration; the HTTP Messenger's carries the part because "HTTP" is the durable half of that name, and what the rule protects against is a rename becoming a migration ([ADR-0034](./adr/0034-the-http-messenger-is-an-opinionated-messenger.md)). Each schema carries its own migration tracking table, which is what stops one part's migrations being silently skipped, and a part registers its migration descriptor with the Db when it is constructed ([ADR-0032](./adr/0032-components-wire-themselves-at-construction.md)). Registration order is construction order, and the foreign key makes it load-bearing: the User Manager must be constructed before the HTTP Messenger or the latter's first migration fails with `schema "saf_users" does not exist`, since each descriptor's schema is created immediately before its own folder is applied and a User Manager not reached yet has no schema either. `createGatewayWithDefaults` fixes that order once, and the Messenger taking the User Manager as an argument is what makes the wrong one a compile error for anyone assembling by hand ([ADR-0038](./adr/0038-the-default-assembly-is-a-constructor.md)); a migration job that registers the three descriptors itself has neither guard, and the quickstart's [migration step](./quickstart.md#migrations-as-a-separate-step) says so.
+The Signal Worker's schema is **`saf_signals`**, the User Manager's is **`saf_users`**, the HTTP Messenger's is **`saf_http_messages`** and Decisions' is **`saf_decisions`**. A schema is named for its subject rather than for the part, so that renaming a part is not a schema migration; the HTTP Messenger's carries the part because "HTTP" is the durable half of that name, and what the rule protects against is a rename becoming a migration ([ADR-0034](./adr/0034-the-http-messenger-is-an-opinionated-messenger.md)). Each schema carries its own migration tracking table, which is what stops one part's migrations being silently skipped, and a part registers its migration descriptor with the Db when it is constructed ([ADR-0032](./adr/0032-components-wire-themselves-at-construction.md)). Registration order is construction order, and the foreign key makes it load-bearing: the User Manager must be constructed before the HTTP Messenger or the latter's first migration fails with `schema "saf_users" does not exist`, since each descriptor's schema is created immediately before its own folder is applied and a User Manager not reached yet has no schema either. `createGatewayWithDefaults` fixes that order once, and the Messenger taking the User Manager as an argument is what makes the wrong one a compile error for anyone assembling by hand ([ADR-0038](./adr/0038-the-default-assembly-is-a-constructor.md)); a migration job that registers the three descriptors itself has neither guard, and the quickstart's [migration step](./quickstart.md#migrations-as-a-separate-step) says so.
 
 ## Signal Worker (`saf_signals`)
 
@@ -106,10 +106,37 @@ The `kind` and payload shape of the Signals this part emits are **its contract, 
 
 The payload **is** the record every other surface returns, not a projection of it: one shape for the POST response, both reads, the trusted-code methods and this. `direction` is always `inbound` here and `seq` is redundant for most Handlers; both are carried so that the part has one shape rather than two kept parallel by hand. `userId` is the id of the User the **User Manager** authenticated, read off the request and never from the body, which is what makes attribution trustworthy. `createdAt` is an ISO 8601 string, because JSON has no date. A Handler wanting more than the one Message reads that User's log through the part's own method rather than re-deriving anything from the payload.
 
+## Decisions (`saf_decisions`)
+
+### Decision
+
+One Signed Statement, numbered and kept. **No `user_id`**: the log is global, and a Decision is addressed to nobody ([ADR-0043](./adr/0043-decisions-are-one-global-log.md)).
+
+| | |
+| --- | --- |
+| `seq` | the primary key, `GENERATED BY DEFAULT AS IDENTITY`. Global rather than per-User, which is the whole difference from `messages.seq` and the reason there is no `id` beside it: a global sequence is already unique, so a uuid would be neither a better cursor nor a better handle. `BY DEFAULT` and not `ALWAYS` because the value is always supplied by hand — `publish` draws it with `nextval` **before** signing, since the JWS binds it |
+| `statement` | the whole content, a plain string, non-empty. No `maxLength`, for the reason `messages.text` has none: `bodyLimit` is the bound and it is the Operator's |
+| `jws` | the compact JWS over `{ seq, createdAt, statement }`, base64url, **not null**. `text` and not `bytea`, because it crosses the API in that form regardless and storing the encoded form is what keeps the stored bytes and the served bytes from disagreeing. Named `jws` and not `signature` because it holds a whole JWS, of which the signature is one of three segments |
+| `created_at` | generated **in JS**, not by `clock_timestamp()`. The signed timestamp and the stored one must be the same value, and the only way to guarantee that is for one value to reach both. `messages.created_at`'s reason for `clock_timestamp()` is satisfied anyway, each `publish` calling `new Date()` itself |
+
+Four columns and no index beyond the primary key, since every query this part will ever make is `[where seq >/< ?] order by seq`.
+
+A Decision is **immutable** once written — no column is ever updated, and unlike the alternative write path considered in ADR-0043 that claim is literal rather than "not after publish". Nothing removes one: no delete, no TTL, no sweeper, no supersession field. A reversal is a new Decision whose statement says so, and the table grows forever as `messages` and `tokens` do.
+
+There is **no `run_id`**, for the HTTP Messenger's reason and two of its own: it would be a second cross-schema foreign key, repeating by hand the edit ADR-0036 calls the dangerous one, and it would be null for a Decision published by a Signal Handler and so mean two things at once. Correlating a Decision to its Run is a manual timestamp join, ambiguous if two Runs publish inside one clock tick.
+
+There is **no `key_id`**, so changing the signing key leaves the log holding artifacts under two keys with nothing saying which; a verifier needs the old public key out of band ([ADR-0041](./adr/0041-the-shared-agent-has-a-signing-identity.md)).
+
+**A gap in `seq` is meaningless and expected.** A rolled-back transaction burns a number. Gaplessness would prove nothing anyway: the Operator is trusted and owns the database, so withholding is undetectable under any numbering, and detecting it needs the hash chain ADR-0001 rejected.
+
+`nextval` is what removes the race `messages.seq` needs a bounded retry for — and there is nothing to race in the first place, since every writer is serial: the publish route is on the Agent server only, so the agent can only publish during a Run, and trusted code publishes from inside the same serial worker. There is no public publish route.
+
+**Decisions emits no Signal**, so it has no Signal contract. Publishing writes a row and nothing wakes (ADR-0043).
+
 ## Invariants
 
 1. **A Message envelope exposes no cross-User provenance.** No originating Signal or Run identifier reaches a client: one Signal may produce Messages to several Users, so exposing it would reveal that another User acted, and a Run identifier discloses how much other activity intervened (ADR-0007).
-2. **No identifier or counter visible to a User is influenced by another User's activity.** Hence `Message.seq` is per-User rather than a global sequence. Numbering both directions does not touch this: it changes what is numbered, not whose activity moves the number (ADR-0035).
+2. **No identifier or counter visible to a User is influenced by another User's activity — on a per-User surface.** Hence `Message.seq` is per-User rather than a global sequence. Numbering both directions does not touch this: it changes what is numbered, not whose activity moves the number (ADR-0035). **`Decision.seq` is the deliberate exception**, and the scoping clause is there for it: every User sees the same global sequence and it is moved by every other User's activity, so a reader can infer from a jump and a timestamp that somebody else acted. On a surface whose content is published to everyone on purpose that is the function rather than a leak (ADR-0043). Invariant 1's bar on Signal and Run provenance loses its stated reason on that surface for the same reason, and is honoured there anyway.
 3. **Every outbound Message belongs to exactly one Run, and every Run to exactly one Signal.** True but unrecorded in the HTTP Messenger — see Message above. An inbound Message belongs to no Run: it precedes one, and the link is the Signal it emitted, which is recorded on the Signal Worker's side.
 4. **A Signal with no Prompts is still a Signal.** Handler-level refusal leaves an arrival record, which is what makes authorization auditable.
 5. **`state` transitions are one-way.** Nothing returns to `pending`; failed Signals are never re-run (ADR-0017).
@@ -117,6 +144,9 @@ The payload **is** the record every other surface returns, not a projection of i
 7. **A stored credential is never readable, only verifiable.** A Token's plaintext exists once, in the response that issued it, and a password's never. Nothing in the framework can answer "what is this User's Token".
 8. **A User may read their own Attributes.** They govern that User's authorization, they are not secret, and a Signal Handler's behaviour reveals them anyway.
 9. **Only a User can cause an inbound Message.** There is no trusted-code path that writes one, so nothing in the Gateway and nothing the agent can reach puts words in a User's mouth. Trusted code writing history in uses the Operator's own SQL.
+10. **A signature proves custody, not conduct.** It says the Operator committed to this Statement on the Shared Agent's behalf. It says nothing about how the Statement came to be, and an injected agent can obtain one (ADR-0041).
+11. **The Decision log is the one shared surface, and the only one.** Every authenticated User reads the same rows in the same order; nothing scopes it, and no other read in the model works that way.
+12. **A Decision exists as an artifact, not as a row.** The JWS is the Decision, so a valid one does not imply a row and a verifier needs none (ADR-0042, ADR-0043).
 
 ## What is deliberately absent
 
@@ -132,3 +162,8 @@ The payload **is** the record every other surface returns, not a projection of i
 - **Credentials other than a password.** No table of credential kinds, no `kind` column with one value in it. A second first-class kind would be an ADR and a migration; a deployment that wants one today writes its own login route and issues a Token (ADR-0030).
 - **Account-recovery state.** No reset tokens, no verification records, no security answers (ADR-0014, ADR-0030).
 - **Failed-attempt counters or lockout state.** Deliberately absent; throttling is the deployment edge's (ADR-0030).
+- **Any record of a signature.** Signatures stores nothing, so an injected agent's Signed Statements exist only in a log line carrying the `typ` and a SHA-256 digest of the statement (ADR-0042).
+- **A `typ` allowlist or reserved prefix.** Nothing is reserved and `saf-decision+jws` is not special-cased; `typ` is the agent's own signed claim (ADR-0042).
+- **Key rotation, key identifiers and any stored key.** One keypair, supplied by the Operator, never generated and never persisted (ADR-0041).
+- **Any addressee on a Decision.** No `user_id`, no group, no Party (ADR-0043).
+- **Notification that a Decision was published.** No Signal and no push; Users poll (ADR-0043).
