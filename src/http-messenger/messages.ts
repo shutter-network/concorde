@@ -11,6 +11,7 @@
 
 import { and, asc, desc, eq, gt, lt, sql } from "drizzle-orm";
 import type { Handle } from "../db/index.ts";
+import type { CursorWindow } from "../route-conventions.ts";
 import { type httpMessagesTables, type MessageDirection, messages } from "./schema.ts";
 
 /** A handle typed to this part's own tables, and to no other part's (ADR-0022). */
@@ -39,19 +40,20 @@ export type MessageRecord = {
 };
 
 /**
- * Which stretch of a User's log a read asks for.
+ * Which stretch of a User's log a read asks for: the shared cursor window under this
+ * part's own name.
  *
- * Three motions and one order on the wire: no cursor is the newest `limit`, `before` is
- * the newest `limit` strictly below it, and `after` is everything above it capped at
- * `limit`. All three answer ascending by `seq`, so a client concatenates pages without
- * reversing anything (ADR-0035). Both cursors at once describes two windows and is
- * refused by the routes rather than resolved here.
+ * An alias and not a second declaration. The shape was always generic, carrying no User id
+ * and nothing else about Messages, and what the cursor means now lives beside the schema
+ * and the refusal that enforce it, in `route-conventions.ts` (ADR-0035).
+ *
+ * The name stays all the same. It is not exported, and it reaches a consumer only
+ * structurally, as `Partial<MessageWindow>` on the `HttpMessenger` type's `history`, so what
+ * it buys is inside: a reader of this part meets a window over one User's Messages
+ * rather than a window in general, and the two route groups, the read below and the trusted
+ * method all say the one word for it.
  */
-export type MessageWindow = {
-  readonly after?: number;
-  readonly before?: number;
-  readonly limit: number;
-};
+export type MessageWindow = CursorWindow;
 
 /** What a send is: a User, a direction the server decided, and the text. */
 export type OutgoingMessage = {

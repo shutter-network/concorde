@@ -36,9 +36,11 @@
  * the read is refused as the unknown parameter it is, and a `userId` in the body of a post
  * reaches nothing.
  *
- * The capped limit, the envelope, the pattern-validated id, the refusal of an unknown query
- * parameter and the 404 body are the conventions in `route-conventions.ts` that every
- * part's routes share; only the sentence a refusal ends with is this part's.
+ * The cursor pair and the window it describes, the capped limit, the envelope, the
+ * pattern-validated id, the refusal of an unknown query parameter, the refusal of both
+ * cursors at once and the 404 body are the conventions in `route-conventions.ts` that every
+ * part's routes share; what is this part's is the noun each refusal names and the sentence
+ * it ends with.
  *
  * Every route also **describes what it answers with**, which is how a person writing a
  * client learns how to submit a Message and how to page a log without reading the
@@ -46,10 +48,10 @@
  * ([ADR-0040](../../docs/adr/0040-the-gateway-describes-its-own-http-api.md)). The
  * sentences below are load-bearing prose rather than commentary: they are what
  * `/openapi.json` serves. **The cursor rules are the sharpest of them**, because no schema
- * conveys any of them: `after` and `before` are two optional integers, and nothing about
- * that shape says which of them is the newest page, that all three cases answer ascending,
- * or that passing both is refused. A client that guesses wrong renders a conversation
- * backwards and nothing anywhere reports it.
+ * conveys any of them, and they are imported rather than written here for the reason the
+ * schema they describe is. What this part says on top of them is what its own log is, that
+ * a full page is the only more-results flag there is, and that nothing here can be
+ * searched.
  *
  * The two Public routes describe their 401 and their Token in the **User Manager's own
  * words**, imported rather than restated, because it is the Manager's hook that refuses
@@ -61,7 +63,11 @@
 
 import type { FastifyPluginAsync, FastifyReply, preHandlerAsyncHookHandler } from "fastify";
 import {
+  afterCursor,
+  beforeCursor,
+  bothCursors,
   cappedLimit,
+  cursorCases,
   idSchema,
   limitSchema,
   notFound,
@@ -140,18 +146,6 @@ const notSearchable =
 const rejectUnknownQuery = unknownQueryRefusal(notSearchable);
 
 /**
- * The three cursor cases, the one order they all answer in, and why both at once is a 400.
- *
- * The one paragraph in this file that no schema conveys any part of
- * ([ADR-0035](../../docs/adr/0035-a-users-messages-are-one-log-read-by-cursor.md)), and the
- * same paragraph on both reads, since the two are one query asked about a User named in a
- * different place. Written once for that reason: two copies of this are two chances to
- * disagree about what `before` means, which is a thing no client could report.
- */
-const cursorCases =
-  "**Three cursor cases, one order.** No cursor answers the newest page, which is what a client opening a conversation wants. `before=N` answers the newest page strictly below `N`, which is scrolling back. `after=N` walks forwards from `N`, which is polling, and `after=0` is how a log is read from its beginning, since nothing is numbered 0 and no cursor at all means the newest page instead. All three answer **ascending by `seq`**, so a client concatenates pages without reversing anything. Passing `after` and `before` together is a **400**, because it describes two windows rather than one.";
-
-/**
  * How a client knows to ask again, which is the question the envelope deliberately does not
  * answer with a field.
  *
@@ -200,39 +194,6 @@ const lostTheRace =
  * the hook belongs to another part to know that the answer is identical there (ADR-0030).
  */
 const notAuthenticated = `${authenticationFailed} This part authenticates nobody: the refusal is the User Manager's \`requireUser\`, taken as one option on the route, so it is the same 401 the routes under \`/auth\` answer.`;
-
-/**
- * A cursor: one `seq`, or the 0 no Message has.
- *
- * Validated as an integer so that `?after=abc` is the 400 it earned rather than a query
- * PostgreSQL refuses to run, the same reason an id is pattern-validated.
- *
- * `0` is deliberately allowed even though nothing is numbered it: `after=0` is how a client
- * asks for a log **from its beginning**, oldest first, which no other spelling expresses —
- * no cursor at all means the newest page, and `after=1` would skip the first Message.
- */
-const cursorSchema = { type: "integer", minimum: 0 } as const;
-
-/**
- * The same cursor twice, described as the two different motions it is.
- *
- * One `cursorSchema` for the validation and two descriptions over it, because what `after`
- * and `before` share is their shape and nothing else: a single description on the constant
- * would have to be true of both and would therefore say nothing about either. The route's
- * own description still carries all three cases together, since the third is the one a
- * parameter list cannot show, being the *absence* of both of these.
- */
-const afterCursor = {
-  ...cursorSchema,
-  description:
-    "Walk **forwards** from this `seq`, exclusive: the poll. `after=0` reads the log from its beginning, oldest first, which no other spelling expresses.",
-} as const;
-
-const beforeCursor = {
-  ...cursorSchema,
-  description:
-    "The newest page strictly **below** this `seq`: scrolling back. Answers ascending like every other case, so the page before the one in hand arrives the same way up.",
-} as const;
 
 /**
  * The text of a Message: non-empty, and with **no upper bound**.
@@ -505,11 +466,13 @@ export function publicMessageRoutes(
 }
 
 /**
- * The read both surfaces answer, and the one place the cursor rules live.
+ * The read both surfaces answer, and the one place this part applies the cursor rules.
  *
  * Written here rather than inside the agent's handler because a User's own read is the same
  * query asked about the User their Token names: the two must not become a parallel pair
- * that can disagree about what `before` means.
+ * that can disagree about what `before` means. What a cursor *means* is not this part's and
+ * is in `route-conventions.ts`, for the same reason one file up: the other parts that page
+ * must not disagree with this one either.
  */
 async function answerHistory(
   reply: FastifyReply,
@@ -517,15 +480,10 @@ async function answerHistory(
   userId: string,
   asked: MessageWindow,
 ): Promise<FastifyReply | { readonly messages: MessageRecord[] }> {
+  // Two windows in one request, refused with the shared 400 and the noun that makes it this
+  // part's: what a caller reading Messages asked about is a User's Messages.
   if (asked.after !== undefined && asked.before !== undefined) {
-    // Two windows in one request, which is a client bug worth naming rather than one of
-    // the two silently winning.
-    return reply.code(400).send({
-      statusCode: 400,
-      error: "Bad Request",
-      message:
-        "after and before describe two different windows: pass after to walk forwards, before to walk backwards, or neither for the newest page.",
-    });
+    return bothCursors(reply, "a User's Messages");
   }
   // The envelope, matching `{ users: [...] }`, and with no `hasMore` in it: a full page
   // says it, since `messages.length === limit`.
