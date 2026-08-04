@@ -67,7 +67,15 @@ before(async () => {
   // (ADR-0043).
   const users = createUsers({ db, tokenTtl: hour, agentServer, publicServer });
   const { privateKey } = generateKeyPairSync("ed25519");
-  const signatures = createSignatures({ signingKey: privateKey, publicServer, logger: silent });
+  // Its own routes are registered on both servers and are not this file's subject; what
+  // Decisions wants of it is the in-process `sign`.
+  const signatures = createSignatures({
+    signingKey: privateKey,
+    agentServer,
+    publicServer,
+    users,
+    logger: silent,
+  });
   // Nothing is held: everything under test is a route the constructor registered itself
   // (ADR-0032).
   createDecisions({ db, signatures, users, agentServer, publicServer });

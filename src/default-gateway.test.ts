@@ -369,10 +369,11 @@ describe("a whole deployment from one call", () => {
     assert.deepEqual(components.notes.lines, []);
   });
 
-  it("wired every part to every other, which is seven route groups on two servers", async () => {
+  it("wired every part to every other, which is eight route groups on two servers", async () => {
     // One read per group, chosen so that nothing here derives a password: the User Manager's
-    // two plugins, the Signal Worker's, the Messenger's pair and Decisions' pair. A group that
-    // was never registered answers 404, and so does one registered on the other server.
+    // two plugins, the Signal Worker's, the Messenger's pair, Decisions' pair and Signatures'
+    // pair. A group that was never registered answers 404, and so does one registered on the
+    // other server.
     assert.equal((await fetch(`${agentUrl}/users`)).status, 200);
     assert.equal((await fetch(`${agentUrl}/signals`)).status, 200);
     assert.equal((await fetch(`${agentUrl}/messages?user=${client.id}`)).status, 200);
@@ -380,9 +381,13 @@ describe("a whole deployment from one call", () => {
     assert.equal((await authenticated(`${publicUrl}/auth/me`)).status, 200);
     assert.equal((await authenticated(`${publicUrl}/messages`)).status, 200);
     assert.equal((await authenticated(`${publicUrl}/decisions`)).status, 200);
-    // And Signatures' one, which is the only route on the Public server that takes no Token
-    // besides the login: a public key is public (ADR-0042).
+    // And Signatures' two, whose one read is the only route on the Public server that takes no
+    // Token besides the login: a public key is public (ADR-0042). The other two are POSTs and
+    // are exercised in full further down; here they are one 400 each, which is a group that
+    // registered rather than the 404 of one that did not.
     assert.equal((await fetch(`${publicUrl}/jwks.json`)).status, 200);
+    assert.equal((await postJson(`${agentUrl}/sign`, {})).status, 400);
+    assert.equal((await postJson(`${publicUrl}/verify`, {}, client.token)).status, 400);
   });
 
   it("migrated the Messenger's tables after the User Manager's, so the foreign key is live", async () => {
@@ -775,6 +780,94 @@ describe("a whole deployment from one call", () => {
     );
   });
 
+  it("signs whatever the agent asks for, and checks one back for a User", async () => {
+    // **The Decision label, asked for on the generic route**, which is the thing a reviewer
+    // will want refused and which is deliberately allowed: publishing a Decision is an
+    // authority the agent already holds, so a decision-typed artifact minted here is that same
+    // authority exercised without a log row rather than a forgery (ADR-0042). It is asserted
+    // against the assembled Gateway rather than against Signatures alone because "nothing is
+    // reserved" only means something where the real Decisions is sitting next door.
+    const claimed = "a receipt for the March invoice, which is not a Decision";
+    const signed = await postJson(`${agentUrl}/sign`, {
+      statement: claimed,
+      typ: "saf-decision+jws",
+    });
+    const signedBody = await signed.text();
+    // 200 and not 201: nothing was created, and there is nowhere this could be fetched from
+    // again.
+    assert.equal(signed.status, 200, signedBody);
+    const { jws }: { jws: string } = JSON.parse(signedBody);
+
+    // Checked the way the third party checks it, which is the only check worth anything: the
+    // key off the unauthenticated route, `node:crypto` rather than the library that signed it,
+    // and the signing input reconstructed by splitting the emitted string.
+    const [header, payload, signature] = jws.split(".");
+    assert.ok(header !== undefined && payload !== undefined && signature !== undefined);
+    const keys = await fetch(`${publicUrl}/jwks.json`);
+    const [key]: JsonWebKey[] = JSON.parse(await keys.text()).keys;
+    assert.ok(key !== undefined);
+    assert.equal(
+      verify(
+        null,
+        Buffer.from(`${header}.${payload}`, "utf8"),
+        createPublicKey({ key, format: "jwk" }),
+        Buffer.from(signature, "base64url"),
+      ),
+      true,
+    );
+    // The label that was asked for, in the protected header and therefore covered by the
+    // signature, and a payload carrying the Statement and **nothing else**: no `seq` and no
+    // `createdAt`, both of which are a Decision's and neither of which this route invents.
+    assert.deepEqual(decoded(header), { alg: "EdDSA", typ: "saf-decision+jws" });
+    assert.deepEqual(decoded(payload), { statement: claimed });
+
+    // And the log does not have it, which is the sentence the freedom above costs: `typ` is
+    // the agent's signed claim about its own artifact and not a promise that a row exists, so
+    // only an artifact fetched from here is guaranteed to be one of these (ADR-0042).
+    const { decisions } = await agentJson<{ decisions: DecisionRecord[] }>("/decisions?after=0");
+    assert.equal(
+      decisions.some((published) => published.jws === jws),
+      false,
+      "signing must not have published anything",
+    );
+
+    // The lazy check, and the first half of what it costs: a Token, and the User Manager's
+    // single 401 without one. Compared body for body against another Public route's refusal,
+    // because "the same 401" is the claim and this part authenticates nobody (ADR-0030).
+    const refused = await fetch(`${publicUrl}/verify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jws }),
+    });
+    assert.equal(refused.status, 401);
+    const elsewhere = await fetch(`${publicUrl}/auth/me`);
+    assert.equal(elsewhere.status, 401);
+    assert.deepEqual(JSON.parse(await refused.text()), JSON.parse(await elsewhere.text()));
+
+    // And with one, the verdict and what the artifact said. The independent side of this
+    // comparison is the bytes above, which no response schema has been near, so a `header` or
+    // a `payload` the serializer flattened disagrees with what was signed (ADR-0040).
+    const checked = await postJson(`${publicUrl}/verify`, { jws }, client.token);
+    const checkedBody = await checked.text();
+    assert.equal(checked.status, 200, checkedBody);
+    assert.deepEqual(JSON.parse(checkedBody), {
+      verified: true,
+      header: decoded(header),
+      payload: decoded(payload),
+    });
+
+    // A string that is nothing of the kind is a `false` and a 200: it arrived from a caller,
+    // so it is an answer rather than an error.
+    const nonsense = await postJson(
+      `${publicUrl}/verify`,
+      { jws: "not an artifact" },
+      client.token,
+    );
+    const nonsenseBody = await nonsense.text();
+    assert.equal(nonsense.status, 200, nonsenseBody);
+    assert.deepEqual(JSON.parse(nonsenseBody), { verified: false });
+  });
+
   it("drains with everything still up, and closes it all once the drain is done", async () => {
     const posted = await postMessage(inFlightAtShutdown);
     assert.equal(posted.status, 201);
@@ -917,9 +1010,9 @@ describe("the defaults on their own", () => {
  * further up: that suite's subject is what is listening and when, and `inject` answers on
  * a server that has been closed. This one never starts or stops a Gateway.
  *
- * **All twenty routes declare what they answer with**, one part at a time: the Signal
+ * **All twenty-two routes declare what they answer with**, one part at a time: the Signal
  * Worker's four, the User Manager's eight, the HTTP Messenger's four, Decisions' three and
- * Signatures' one. What no test here can do is catch a *dropped* field, since a document and
+ * Signatures' three. What no test here can do is catch a *dropped* field, since a document and
  * the wire it describes are the same schema read twice. That is the round-trip assertions in
  * the first suite, which need records real parts recorded and therefore a real database.
  */
@@ -945,6 +1038,7 @@ describe("the description both servers serve", () => {
     "/messages/",
     "/runs",
     "/runs/{id}",
+    "/sign",
     "/signals",
     "/signals/{id}",
     "/users/",
@@ -958,6 +1052,7 @@ describe("the description both servers serve", () => {
     "/decisions/",
     "/jwks.json",
     "/messages/",
+    "/verify",
   ];
 
   /** As much of an OpenAPI document as anything here reads. */
@@ -1465,33 +1560,107 @@ describe("the description both servers serve", () => {
     assert.match(takingItAway, /nothing whatever about how the agent behaved/);
   });
 
-  it("says what the key set is, and that it needs no Token", async () => {
-    // One route, on the Public server only, and the only one there besides the login that
-    // asks for nothing: the audience for a public key is somebody who has no Token and never
-    // will (ADR-0042).
-    const document = await documentOf(described.components.publicServer.fastify);
-    const route = document.paths["/jwks.json"]?.get;
-    assert.ok(route !== undefined, "the key set should be described");
+  it("says what Signatures' three routes answer with, and what each of them is worth", async () => {
+    // The fourth part across both surfaces, and the one whose three routes are three different
+    // relationships with the same key: only the agent may sign, anybody with a Token may ask,
+    // and anybody at all may take the key and stop asking (ADR-0042).
+    const documents = {
+      agent: await documentOf(described.components.agentServer.fastify),
+      public: await documentOf(described.components.publicServer.fastify),
+    };
+    const answers: readonly {
+      readonly surface: keyof typeof documents;
+      readonly path: string;
+      readonly method: Method;
+      readonly statuses: readonly string[];
+    }[] = [
+      // No 401 on the signing, the Agent server having no authentication at all, and no 401
+      // on the key set, a public key being public. The one route between them has one.
+      { surface: "agent", path: "/sign", method: "post", statuses: ["200", "400"] },
+      { surface: "public", path: "/verify", method: "post", statuses: ["200", "400", "401"] },
+      { surface: "public", path: "/jwks.json", method: "get", statuses: ["200", "400"] },
+    ];
 
-    assert.deepEqual(Object.keys(route.responses).sort(), ["200", "400"]);
-    assert.deepEqual(route.tags, ["Signatures"]);
+    for (const { surface, path, method, statuses } of answers) {
+      const where = `${method.toUpperCase()} ${path} on the ${surface} server`;
+      const route = documents[surface].paths[path]?.[method];
+      assert.ok(route !== undefined, `${where} should be described`);
+      assert.deepEqual(Object.keys(route.responses).sort(), [...statuses].sort(), where);
+      for (const [status, answered] of Object.entries(route.responses)) {
+        // "Default Response" is what an undeclared response reads as, so this is the line
+        // that tells a described status from a status the plugin invented a sentence for.
+        assert.notEqual(answered.description, "Default Response", `${where} ${status}`);
+        assert.ok(Object.hasOwn(answered, "content"), `${where} ${status}`);
+      }
+      assert.deepEqual(route.tags, ["Signatures"], where);
+      assert.ok(route.summary !== undefined && route.summary.length > 0, where);
+      assert.ok(route.description !== undefined && route.description.length > 0, where);
+    }
+
+    // Neither server describes the other's, which on this part is the sharpest version of that
+    // separation anywhere: a `POST /sign` in the Public server's document would be advertising
+    // the Shared Agent's key to whoever can reach the port.
+    assert.equal(documents.public.paths["/sign"], undefined);
+    assert.equal(documents.agent.paths["/verify"], undefined);
+    assert.equal(documents.agent.paths["/jwks.json"], undefined);
+
+    // **`typ` described as what it is**, which is the one thing about this part a reader can
+    // get wrong in the direction that matters: the freedom said outright on the request, and
+    // the consequence of that freedom said outright on the answer (ADR-0042).
+    const signing = bodyOf(documents.agent, "/sign", "post");
+    assert.deepEqual(Object.keys(signing.properties ?? {}).sort(), ["statement", "typ"]);
+    assert.deepEqual(signing.required, ["statement"]);
+    assert.match(String(signing.properties?.typ?.description), /Any label, `saf-decision\+jws`/);
+    assert.match(String(documents.agent.paths["/sign"]?.post?.description), /nothing is reserved/);
+    const verdict = schemaOf(documents.public, "/verify", "post", "200");
+    assert.deepEqual(Object.keys(verdict.properties ?? {}).sort(), [
+      "header",
+      "payload",
+      "verified",
+    ]);
+    // Only the verdict is promised, because only the verdict is answered when it is `false`.
+    assert.deepEqual(verdict.required, ["verified"]);
+    assert.match(
+      String(verdict.properties?.header?.description),
+      /not a guarantee of this framework's/,
+    );
+    // `header` and `payload` are **empty schemas**, which is what passes the artifact's own
+    // JSON through byte intact: a `type` here would be this route having an opinion about what
+    // the agent signs, which it does not have anywhere else.
+    assert.equal(verdict.properties?.header?.type, undefined);
+    assert.equal(verdict.properties?.payload?.type, undefined);
+
+    // And what the check is worth, said where somebody about to rely on it will read it: it
+    // proves less than it looks like it proves, and the offline path is named beside it.
+    const check = String(documents.public.paths["/verify"]?.post?.description);
+    assert.match(check, /\*\*it proves less than it looks like it proves\*\*/);
+    assert.match(check, /\*\*Real verification is offline\.\*\*/);
+    assert.match(check, /\*\*Requires a bearer Token\*\*/);
+    // The 401 in the User Manager's own words with where the hook came from added, which is
+    // how Decisions describes the same refusal: this part holds no scheme of its own, and a
+    // client should not have to discover that to know the answer is identical there.
+    const unauthenticated = String(
+      documents.public.paths["/verify"]?.post?.responses["401"]?.description,
+    );
+    assert.match(unauthenticated, /Authentication failed/);
+    assert.match(unauthenticated, /the same 401 the routes under `\/auth` answer/);
+
+    const route = documents.public.paths["/jwks.json"]?.get;
+    assert.ok(route !== undefined, "the key set should be described");
     assert.match(String(route.description), /No Token is required/);
     assert.match(String(route.description), /without trusting this Gateway/);
 
     // The JWK as it is described, which is a **positive list of public members**: the schema
     // is the second of the two things standing between a wrong key argument and the private
     // scalar reaching an unauthenticated route, and a `d` here would undo it silently.
-    const keySet = schemaOf(document, "/jwks.json", "get", "200");
+    const keySet = schemaOf(documents.public, "/jwks.json", "get", "200");
     const key = keySet.properties?.keys?.items;
     assert.ok(key !== undefined, "the key set should describe what a key looks like");
     assert.deepEqual(Object.keys(key.properties ?? {}).sort(), ["crv", "e", "kty", "n", "x", "y"]);
     assert.deepEqual(key.required, ["kty"]);
     // Neither in the schema nor anywhere else in either document, since a member named at all
     // is a member the serializer would let through.
-    for (const [surface, served] of Object.entries({
-      public: document,
-      agent: await documentOf(described.components.agentServer.fastify),
-    })) {
+    for (const [surface, served] of Object.entries(documents)) {
       assert.equal(JSON.stringify(served).includes('"d"'), false, surface);
     }
   });
@@ -1816,6 +1985,11 @@ async function agentJson<T>(path: string): Promise<T> {
   const body = await response.text();
   assert.equal(response.status, 200, `${path} should have answered: ${body}`);
   return JSON.parse(body);
+}
+
+/** One segment of a compact JWS as the JSON it is, decoded from the string that was emitted. */
+function decoded(segment: string): unknown {
+  return JSON.parse(Buffer.from(segment, "base64url").toString("utf8"));
 }
 
 /** One `POST /messages` on the Public server, by the User the Token names. */

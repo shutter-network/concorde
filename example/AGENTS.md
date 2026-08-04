@@ -35,14 +35,17 @@ arrived.** So a Signal you read is something somebody said, with the person it c
 attached.
 
 **You cannot reach the Db**, where the Gateway keeps its own persistent state, and there
-is nothing else of the Gateway's you can reach either. Two of the calls available to you
-write, and both write little: creating a User, who arrives with nothing at all, and
-sending a Message to exactly one person. Everything else you can call only reads, and
-nothing anywhere on this API edits or deletes: a Message is immutable once written, and so
-is a Signal but for the state the Gateway itself gives it. Setting a User's Attributes,
-replacing a password, issuing a Token and revoking one are not routes here at all. They
-are reachable only from the Gateway's own code, and no instruction you are given can make
-them reachable from this API.
+is nothing else of the Gateway's you can reach either. Three of the calls available to you
+write, and each writes little: creating a User, who arrives with nothing at all, sending a
+Message to exactly one person, and publishing a Decision, which everybody can read and
+nothing can take back. A fourth, signing a Statement, stores nothing: no row exists
+afterwards and the artifact handed back is the whole of it, though the Gateway does log
+that a signing happened. Everything else you can call only reads, and nothing anywhere on
+this API edits or deletes: a Message is immutable once written, and so is a Signal but for
+the state the Gateway itself gives it. Setting a User's Attributes, replacing a password,
+issuing a Token and revoking one are not routes here at all. They are reachable only from
+the Gateway's own code, and no instruction you are given can make them reachable from this
+API.
 
 ## Reaching a person
 

@@ -2,8 +2,9 @@
  * Signatures: the part of the Gateway that holds the Shared Agent's signing identity.
  *
  * Constructed like every other part — one call, an ordinary object back, and nothing to
- * register it with. It wires itself the way every part does, registering its route group on
- * the server it is handed (ADR-0032).
+ * register it with. It wires itself the way every part does, registering a route group on each
+ * of the two servers it is handed (ADR-0032): the signing on the Agent server, the lazy check
+ * and the public key on the Public server.
  *
  * It is the **first part of the framework with no storage at all**: no schema, no tables, no
  * migrations and no migration descriptor, so there is no Db argument either
@@ -45,11 +46,16 @@
  */
 
 import { createHash, createPublicKey, type JsonWebKey, type KeyObject } from "node:crypto";
-import type { FastifyInstance } from "fastify";
-import { CompactSign } from "jose";
+import type { FastifyInstance, preHandlerAsyncHookHandler } from "fastify";
+import { CompactSign, compactVerify } from "jose";
 import type { Component } from "../components.ts";
 import { defaultLogger, type Logger } from "../logging.ts";
-import { type KeySet, publicSignatureRoutes } from "./routes.ts";
+import {
+  agentSignatureRoutes,
+  type KeySet,
+  publicSignatureRoutes,
+  type Verdict,
+} from "./routes.ts";
 
 /**
  * What a signature commits to: the Statement, and whatever else the caller is binding to it.
@@ -89,6 +95,21 @@ export type SignaturesOptions = {
    */
   readonly signingAlg?: string;
   /**
+   * The Agent server, where the Shared Agent signs, at **`POST /sign`**.
+   *
+   * Required, and it is the reason the key lives in this process rather than in the Agent
+   * Container: signing is a route the agent calls and never a key it holds, so a compromise of
+   * the container mints nothing once the Gateway is stopped (ADR-0041). Signatures the agent
+   * cannot reach signs nothing but Decisions, which is broken rather than smaller.
+   *
+   * Structural, and asks for nothing but the Fastify instance, for the purely technical reason
+   * every other part's server option is — `FastifyInstance` has five generic parameters — so
+   * what satisfies it is what `serverComponent` returns.
+   */
+  readonly agentServer: {
+    readonly fastify: FastifyInstance;
+  };
+  /**
    * The Public server, where the key set is served at **`/jwks.json`**.
    *
    * Required, and unauthenticated, a public key being public: it is what makes verification
@@ -102,6 +123,22 @@ export type SignaturesOptions = {
    */
   readonly publicServer: {
     readonly fastify: FastifyInstance;
+  };
+  /**
+   * Where `POST /verify`'s authentication comes from: the User Manager's own hook, taken as
+   * one option on that route and neither wrapped nor re-implemented, so this part
+   * authenticates nobody and its one refusal is the Manager's single 401 (ADR-0030).
+   *
+   * **The hook and not a `Users`**, which is the one option here shaped differently from
+   * Decisions' and is worth a sentence. This part stores nothing and reads no User: it needs
+   * `requireUser` and there is no second thing it could ever want off the Manager, so asking
+   * for the whole object would be asking for a Db-backed part in order to use a function.
+   * What it costs is that the assembly, not the type, is what makes this the *real* Manager's
+   * hook — which is why `default-gateway.test.ts` is where the 401 on this route is proven to
+   * be the same 401 the routes under `/auth` answer.
+   */
+  readonly users: {
+    readonly requireUser: preHandlerAsyncHookHandler;
   };
   /** Defaults to a `pino` instance on stdout, and is what the signing line is written to. */
   readonly logger?: Logger;
@@ -139,8 +176,8 @@ export type Signatures = Component & {
    * **Does nothing.** Written out here so that it is read rather than discovered.
    *
    * There is no pool, no timer and no connection: the key was handed over at construction and
-   * the route went on the server there too (ADR-0032). This part is in the Gateway's record
-   * for its membership and for the position that comes with it (ADR-0037).
+   * the routes went on the two servers there too (ADR-0032). This part is in the Gateway's
+   * record for its membership and for the position that comes with it (ADR-0037).
    */
   start(): Promise<void>;
 
@@ -163,35 +200,86 @@ export function createSignatures(options: SignaturesOptions): Signatures {
   // things standing between a wrong argument and `d` being served from an unauthenticated
   // route; the second is the response schema, which is a positive list of public members
   // (ADR-0042).
-  const publicKey = createPublicKey(options.signingKey).export({ format: "jwk" });
-  const alg = options.signingAlg ?? algorithmFor(publicKey);
+  const publicKey = createPublicKey(options.signingKey);
+  const publicJwk = publicKey.export({ format: "jwk" });
+  const alg = options.signingAlg ?? algorithmFor(publicJwk);
 
   // A JWK **Set** even with one key, because that is RFC 7517's own container and it means a
   // client points its remote-key-set helper at the URL with no glue code. A bare JWK needs
   // hand-parsing in every language (ADR-0042).
-  const keySet: KeySet = { keys: [publicKey] };
+  const keySet: KeySet = { keys: [publicJwk] };
 
-  // The one act of wiring, here so that an Operator's entry point does none of it (ADR-0032).
-  // Not awaited: Fastify defers a plugin until the server is ready, so this is a registration
-  // made at construction and loaded at `listen`.
-  options.publicServer.fastify.register(publicSignatureRoutes(keySet));
+  /**
+   * Signs `claims` under `typ`, and is the whole of what this part does.
+   *
+   * Named here rather than written into the object below because the route registered on the
+   * Agent server needs it before that object exists, and the two must be one function: an
+   * artifact minted over HTTP and one minted in process by Decisions differ in nothing, which
+   * is what makes "the agent may ask for the Decision label" a statement about authority
+   * rather than about two code paths.
+   */
+  const signStatement = async (typ: string, claims: SignedClaims): Promise<string> => {
+    const jws = await new CompactSign(new TextEncoder().encode(JSON.stringify(claims)))
+      .setProtectedHeader({ alg, typ })
+      .sign(options.signingKey);
+
+    // The whole of the record that this happened, and the statement is not in it: a log
+    // aggregator holding every Statement the agent ever signed would be the shadow copy
+    // ADR-0042 declines to keep. The digest is enough to match an artifact somebody
+    // presents against a line in the log, which is what the trail is for.
+    log.info(
+      { typ, statementSha256: createHash("sha256").update(claims.statement).digest("hex") },
+      "signed a Statement",
+    );
+    return jws;
+  };
+
+  /**
+   * The lazy check behind `POST /verify`: is this string an artifact of ours, and what does it
+   * say if it is.
+   *
+   * **The library's verification and not one of ours**, for the reason the library does the
+   * signing: a wrong segment count, malformed base64url and an unparseable header all arrive
+   * from a caller, and all three are defensive code `jose` has already written (ADR-0042). The
+   * `algorithms` list is the derived `alg` and nothing else, so an artifact naming another one
+   * is refused by the library rather than reaching a primitive.
+   *
+   * Every failure is one `false`, and the `catch` is deliberately not narrowed to `jose`'s own
+   * error classes: enumerating them here would be a second copy of the library's error set,
+   * going stale the day it grows one, and there is nothing this function could usefully do
+   * differently between them. What reaches it is a string somebody posted, and the honest
+   * answer to every unacceptable string is the same answer.
+   */
+  const verifyArtifact = async (jws: string): Promise<Verdict> => {
+    try {
+      const checked = await compactVerify(jws, publicKey, { algorithms: [alg] });
+      return {
+        verified: true,
+        header: checked.protectedHeader,
+        // Parsed inside the `try` on purpose, and it is the one place a `false` would mean
+        // something other than "not ours". Everything this identity signs is `JSON.stringify`
+        // of an object, so a verified payload parses and the case is unreachable; were it ever
+        // reached, a wrong answer said safely beats an uncaught throw becoming a 500 on a route
+        // whose whole job is to answer about a caller's string.
+        payload: JSON.parse(new TextDecoder().decode(checked.payload)),
+      };
+    } catch {
+      return { verified: false };
+    }
+  };
+
+  // The two acts of wiring, here so that an Operator's entry point does none of them
+  // (ADR-0032). Not awaited: Fastify defers a plugin until the server is ready, so these are
+  // registrations made at construction and loaded at `listen`.
+  options.agentServer.fastify.register(agentSignatureRoutes({ sign: signStatement }));
+  options.publicServer.fastify.register(
+    // The Manager's own hook, passed through and not wrapped: this part authenticates nobody
+    // (ADR-0030).
+    publicSignatureRoutes(keySet, { verify: verifyArtifact }, options.users.requireUser),
+  );
 
   return {
-    async sign(typ, claims) {
-      const jws = await new CompactSign(new TextEncoder().encode(JSON.stringify(claims)))
-        .setProtectedHeader({ alg, typ })
-        .sign(options.signingKey);
-
-      // The whole of the record that this happened, and the statement is not in it: a log
-      // aggregator holding every Statement the agent ever signed would be the shadow copy
-      // ADR-0042 declines to keep. The digest is enough to match an artifact somebody
-      // presents against a line in the log, which is what the trail is for.
-      log.info(
-        { typ, statementSha256: createHash("sha256").update(claims.statement).digest("hex") },
-        "signed a Statement",
-      );
-      return jws;
-    },
+    sign: signStatement,
 
     // The two no-ops, whose reason is on the type above: membership in the Gateway's record,
     // and the position that comes with it (ADR-0037).

@@ -78,7 +78,13 @@ before(async () => {
   // generates none, because a fresh key per restart leaves every artifact ever published
   // unverifiable with nothing saying so (ADR-0041).
   const { privateKey } = generateKeyPairSync("ed25519");
-  const signatures = createSignatures({ signingKey: privateKey, publicServer, logger: silent });
+  const signatures = createSignatures({
+    signingKey: privateKey,
+    agentServer,
+    publicServer,
+    users,
+    logger: silent,
+  });
   createDecisions({ db, signatures, users, agentServer, publicServer });
 
   await db.migrate();

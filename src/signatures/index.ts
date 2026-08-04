@@ -8,11 +8,12 @@
  * ([ADR-0042](../../docs/adr/0042-a-signature-is-a-compact-jws.md)).
  *
  * `createSignatures` is the whole of it for an Operator: hand it the Shared Agent's private
- * key and the Public server, and it derives the public half and registers `GET /jwks.json`
- * there (ADR-0032). Then put it in the Gateway's record like every other part: it is a
- * Component whose `start` and `stop` do nothing, keyed **before** the Signal Worker so that it
- * outlives the drain, which is when a Signal Handler's post phase may still need to sign
- * (ADR-0037, ADR-0038).
+ * key, both servers and the User Manager, and it derives the public half and registers three
+ * routes — `POST /sign` where only the agent can reach it, `POST /verify` behind the Manager's
+ * single 401, and `GET /jwks.json` in front of everything (ADR-0032). Then put it in the
+ * Gateway's record like every other part: it is a Component whose `start` and `stop` do
+ * nothing, keyed **before** the Signal Worker so that it outlives the drain, which is when a
+ * Signal Handler's post phase may still need to sign (ADR-0037, ADR-0038).
  *
  * **The key is yours to load and ours to hold.** It is a `crypto.KeyObject` and this framework
  * parses no PEM, reads no environment variable and opens no file: an Operator writes
@@ -22,9 +23,11 @@
  *
  * What it answers with is one method, `sign`, and that is what trusted code has and no request
  * does: Decisions holds this object and signs **in process**, never by calling the Gateway's
- * own routes. `SignedClaims` is what goes into the payload, and the order of its keys is the
- * order of the bytes, because a compact JWS is signed as exactly what was emitted and nothing
- * re-serializes it.
+ * own routes. It is the same function `POST /sign` reaches, which is what makes "the agent may
+ * ask for the Decision label" a statement about authority rather than about two code paths.
+ * `SignedClaims` is what goes into the payload, and the order of its keys is the order of the
+ * bytes, because a compact JWS is signed as exactly what was emitted and nothing re-serializes
+ * it.
  *
  * **No route plugin is exported and no path is configurable**, as with the HTTP Messenger and
  * for the same reason: these routes are half of a contract whose other half is the artifact

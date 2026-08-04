@@ -418,13 +418,16 @@ export function createGatewayWithDefaults<E extends GatewayExtension = Record<st
     publicServer,
   });
 
-  // And the fourth reason, which is an ordinary construction dependency rather than a
-  // migration one: Decisions holds Signatures and signs through it in process, so it cannot
-  // be built first. There is no key here beyond the one the Operator passed — this
-  // constructor derives nothing, defaults nothing and generates nothing (ADR-0041).
+  // And the fourth reason, which is two ordinary construction dependencies rather than a
+  // migration one: Signatures takes the Manager's `requireUser` for its Public check, and
+  // Decisions holds Signatures and signs through it in process. So the three go in this order
+  // and no other. There is no key here beyond the one the Operator passed — this constructor
+  // derives nothing, defaults nothing and generates nothing (ADR-0041).
   const signatures = createSignatures({
     signingKey: options.signingKey,
+    agentServer,
     publicServer,
+    users,
     ...(options.logger === undefined ? {} : { logger: options.logger }),
   });
 

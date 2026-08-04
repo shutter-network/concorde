@@ -714,17 +714,18 @@ try {
       "  createdAt: new Date().toISOString(),",
       "};",
       "",
-      "// Signatures: a key and the Public server, and **no Db at all** — the one part of the",
-      "// framework that stores nothing, so there is no descriptor beside it and nothing to",
-      "// migrate (ADR-0042). The key is a `KeyObject` the consumer loaded however they like,",
-      "// because the framework parses no PEM, reads no environment and generates nothing",
-      "// (ADR-0041). Generated here rather than read off disk only because this file has no",
-      "// disk; `createPrivateKey` is annotated below to show the shape an Operator actually",
-      "// writes.",
+      "// Signatures: a key, both servers, the User Manager whose hook refuses an",
+      "// unauthenticated check, and **no Db at all** — the one part of the framework that",
+      "// stores nothing, so there is no descriptor beside it and nothing to migrate",
+      "// (ADR-0042). The key is a `KeyObject` the consumer loaded however they like, because",
+      "// the framework parses no PEM, reads no environment and generates nothing (ADR-0041).",
+      "// Generated here rather than read off disk only because this file has no disk;",
+      "// `createPrivateKey` is annotated below to show the shape an Operator actually writes.",
       "const { privateKey } = generateKeyPairSync('ed25519');",
       "export const loaded: (pem: string) => KeyObject = (pem) => createPrivateKey(pem);",
       "const signaturesOptions: SignaturesOptions = {",
-      "  signingKey: privateKey, publicServer: publicComponent, logger: log,",
+      "  signingKey: privateKey, users, logger: log,",
+      "  publicServer: publicComponent, agentServer: agentComponent,",
       "};",
       "export const signatures: Signatures = createSignatures(signaturesOptions);",
       "// The one method it carries, and the claims the caller builds: `statement` is required",
@@ -1141,15 +1142,16 @@ try {
         "const messengerWorker = createSignalWorker({ db: scratch, runtime: { run: async () => ({ ok: true }) }, handlers: {} });",
         "const messenger = createHttpMessenger({ db: scratch, users: directory, worker: messengerWorker, publicServer: { fastify: Fastify() }, agentServer: { fastify: Fastify() } });",
         // Signatures and Decisions, constructed the way an Operator constructs them and in the
-        // order they must be: Decisions holds Signatures. Signatures takes **no Db**, being the
-        // one part with nothing to store, and the key is a `KeyObject` this project generated
-        // itself, because the framework parses no PEM and generates nothing (ADR-0041).
+        // order they must be: Signatures takes the Manager's hook and Decisions holds
+        // Signatures. Signatures takes **no Db**, being the one part with nothing to store, and
+        // the key is a `KeyObject` this project generated itself, because the framework parses
+        // no PEM and generates nothing (ADR-0041).
         "const signaturesServer = Fastify();",
         // A logger that says nothing, because stdout is this step's assertion channel and a
         // signing line written to it would be part of what is compared. What that line carries
         // is `src/signatures/signatures.test.ts`'s subject.
         "const quiet = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };",
-        "const signatures = createSignatures({ signingKey: generateKeyPairSync('ed25519').privateKey, publicServer: { fastify: signaturesServer }, logger: quiet });",
+        "const signatures = createSignatures({ signingKey: generateKeyPairSync('ed25519').privateKey, publicServer: { fastify: signaturesServer }, agentServer: { fastify: Fastify() }, users: directory, logger: quiet });",
         "const decisions = createDecisions({ db: scratch, signatures, users: directory, publicServer: { fastify: signaturesServer }, agentServer: { fastify: Fastify() } });",
         // And the artifact actually produced, in process, from the installed package. This is
         // the whole proof that `jose` is a **declared** dependency rather than one merely
@@ -1183,7 +1185,7 @@ try {
         // fetched the way an Agent Implementation fetches it. `ready` boots the plugins and
         // binds nothing, so this reaches no database and no socket; what it proves is that
         // the two plugins resolve from a consumer's tree, that the assembly registered them
-        // ahead of all five parts, and that the eight paths the framework's own routes make
+        // ahead of all five parts, and that the nine paths the framework's own routes make
         // are in the document rather than an empty `paths` (ADR-0040).
         "await assembled.components.agentServer.fastify.ready();",
         "const description = (await assembled.components.agentServer.fastify.inject({ method: 'GET', url: '/openapi.json' })).json();",
@@ -1217,8 +1219,8 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword,start,stop:saf_http_messages:history,send,start,stop:message.received:saf_decisions:sign,start,stop:start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,signatures,decisions,messenger,worker,ownLoop:Shared Agent Gateway: Agent server describes 8 paths:by hand /healthz",
-    "all six subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Manager should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself, and both of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct from a key alone with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds, and one call should assemble all eight of them from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the consumer's own Component appended last, and that assembly's Agent server should answer a description of its own eight paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand",
+    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword,start,stop:saf_http_messages:history,send,start,stop:message.received:saf_decisions:sign,start,stop:start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,signatures,decisions,messenger,worker,ownLoop:Shared Agent Gateway: Agent server describes 9 paths:by hand /healthz",
+    "all six subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Manager should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself, and both of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds, and one call should assemble all eight of them from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the consumer's own Component appended last, and that assembly's Agent server should answer a description of its own nine paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand",
   );
 
   step("applying a shipped migration folder from inside the installed package");
@@ -1271,7 +1273,7 @@ try {
       "// A logger that says nothing, for the reason the cost above is cheap: stdout is what",
       "// this file reports through, and one signing writes one line to it by default.",
       "const quiet = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };",
-      "const signatures = createSignatures({ signingKey: generateKeyPairSync('ed25519').privateKey, publicServer: { fastify: publicServer }, logger: quiet });",
+      "const signatures = createSignatures({ signingKey: generateKeyPairSync('ed25519').privateKey, publicServer: { fastify: publicServer }, agentServer: { fastify: agentServer }, users, logger: quiet });",
       "createDecisions({ db, signatures, users, publicServer: { fastify: publicServer }, agentServer: { fastify: agentServer } });",
       "try {",
       "  // Both descriptors registered explicitly, as a pre-deploy migration entry point",
