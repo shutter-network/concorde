@@ -209,6 +209,15 @@ not what the agent said, so an answer written into its own conversation or into 
 Workspace arrives nowhere. Until it makes that call your poll answers `{"messages":[]}`, and
 [a client keeps asking](#three-things-about-messages-and-none-of-them-is-a-bug).
 
+**Those four requests are a walkthrough and not the specification.** The Public server
+describes itself the same way the Agent server does: `localhost:8080/openapi.json` is an
+OpenAPI document of every route you just used, what each takes, the exact shape of an
+issued Token and of a Message, which routes want a bearer Token, and every status each can
+answer; `localhost:8080/docs` is the same thing as a page, grouped rather than as one flat
+list ([ADR-0040](./adr/0040-the-gateway-describes-its-own-http-api.md)). Write a client
+against that. What follows below is the reasoning behind it, which a document has no room
+for.
+
 ### Three motions, and no fourth
 
 One route serves the whole conversation, both directions, and every page comes back
@@ -450,7 +459,9 @@ confinement flags, the process, the redaction and the diagnosis of a failure —
 
 The framework does not tell the agent anything. It writes no file, passes no system
 prompt, and holds no text about itself — so an agent nobody tells about the Agent server
-never calls it. Telling it is yours, and **this section is what you copy from.**
+never calls it. Telling it is yours, and **it is one URL rather than a transcription**:
+what used to be a table here for you to copy is now
+[a document the server generates](#the-routes-and-why-you-do-not-write-them-down).
 
 The mechanism is `pi`'s own: it looks for `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md` or
 `CLAUDE.MD` in its working directory and that directory's ancestors, and its working
@@ -474,99 +485,67 @@ unaffected, while a Run that is talked into rewriting the agent's instructions g
 every single Run; the container runtime holds it by construction now, and holds it even
 for a Run that never finishes.
 
-### The routes
+### The routes, and why you do not write them down
 
 All JSON, all on the Agent server, and **all unscoped**. Which of them exist is a
-consequence of which parts were handed that server: the first four are the Signal Worker's,
-the next three the User Manager's and the last two the HTTP Messenger's. All three are
-handed it by `createGatewayWithDefaults`, so on the default path the whole table is what
-you get.
+consequence of which parts were handed that server: four are the Signal Worker's, three the
+User Manager's and two the HTTP Messenger's. All three parts are handed it by
+`createGatewayWithDefaults`, so on the default path the agent gets the whole of that.
 
-| Route | Answers |
-| --- | --- |
-| `GET /signals?limit=&kind=` | `{ "signals": [ … ] }`, newest first |
-| `GET /signals/<id>` | one Signal, or 404 |
-| `GET /runs?limit=&signalId=` | `{ "runs": [ … ] }`, newest first |
-| `GET /runs/<id>` | one Run, or 404 |
-| `GET /users?limit=` | `{ "users": [ … ] }`, newest first |
-| `GET /users/<id>` | one User, or 404 |
-| `POST /users` | the User it created |
-| `GET /messages?user=&after=&before=&limit=` | `{ "messages": [ … ] }`, ascending by `seq` |
-| `POST /messages` | the Message it sent to one User, or 404 |
+**Which nine, though, is not written here and is not written in your `AGENTS.md`
+either.** The server describes itself: `GET /openapi.json` answers a current OpenAPI
+document generated from the routes that deployment actually registered, and `/docs` is the
+same thing as a browsable page. It carries every path, what each takes, the shape of every
+record it answers with, and every status it can answer. An agent can therefore tell a 404
+for an unknown Signal from a 400 for a mistyped one without guessing.
 
-A **Signal** is `{ id, kind, payload, emittedAt, state, error }`. `payload` is arbitrary
-JSON, exactly as the Producer wrote it. `emittedAt` is an ISO 8601 string, because JSON
-has no date. `state` is one of `pending`, `processing`, `done`, `failed`, and `error` is a
-string or `null`.
+The behaviour goes with it, which is the half that used to be transcribed and quietly
+misunderstood. The document says on the routes it applies to that reads are not scoped by
+Session or by User, that `limit` is capped and a larger value refused rather than quietly
+reduced, that an unknown query parameter is a **400** rather than a filter that did nothing,
+that `POST /users` has nowhere for Attributes to arrive through, and that the Message log
+requires a `user` because a log belongs to one person and `seq` numbers only theirs
+([ADR-0040](./adr/0040-the-gateway-describes-its-own-http-api.md)).
 
-A **Run** is `{ id, signalId, session, prompt, state, error, startedAt, endedAt }`.
-`session` is a plain name: a Handler asking for a fresh Session writes `null`, and the
-Signal Worker names it `run_<the Run's id>` before the Run starts, so every Run recorded
-by this version has one. It is still typed `string | null`, because a Run recorded before
-the Worker did that reads back the way it was written. `state`
-is one of `pending`, `running`, `done`, `failed`. The timings are ISO 8601 strings, or
-`null` for a Run that has not reached that point. The Run executing right now is in there,
-and so is its Signal.
-
-A **User** is `{ id, attributes, createdAt }`. `attributes` is arbitrary JSON that the
-deployment's own code put there and is the whole of what anything means by authorization.
-
-A **Message** is `{ id, userId, direction, seq, text, createdAt }`, where `direction` is
-`inbound` (from the person) or `outbound` (from the agent) and `seq` numbers one person's
-Messages from 1 across both directions. In this deployment a Signal's `payload` **is** one of
-these, so a Signal the agent reads is something somebody said with the person it came from
-attached. What those two routes mean to an agent, and the four things the API will not let it
-do with them, are stated where the agent actually reads them: *Reaching a person* in
-[`../example/AGENTS.md`](../example/AGENTS.md). They are deliberately not restated here,
-because two copies of one paragraph drift.
-
-Four facts about the surface that an agent's instructions should carry, because each of
-them is a request that would otherwise be written and quietly misunderstood:
-
-- **There is no credential.** Reaching the port is access. Nothing to send, nothing to
-  obtain, nothing to rotate.
-- **Reads are not scoped.** Every Signal, every Run, every User and any person's Message log,
-  whatever Session the Run asking is in. There is no `session` parameter anywhere, and an
-  unknown query parameter is a **400** rather than a request answered with everything — so a
-  deployment that believed it was scoping something finds out at once. The Message log's
-  required `user` is the one apparent exception and is not one: it narrows nothing the agent
-  could otherwise have seen, and it is required because `seq` is per person and cannot cursor
-  an interleaved result.
-- **`limit` defaults to 50 and caps at 200.** Asking for more is refused rather than
-  quietly reduced. The Message log is the only thing here with a cursor at all, so records
-  past the cap are otherwise reached by narrowing with `kind` or `signalId` and not by
-  paging.
-- **Two things here write, and neither is a lever.** `POST /users` takes a password and no
-  attributes, so an agent talked into creating a User cannot make it a privileged one.
-  `POST /messages` addresses exactly one User and is always `outbound`, decided by the server
-  it arrived on, so no instruction the agent is given can broadcast or put words in somebody's
-  mouth. Everything else is immutable: a Signal but for the state the worker gives it, a Run
-  which is the worker's record of its own work, and a Message once written. Setting
-  attributes, replacing a password, issuing a Token and revoking one are methods on the User
-  Manager and no route at all.
-
-`pi` ships no HTTP client, so the agent calls this with its shell tool and `curl` — which
+`pi` ships no HTTP client, so the agent fetches that with its shell tool and `curl`, which
 is why `curl` is one of the [three things the agent's image
 needs](#no-agent-image-is-published):
 
 ```sh
-curl -s "http://gateway:7411/signals?limit=5"
+curl -s http://gateway:7411/openapi.json
 ```
 
 That host name is the reference deployment's Compose service, and it is
 [not derivable from where the server binds](#where-the-agent-reaches-you-is-not-derivable-from-where-the-server-binds).
 
-### This copy can go stale
+So what is left for you to write is what the framework has no way to know, and there is
+not much of it. The **address** above is the first thing. The second is what your Signal
+Handlers make a `payload` mean: in this deployment a Signal's `payload` **is** a Message
+record, so a Signal the agent reads is something somebody said with the person it came from
+attached, and no generated document can say that about a convention of yours. The third is
+how the agent should conduct itself: who it is acting for, and what to do when a call is
+refused while somebody is still waiting.
+[`../example/AGENTS.md`](../example/AGENTS.md) is those three and nothing else.
 
-The routes and the field shapes above are the framework's; the file in your Workspace is a
-**copy** of them, made by hand. Nothing keeps the two in sync — the framework does not
-write that file, does not read it, and cannot see that it has drifted. So check it against
-this page when you upgrade.
+### What keeps the description honest
 
-The failure mode is worth knowing because it is quiet: a stale copy does not produce an
-error, it produces an agent that asks for something that is not there, gets a 400 or a
-404, and stops asking. That reads as a model being unhelpful rather than as a deployment
-being out of date.
+This section used to be a hand-made table of nine routes and four record shapes, the file
+in your Workspace used to be a second copy made from it, and the warning here used to be
+that nothing kept either current. The failure mode was worth knowing because it was quiet:
+a stale copy produced an agent that asked for something absent, got a 400 or a 404, and
+stopped asking, which reads as an unhelpful model rather than as a deployment out of date.
+
+Being generated is the whole of the answer. The document is built at boot from the running
+route table, so it describes *that* Gateway and whatever you registered on it appears
+beside ours, and there is nothing left to compare against this page when you upgrade: the
+agent fetches it each Run and gets what the Gateway it is talking to actually serves.
+
+The hazard that replaces it is ours rather than yours, and it is why the round-trip
+assertions in `src/default-gateway.test.ts` exist: a response schema is both what the
+document describes a route with **and** what Fastify serialises the answer through, so a
+record that gains a field its schema does not declare loses that field on the wire,
+silently, in the answer and in the description alike
+([ADR-0040](./adr/0040-the-gateway-describes-its-own-http-api.md)).
 
 ## What the entry point actually does
 

@@ -155,6 +155,31 @@ Conventions the build depends on:
   would catch it, because the throwaway consumer installs Fastify and the import would
   resolve. A second module that genuinely needs one is a new allowlist entry, and it
   should arrive with the sentence saying why.
+- **Both servers describe themselves, and a route declares what it answers with.**
+  `createGatewayWithDefaults` registers `@fastify/swagger` and `@fastify/swagger-ui` on
+  each instance **before it constructs the first part**, because route discovery is an
+  `onRoute` hook and every part registers its routes inside its own constructor
+  ([ADR-0040](./docs/adr/0040-the-gateway-describes-its-own-http-api.md)). Move that
+  registration below a part and the document is empty, which is why construction order in
+  `src/default-gateway.ts` is load-bearing for a third reason, alongside the migration
+  registration order and the worker-before-Messenger cycle. So a route arrives with
+  `tags`, a `summary`, a `description` and a `response` schema per status it can answer,
+  or it arrives half-described: those sentences *are* the API documentation now, and
+  `example/AGENTS.md` holds a URL and no route table. An Operator's own route is described
+  only if it was `register`ed: one written straight onto the instance after the
+  constructor returns is served and absent from the document, and both spellings are
+  pinned in `src/default-gateway.test.ts`.
+- **A response schema is a serializer, and its drift is silent.** Fastify compiles one
+  with `fast-json-stringify`, which drops every field the schema does not declare with no
+  warning anywhere and answers 500 for a declared-required field the handler omits. A
+  field added to a record type and forgotten in its schema is therefore missing from the
+  wire *and* from the document, and no comparison of one HTTP response against another can
+  see it, because a uniformly stripped field is stripped on both sides. That is what the
+  round-trip assertions in `src/default-gateway.test.ts` are for: each record type is
+  produced through its part's own method, read back over HTTP, and the whole body compared
+  against a literal the type checker holds to the record type. Same rule as the two
+  migration hand-edits: a silent failure gets something that scans for it rather than a
+  comment.
 - **Nothing in `src/container/` knows about an Agent Implementation.** That
   directory is the Agent Container, the Mount Table and the process handling —
   what `docker run` takes and what to do with it — and it is exported from the
