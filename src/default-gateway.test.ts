@@ -215,6 +215,15 @@ const roundTripping: SignalHandler<{ readonly text: string }> = {
  */
 const inFlightAtShutdown = "are you still there?";
 
+/**
+ * What the post phase commits to on the way out, and the reason Decisions is keyed ahead of
+ * the Signal Worker.
+ *
+ * A Decision reached by a failing Run is still a Decision, and the phase that reaches it runs
+ * inside the drain (ADR-0038, ADR-0043).
+ */
+const decidedOnTheWayOut = "the March rollout is off, decided while the Gateway was stopping";
+
 let database: TestDatabase;
 let gateway: Gateway<DefaultComponents & { notes: Notebook }>;
 let components: DefaultComponents & { notes: Notebook };
@@ -319,13 +328,24 @@ after(async () => {
 
 /**
  * The reference deployment's Handler, shortened to what this file is about: one Prompt per
- * Message, a note in the Operator's own Component, and a failure notice sent from the post
- * phase.
+ * Message, a note in the Operator's own Component, a failure notice sent from the post phase,
+ * and the Decision that failure was reached about published from the same phase.
  *
  * A factory taking every Component, because that is what `handlers` is handed. Everything
- * it reaches — the Db, the Messenger, the notebook — is constructed *after* the Signal
- * Worker that will dispatch to it, which is the cycle `createGatewayWithDefaults` exists to
- * break.
+ * it reaches (the Db, the Messenger, Decisions, the notebook) is constructed *after* the
+ * Signal Worker that will dispatch to it, which is the cycle `createGatewayWithDefaults`
+ * exists to break.
+ *
+ * The publish is why Decisions is keyed **ahead of** the Signal Worker: a post phase runs after
+ * the Runs arising from a Signal have finished, which during shutdown is inside the drain, and
+ * a Decision reached by a failing Run should still be recorded (ADR-0038, ADR-0043).
+ *
+ * What makes it *work* today is narrower than that, and worth saying rather than letting a
+ * reader infer the stronger claim: the insert goes through the Db's handle, and the Db is keyed
+ * first and therefore stopped last. Decisions' own `stop` does nothing, so moving its key
+ * behind the worker's would leave this line passing and only the pinned order in `theEight`
+ * would report it. The position is the HTTP Messenger's anticipatory one, held for the day
+ * either part's `stop` starts releasing something.
  */
 function answering(all: DefaultComponents & { notes: Notebook }): SignalHandler<MessageRecord> {
   return {
@@ -341,6 +361,20 @@ function answering(all: DefaultComponents & { notes: Notebook }): SignalHandler<
             all.messenger.send(tx, signal.payload.userId, "Something went wrong."),
           );
           return sent.direction;
+        }),
+      );
+      duringTheDrain.push(
+        await reaching("Decisions published a Decision", async () => {
+          // In a transaction of the Handler's own, which is the shape the trusted method
+          // exists for (ADR-0023), and read straight back through the other one, which is the
+          // fact this line carries: the row committed while the Gateway was closing, and the
+          // artifact that came back is the artifact the log holds. No number in the line, so
+          // that a Decision published anywhere else in this file does not rewrite a shutdown
+          // assertion.
+          const published = await all.db.tx((tx) => all.decisions.publish(tx, decidedOnTheWayOut));
+          const [found] = await all.decisions.history({ after: published.seq - 1 });
+          if (found === undefined) return "committed to nothing";
+          return found.jws === published.jws ? "the same artifact" : "another artifact";
         }),
       );
     },
@@ -718,10 +752,10 @@ describe("a whole deployment from one call", () => {
     // field would be worst: the artifact **is** the Decision, so a `jws` the schema forgot to
     // declare is a log of Decisions nobody can verify, answered with a 200 (ADR-0040).
     //
-    // The independent side of this comparison is not an in-process method — Decisions exposes
-    // none yet — but something better: the payload inside the artifact, which this part
-    // serialized itself and which no response schema has been anywhere near. So a field
-    // stripped on the wire disagrees with the bytes that were signed.
+    // The independent side of this comparison is not the part's own `history`, which would be
+    // one of ours agreeing with another of ours, but something better: the payload inside the
+    // artifact, which this part serialized itself and which no response schema has been
+    // anywhere near. So a field stripped on the wire disagrees with the bytes that were signed.
     const published = await postJson(`${agentUrl}/decisions`, {
       statement: "we will keep the Gateway trusted and say so out loud",
     });
@@ -899,12 +933,18 @@ describe("a whole deployment from one call", () => {
     // its Signal stays `pending`, and the next boot picks it up. The Operator's own
     // Component is the one line that says stopped, because `extend` appends and appended
     // Components stop first.
+    //
+    // The last line is what a Decision reached by a failing Run costs and buys: a post phase
+    // that commits to something on the way out gets a row and an artifact, because the insert
+    // goes through the Db and the Db stops last (ADR-0043). Which part of the order that
+    // depends on is on `answering` above, and it is the Db's key rather than Decisions' own.
     assert.deepEqual(duringTheDrain, [
       "the User Manager read the Db: 1 User",
       "the Agent server answered: 200",
       "the Public server took a submission: 201",
       "the Operator's own Component: stopped",
       "the HTTP Messenger sent a Message: outbound",
+      "Decisions published a Decision: the same artifact",
     ]);
 
     // And afterwards, nothing. Both sockets are closed and the pool is ended, which is the

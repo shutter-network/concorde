@@ -12,6 +12,13 @@
  * **before** the Signal Worker so that it is stopped after the drain, which is when a Signal
  * Handler's post phase may still publish (ADR-0037, ADR-0038).
  *
+ * What it answers with is worth holding, and it is two methods: `publish`, which commits to a
+ * Statement from inside the caller's own transaction, and `history`, which reads the whole log.
+ * Those are what trusted code has that no request does: a write that commits with the
+ * Operator's own record of why (ADR-0023), and a read a Signal Handler can build a Prompt from
+ * with no Token and no route. Neither takes a User id, this log having no owner, and neither
+ * takes an artifact: the signature is produced by the write path and is not an argument.
+ *
  * **Construct it after Signatures**, which it holds: a Decision that was not signed is not a
  * Decision, so there is no degraded mode in which this part writes rows without artifacts. It
  * imposes **no** construction order on the User Manager, unlike the HTTP Messenger: there is no

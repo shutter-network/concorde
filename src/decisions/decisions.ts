@@ -43,8 +43,8 @@
 import { and, asc, desc, getTableName, gt, lt, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { Component } from "../components.ts";
-import type { Db, Handle, Transaction } from "../db/index.ts";
-import type { CursorWindow } from "../route-conventions.ts";
+import type { Db, Handle } from "../db/index.ts";
+import { type CursorWindow, limitSchema } from "../route-conventions.ts";
 import type { Signatures } from "../signatures/index.ts";
 import type { Users } from "../users/users.ts";
 import { decisionsMigrations } from "./migrations.ts";
@@ -157,13 +157,84 @@ export type DecisionsOptions = {
 };
 
 /**
- * What the constructor answers with today: the two methods every Component has, and nothing
- * else.
+ * What the constructor answers with: the two things trusted code needs and no request can
+ * express.
  *
- * Everything this part can do is a route it registered itself, and no route plugin is exported
- * (ADR-0034). The reads and the write below are reached over HTTP.
+ * Every other capability this part has is a route it registered itself, and no route plugin is
+ * exported (ADR-0034), so what is on this object is what a Signal Handler and an Operator's
+ * entry point, both of them trusted code (ADR-0009, ADR-0020), cannot reach over HTTP: a
+ * publish that joins a transaction of their own, and a read of the whole log that needs neither
+ * a Token nor a route.
+ *
+ * The pair is what makes a Handler able to commit to something on the record and build the next
+ * Prompt from what has already been committed to, which is otherwise something only the agent
+ * can do and only during a Run.
+ *
+ * **No method writes a Decision without signing it**, and neither takes a User id. There is no
+ * parameter for the artifact anywhere, on the type or on the route: the signature is produced
+ * by the write path from a number this part drew and a timestamp it generated, so no caller's
+ * own bytes can reach the `jws` column (ADR-0042, ADR-0043). And there is no parameter naming a
+ * User because the log has no owner: a Decision is addressed to nobody, so there is nothing for
+ * either method to be scoped by.
  */
 export type Decisions = Component & {
+  /**
+   * Publishes a Decision from inside the caller's transaction, and answers with the record.
+   *
+   * Takes the caller's transaction rather than finding one (ADR-0023), so that committing to
+   * something and recording in the Operator's own tables why cannot come apart: a rollback
+   * loses both. That is the whole point of the split, and the failure it exists to prevent is
+   * a Decision published about something that was never recorded. Ambient enlistment is not
+   * available: a transaction started on one handle takes its own connection from the pool, so a
+   * second handle's writes would survive its rollback with nothing reported.
+   *
+   * The schema parameter is widened rather than named, because the transaction carries the
+   * schema of the handle it was started on and that handle belongs to the caller.
+   *
+   * The Statement is the only other argument. The number, the timestamp and the artifact are
+   * the write path's, produced in that order because the signature binds the first two.
+   *
+   * It answers with the record because a read cannot see the caller's own uncommitted write,
+   * which is the same reason the HTTP Messenger's `send` does. So the artifact is in hand
+   * before the transaction commits and there is no read-back to attempt.
+   *
+   * A publish that rolls back **burns its number**, since the sequence is not transactional.
+   * That is expected and meaningless: gaplessness would prove nothing anyway, the Operator
+   * owning the database (ADR-0043).
+   */
+  publish<TSchema extends Record<string, unknown>>(
+    tx: Handle<TSchema>,
+    statement: string,
+  ): Promise<DecisionRecord>;
+
+  /**
+   * The Decision log, ascending by `seq`, so that a Handler can build a Prompt from everything
+   * already committed to rather than from the Signal alone.
+   *
+   * Nothing scopes it, because there is no slice of this log to ask for: it is global, and
+   * every reader sees the same sequence (ADR-0043). What bounds an answer is the window below
+   * and nothing else, so a Handler wanting everything asks with `after: 0` and a `limit` past
+   * the length of the log rather than by omitting an argument.
+   *
+   * A read, so it takes no transaction and therefore **cannot see the caller's own uncommitted
+   * write**. `publish` returns the record for exactly that reason.
+   *
+   * It answers from the same query both routes answer from, with the same cursor options: no
+   * cursor is the newest `limit`, `before` the newest `limit` strictly below it, `after`
+   * everything above it, and every one of them ascending (ADR-0035). The routes refuse both
+   * cursors at once as the client bug it is there, and nothing refuses it here: what comes back
+   * is the stretch between them, newest end first if it does not fit. Recorded rather than
+   * guarded, and not a spelling to reach for.
+   *
+   * `limit` defaults to the number the routes default to and is **not** capped here: the cap on
+   * a route bounds a response body a stranger or the agent reads, which is not the case trusted
+   * code asking for a thousand Decisions is in.
+   *
+   * The options are the shared window with every field made optional, and not a shape of this
+   * method's own: one list of cursor names in this part, not two that could drift.
+   */
+  history(options?: Partial<DecisionWindow>): Promise<DecisionRecord[]>;
+
   /**
    * **Does nothing.** Written out here so that it is read rather than discovered.
    *
@@ -192,14 +263,22 @@ export function createDecisions(options: DecisionsOptions): Decisions {
   // them from becoming a parallel set that can disagree about what `before` means (ADR-0035).
   const readHistory = (window: DecisionWindow) => selectDecisions(handle, window);
 
+  // And one write, likewise named once: this part signs and stores here and nowhere else.
+  // Widened over the handle it is given, so the agent's route reaches it inside a transaction
+  // this part opens (a request that publishes has nothing else to keep the insert company
+  // with), while a Handler reaches the same statements with a transaction of its own, which is
+  // what makes the Decision and the Operator's record of why commit as one (ADR-0023).
+  const publishSigned = <TSchema extends Record<string, unknown>>(
+    on: Handle<TSchema>,
+    statement: string,
+  ) => publishDecision(on, options.signatures, statement);
+
   const agentRoutes = agentDecisionRoutes({
     history: readHistory,
     // One transaction, with the whole of the write path inside it. On the part's own Db rather
-    // than a handle, because a request that publishes has nothing else to keep the insert
-    // company with — trusted code with something to keep it company is what takes a
-    // transaction first (ADR-0023).
-    publish: (statement) =>
-      options.db.tx((tx) => publishDecision(tx, options.signatures, statement)),
+    // than on a handle a caller brought, because a request that publishes has nothing else to
+    // keep the insert company with; the method below is the surface that does.
+    publish: (statement) => options.db.tx((tx) => publishSigned(tx, statement)),
   });
   const publicRoutes = publicDecisionRoutes(
     { history: readHistory },
@@ -219,6 +298,14 @@ export function createDecisions(options: DecisionsOptions): Decisions {
   options.publicServer.fastify.register(publicRoutes, { prefix: decisionsPrefix });
 
   return {
+    // The one write above, on the **caller's** handle rather than the part's own, which is the
+    // whole of what taking the transaction first means (ADR-0023).
+    publish: publishSigned,
+    // The one read above, reached with arguments instead of a query string: the routes' own
+    // default `limit` and none of their cap, since a cap bounds a response body and there is
+    // no response here.
+    history: (asked) => readHistory({ ...asked, limit: asked?.limit ?? limitSchema.default }),
+
     // The two no-ops, whose reason is on the type above: membership in the Gateway's record,
     // and the position that comes with it (ADR-0037).
     start: async () => {},
@@ -234,13 +321,15 @@ export function createDecisions(options: DecisionsOptions): Decisions {
  * version is that the JWS binds `seq` and `createdAt`, so both have to exist before the
  * signature does, and the signed values have to be the values that get stored.
  *
- * One transaction and nothing else in it, opened by the part rather than taken from a caller: a
- * request that publishes has one thing to record. The parameter is the Db's own `Transaction`
- * and is **not** widened over a schema, because there is nothing to widen it for — every caller
- * of this is a route (ADR-0023).
+ * The query-builder form and a **widened** schema parameter, so it works on a transaction
+ * carrying any part's schema (ADR-0023): the route's is one this part opened over its own
+ * tables, and a Signal Handler's is its own, holding whatever the Operator was recording
+ * alongside. Two statements and no savepoint, unlike the HTTP Messenger's insert: nothing here
+ * has a constraint it expects to lose a race against, so there is no violation to keep from
+ * aborting the caller's transaction.
  */
-async function publishDecision(
-  tx: Transaction,
+async function publishDecision<TSchema extends Record<string, unknown>>(
+  tx: Handle<TSchema>,
   signatures: Signatures,
   statement: string,
 ): Promise<DecisionRecord> {
@@ -294,7 +383,9 @@ async function publishDecision(
  * one as; the column itself is an `integer`, so the cast narrows nothing that was not already
  * narrow.
  */
-async function drawSeq(tx: Transaction): Promise<number> {
+async function drawSeq<TSchema extends Record<string, unknown>>(
+  tx: Handle<TSchema>,
+): Promise<number> {
   const table = `${decisionsSchema.schemaName}.${getTableName(decisions)}`;
   const [drawn] = await tx
     .select({
