@@ -102,13 +102,27 @@ instinct applied to a secret. A `KeyObject` also holds its material in the OpenS
 than as a JS value, so it does not stringify into a log line by accident.
 
 `signingAlg` is **optional and derived from the key**, because for every key type but one the
-key determines it: `OKP`/`Ed25519` and `OKP`/`Ed448` give `EdDSA`, and `EC` with `P-256`,
-`P-384` or `secp256k1` gives `ES256`, `ES384` or `ES256K`. **RSA is the exception** — `RS256`,
-`RS384`, `RS512`, `PS256`, `PS384` and `PS512` are all valid for the same key, and
-`asymmetricKeyDetails` carries only `modulusLength` and `publicExponent`. So an RSA key throws
-at construction with a message naming the choice. There is no standard *derivation*: JWK has an
-optional `alg` member ([RFC 7517](https://www.rfc-editor.org/rfc/rfc7517) §4.4) and Node leaves
-it absent for every key type.
+key determines it: `OKP`/`Ed25519` gives `EdDSA`, and `EC` with `P-256`, `P-384` or `P-521`
+gives `ES256`, `ES384` or `ES512`. **RSA is the exception**: `RS256`, `RS384`, `RS512`,
+`PS256`, `PS384` and `PS512` are all valid for the same key, and `asymmetricKeyDetails` carries
+only `modulusLength` and `publicExponent`. So an RSA key throws at construction with a message
+naming the choice. There is no standard *derivation*: JWK has an optional `alg` member
+([RFC 7517](https://www.rfc-editor.org/rfc/rfc7517) §4.4) and Node leaves it absent for every
+key type.
+
+**Amended when the table was implemented, in both directions.** The first draft of the list
+above read `OKP`/`Ed25519` and `OKP`/`Ed448` for `EdDSA`, and `P-256`, `P-384` or `secp256k1`
+for `ES256`, `ES384` or `ES256K`. Two of those five rows cannot produce an artifact, and it is
+**`jose`'s algorithm table** rather than the platform that stops them: its `EdDSA` entry names
+`Ed25519` and nothing else, so an `Ed448` key is refused with `Invalid key type` however the
+header reads, and `ES256K` is not in that table at all. Node's own WebCrypto would in fact sign
+with an `Ed448` key today, experimentally; `jose` never asks it to, and asking it ourselves is
+the hand-rolling this ADR gave up. Deriving those two would have named an algorithm in a header
+nobody could obtain, since the very first signing throws: a Gateway that starts fine and signs
+nothing. So the two are refused at construction with that reason instead, and `P-521`/`ES512`,
+which the draft omitted and which signs, takes their place. **A row that cannot produce an
+artifact is not a derivation.** The cost is that the table now encodes something about the
+library as well as about JOSE: the day `jose` grows either row, this is what has to be told.
 
 One detail is still a bug if written the other way, and the other two moved to `jose`:
 
@@ -120,10 +134,19 @@ One detail is still a bug if written the other way, and the other two moved to `
   **`jose`'s**, for the reasons in the section above. Do not reintroduce either; a second
   mapping that disagrees with the library's is worse than none.
 
-**Two costs, recorded.** A `KeyObject` cannot represent a **KMS or HSM key**, which is
+**Three costs, recorded.** A `KeyObject` cannot represent a **KMS or HSM key**, which is
 asynchronous and has no exportable private half; a signer-function seam would have supported it
-and is given up. And an RSA key with no `signingAlg` **still throws at construction** — that
+and is given up. An RSA key with no `signingAlg` **still throws at construction**, and that
 refusal is ours, not `jose`'s, because the ambiguity is in the key rather than in any algorithm.
+And a `signingAlg` that was **given** and that the key cannot perform is refused at the **first
+signing** rather than at construction: that check is the library's, the library's is
+asynchronous, and `createSignatures` is not. Making it a construction refusal would mean either
+a second key/alg check of ours, which the bullets above forbid, or a self-test in `start`, which
+Signatures does not have and whose `start` does nothing on purpose. The exposure is one wrong
+option surviving until the first Run, and the failure is loud when it arrives. It also lets an
+`Ed448` or `secp256k1` key straight back past the construction refusal the amendment above just
+gave it, by naming the algorithm the table declines to derive; the refusal's own wording is what
+stands in front of that, since it says outright that those two are not rescued by passing one.
 
 ## `typ` is the agent's, and nothing is reserved
 

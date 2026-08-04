@@ -941,6 +941,36 @@ describe("the defaults on their own", () => {
     assert.equal(typeof db.migrate, "function");
   });
 
+  it("forwards signingAlg, which is the only way an RSA key reaches this assembly at all", async () => {
+    // Six algorithms are valid for one RSA key and nothing in the key says which was meant,
+    // so Signatures refuses one that arrives without an answer (ADR-0042). What this option
+    // is for is that the refusal be *answerable* here: without it an Operator holding an RSA
+    // key would have to leave the assembly for `createGateway` to say PS256, and the
+    // assembly is how nearly every deployment builds a Gateway.
+    const rsa = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey;
+    const withRsa = {
+      databaseUrl: "postgres://nobody@example.invalid/none",
+      runtime,
+      signingKey: rsa,
+      tokenTtl: hour,
+      agentListen: { port: 0 },
+      publicListen: { port: 0 },
+      handlers: () => ({}),
+    } as const;
+
+    // The refusal is this constructor's own, in the sense that it happens as it runs: nothing
+    // has listened, migrated or connected by the time an Operator reads it.
+    assert.throws(() => createGatewayWithDefaults(withRsa), /signingAlg/);
+
+    const answered = createGatewayWithDefaults({ ...withRsa, signingAlg: "PS256" });
+    const jws = await answered.components.signatures.sign("saf-decision+jws", {
+      statement: "we will ship on Friday",
+    });
+    const [header] = jws.split(".");
+
+    assert.deepEqual(decoded(String(header)), { alg: "PS256", typ: "saf-decision+jws" });
+  });
+
   it("refuses an extend that returns one of the eight", () => {
     const substituting = createGatewayWithDefaults({
       databaseUrl: "postgres://nobody@example.invalid/none",

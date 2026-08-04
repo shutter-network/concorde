@@ -89,9 +89,21 @@ export type SignaturesOptions = {
    *
    * Optional, and derived from the key's **JWK export** when it is left out, because the
    * export speaks JOSE's own curve names where `asymmetricKeyDetails` speaks OpenSSL's
-   * (ADR-0042). Given, it is passed to `jose` unexamined: there is no key/alg compatibility
-   * check of ours, because there is one of the library's and a second would be a second
-   * opinion.
+   * (ADR-0042). The table is `algorithmForCurve` at the foot of this file, and it is short:
+   * `EdDSA` for an Ed25519 key, and `ES256`, `ES384` or `ES512` for an EC key on P-256, P-384
+   * or P-521.
+   *
+   * **Every other key is refused at construction**, in a sentence naming what to pass rather
+   * than in a crypto error code. Three kinds reach that: an RSA key, for which six algorithms
+   * are valid and nothing in the key says which was meant; an `rsa-pss` key, which cannot be
+   * exported as a JWK at all and which `exportedJwk` refuses before this option is even read;
+   * and any other curve, Ed448 and secp256k1 included.
+   *
+   * Given, it is passed to `jose` unexamined: there is no key/alg compatibility check of
+   * ours, because there is one of the library's and a second would be a second opinion.
+   * That is also the one refusal that is **not** at construction, because `jose`'s check is
+   * asynchronous and construction is not: an algorithm this key cannot perform is refused at
+   * the first signing, in the library's own words.
    */
   readonly signingAlg?: string;
   /**
@@ -201,7 +213,7 @@ export function createSignatures(options: SignaturesOptions): Signatures {
   // route; the second is the response schema, which is a positive list of public members
   // (ADR-0042).
   const publicKey = createPublicKey(options.signingKey);
-  const publicJwk = publicKey.export({ format: "jwk" });
+  const publicJwk = exportedJwk(publicKey);
   const alg = options.signingAlg ?? algorithmFor(publicJwk);
 
   // A JWK **Set** even with one key, because that is RFC 7517's own container and it means a
@@ -289,28 +301,102 @@ export function createSignatures(options: SignaturesOptions): Signatures {
 }
 
 /**
+ * The public JWK, or a refusal that reads like a sentence instead of a crypto error code.
+ *
+ * The export is what every other thing here is built on. The key set *is* it and the algorithm
+ * is derived from it, so a key that cannot be exported is a key this part cannot be
+ * constructed around at all, whatever `signingAlg` says.
+ *
+ * **`rsa-pss` is the key that reaches this**, and it reaches it from inside Node rather than
+ * from any check of ours: the export throws `ERR_CRYPTO_JWK_UNSUPPORTED_KEY_TYPE`, whose
+ * message is `Unsupported JWK Key Type.` and which names neither the key nor anything to do
+ * about it. Caught rather than predicted, because "which key types can Node export" is Node's
+ * list and a copy of it here would be a copy going stale.
+ */
+function exportedJwk(publicKey: KeyObject): JsonWebKey {
+  try {
+    return publicKey.export({ format: "jwk" });
+  } catch (error) {
+    throw new Error(
+      `the signing key is ${publicKey.asymmetricKeyType} and cannot be exported as a JWK, so this Shared Agent would have no public key to serve and no algorithm to derive: ${reason(error)}. An rsa-pss key is what reaches this: its PSS parameters are part of its algorithm identifier and a JWK has nowhere to put them, and no re-encoding of the same key gets round it. Supply a plain RSA key and pass signingAlg "PS256": PSS is the padding, not the key.`,
+      { cause: error },
+    );
+  }
+}
+
+/**
+ * What a curve means, which is the whole of the derivation for every key that has one.
+ *
+ * Keyed on `crv` alone and not on the `kty`/`crv` pair, because JOSE's curve names are unique
+ * across key types (`OKP` has the Edwards and Montgomery curves, `EC` the NIST ones), so the
+ * pair would be two lookups where the curve is already the answer. `kty` is read for the one
+ * key type that has no curve at all, which is RSA, and that branch is a refusal.
+ *
+ * **Ed448 and secp256k1 are absent on purpose**, and their absence is the one place this table
+ * is narrower than JOSE. Both determine an algorithm perfectly well, `EdDSA` and `ES256K`, and
+ * **`jose`'s own algorithm table can perform neither**: its `EdDSA` entry names `Ed25519` and
+ * nothing else, so an Ed448 key is refused with `Invalid key type` however the header reads,
+ * and `ES256K` is not in that table at all. It is the library and not the platform that stops
+ * them, Node's WebCrypto having grown an experimental Ed448 that `jose` never asks it for.
+ * Deriving them would start a Gateway whose very first signing throws, having named an
+ * algorithm in a header nobody could ever obtain, so a row that cannot produce an artifact is
+ * not a derivation and these two are refused at construction with that reason instead. The
+ * cost is that this table now knows something about the library as well as about JOSE, and it
+ * is recorded rather than guarded against: the day `jose` grows either row, this is what has
+ * to be told.
+ */
+const algorithmForCurve: Readonly<Record<string, string>> = {
+  Ed25519: "EdDSA",
+  "P-256": "ES256",
+  "P-384": "ES384",
+  "P-521": "ES512",
+};
+
+/**
  * The `alg` the header declares, read off the key's own JWK export.
- *
- * **One entry, and deliberately not the table.** Every key type but RSA determines its `alg`,
- * and RSA is ambiguous between six of them, so the derivation across the rest and the refusal
- * an ambiguous key earns are a piece of work with a shape of their own (ADR-0042). What is
- * here is Ed25519, which is the identity ADR-0041 describes.
- *
- * Any other key gets a **string that is deliberately not an algorithm**: its own curve or key
- * type, which is not a JOSE `alg`, so `jose` refuses the first signing with its own message
- * rather than this function inventing a worse one. `jose`'s header type requires the parameter,
- * so there is a value here whatever happens, and the one value that must never be it is `none`
- * — RFC 7518's own name for an **unsecured** JWS, and the last string that should reach a
- * header of ours.
  *
  * From the **JWK export** and not from `asymmetricKeyDetails`, which is the one detail that is
  * still a bug written the other way round: the latter gives OpenSSL's curve names,
  * `prime256v1` and `secp384r1`, where the JWK gives JOSE's own, `P-256` and `P-384`. The JWK
  * is already the vocabulary the header needs and the vocabulary `jose` is handed.
+ *
+ * There is no standard derivation to lean on. JWK has an optional `alg` member (RFC 7517
+ * §4.4) and Node leaves it absent for every key type, so this table is ours (ADR-0042).
+ *
+ * **An RSA key is refused rather than guessed at.** `RS256`, `RS384`, `RS512`, `PS256`,
+ * `PS384` and `PS512` are all valid for one RSA key and nothing in the key distinguishes
+ * them, so the choice is the Operator's and the message names it. Everything else that is not
+ * in the table above is refused too, which is what makes a wrong key a sentence at startup
+ * rather than an artifact nobody can verify weeks later.
+ *
+ * What is **not** here, and must not arrive, is an `alg` → primitive mapping or a key/alg
+ * compatibility check: both are `jose`'s, and a second one that disagreed with the library's
+ * would be worse than none (ADR-0042). Getting this table wrong is safe in the way that
+ * matters: the library refuses to sign rather than emitting something unverifiable.
  */
-function algorithmFor(publicKey: JsonWebKey): string {
-  if (publicKey.crv === "Ed25519") return "EdDSA";
-  // `kty` is on every JWK Node exports, so the last branch is unreachable and is a poison
-  // value rather than a fallback: it names the situation instead of naming an algorithm.
-  return publicKey.crv ?? publicKey.kty ?? "no algorithm was derived from this key";
+function algorithmFor(publicJwk: JsonWebKey): string {
+  if (publicJwk.kty === "RSA") {
+    throw new Error(
+      'the signing key is RSA, which does not settle its own algorithm: RS256, RS384, RS512, PS256, PS384 and PS512 are all valid for it, and neither the key nor its JWK export says which was meant. Pass signingAlg: "PS256" unless a verifier you have to satisfy requires PKCS#1 v1.5, in which case "RS256".',
+    );
+  }
+
+  const derived = publicJwk.crv === undefined ? undefined : algorithmForCurve[publicJwk.crv];
+  if (derived === undefined) {
+    throw new Error(
+      `no algorithm can be derived from the signing key, whose JWK export is ${described(publicJwk)}. What is derived is EdDSA for an OKP key on Ed25519, and ES256, ES384 or ES512 for an EC key on P-256, P-384 or P-521. Pass signingAlg if this key signs with something else, though not for an Ed448 or a secp256k1 key: JOSE calls their algorithms EdDSA and ES256K, and jose can perform neither, so naming one here buys a Gateway that starts and cannot sign.`,
+    );
+  }
+  return derived;
+}
+
+/** A key as the two members a refusal can usefully name it by. */
+function described(publicJwk: JsonWebKey): string {
+  const kty = `kty ${JSON.stringify(publicJwk.kty ?? null)}`;
+  return publicJwk.crv === undefined ? kty : `${kty}, crv ${JSON.stringify(publicJwk.crv)}`;
+}
+
+/** What a caught throw contributes to a message of ours: its own sentence and nothing else. */
+function reason(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

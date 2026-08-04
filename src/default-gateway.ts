@@ -234,6 +234,22 @@ export type DefaultGatewayOptions<E extends GatewayExtension> = {
    */
   readonly signingKey: KeyObject;
   /**
+   * The JOSE algorithm to sign under, when the key does not settle it by itself.
+   *
+   * Forwarded to Signatures untouched, and derived from the key's JWK export when it is left
+   * out: `EdDSA` for an Ed25519 key, and `ES256`, `ES384` or `ES512` for an EC key on P-256,
+   * P-384 or P-521. Every other key is **refused as this constructor runs**, in a sentence
+   * naming what to pass. An RSA key is the one an Operator is most likely to be holding: six
+   * algorithms are valid for it and nothing in the key says which was meant
+   * ([ADR-0042](../docs/adr/0042-a-signature-is-a-compact-jws.md)).
+   *
+   * Here rather than only on `createSignatures` because otherwise an RSA key would be a key
+   * this assembly cannot be given at all, and the assembly is how nearly every deployment
+   * builds a Gateway. It defaults to nothing for the reason `signingKey` does: what the
+   * right answer is depends on a key this framework has never seen.
+   */
+  readonly signingAlg?: string;
+  /**
    * How long an issued Token lives, in milliseconds. Defaults to thirty days.
    *
    * `createUsers` requires this and says why: a long lifetime is fewer
@@ -425,6 +441,7 @@ export function createGatewayWithDefaults<E extends GatewayExtension = Record<st
   // derives nothing, defaults nothing and generates nothing (ADR-0041).
   const signatures = createSignatures({
     signingKey: options.signingKey,
+    ...(options.signingAlg === undefined ? {} : { signingAlg: options.signingAlg }),
     agentServer,
     publicServer,
     users,
