@@ -263,6 +263,24 @@ export function createDecisions(options: DecisionsOptions): Decisions {
   // them from becoming a parallel set that can disagree about what `before` means (ADR-0035).
   const readHistory = (window: DecisionWindow) => selectDecisions(handle, window);
 
+  // And citing one by number is **that same read**, asked with the cursor just below the number
+  // cited, rather than a query of its own against the same row: two readings of one table are two
+  // chances to answer differently, and the whole of this part is organised so that there is one
+  // (ADR-0043).
+  //
+  // What comes back is the first Decision at or *after* the number, which is that Decision when
+  // it exists and its successor when the number was burned by a rolled-back publish. So the row
+  // is the citation only when it is numbered what was asked for, and a burned number is nothing
+  // rather than the Decision that came after it.
+  //
+  // Citing the first Decision asks with `after: 0`, which is the cursor nothing is numbered and
+  // means "from the beginning" rather than "no cursor": a read that took it for an absence would
+  // answer the *newest* Decision when asked for the first one (ADR-0035).
+  const readNumbered = async (seq: number) => {
+    const [atOrAfter] = await readHistory({ after: seq - 1, limit: 1 });
+    return atOrAfter?.seq === seq ? atOrAfter : undefined;
+  };
+
   // And one write, likewise named once: this part signs and stores here and nowhere else.
   // Widened over the handle it is given, so the agent's route reaches it inside a transaction
   // this part opens (a request that publishes has nothing else to keep the insert company
@@ -275,13 +293,14 @@ export function createDecisions(options: DecisionsOptions): Decisions {
 
   const agentRoutes = agentDecisionRoutes({
     history: readHistory,
+    numbered: readNumbered,
     // One transaction, with the whole of the write path inside it. On the part's own Db rather
     // than on a handle a caller brought, because a request that publishes has nothing else to
     // keep the insert company with; the method below is the surface that does.
     publish: (statement) => options.db.tx((tx) => publishSigned(tx, statement)),
   });
   const publicRoutes = publicDecisionRoutes(
-    { history: readHistory },
+    { history: readHistory, numbered: readNumbered },
     // The Manager's own hook, passed through and not wrapped: this part authenticates nobody,
     // which is what `src/users/users.ts` promised it would do (ADR-0030).
     options.users.requireUser,

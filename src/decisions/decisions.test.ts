@@ -211,6 +211,73 @@ describe("the agent reading the log", () => {
   });
 });
 
+describe("the agent citing a Decision by number", () => {
+  it("answers exactly the one cited, and it is what the cursored read answers", async () => {
+    const published = await publish("the one that gets quoted back by its number");
+
+    // The record whole, so a field this route's response schema forgot to declare differs from
+    // the record the publish answered with (ADR-0040).
+    const cited = await agentJson<DecisionRecord>(`${prefix}/${published.seq}`);
+    assert.deepEqual(cited, published);
+
+    // And the same record the long way round, which is the spelling this route exists to
+    // replace: `?after=<n-1>&limit=1`. They agree because they are one read (ADR-0043).
+    assert.deepEqual(await read(`?after=${published.seq - 1}&limit=1`), [cited]);
+  });
+
+  it("cites the first Decision in the log, where the cursor underneath it is 0", async () => {
+    // The off-by-one worth a test of its own: a citation of Decision 1 asks the read for
+    // everything after 0, and 0 is a cursor meaning "from the beginning" rather than no cursor
+    // at all. A read that took it for an absence would answer the *newest* Decision here.
+    const [first] = await read("?after=0&limit=1");
+    assert.ok(first !== undefined, "this file has published something by now");
+
+    assert.deepEqual(await agentJson<DecisionRecord>(`${prefix}/${first.seq}`), first);
+  });
+
+  it("answers a number nobody has with a 404 saying which number", async () => {
+    // Not an empty envelope and not a 200 with nothing in it: a citation that resolves to
+    // nothing is a fact about the citation. It is also not evidence of a withheld Decision.
+    const beyond = (await publish("the newest thing in the log")).seq + 1000;
+    const missing = await agentServer.fastify.inject({ url: `${prefix}/${beyond}` });
+
+    assert.equal(missing.statusCode, 404, missing.body);
+    assert.deepEqual(missing.json(), {
+      statusCode: 404,
+      error: "Not Found",
+      message: `no Decision ${beyond} exists`,
+    });
+  });
+
+  it("answers a number that is not one with a 400, which the caller earned", async () => {
+    // A caller who typed a word gets the 400 rather than the 500 an uncastable value would be
+    // if it reached PostgreSQL, which is why the path is validated before the read runs. `0` and
+    // `-1` are refused for a different reason and by the same schema: nothing is numbered
+    // either, and 0 is a cursor rather than a Decision.
+    //
+    // The last two are the same 500 from the other end and the reason the schema has a
+    // `maximum`: a number too large for the column the log is numbered in is a number no
+    // Decision can have, and unbounded it reaches PostgreSQL and comes back carrying the text of
+    // the query.
+    for (const cited of ["seven", "1.5", "0", "-1", "%20", "2147483648", "9999999999"]) {
+      const refused = await agentServer.fastify.inject({ url: `${prefix}/${cited}` });
+      assert.equal(refused.statusCode, 400, `${cited}: ${refused.body}`);
+    }
+  });
+
+  it("refuses a window on a route that answers one record", async () => {
+    // A `?limit=1` answered with a 200 reads as though it had been honoured, so it is refused
+    // rather than stripped, exactly as on the routes that do take a window.
+    const published = await publish("the one somebody asked for a page of");
+    const windowed = await agentServer.fastify.inject({
+      url: `${prefix}/${published.seq}?limit=1`,
+    });
+
+    assert.equal(windowed.statusCode, 400, windowed.body);
+    assert.match(windowed.json<{ message: string }>().message, /"limit" is not a parameter/);
+  });
+});
+
 /** One `POST /decisions`, the way the agent publishes one. */
 async function publish(
   statement: string,

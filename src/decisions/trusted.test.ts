@@ -227,6 +227,25 @@ describe("a Handler publishing a Decision", () => {
     // gaplessness would prove nothing anyway, the Operator owning the database (ADR-0043).
     const next = await db.tx((tx) => decisions.publish(tx, "and the log carries on"));
     assert.ok(next.seq > attempted.seq, "a rolled-back publish burns its number");
+
+    // And a citation of the burned number is a **404 rather than the Decision that took the
+    // next one**, which is the one place a by-number read could quietly answer the wrong
+    // record. It is asserted here because this is the only way a gap can be made: every other
+    // file's log is a run of consecutive numbers, where a read that answered "the first
+    // Decision at or after this number" would be indistinguishable from a correct one.
+    const burned = await publicServer.fastify.inject({
+      url: `${prefix}/${attempted.seq}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(burned.statusCode, 404, burned.body);
+    assert.equal(
+      (await agentServer.fastify.inject({ url: `${prefix}/${attempted.seq}` })).statusCode,
+      404,
+    );
+    // While the number that was not burned answers with the Decision that holds it, so the 404
+    // above is about that number and not about the route.
+    const carried = await agentServer.fastify.inject({ url: `${prefix}/${next.seq}` });
+    assert.deepEqual(carried.json<DecisionRecord>(), next);
   });
 
   it("answers with the record, which is what a caller cannot read back", async () => {

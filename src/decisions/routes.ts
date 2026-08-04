@@ -11,16 +11,23 @@
  * | --- | --- |
  * | `POST /decisions` | 201, the published `DecisionRecord`; 400 |
  * | `GET /decisions?after=&before=&limit=` | `{ decisions: [...] }`, ascending by `seq`; 400 |
+ * | `GET /decisions/:seq` | one `DecisionRecord`; 400; 404 |
  *
  * | Public server | Answers |
  * | --- | --- |
  * | `GET /decisions?after=&before=&limit=` | the same read; 400; 401 |
+ * | `GET /decisions/:seq` | the same one record; 400; 401; 404 |
  *
  * **The two reads are one query and differ in nothing but the hook.** The log is global, so
  * there is no `?user=` on the agent's read and no Token-derived subject on the User's: what a
  * cursored read of this log asks is the window and nothing else. That is the whole difference
  * from the HTTP Messenger's pair, where the two surfaces differ in where the User comes from
  * ([ADR-0043](../../docs/adr/0043-decisions-are-one-global-log.md)).
+ *
+ * **And the four reads are one query**, not two: the by-number pair exists so that citing a
+ * Decision is a route rather than `?after=<n-1>&limit=1`, which works and reads badly, and it is
+ * that same read with the cursor worked out by the part rather than a second query against the
+ * same row. A citation and a page therefore cannot come to disagree about what a record is.
  *
  * **Publishing is the Agent server's alone.** There is no public route that writes a Decision
  * and no plan for one: a Decision is the Shared Agent's commitment, and a User with a Token is
@@ -54,6 +61,7 @@ import {
   cappedLimit,
   cursorCases,
   limitSchema,
+  notFound,
   refused,
   unknownParameter,
   unknownQueryRefusal,
@@ -62,14 +70,27 @@ import { authenticationFailed, bearerRequired } from "../users/routes.ts";
 import type { DecisionRecord, DecisionWindow } from "./decisions.ts";
 
 /**
- * The read **both** surfaces need of the part, and the reason it is a type of its own.
+ * The reads **both** surfaces need of the part, and the reason they are a type of their own.
  *
- * The agent's read and a User's are one implementation with nothing at all to distinguish them,
- * so two of these would be two chances to disagree about what `before` means — a thing no
+ * Named for the two of them rather than for the log read alone, which is what it held when there
+ * was one: a type named after one of the things it carries is the mistake ADR-0044 records under
+ * another name.
+ *
+ * The agent's reads and a User's are one implementation with nothing at all to distinguish them,
+ * so two of these would be two chances to disagree about what `before` means, which is a thing no
  * client could report and no test of one surface would catch (ADR-0035).
  */
-export type DecisionHistory = {
+export type DecisionReads = {
   history(window: DecisionWindow): Promise<DecisionRecord[]>;
+  /**
+   * One Decision by its number, or nothing, which is what the 404 is made of.
+   *
+   * A method beside `history` rather than a window the routes assemble, so that the arithmetic
+   * turning a number into a cursor lives once beside the query it is a cursor into and not twice
+   * beside the two routes that cite one. `undefined` and not a thrown error, because a number
+   * nobody has is an ordinary answer here: gaps are expected and mean nothing (ADR-0043).
+   */
+  numbered(seq: number): Promise<DecisionRecord | undefined>;
 };
 
 /**
@@ -82,7 +103,7 @@ export type DecisionHistory = {
  * one: a request that publishes has exactly one thing to record, so the part opens the
  * transaction the write path needs and a route holds nothing (ADR-0023).
  */
-export type DecisionOperations = DecisionHistory & {
+export type DecisionOperations = DecisionReads & {
   publish(statement: string): Promise<DecisionRecord>;
 };
 
@@ -194,6 +215,39 @@ const historySchema = {
 } as const;
 
 /**
+ * The number in the path of a citation: a positive integer, and validated before it is one.
+ *
+ * Not `idParams` from the conventions, which is a uuid pattern: what identifies a Decision is its
+ * position in the one log, and there is no second identifier anywhere in this part (ADR-0043).
+ * The convention it does follow is the reason that one exists. An identifier in a path is checked
+ * before it reaches PostgreSQL, so `GET /decisions/seven` is the 400 it earned rather than a 500
+ * out of a query that could not be run. Fastify's ajv coerces the digits, so the handler is given
+ * a number.
+ *
+ * `minimum: 1` because nothing is numbered 0: the log starts at 1, and 0 is a *cursor* meaning
+ * "from the beginning", which is a thing to ask a read for and not a Decision to cite.
+ *
+ * `maximum` is PostgreSQL's `integer`, which is what `seq` is, and it is here for the half of the
+ * sentence above that a `minimum` does not cover: a number too large for the column is a number
+ * no Decision can have, and without the bound it reaches the database and comes back as a 500
+ * carrying the text of the query. Written as the number rather than computed, because it is a
+ * property of the column type and moves only if the column does.
+ */
+const seqParams = {
+  type: "object",
+  properties: {
+    seq: {
+      type: "integer",
+      minimum: 1,
+      maximum: 2147483647,
+      description: "The Decision's number in the one global log, from 1.",
+    },
+  },
+  required: ["seq"],
+  additionalProperties: false,
+} as const;
+
+/**
  * `DecisionRecord` on the wire, and **the serializer every surface answers through** rather
  * than a description of one.
  *
@@ -203,8 +257,9 @@ const historySchema = {
  * (ADR-0040). That is why `default-gateway.test.ts` reads a log this part actually recorded and
  * compares the whole thing.
  *
- * One shape for all three routes, as there is one shape for every surface of this part: the 201
- * of a publish and the items of either read are the same object.
+ * One shape for all five routes, as there is one shape for every surface of this part: the 201 of
+ * a publish, the items of either read and the record either citation answers with are the same
+ * object.
  *
  * The property descriptions are on the three fields whose name is not the whole story. `seq` is
  * the cursor and does not say so; `jws` is the reason the part exists and would otherwise read
@@ -246,8 +301,42 @@ const decisionListSchema = {
   required: ["decisions"],
 } as const;
 
+/**
+ * What a citation is for, which is the whole reason this route exists beside the read.
+ *
+ * `?after=<n-1>&limit=1` answers the same record and reads badly, and a client that has to write
+ * it will get the off-by-one wrong once. Said on both surfaces because both cite: a User quoting
+ * a Decision to a third party and an agent quoting one to a User are the same request.
+ */
+const citingOne =
+  "Citing a Decision is a route rather than a cursor query: `GET /decisions/7` is the Decision numbered 7, which is what `?after=6&limit=1` says the long way round. It is the **same read** the log is paged with, asked for one record from the cursor just below the number, so a citation and a page can never answer with different records.";
+
+/**
+ * What a number nobody has means, which is less than a reader will assume.
+ *
+ * The 404 is the honest answer and the sentence after it is what keeps the answer from being
+ * over-read: a hole in the sequence is a rolled-back publish, and no absence anywhere on this
+ * surface is evidence of anything, the Operator owning the database (ADR-0043).
+ */
+const aNumberNobodyHas =
+  "A number nobody has is a **404**, and it is not evidence of a Decision withheld: a rolled-back publish burns a number, so gaps in `seq` are expected and mean nothing. Detecting a withheld Decision is not something this log can do and does not claim to.";
+
+/**
+ * What these two routes say about a query parameter, there being no window to ask for.
+ *
+ * The Signal Worker's single-record routes say the same thing for the same reason: a `?limit=1`
+ * answered with a 200 reads as though it had been honoured.
+ */
+const noWindowHere = `This route takes no query parameters at all: the number is the whole of the request, and the window belongs to the read beside it. ${unknownParameter}`;
+
+/** What a citation is refused for, and what it is answered with when nothing has that number. */
+const malformedNumber =
+  "The number in the path is not a positive integer this log could have reached, or a query parameter was written.";
+const noSuchNumber = "No Decision has that number.";
+
 /** What both reads answer with, and what a publish does, each written once. */
 const theWindow = "The window that matched, ascending by `seq`.";
+const theCitedDecision = "The Decision with that number, exactly as the log read answers with it.";
 const thePublishedDecision =
   "The Decision as it was published, including the number it was given and the artifact signed over it.";
 
@@ -291,11 +380,30 @@ export function agentDecisionRoutes(log: DecisionOperations): FastifyPluginAsync
       },
       async (request, reply) => answerHistory(reply, log, request.query),
     );
+
+    fastify.get<{ Params: { seq: number } }>(
+      "/:seq",
+      {
+        schema: {
+          tags: ["Decisions"],
+          summary: "Read one Decision by number",
+          description: `One Decision, so that a number the agent holds can be quoted without working out a cursor: its own from an earlier Run, or one a User cited at it. ${citingOne} ${aNumberNobodyHas} ${noWindowHere}`,
+          params: seqParams,
+          response: {
+            200: { ...decisionRecordSchema, description: theCitedDecision },
+            400: refused(malformedNumber),
+            404: refused(noSuchNumber),
+          },
+        },
+        preValidation: rejectUnknownQuery(),
+      },
+      async (request, reply) => answerNumbered(reply, log, request.params.seq),
+    );
   };
 }
 
 /**
- * The Public server's Decision route: the same read, behind the User Manager's single 401.
+ * The Public server's Decision routes: the same two reads, behind the User Manager's single 401.
  *
  * `presentedUser` is `requireUser`, taken as one option on the route and not wrapped, extended
  * or re-implemented. So an unauthenticated read is the Manager's single 401 — a missing header,
@@ -314,7 +422,7 @@ export function agentDecisionRoutes(log: DecisionOperations): FastifyPluginAsync
  * never a User.
  */
 export function publicDecisionRoutes(
-  log: DecisionHistory,
+  log: DecisionReads,
   presentedUser: preHandlerAsyncHookHandler,
 ): FastifyPluginAsync {
   return async (fastify) => {
@@ -341,6 +449,29 @@ export function publicDecisionRoutes(
       // scope, so the whole difference between this read and the agent's is the line above.
       async (request, reply) => answerHistory(reply, log, request.query),
     );
+
+    fastify.get<{ Params: { seq: number } }>(
+      "/:seq",
+      {
+        schema: {
+          tags: ["Decisions"],
+          summary: "Read one Decision by number",
+          description: `The Decision somebody cited at you, fetched by the number they cited. This is where an artifact worth handing onward comes from: one record, one \`jws\`, and nothing else to hold. ${citingOne} ${whatTheArtifactIs} ${aNumberNobodyHas} ${bearerRequired} ${noWindowHere}`,
+          params: seqParams,
+          response: {
+            200: { ...decisionRecordSchema, description: theCitedDecision },
+            400: refused(malformedNumber),
+            401: refused(notAuthenticated),
+            404: refused(noSuchNumber),
+          },
+        },
+        preHandler: presentedUser,
+        preValidation: rejectUnknownQuery(),
+      },
+      // The User is unread here too: a Decision is addressed to nobody, so every Token that
+      // works answers with the same record.
+      async (request, reply) => answerNumbered(reply, log, request.params.seq),
+    );
   };
 }
 
@@ -354,7 +485,7 @@ export function publicDecisionRoutes(
  */
 async function answerHistory(
   reply: FastifyReply,
-  log: DecisionHistory,
+  log: DecisionReads,
   asked: DecisionWindow,
 ): Promise<FastifyReply | { readonly decisions: DecisionRecord[] }> {
   // Two windows in one request, refused with the shared 400 and the noun that makes it this
@@ -365,4 +496,27 @@ async function answerHistory(
   // The envelope, matching `{ messages: [...] }` and `{ users: [...] }`, and with no `hasMore`
   // in it: a full page says it, since `decisions.length === limit`.
   return { decisions: await log.history(asked) };
+}
+
+/**
+ * The citation both surfaces answer, and the only place either of them can 404.
+ *
+ * One function for the same reason `answerHistory` above is one: the agent citing a number and a
+ * User citing the same number are one request asked by two callers, and the record they are
+ * answered with is the record the log read answers with, because it is the same read
+ * (ADR-0043). What is not here is a query: `numbered` is the part's, and it is the log read asked
+ * for one record from the cursor below the number rather than a second reading of the row.
+ *
+ * The 404 is the shared body, in Fastify's own error shape, naming what was not found and the
+ * number it was not found by, which is worth saying rather than answering an empty envelope:
+ * a citation that resolves to nothing is a fact about the citation.
+ */
+async function answerNumbered(
+  reply: FastifyReply,
+  log: DecisionReads,
+  seq: number,
+): Promise<FastifyReply | DecisionRecord> {
+  const cited = await log.numbered(seq);
+  if (cited === undefined) return notFound(reply, "Decision", String(seq));
+  return cited;
 }

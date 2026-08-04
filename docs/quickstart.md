@@ -489,10 +489,11 @@ for a Run that never finishes.
 
 All JSON, all on the Agent server, and **all unscoped**. Which of them exist is a
 consequence of which parts were handed that server: four are the Signal Worker's, three the
-User Manager's, two the HTTP Messenger's and two Decisions'. All four parts are handed it by
-`createGatewayWithDefaults`, so on the default path the agent gets the whole of that.
+User Manager's, two the HTTP Messenger's, three Decisions' and one Signatures'. All five
+parts are handed it by `createGatewayWithDefaults`, so on the default path the agent gets
+the whole of that.
 
-**Which eleven, though, is not written here and is not written in your `AGENTS.md`
+**Which thirteen, though, is not written here and is not written in your `AGENTS.md`
 either.** The server describes itself: `GET /openapi.json` answers a current OpenAPI
 document generated from the routes that deployment actually registered, and `/docs` is the
 same thing as a browsable page. It carries every path, what each takes, the shape of every

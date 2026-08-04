@@ -778,6 +778,14 @@ describe("a whole deployment from one call", () => {
       } satisfies DecisionRecord,
     ]);
 
+    // And the same record cited by its number, which is how a User fetches the one somebody
+    // quoted at them: the route is a citation rather than a cursor query, and it answers from
+    // the read above rather than from a query of its own (ADR-0043).
+    const numbered = await bearing(`${publicUrl}/decisions/${decision.seq}`, client.token);
+    const numberedBody = await numbered.text();
+    assert.equal(numbered.status, 200, numberedBody);
+    assert.deepEqual(JSON.parse(numberedBody), decisions[0]);
+
     // And the artifact agreeing with all four fields of it, which is what makes the
     // comparison above more than two HTTP responses agreeing with each other.
     const [header, payload, signature] = decision.jws.split(".");
@@ -1080,8 +1088,8 @@ describe("the defaults on their own", () => {
  * further up: that suite's subject is what is listening and when, and `inject` answers on
  * a server that has been closed. This one never starts or stops a Gateway.
  *
- * **All twenty-two routes declare what they answer with**, one part at a time: the Signal
- * Worker's four, the User Manager's eight, the HTTP Messenger's four, Decisions' three and
+ * **All twenty-four routes declare what they answer with**, one part at a time: the Signal
+ * Worker's four, the User Manager's eight, the HTTP Messenger's four, Decisions' five and
  * Signatures' three. What no test here can do is catch a *dropped* field, since a document and
  * the wire it describes are the same schema read twice. That is the round-trip assertions in
  * the first suite, which need records real parts recorded and therefore a real database.
@@ -1105,6 +1113,7 @@ describe("the description both servers serve", () => {
    */
   const agentPaths = [
     "/decisions/",
+    "/decisions/{seq}",
     "/messages/",
     "/runs",
     "/runs/{id}",
@@ -1120,6 +1129,7 @@ describe("the description both servers serve", () => {
     "/auth/tokens",
     "/auth/tokens/current",
     "/decisions/",
+    "/decisions/{seq}",
     "/jwks.json",
     "/messages/",
     "/verify",
@@ -1258,7 +1268,7 @@ describe("the description both servers serve", () => {
         assert.notEqual(response.description, "Default Response", `${path} ${status}`);
       }
 
-      // Tagged, so the browsable page groups them rather than listing sixteen routes
+      // Tagged, so the browsable page groups them rather than listing two dozen routes
       // flat, and summarised, so the list is readable before anything is expanded.
       assert.ok(route.tags !== undefined && route.tags.length > 0, `${path} should be tagged`);
       assert.ok(route.summary !== undefined && route.summary.length > 0, path);
@@ -1547,7 +1557,7 @@ describe("the description both servers serve", () => {
     }
   });
 
-  it("says what Decisions' three routes answer with, and what the artifact in them is", async () => {
+  it("says what Decisions' five routes answer with, and what the artifact in them is", async () => {
     // The third part that spans both surfaces, and the one whose two surfaces are the same
     // read twice: the log is global, so the agent's read and a User's differ in nothing but
     // whether a Token is wanted, which is a thing a client author should be told rather than
@@ -1557,24 +1567,29 @@ describe("the description both servers serve", () => {
       public: await documentOf(described.components.publicServer.fastify),
     };
     const log = "/decisions/";
+    const cited = "/decisions/{seq}";
 
     const answers: readonly {
       readonly surface: keyof typeof documents;
+      readonly path: string;
       readonly method: Method;
       readonly statuses: readonly string[];
     }[] = [
-      { surface: "agent", method: "post", statuses: ["201", "400"] },
-      { surface: "agent", method: "get", statuses: ["200", "400"] },
-      // No 404 anywhere on this part, and its absence is the document following the code:
-      // with no `user_id` there is no foreign key, so ADR-0036's "the agent's 404 is
-      // PostgreSQL's 23503 caught" has no analogue here. No 503 either: `nextval` is atomic,
-      // so there is no race to lose and no bounded retry to run out of.
-      { surface: "public", method: "get", statuses: ["200", "400", "401"] },
+      { surface: "agent", path: log, method: "post", statuses: ["201", "400"] },
+      { surface: "agent", path: log, method: "get", statuses: ["200", "400"] },
+      // No 503 anywhere on this part: `nextval` is atomic, so there is no race to lose and no
+      // bounded retry to run out of. And the only 404 is the by-number pair's, which is a
+      // number nobody has rather than the HTTP Messenger's missing User: with no `user_id`
+      // there is no foreign key, so ADR-0036's "the agent's 404 is PostgreSQL's 23503 caught"
+      // has no analogue here and neither read of the log can 404 at all.
+      { surface: "agent", path: cited, method: "get", statuses: ["200", "400", "404"] },
+      { surface: "public", path: log, method: "get", statuses: ["200", "400", "401"] },
+      { surface: "public", path: cited, method: "get", statuses: ["200", "400", "401", "404"] },
     ];
 
-    for (const { surface, method, statuses } of answers) {
-      const where = `${method.toUpperCase()} ${log} on the ${surface} server`;
-      const route = documents[surface].paths[log]?.[method];
+    for (const { surface, path, method, statuses } of answers) {
+      const where = `${method.toUpperCase()} ${path} on the ${surface} server`;
+      const route = documents[surface].paths[path]?.[method];
       assert.ok(route !== undefined, `${where} should be described`);
       assert.deepEqual(Object.keys(route.responses).sort(), [...statuses].sort(), where);
       for (const [status, answered] of Object.entries(route.responses)) {
@@ -1592,7 +1607,28 @@ describe("the description both servers serve", () => {
     // server for a reader to look for: a User with a Token is not the Shared Agent.
     assert.deepEqual(tagsOf(documents.agent, log, "post"), ["Decisions"]);
     assert.deepEqual(tagsOf(documents.public, log, "get"), ["Decisions"]);
+    assert.deepEqual(tagsOf(documents.public, cited, "get"), ["Decisions"]);
     assert.equal(documents.public.paths[log]?.post, undefined);
+    assert.equal(documents.public.paths[cited]?.post, undefined);
+
+    // The citation described as the thing it replaces, which is the whole reason it is a route:
+    // a client that writes `?after=<n-1>&limit=1` will get that off-by-one wrong once, and
+    // nothing but a sentence could tell them not to (ADR-0040).
+    for (const surface of ["agent", "public"] as const) {
+      const citing = String(documents[surface].paths[cited]?.get?.description);
+      assert.match(citing, /`GET \/decisions\/7` is the Decision numbered 7/, surface);
+      assert.match(citing, /\*\*same read\*\* the log is paged with/, surface);
+      // And what a 404 there does **not** mean, said where somebody will over-read it: a hole
+      // in the sequence is a rolled-back publish and evidence of nothing at all.
+      assert.match(citing, /not evidence of a Decision withheld/, surface);
+      // One number in the path and no window beside it, which is the parameter list saying
+      // that this route is the citation rather than a page of one.
+      assert.deepEqual(
+        parametersOf(documents[surface], cited, "get").map((parameter) => parameter.name),
+        ["seq"],
+        surface,
+      );
+    }
 
     // Neither read has a parameter naming a User, on either surface, which is the whole
     // difference from the Message log's pair and the sentence saying so.
@@ -1621,6 +1657,14 @@ describe("the description both servers serve", () => {
     assert.match(String(record.properties?.jws?.description), /compact JWS/);
     assert.match(String(record.properties?.seq?.description), /Gaps are expected/);
     assert.equal(record.properties?.statement?.description, undefined);
+
+    // And the same four fields on the citation, because it is the same schema rather than a
+    // second one describing the same record: a response schema is a serializer, so two of them
+    // would be two chances to drop `jws` from one surface and not the other (ADR-0040).
+    assert.deepEqual(
+      Object.keys(schemaOf(documents.public, cited, "get", "200").properties ?? {}).sort(),
+      fields,
+    );
 
     // And the sentence the whole feature turns on, on the read a Party actually meets: the
     // offline path named first, and what a signature does not prove said outright, because a

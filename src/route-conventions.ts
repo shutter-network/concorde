@@ -247,8 +247,8 @@ export function notFound(reply: FastifyReply, what: string, id: string): Fastify
  * framework's own refusals send; Fastify's *validation* failures send a fourth,
  * `code: "FST_ERR_VALIDATION"`, and a route declaring this for its 400 drops it. That is
  * the trade taken knowingly: the useful part of a validation refusal is its `message`,
- * which names the field, and one error shape across sixteen routes is worth more than a
- * machine-readable code no caller of ours branches on.
+ * which names the field, and one error shape across every route of every part is worth more
+ * than a machine-readable code no caller of ours branches on.
  *
  * It arrived with **no caller**, deliberately: the three parts declare their responses in
  * three tickets that would otherwise have chained behind whichever one invented this
@@ -269,7 +269,7 @@ export const errorSchema = {
  * One refused status, in the shape above and with the sentence saying what reaches it
  * *here*.
  *
- * The shape is the same on all sixteen routes and the sentence never is, which is the
+ * The shape is the same on every route that has one and the sentence never is, which is the
  * whole division of labour: a caller reading one route wants to know what it is about to
  * be refused for, not what a refusal looks like. So this is what a part reaches for
  * rather than `errorSchema` itself, and a status that cannot be described without saying

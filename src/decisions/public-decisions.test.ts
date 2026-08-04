@@ -149,6 +149,53 @@ describe("a User reading the log", () => {
   });
 });
 
+describe("a User citing a Decision by number", () => {
+  it("fetches the one that was cited at them, and the agent's copy of it is identical", async () => {
+    // What a citation is for: somebody quotes "Decision 7" and the number is the whole of what
+    // the reader needs. Compared whole against both surfaces, because the log is global and the
+    // two reads are one query with nothing to scope (ADR-0043).
+    const published = await publish("the term somebody will quote by number");
+
+    const cited = await citing(published.seq);
+    assert.equal(cited.statusCode, 200, cited.body);
+    assert.deepEqual(cited.json<DecisionRecord>(), published);
+
+    const agents = await agentServer.fastify.inject({ url: `${prefix}/${published.seq}` });
+    assert.equal(agents.body, cited.body);
+  });
+
+  it("is refused without a Token, in the same 401 the log read answers", async () => {
+    const published = await publish("not for whoever found the port");
+
+    // The Gateway is not a public bulletin board: a Decision is public because a *User* takes
+    // one away and hands it on, not because a stranger can fetch one (ADR-0043). The refusal is
+    // the User Manager's, so it is byte for byte the one the log read answers with.
+    const refused = await publicServer.fastify.inject({ url: `${prefix}/${published.seq}` });
+    assert.equal(refused.statusCode, 401, refused.body);
+    const log = await publicServer.fastify.inject({ url: prefix });
+    assert.equal(refused.body, log.body);
+  });
+
+  it("gets the 404 and the 400 behind that Token, and not before it", async () => {
+    const beyond = (await publish("the newest thing this file published")).seq + 1000;
+
+    const missing = await citing(beyond);
+    assert.equal(missing.statusCode, 404, missing.body);
+    assert.deepEqual(missing.json(), {
+      statusCode: 404,
+      error: "Not Found",
+      message: `no Decision ${beyond} exists`,
+    });
+
+    // A word rather than a number, which is a 400 and not a 500, and which is answered before
+    // the Token is looked at: validation runs at `preValidation` and the Manager's hook at
+    // `preHandler`, the order every other Public route already answers in. That leaks nothing,
+    // a refusal about a path naming no User.
+    const word = await publicServer.fastify.inject({ url: `${prefix}/seven` });
+    assert.equal(word.statusCode, 400, word.body);
+  });
+});
+
 describe("a third party holding nothing but the public key", () => {
   it("checks a Decision without asking this Gateway whether it is real", async () => {
     // The demoable end of the whole feature. Everything below comes off a wire: the artifact
@@ -235,6 +282,14 @@ async function ownLog(window: string): Promise<DecisionRecord[]> {
   });
   assert.equal(answered.statusCode, 200, `reading should have answered: ${answered.body}`);
   return answered.json<{ decisions: DecisionRecord[] }>().decisions;
+}
+
+/** One `GET /decisions/:seq` on the Public server, unasserted: three statuses are its subject. */
+function citing(seq: number) {
+  return publicServer.fastify.inject({
+    url: `${prefix}/${seq}`,
+    headers: { authorization: `Bearer ${token}` },
+  });
 }
 
 /**
