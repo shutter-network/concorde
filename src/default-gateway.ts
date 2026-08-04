@@ -1,5 +1,5 @@
 /**
- * The default assembly: one call that builds the six Components a deployment using our
+ * The default assembly: one call that builds the eight Components a deployment using our
  * parts would otherwise build by hand, wires them to each other, puts them in an order,
  * and answers with a Gateway
  * ([ADR-0038](../docs/adr/0038-the-default-assembly-is-a-constructor.md)).
@@ -22,16 +22,26 @@
  * ## The order, and the one rule it comes from
  *
  * ```
- * start:  db -> agentServer -> publicServer -> users -> messenger -> worker -> extend
- * stop:   extend -> worker(drain) -> messenger -> users -> publicServer -> agentServer -> db
+ * start:  db -> agentServer -> publicServer -> users -> signatures -> decisions
+ *            -> messenger -> worker -> extend
+ * stop:   extend -> worker(drain) -> messenger -> decisions -> signatures -> users
+ *            -> publicServer -> agentServer -> db
  * ```
  *
  * **The Signal Worker's `stop` is the only stop that does work.** Every other one releases
  * something. The worker's waits for the Run in flight and never cancels it
  * ([ADR-0017](../docs/adr/0017-failed-runs-are-not-retried.md)), and that Run reads the Db,
  * calls the Agent server the Operator's own `AGENTS.md` gave it the URLs for, and reaches
- * the Messenger through a Signal Handler's post phase. So the drain goes **first**, while
- * every server is still listening, the Messenger is still live and the pool is still open.
+ * the Messenger, Signatures and Decisions through a Signal Handler's post phase. So the
+ * drain goes **first**, while every server is still listening, those three are still live
+ * and the pool is still open.
+ *
+ * Signatures and Decisions were inserted into that order rather than appended, and the two
+ * constraints they had to satisfy are worth naming because neither is visible from the
+ * record: **no existing pair moved relative position**, so nothing about the six above them
+ * changed, and both sit **ahead of the Signal Worker**, which is the Messenger's
+ * anticipatory position taken for the same reason — a post phase that publishes a Decision
+ * on the way out runs inside the drain (ADR-0043).
  *
  * Which puts the two servers back together and leaves the Public server accepting
  * submissions throughout the drain — the thing
@@ -126,20 +136,23 @@
  * Fastify a consumer's own plugins were written against (ADR-0021).
  */
 
+import type { KeyObject } from "node:crypto";
 import fastifySwagger from "@fastify/swagger";
 import fastifySwaggerUi from "@fastify/swagger-ui";
 import type { FastifyInstance, FastifyListenOptions } from "fastify";
 import Fastify from "fastify";
 import { type Component, createGateway, type Gateway, serverComponent } from "./components.ts";
 import { type Db, openDb } from "./db/index.ts";
+import { createDecisions, type Decisions } from "./decisions/index.ts";
 import { createHttpMessenger, type HttpMessenger } from "./http-messenger/index.ts";
 import type { Logger } from "./logging.ts";
 import type { Runtime, SignalHandler, SignalHandlers, SignalWorker } from "./signals/index.ts";
 import { createSignalWorker } from "./signals/index.ts";
+import { createSignatures, type Signatures } from "./signatures/index.ts";
 import { createUsers, type Users } from "./users/index.ts";
 
 /**
- * The six this constructor builds, under the keys it files them under — **and that is the
+ * The eight this constructor builds, under the keys it files them under — **and that is the
  * start order**, since a Gateway starts in key order and stops in the reverse of it
  * ([ADR-0037](../docs/adr/0037-the-gateway-is-a-record-of-components.md)).
  *
@@ -152,13 +165,15 @@ export type DefaultComponents = {
   agentServer: Component & { readonly fastify: FastifyInstance };
   publicServer: Component & { readonly fastify: FastifyInstance };
   users: Users;
+  signatures: Signatures;
+  decisions: Decisions;
   messenger: HttpMessenger;
   worker: SignalWorker;
 };
 
 /**
  * What `extend` may return: Components under keys of the Operator's own, and **none of the
- * six above**.
+ * eight above**.
  *
  * The refusal is the point. A JavaScript spread overwrites the value and keeps the original
  * key's position, so replacing a default in place would otherwise be silent — a substituted
@@ -168,6 +183,10 @@ export type DefaultComponents = {
  *
  * An Operator who really wants to substitute one is writing `createGateway` by hand, which
  * is the honest way to say it.
+ *
+ * It is written over `keyof DefaultComponents` rather than as a list, so a key added to the
+ * record above is forbidden here by the same edit that added it — which is what kept
+ * `signatures` and `decisions` from being two names somebody could quietly take over.
  */
 export type GatewayExtension = Record<string, Component> & {
   [K in keyof DefaultComponents]?: never;
@@ -197,6 +216,24 @@ export type DefaultGatewayOptions<E extends GatewayExtension> = {
    */
   readonly runtime: Runtime;
   /**
+   * The Shared Agent's private key, as a `crypto.KeyObject`, and the whole of its identity
+   * ([ADR-0041](../docs/adr/0041-the-shared-agent-has-a-signing-identity.md)).
+   *
+   * **Required of every deployment, including one that never publishes a Decision**, and
+   * that is the price of this assembly being one fixed shape: nothing here branches on
+   * whether a key was passed, so there is no arrangement in which two of the eight are
+   * absent and the record has a different set of keys in it.
+   *
+   * The framework parses nothing and generates nothing. An Operator writes
+   * `createPrivateKey(readFileSync(path))` and decides for themselves whether that path came
+   * from a file, an environment variable or a secrets manager — the same division as
+   * `HOST_DIR` in the reference deployment (ADR-0016). Nothing defaults it either, unlike
+   * the two options below, because a generated key would be the one default that fails
+   * quietly in the worst way: a fresh one per restart leaves every prior artifact
+   * unverifiable with nothing anywhere saying so.
+   */
+  readonly signingKey: KeyObject;
+  /**
    * How long an issued Token lives, in milliseconds. Defaults to thirty days.
    *
    * `createUsers` requires this and says why: a long lifetime is fewer
@@ -222,7 +259,7 @@ export type DefaultGatewayOptions<E extends GatewayExtension> = {
    */
   readonly publicListen: FastifyListenOptions;
   /**
-   * Components of the Operator's own, built from the six this call constructed.
+   * Components of the Operator's own, built from the eight this call constructed.
    *
    * A callback because it needs objects constructed in this function's body. What it
    * returns is **appended**, so those Components start last and therefore stop *first* —
@@ -232,7 +269,7 @@ export type DefaultGatewayOptions<E extends GatewayExtension> = {
    */
   readonly extend?: (components: DefaultComponents) => E;
   /**
-   * The `kind`-to-Handler map, built from the six defaults **and** whatever `extend`
+   * The `kind`-to-Handler map, built from the eight defaults **and** whatever `extend`
    * returned.
    *
    * Required, and a callback for the reason `extend` is plus one more: there is a genuine
@@ -309,7 +346,7 @@ function describeSurface(fastify: FastifyInstance, title: string, description: s
 }
 
 /**
- * Builds the six, wires them, orders them, and answers with a Gateway.
+ * Builds the eight, wires them, orders them, and answers with a Gateway.
  *
  * The type parameter's **default is load-bearing** and is not decoration. With `extend`
  * omitted there is nothing to infer `E` from, and a type parameter with no inference
@@ -362,22 +399,36 @@ export function createGatewayWithDefaults<E extends GatewayExtension = Record<st
     "The HTTP surface exposed outside the Gateway. A User trades a password for a bearer Token at `POST /auth/tokens` and presents it as `Authorization: Bearer …` on every route that acts as somebody (ADR-0030).",
   );
 
-  // Construction order from here on is load-bearing three times over, and none of the
+  // Construction order from here on is load-bearing four times over, and none of the
   // reasons is visible in the record below. The first is above: the description goes ahead
   // of every part, or it describes nothing.
   //
-  // The User Manager is first of the three because registering a migration descriptor is
+  // The User Manager is first of the parts because registering a migration descriptor is
   // what a constructor does and `db.migrate()` applies them in registration order:
   // `messages.user_id` is a foreign key onto `saf_users.users.id`, so a Messenger
   // constructed before this fails the first migration of every new deployment with
   // PostgreSQL's `schema "saf_users" does not exist` (ADR-0036). On this path that order is
-  // not expressible wrongly, which is most of what the path is for.
+  // not expressible wrongly, which is most of what the path is for. Decisions imposes no
+  // such order of its own: it has no foreign key and references no User, so its folder
+  // applies wherever it lands (ADR-0043).
   const users = createUsers({
     db,
     tokenTtl: options.tokenTtl ?? defaultTokenTtl,
     agentServer,
     publicServer,
   });
+
+  // And the fourth reason, which is an ordinary construction dependency rather than a
+  // migration one: Decisions holds Signatures and signs through it in process, so it cannot
+  // be built first. There is no key here beyond the one the Operator passed — this
+  // constructor derives nothing, defaults nothing and generates nothing (ADR-0041).
+  const signatures = createSignatures({
+    signingKey: options.signingKey,
+    publicServer,
+    ...(options.logger === undefined ? {} : { logger: options.logger }),
+  });
+
+  const decisions = createDecisions({ db, signatures, users, agentServer, publicServer });
 
   // The map the worker holds, empty for as long as it takes to construct the Messenger and
   // run the two callbacks. This is the mutation the cycle in the header is broken by: the
@@ -402,8 +453,19 @@ export function createGatewayWithDefaults<E extends GatewayExtension = Record<st
 
   // The record, whose key order is the start order and is **not** the construction order
   // above: the Messenger is keyed before the worker so that it is stopped *after* the
-  // drain, which is when a Signal Handler's post phase reaches it.
-  const defaults: DefaultComponents = { db, agentServer, publicServer, users, messenger, worker };
+  // drain, which is when a Signal Handler's post phase reaches it — and Signatures and
+  // Decisions are keyed ahead of it for the same reason, a post phase that publishes a
+  // Decision on the way out being the case ADR-0043 names.
+  const defaults: DefaultComponents = {
+    db,
+    agentServer,
+    publicServer,
+    users,
+    signatures,
+    decisions,
+    messenger,
+    worker,
+  };
 
   // `{} as E` because there is no value this function can construct that TypeScript will
   // accept as an arbitrary `E`. It is the empty extension, and it is only ever reached when
@@ -412,7 +474,7 @@ export function createGatewayWithDefaults<E extends GatewayExtension = Record<st
   const extension: E = options.extend === undefined ? ({} as E) : options.extend(defaults);
 
   // Appended, so an Operator's own Components start last and stop first (ADR-0038). A key
-  // collision cannot get here: `GatewayExtension` refuses the six by name.
+  // collision cannot get here: `GatewayExtension` refuses all eight by name.
   const components = { ...defaults, ...extension };
 
   // And the cycle closed, into the map the worker has been holding since it was built.

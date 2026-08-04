@@ -27,6 +27,14 @@
       "types": "./dist/http-messenger/index.d.ts",
       "default": "./dist/http-messenger/index.js"
     },
+    "./signatures": {
+      "types": "./dist/signatures/index.d.ts",
+      "default": "./dist/signatures/index.js"
+    },
+    "./decisions": {
+      "types": "./dist/decisions/index.d.ts",
+      "default": "./dist/decisions/index.js"
+    },
     "./messenger": null
   },
   "files": [
@@ -57,6 +65,7 @@
     "@fastify/swagger": "^9.8.1",
     "@fastify/swagger-ui": "^6.1.1",
     "handlebars": "^4.7.9",
+    "jose": "^6.2.8",
     "pg": "^8.22.0",
     "pino": "^10.3.1"
   },

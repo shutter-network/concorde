@@ -47,6 +47,23 @@
           }
         }
       }
+    },
+    {
+      "includes": ["**", "!src/signatures/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "jose": "Building a JWS is Signatures' alone: ask it for one with signatures.sign(typ, claims). Decisions stores the string it answers with and never touches the format, and a second party assembling segments is a second chance to emit something nobody else can verify (ADR-0042)."
+                }
+              }
+            }
+          }
+        }
+      }
     }
   ]
 }

@@ -12,7 +12,15 @@ it is the Runtime, one Signal Handler and shutdown.
 that directory and not the repository root
 ([ADR-0039](./docs/adr/0039-the-reference-deployment-runs-in-a-compose-stack.md)). The
 Gateway is a container holding the host's Docker socket, so `main.ts` requires
-`HOST_DIR` and declares `hostPaths`, and running it with `node` is not supported.
+`HOST_DIR` and declares `hostPaths`, and running it with `node` is not supported. It also
+requires `SIGNING_KEY_FILE`, a PEM private key it loads itself and hands to
+`createGatewayWithDefaults`: the framework parses nothing and generates nothing, so a
+deployment brings its own identity or does not start
+([ADR-0041](./docs/adr/0041-the-shared-agent-has-a-signing-identity.md)). **Where the stack
+gets that file is not settled**: `compose.yml` neither passes the variable nor mounts a key,
+so `docker compose up -d --build` does not currently come up, and the one-command promise
+above is suspended until it does. The quickstart's arc stops short of Decisions for the same
+reason.
 The image builds the framework itself, from a context that is the repository root, which is
 what `.dockerignore` is for. Nothing in `example/` ships in the tarball; `tsconfig.json`
 type-checks it against `src` through a `paths` mapping, while the image resolves the same
@@ -69,6 +77,7 @@ schema generation tool. Each part has a config file of its own and passes it wit
 npm run migrations:generate                                              # the Signal Worker
 npm run migrations:generate -- --config drizzle.users.config.ts          # the User Manager
 npm run migrations:generate -- --config drizzle.http-messages.config.ts  # the HTTP Messenger
+npm run migrations:generate -- --config drizzle.decisions.config.ts      # Decisions
 ```
 
 Read the config before running any of them, because what ships is never quite what was
@@ -89,6 +98,10 @@ passes against a database that simply does not enforce the constraint, and what 
 enforcing is the agent's 404 for a Message addressed to nobody. That is why
 `src/http-messenger/migrations.test.ts` scans the shipped folder for the constraint
 itself.
+
+Signatures has none of any of this, and is the only part of which that is true: it stores
+nothing, so it has no schema, no tables, no folder, no descriptor and no config
+([ADR-0042](./docs/adr/0042-a-signature-is-a-compact-jws.md)).
 
 Conventions the build depends on:
 

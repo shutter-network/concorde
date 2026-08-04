@@ -68,6 +68,7 @@
  */
 
 import assert from "node:assert/strict";
+import { createPublicKey, generateKeyPairSync, type JsonWebKey, verify } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -75,6 +76,7 @@ import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 import type { Component, Gateway } from "./components.ts";
 import type { Db } from "./db/index.ts";
+import type { DecisionRecord } from "./decisions/index.ts";
 import {
   createGatewayWithDefaults,
   type DefaultComponents,
@@ -95,6 +97,35 @@ const silent: Logger = { debug: () => {}, info: () => {}, warn: () => {}, error:
 
 /** Somewhere nobody is, for the one call that is supposed to be refused. */
 const nobody = "2f1b4d54-1c3a-4f2e-9d7b-8e6a5c4b3a21";
+
+/**
+ * The Shared Agent's identity for the duration of this file, generated here because this is
+ * where a keypair may be generated: the framework generates none, and `signingKey` is required
+ * of every deployment including one that publishes nothing
+ * ([ADR-0041](../docs/adr/0041-the-shared-agent-has-a-signing-identity.md)).
+ */
+const { privateKey: signingKey } = generateKeyPairSync("ed25519");
+
+/**
+ * What a deployment consists of, in the order it starts and the reverse of the order it stops,
+ * written once because three tests are about exactly this list.
+ *
+ * Signatures and Decisions were **inserted** rather than appended, and the two constraints
+ * they had to satisfy are what this array is for: no existing pair moved relative position, so
+ * every claim the six made about their own order still holds, and both sit ahead of the Signal
+ * Worker so that they outlive the drain — which is when a Signal Handler's post phase may still
+ * publish (ADR-0038, ADR-0043).
+ */
+const theEight = [
+  "db",
+  "agentServer",
+  "publicServer",
+  "users",
+  "signatures",
+  "decisions",
+  "messenger",
+  "worker",
+];
 
 /**
  * A Component of the Operator's own, which is the whole of what `extend` is for.
@@ -239,6 +270,7 @@ before(async () => {
   gateway = createGatewayWithDefaults({
     databaseUrl: database.url,
     runtime,
+    signingKey,
     tokenTtl: hour,
     // Port 0 on both, because two suites must be able to run at once and neither address is
     // asserted on. Where they actually landed is read back off the instances after `start`.
@@ -246,21 +278,14 @@ before(async () => {
     publicListen: { port: 0, host: "127.0.0.1" },
     extend: (defaults) => {
       callbacks.push("extend");
-      // Given the six, and *not* the handlers: a Component that needed a Handler would be a
+      // Given the eight, and *not* the handlers: a Component that needed a Handler would be a
       // Component that wanted to be a Signal Worker (ADR-0038).
-      assert.deepEqual(Object.keys(defaults), [
-        "db",
-        "agentServer",
-        "publicServer",
-        "users",
-        "messenger",
-        "worker",
-      ]);
+      assert.deepEqual(Object.keys(defaults), theEight);
       return { notes: notebook() };
     },
     handlers: (all) => {
       callbacks.push("handlers");
-      // Given the six *and* the extension, which is the direction that makes a Handler able
+      // Given the eight *and* the extension, which is the direction that makes a Handler able
       // to use an Operator's own Component.
       return { [messageReceivedKind]: answering(all), [roundTripKind]: roundTripping };
     },
@@ -323,18 +348,13 @@ function answering(all: DefaultComponents & { notes: Notebook }): SignalHandler<
 }
 
 describe("a whole deployment from one call", () => {
-  it("holds the six defaults, in the order that is the start order, with the extension last", () => {
+  it("holds the eight defaults, in the order that is the start order, with the extension last", () => {
     // The keys are the start order, and they are the order the drain needs. That they are
     // *acted on* in this order is `components.test.ts`'s claim; that these are what a
     // deployment consists of, and in this order, is this one — and it is the framework's
     // claim now rather than the Operator's (ADR-0038).
     assert.deepEqual(Object.keys(components), [
-      "db",
-      "agentServer",
-      "publicServer",
-      "users",
-      "messenger",
-      "worker",
+      ...theEight,
       // Appended, which is why it stops first. The last test is where that is observed.
       "notes",
     ]);
@@ -349,15 +369,20 @@ describe("a whole deployment from one call", () => {
     assert.deepEqual(components.notes.lines, []);
   });
 
-  it("wired every part to every other, which is four route groups on two servers", async () => {
+  it("wired every part to every other, which is seven route groups on two servers", async () => {
     // One read per group, chosen so that nothing here derives a password: the User Manager's
-    // two plugins, the Signal Worker's, and the Messenger's pair. A group that was never
-    // registered answers 404, and so does one registered on the other server.
+    // two plugins, the Signal Worker's, the Messenger's pair and Decisions' pair. A group that
+    // was never registered answers 404, and so does one registered on the other server.
     assert.equal((await fetch(`${agentUrl}/users`)).status, 200);
     assert.equal((await fetch(`${agentUrl}/signals`)).status, 200);
     assert.equal((await fetch(`${agentUrl}/messages?user=${client.id}`)).status, 200);
+    assert.equal((await fetch(`${agentUrl}/decisions`)).status, 200);
     assert.equal((await authenticated(`${publicUrl}/auth/me`)).status, 200);
     assert.equal((await authenticated(`${publicUrl}/messages`)).status, 200);
+    assert.equal((await authenticated(`${publicUrl}/decisions`)).status, 200);
+    // And Signatures' one, which is the only route on the Public server that takes no Token
+    // besides the login: a public key is public (ADR-0042).
+    assert.equal((await fetch(`${publicUrl}/jwks.json`)).status, 200);
   });
 
   it("migrated the Messenger's tables after the User Manager's, so the foreign key is live", async () => {
@@ -373,21 +398,30 @@ describe("a whole deployment from one call", () => {
     );
   });
 
-  it("starts and stops the two parts with nothing to run, and neither call does a thing", async () => {
+  it("starts and stops the four parts with nothing to run, and no call does a thing", async () => {
     // Started once already, by `start` above, and started again here — which is safe for
     // precisely the reason `worker.start` refuses a second call and these do not: there is
     // nothing running to run twice.
-    await components.users.start();
-    await components.messenger.start();
-    await components.users.stop();
-    await components.messenger.stop();
+    for (const idle of [
+      components.users,
+      components.signatures,
+      components.decisions,
+      components.messenger,
+    ]) {
+      await idle.start();
+      await idle.stop();
+    }
 
     // And the whole deployment is where it was. That is the only form this assertion can
-    // take while both bodies are empty, and it is worth having for the day one of them is
+    // take while every body is empty, and it is worth having for the day one of them is
     // not: a stop that had done something would have taken a route, a pool or a hook with
     // it, and one `GET /messages` needs the Public server, the Manager's `requireUser`, the
-    // Messenger's own plugin and the Db, all four of them (ADR-0032).
+    // Messenger's own plugin and the Db, all four of them (ADR-0032). Decisions' Public read
+    // needs the same four and Signatures' key set needs neither the Db nor the hook, so the
+    // three together cover both halves of what a stop could have released.
     assert.equal((await authenticated(`${publicUrl}/messages`)).status, 200);
+    assert.equal((await authenticated(`${publicUrl}/decisions`)).status, 200);
+    assert.equal((await fetch(`${publicUrl}/jwks.json`)).status, 200);
     assert.equal((await components.users.get(client.id))?.id, client.id);
     assert.deepEqual(await components.messenger.history(client.id), []);
   });
@@ -674,6 +708,73 @@ describe("a whole deployment from one call", () => {
     assert.match(refusal.message, /after and before describe two different windows/);
   });
 
+  it("answers a Decision as Decisions published it, and a key set with nothing private in it", async () => {
+    // The same serializer hazard as the two round trips above, on the record where a dropped
+    // field would be worst: the artifact **is** the Decision, so a `jws` the schema forgot to
+    // declare is a log of Decisions nobody can verify, answered with a 200 (ADR-0040).
+    //
+    // The independent side of this comparison is not an in-process method — Decisions exposes
+    // none yet — but something better: the payload inside the artifact, which this part
+    // serialized itself and which no response schema has been anywhere near. So a field
+    // stripped on the wire disagrees with the bytes that were signed.
+    const published = await postJson(`${agentUrl}/decisions`, {
+      statement: "we will keep the Gateway trusted and say so out loud",
+    });
+    const publishedBody = await published.text();
+    assert.equal(published.status, 201, publishedBody);
+    const decision: DecisionRecord = JSON.parse(publishedBody);
+
+    // Read back over the *other* server, by a User with a Token, which is the whole path a
+    // Party takes: one global log, no scoping, the same record from both surfaces.
+    const read = await bearing(`${publicUrl}/decisions?after=${decision.seq - 1}`, client.token);
+    const readBody = await read.text();
+    assert.equal(read.status, 200, readBody);
+    const { decisions }: { decisions: DecisionRecord[] } = JSON.parse(readBody);
+    assert.deepEqual(decisions, [
+      {
+        seq: decision.seq,
+        statement: "we will keep the Gateway trusted and say so out loud",
+        jws: decision.jws,
+        createdAt: decision.createdAt,
+      } satisfies DecisionRecord,
+    ]);
+
+    // And the artifact agreeing with all four fields of it, which is what makes the
+    // comparison above more than two HTTP responses agreeing with each other.
+    const [header, payload, signature] = decision.jws.split(".");
+    assert.ok(header !== undefined && payload !== undefined && signature !== undefined);
+    assert.deepEqual(JSON.parse(Buffer.from(payload, "base64url").toString("utf8")), {
+      seq: decision.seq,
+      createdAt: decision.createdAt,
+      statement: decision.statement,
+    });
+
+    // The key set, over the Public server and with no Token, and **without a private member
+    // in it**: the worst failure available anywhere in this feature is the private scalar
+    // being served from an unauthenticated route, and this is the assembled Gateway's own
+    // check of it (ADR-0042).
+    const keys = await fetch(`${publicUrl}/jwks.json`);
+    const keysBody = await keys.text();
+    assert.equal(keys.status, 200, keysBody);
+    const [key]: JsonWebKey[] = JSON.parse(keysBody).keys;
+    assert.ok(key !== undefined, keysBody);
+    assert.equal(Object.hasOwn(key, "d"), false, keysBody);
+    assert.equal(keysBody.includes(String(signingKey.export({ format: "jwk" }).d)), false);
+
+    // And the whole point of the two of them together: a verifier holding the key off one
+    // route and the artifact off the other checks it with the built-in, having asked this
+    // Gateway for no opinion at all.
+    assert.equal(
+      verify(
+        null,
+        Buffer.from(`${header}.${payload}`, "utf8"),
+        createPublicKey({ key, format: "jwk" }),
+        Buffer.from(signature, "base64url"),
+      ),
+      true,
+    );
+  });
+
   it("drains with everything still up, and closes it all once the drain is done", async () => {
     const posted = await postMessage(inFlightAtShutdown);
     assert.equal(posted.status, 201);
@@ -725,24 +826,18 @@ describe("the defaults on their own", () => {
   // Constructed and never started, which is free: `openDb` connects lazily and a Fastify
   // instance that never listens holds nothing. What these two are about needs no database.
 
-  it("is the six and nothing else when no extend is passed", () => {
+  it("is the eight and nothing else when no extend is passed", () => {
     const bare = createGatewayWithDefaults({
       databaseUrl: "postgres://nobody@example.invalid/none",
       runtime,
+      signingKey,
       tokenTtl: hour,
       agentListen: { port: 0 },
       publicListen: { port: 0 },
       handlers: () => ({}),
     });
 
-    assert.deepEqual(Object.keys(bare.components), [
-      "db",
-      "agentServer",
-      "publicServer",
-      "users",
-      "messenger",
-      "worker",
-    ]);
+    assert.deepEqual(Object.keys(bare.components), theEight);
 
     // And the record still has its types, which is a claim about the type parameter's
     // **default** rather than about the object. With `extend` omitted there is nothing to
@@ -753,10 +848,11 @@ describe("the defaults on their own", () => {
     assert.equal(typeof db.migrate, "function");
   });
 
-  it("refuses an extend that returns one of the six", () => {
+  it("refuses an extend that returns one of the eight", () => {
     const substituting = createGatewayWithDefaults({
       databaseUrl: "postgres://nobody@example.invalid/none",
       runtime,
+      signingKey,
       tokenTtl: hour,
       agentListen: { port: 0 },
       publicListen: { port: 0 },
@@ -774,15 +870,37 @@ describe("the defaults on their own", () => {
     // And it is refused *statically only*, which is the reason the type has to carry it: at
     // runtime the spread simply overwrites, and the substituted part keeps the position the
     // framework gave it rather than the one at the end an Operator would have expected.
-    assert.deepEqual(Object.keys(substituting.components), [
-      "db",
-      "agentServer",
-      "publicServer",
-      "users",
-      "messenger",
-      "worker",
-      "notes",
-    ]);
+    assert.deepEqual(Object.keys(substituting.components), [...theEight, "notes"]);
+  });
+
+  it("refuses an extend that returns either of the two newest keys", () => {
+    // The two keys added last, pinned separately, because the refusal comes from a mapped
+    // type over `keyof DefaultComponents` and a key added to the record without being added
+    // there would be silently substitutable. A substituted Signatures is the sharpest case in
+    // the record: it holds the private key, so an Operator's own under this key would start
+    // where ours would have, sign with whatever it liked, and nothing anywhere would say so.
+    createGatewayWithDefaults({
+      databaseUrl: "postgres://nobody@example.invalid/none",
+      runtime,
+      signingKey,
+      tokenTtl: hour,
+      agentListen: { port: 0 },
+      publicListen: { port: 0 },
+      // @ts-expect-error signatures is a default key and may not be replaced by an extension
+      extend: (defaults) => ({ signatures: defaults.signatures }),
+      handlers: () => ({}),
+    });
+    createGatewayWithDefaults({
+      databaseUrl: "postgres://nobody@example.invalid/none",
+      runtime,
+      signingKey,
+      tokenTtl: hour,
+      agentListen: { port: 0 },
+      publicListen: { port: 0 },
+      // @ts-expect-error decisions is a default key and may not be replaced by an extension
+      extend: (defaults) => ({ decisions: defaults.decisions }),
+      handlers: () => ({}),
+    });
   });
 });
 
@@ -799,11 +917,11 @@ describe("the defaults on their own", () => {
  * further up: that suite's subject is what is listening and when, and `inject` answers on
  * a server that has been closed. This one never starts or stops a Gateway.
  *
- * **All sixteen routes declare what they answer with**, one part at a time and now
- * complete: the Signal Worker's four, the User Manager's eight and the HTTP Messenger's
- * four. What no test here can do is catch a *dropped* field, since a document and the wire
- * it describes are the same schema read twice. That is the round-trip assertions in the
- * first suite, which need records real parts recorded and therefore a real database.
+ * **All twenty routes declare what they answer with**, one part at a time: the Signal
+ * Worker's four, the User Manager's eight, the HTTP Messenger's four, Decisions' three and
+ * Signatures' one. What no test here can do is catch a *dropped* field, since a document and
+ * the wire it describes are the same schema read twice. That is the round-trip assertions in
+ * the first suite, which need records real parts recorded and therefore a real database.
  */
 describe("the description both servers serve", () => {
   /** Somewhere nothing resolves, since none of this connects. */
@@ -823,6 +941,7 @@ describe("the description both servers serve", () => {
    * client, and not worth changing a route over.
    */
   const agentPaths = [
+    "/decisions/",
     "/messages/",
     "/runs",
     "/runs/{id}",
@@ -836,6 +955,8 @@ describe("the description both servers serve", () => {
     "/auth/password",
     "/auth/tokens",
     "/auth/tokens/current",
+    "/decisions/",
+    "/jwks.json",
     "/messages/",
   ];
 
@@ -1261,6 +1382,120 @@ describe("the description both servers serve", () => {
     }
   });
 
+  it("says what Decisions' three routes answer with, and what the artifact in them is", async () => {
+    // The third part that spans both surfaces, and the one whose two surfaces are the same
+    // read twice: the log is global, so the agent's read and a User's differ in nothing but
+    // whether a Token is wanted, which is a thing a client author should be told rather than
+    // left to infer from a missing parameter (ADR-0043).
+    const documents = {
+      agent: await documentOf(described.components.agentServer.fastify),
+      public: await documentOf(described.components.publicServer.fastify),
+    };
+    const log = "/decisions/";
+
+    const answers: readonly {
+      readonly surface: keyof typeof documents;
+      readonly method: Method;
+      readonly statuses: readonly string[];
+    }[] = [
+      { surface: "agent", method: "post", statuses: ["201", "400"] },
+      { surface: "agent", method: "get", statuses: ["200", "400"] },
+      // No 404 anywhere on this part, and its absence is the document following the code:
+      // with no `user_id` there is no foreign key, so ADR-0036's "the agent's 404 is
+      // PostgreSQL's 23503 caught" has no analogue here. No 503 either: `nextval` is atomic,
+      // so there is no race to lose and no bounded retry to run out of.
+      { surface: "public", method: "get", statuses: ["200", "400", "401"] },
+    ];
+
+    for (const { surface, method, statuses } of answers) {
+      const where = `${method.toUpperCase()} ${log} on the ${surface} server`;
+      const route = documents[surface].paths[log]?.[method];
+      assert.ok(route !== undefined, `${where} should be described`);
+      assert.deepEqual(Object.keys(route.responses).sort(), [...statuses].sort(), where);
+      for (const [status, answered] of Object.entries(route.responses)) {
+        // "Default Response" is what an undeclared response reads as, so this is the line
+        // that tells a described status from a status the plugin invented a sentence for.
+        assert.notEqual(answered.description, "Default Response", `${where} ${status}`);
+        assert.ok(Object.hasOwn(answered, "content"), `${where} ${status}`);
+      }
+      assert.ok(route.tags !== undefined && route.tags.length > 0, `${where} should be tagged`);
+      assert.ok(route.summary !== undefined && route.summary.length > 0, where);
+      assert.ok(route.description !== undefined && route.description.length > 0, where);
+    }
+
+    // Tagged as their own group on each page, and there is no publish route on the Public
+    // server for a reader to look for: a User with a Token is not the Shared Agent.
+    assert.deepEqual(tagsOf(documents.agent, log, "post"), ["Decisions"]);
+    assert.deepEqual(tagsOf(documents.public, log, "get"), ["Decisions"]);
+    assert.equal(documents.public.paths[log]?.post, undefined);
+
+    // Neither read has a parameter naming a User, on either surface, which is the whole
+    // difference from the Message log's pair and the sentence saying so.
+    for (const surface of ["agent", "public"] as const) {
+      assert.deepEqual(
+        parametersOf(documents[surface], log, "get")
+          .map((parameter) => parameter.name)
+          .sort(),
+        ["after", "before", "limit"],
+        surface,
+      );
+      const reading = String(documents[surface].paths[log]?.get?.description);
+      assert.match(reading, /\*\*One global log, the same for every reader\.\*\*/, surface);
+      // The cursor rules, in the shared words, because a client written against one of these
+      // two reads pages the other identically (ADR-0035).
+      assert.match(reading, /\*\*Three cursor cases, one order\.\*\*/, surface);
+      assert.match(reading, /All three answer \*\*ascending by `seq`\*\*/, surface);
+    }
+
+    // The record, and the two sentences on it that a document is the only place to put: what
+    // `jws` is and how to check it without us, and that a gap in `seq` means nothing.
+    const fields = ["createdAt", "jws", "seq", "statement"];
+    const record = schemaOf(documents.agent, log, "post", "201");
+    assert.deepEqual(Object.keys(record.properties ?? {}).sort(), fields);
+    assert.deepEqual([...(record.required ?? [])].sort(), fields);
+    assert.match(String(record.properties?.jws?.description), /compact JWS/);
+    assert.match(String(record.properties?.seq?.description), /Gaps are expected/);
+    assert.equal(record.properties?.statement?.description, undefined);
+
+    // And the sentence the whole feature turns on, on the read a Party actually meets: the
+    // offline path named first, and what a signature does not prove said outright, because a
+    // reader who over-reads it has been misled by us (ADR-0041).
+    const takingItAway = String(documents.public.paths[log]?.get?.description);
+    assert.match(takingItAway, /verifiable by any off-the-shelf JOSE library/);
+    assert.match(takingItAway, /nothing whatever about how the agent behaved/);
+  });
+
+  it("says what the key set is, and that it needs no Token", async () => {
+    // One route, on the Public server only, and the only one there besides the login that
+    // asks for nothing: the audience for a public key is somebody who has no Token and never
+    // will (ADR-0042).
+    const document = await documentOf(described.components.publicServer.fastify);
+    const route = document.paths["/jwks.json"]?.get;
+    assert.ok(route !== undefined, "the key set should be described");
+
+    assert.deepEqual(Object.keys(route.responses).sort(), ["200", "400"]);
+    assert.deepEqual(route.tags, ["Signatures"]);
+    assert.match(String(route.description), /No Token is required/);
+    assert.match(String(route.description), /without trusting this Gateway/);
+
+    // The JWK as it is described, which is a **positive list of public members**: the schema
+    // is the second of the two things standing between a wrong key argument and the private
+    // scalar reaching an unauthenticated route, and a `d` here would undo it silently.
+    const keySet = schemaOf(document, "/jwks.json", "get", "200");
+    const key = keySet.properties?.keys?.items;
+    assert.ok(key !== undefined, "the key set should describe what a key looks like");
+    assert.deepEqual(Object.keys(key.properties ?? {}).sort(), ["crv", "e", "kty", "n", "x", "y"]);
+    assert.deepEqual(key.required, ["kty"]);
+    // Neither in the schema nor anywhere else in either document, since a member named at all
+    // is a member the serializer would let through.
+    for (const [surface, served] of Object.entries({
+      public: document,
+      agent: await documentOf(described.components.agentServer.fastify),
+    })) {
+      assert.equal(JSON.stringify(served).includes('"d"'), false, surface);
+    }
+  });
+
   it("serves a browsable page on both, at a path neither can be moved off", async () => {
     for (const server of [described.components.agentServer, described.components.publicServer]) {
       const page = await server.fastify.inject({ method: "GET", url: "/docs" });
@@ -1338,6 +1573,7 @@ describe("the description both servers serve", () => {
     return createGatewayWithDefaults({
       databaseUrl: nowhere,
       runtime,
+      signingKey,
       tokenTtl: hour,
       agentListen: { port: 0 },
       publicListen: { port: 0 },
@@ -1418,6 +1654,7 @@ describe("the two options a deployment may leave out", () => {
 
     const gateway = createGatewayWithDefaults({
       runtime,
+      signingKey,
       agentListen: { port: 0, host: "127.0.0.1" },
       publicListen: { port: 0, host: "127.0.0.1" },
       handlers: () => ({}),
@@ -1453,6 +1690,7 @@ describe("the two options a deployment may leave out", () => {
       () =>
         createGatewayWithDefaults({
           runtime,
+          signingKey,
           agentListen: { port: 0, host: "127.0.0.1" },
           publicListen: { port: 0, host: "127.0.0.1" },
           handlers: () => ({}),

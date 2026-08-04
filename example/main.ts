@@ -1,3 +1,5 @@
+import { createPrivateKey } from "node:crypto";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { createGatewayWithDefaults, templateHandler } from "shared-agent-framework";
 import { type MessageRecord, messageReceivedKind } from "shared-agent-framework/http-messenger";
@@ -9,6 +11,22 @@ if (hostDir === undefined) {
     "set HOST_DIR to this directory's path on the host: the agent's mounts are resolved there, not here",
   );
 }
+
+// The Shared Agent's identity, read here because the framework reads nothing: it takes a
+// `KeyObject` and parses no PEM, opens no file and looks at no environment variable, so
+// whether this path came from a file, a secrets manager or a shell is this entry point's
+// business and nobody else's (ADR-0016, ADR-0041). It is the same division `HOST_DIR` above
+// is on, and this is the one place a reader sees whose job it is.
+//
+// Nothing generates one, deliberately: a fresh key per restart would leave every Decision
+// ever published unverifiable, with nothing anywhere saying so.
+const signingKeyFile = process.env.SIGNING_KEY_FILE;
+if (signingKeyFile === undefined) {
+  throw new Error(
+    "set SIGNING_KEY_FILE to a PEM private key: it is the Shared Agent's identity, and the framework will not invent one",
+  );
+}
+const signingKey = createPrivateKey(readFileSync(signingKeyFile));
 
 const runtime = createPiRuntime({
   image: "saf-agent:0.83.0",
@@ -41,6 +59,7 @@ const runtime = createPiRuntime({
 
 const gateway = createGatewayWithDefaults({
   runtime,
+  signingKey,
   publicListen: { port: 8080, host: "0.0.0.0" },
   agentListen: { port: 7411, host: "0.0.0.0" },
   handlers: () => ({

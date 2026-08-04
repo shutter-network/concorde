@@ -1,0 +1,267 @@
+/**
+ * What Signatures signs, and what it serves so that somebody else can check it.
+ *
+ * The subject is the artifact and the key set, so this is the one suite in the repository
+ * with **no database in it**: this part stores nothing, and there is nothing here a row could
+ * be read back from (ADR-0042). Everything else is real — a real Fastify instance, a real
+ * Ed25519 keypair, and the real `jose` doing the signing.
+ *
+ * **The oracle is `node:crypto`, deliberately not `jose`.** `jose` is what signs, so a `jose`
+ * verification here would be self-verification and would pass against an artifact nobody else
+ * on earth could check. The built-in is the independent implementation, and the signing input
+ * is reconstructed by **splitting the emitted string** rather than rebuilt from our own header
+ * and payload objects — which is what catches signing the wrong bytes, the one failure a
+ * self-consistent implementation cannot see.
+ *
+ * Alongside that, four structural assertions that route through no format code of ours at all:
+ * the signature segment is exactly 64 bytes for Ed25519, all three segments are base64url with
+ * no `+`, `/` or `=`, tampering with either segment fails verification **including swapping
+ * `typ` alone**, and **the key set contains no private member**. The last one guards the worst
+ * failure available here — a wrong key argument serving the private scalar from an
+ * unauthenticated route — and it is the single most valuable assertion in the feature.
+ *
+ * The keypair is generated here, in the test, which is where a keypair may be generated: the
+ * framework generates none, because a fresh key per restart leaves every prior artifact
+ * unverifiable with nothing saying so (ADR-0041).
+ */
+
+import assert from "node:assert/strict";
+import {
+  createHash,
+  createPublicKey,
+  generateKeyPairSync,
+  type JsonWebKey,
+  verify,
+} from "node:crypto";
+import { after, before, describe, it } from "node:test";
+import Fastify, { type FastifyInstance } from "fastify";
+import { type Component, serverComponent } from "../components.ts";
+import type { LogFields, Logger } from "../logging.ts";
+import { createSignatures, type Signatures } from "./signatures.ts";
+
+/** Where a server that is never started would have listened, had it been. */
+const nowhere = { port: 0, host: "127.0.0.1" } as const;
+
+/** The Statement everything here is signed over. */
+const statement = "we will ship on Friday";
+
+/** One line the part wrote, as the fields and the message it was written with. */
+type Line = { readonly fields: LogFields; readonly message: string };
+
+const written: Line[] = [];
+
+/**
+ * A Logger that keeps what it was told, which is the only way "the Statement is not in the
+ * log" is observable at all.
+ *
+ * Structural, like every Logger: four methods and no `pino` anywhere (ADR-0027).
+ */
+const capturing: Logger = {
+  debug: () => {},
+  info: (fields, message) => void written.push({ fields, message }),
+  warn: () => {},
+  error: () => {},
+};
+
+const { privateKey } = generateKeyPairSync("ed25519");
+
+let publicServer: Component & { readonly fastify: FastifyInstance };
+let signatures: Signatures;
+
+before(() => {
+  publicServer = serverComponent(Fastify(), nowhere);
+  // The whole construction: a key and somewhere to publish the public half. No Db, because
+  // there is nothing to store, and this is the only part of which that is true.
+  signatures = createSignatures({ signingKey: privateKey, publicServer, logger: capturing });
+});
+
+after(async () => {
+  await publicServer.stop();
+});
+
+describe("the key set", () => {
+  it("is served to somebody holding no Token at all", async () => {
+    // Every other read on this server is behind the User Manager's single 401, and this is
+    // the stated exception: a public key is public, and the whole audience for it is a third
+    // party who has no Token and never touches the rest of the Gateway (ADR-0042).
+    const answered = await publicServer.fastify.inject({ method: "GET", url: "/jwks.json" });
+
+    assert.equal(answered.statusCode, 200, answered.body);
+    const set = answered.json<{ keys: JsonWebKey[] }>();
+    // A Set even with one key, which is RFC 7517's own container and what a client's
+    // remote-key-set helper consumes with no glue code.
+    assert.equal(set.keys.length, 1);
+    const [key] = set.keys;
+    assert.ok(key !== undefined);
+    assert.equal(key.kty, "OKP");
+    assert.equal(key.crv, "Ed25519");
+    assert.equal(typeof key.x, "string");
+  });
+
+  it("carries no private member, which is the assertion this whole part is arranged around", async () => {
+    // The worst failure available on this surface is the private scalar being served from an
+    // unauthenticated route, and two things stand between a wrong `KeyObject` and it:
+    // `createPublicKey` in the constructor, and the response schema being a positive list of
+    // public members. This is what notices if both are undone at once.
+    const answered = await publicServer.fastify.inject({ method: "GET", url: "/jwks.json" });
+    const [key] = answered.json<{ keys: JsonWebKey[] }>().keys;
+
+    assert.equal(Object.hasOwn(key ?? {}, "d"), false, `the key set carried d: ${answered.body}`);
+    // And on the bytes as well as on the parsed object, because a scalar nested anywhere at
+    // all would parse into a field nobody thought to look at. The private JWK of this exact
+    // key is what is looked for, so this cannot pass by the string simply being absent.
+    const secret = privateKey.export({ format: "jwk" }).d;
+    assert.equal(typeof secret, "string", "an Ed25519 private JWK should have a d to look for");
+    assert.equal(answered.body.includes(String(secret)), false, "the private scalar was served");
+  });
+
+  it("refuses a query parameter it does not have rather than answering anyway", async () => {
+    const answered = await publicServer.fastify.inject({ method: "GET", url: "/jwks.json?kid=1" });
+
+    assert.equal(answered.statusCode, 400, answered.body);
+    assert.match(answered.json<{ message: string }>().message, /"kid" is not a parameter/);
+  });
+});
+
+describe("what it signs", () => {
+  it("is three base64url segments, and the signature is exactly 64 bytes", async () => {
+    const jws = await signatures.sign("saf-decision+jws", { statement });
+
+    const segments = jws.split(".");
+    assert.equal(segments.length, 3, jws);
+    for (const segment of segments) {
+      // No `+`, `/` or `=`: base64url and not base64, which is what makes the artifact
+      // URL-safe and is a property of the encoding rather than of anything we assert about
+      // its contents.
+      assert.match(segment, /^[A-Za-z0-9_-]+$/, jws);
+    }
+
+    const [, , signature] = segments;
+    // Exactly 64 for Ed25519, per RFC 8037. The measured trap this stands against is the
+    // neighbouring one: Node emits DER for EC unless told otherwise, giving a 71-byte
+    // signature where RFC 7518 requires 64, and a self-consistent verifier accepts it happily
+    // (ADR-0042). The length is checked here because nothing else would.
+    assert.equal(Buffer.from(String(signature), "base64url").length, 64);
+  });
+
+  it("declares the algorithm and the type in the protected header", async () => {
+    const jws = await signatures.sign("saf-receipt+jws", { statement });
+
+    assert.deepEqual(headerOf(jws), { alg: "EdDSA", typ: "saf-receipt+jws" });
+  });
+
+  it("carries the claims it was given, in the order they were written", async () => {
+    // The payload is signed as the exact bytes emitted and nothing re-serializes it, so the
+    // order of the caller's own object is the order of the bytes. Asserted on the decoded
+    // string rather than on a parsed object, because a parsed object is where that fact stops
+    // being visible (ADR-0042).
+    const jws = await signatures.sign("saf-decision+jws", { seq: 7, statement });
+
+    assert.equal(payloadTextOf(jws), JSON.stringify({ seq: 7, statement }));
+  });
+
+  it("verifies with node:crypto against the key the Public server serves", async () => {
+    // The demoable claim, in its smallest form: nothing here holds the `KeyObject` the part
+    // was constructed with. The key comes off the wire, the artifact comes out of `sign`, and
+    // the check is the built-in's.
+    const jws = await signatures.sign("saf-decision+jws", { statement });
+
+    assert.equal(await checks(jws), true);
+  });
+
+  it("fails verification when either segment is tampered with", async () => {
+    const jws = await signatures.sign("saf-decision+jws", { statement });
+    const [header, payload, signature] = jws.split(".");
+    assert.ok(header !== undefined && payload !== undefined && signature !== undefined);
+
+    // A payload that says something else, signed with the signature of the thing it does not
+    // say. This is the case the whole artifact exists to make impossible.
+    const relabelled = Buffer.from(
+      JSON.stringify({ statement: "we will ship on Monday" }),
+      "utf8",
+    ).toString("base64url");
+    assert.equal(await checks(`${header}.${relabelled}.${signature}`), false);
+
+    // And a signature from somewhere else entirely, which is a different key's or nobody's.
+    const forged = Buffer.alloc(64, 7).toString("base64url");
+    assert.equal(await checks(`${header}.${payload}.${forged}`), false);
+  });
+
+  it("fails verification when only the type is swapped, which is what proves the header is signed", async () => {
+    // The sharpest of the tampering cases, and the reason the scheme is inside the signature
+    // rather than beside it: a receipt presented as a Decision changes nothing but `typ`, and
+    // a hand-rolled preimage has to remember to cover its own version tag where JWS cannot
+    // omit it (ADR-0042).
+    const jws = await signatures.sign("saf-receipt+jws", { statement });
+    const [, payload, signature] = jws.split(".");
+    const relabelled = Buffer.from(
+      JSON.stringify({ alg: "EdDSA", typ: "saf-decision+jws" }),
+      "utf8",
+    ).toString("base64url");
+
+    assert.equal(await checks(`${relabelled}.${payload}.${signature}`), false);
+  });
+});
+
+describe("what it writes down", () => {
+  it("logs the type and a digest, and never the Statement", async () => {
+    // Signing is otherwise unrecorded, which is a real regression and is mitigated rather
+    // than solved by this line: an injected agent mints unlimited artifacts and the only
+    // trail is here (ADR-0042). What must not be here is the Statement itself, or a log
+    // aggregator becomes a shadow copy of every private thing the agent ever signed.
+    const secret = "the thing nobody should find in stdout";
+    written.length = 0;
+    await signatures.sign("saf-decision+jws", { statement: secret });
+
+    assert.equal(written.length, 1, "one signing should write one line");
+    const [line] = written;
+    assert.ok(line !== undefined);
+    assert.equal(line.fields.typ, "saf-decision+jws");
+    // A SHA-256 of the Statement, and the digest is recomputed here rather than copied off
+    // the line, so a line carrying a digest of something else fails.
+    assert.equal(line.fields.statementSha256, sha256(secret));
+    // And the Statement is in none of it, fields or message.
+    assert.equal(JSON.stringify(line).includes(secret), false, JSON.stringify(line));
+  });
+});
+
+/** The protected header of an artifact, decoded from the string that was emitted. */
+function headerOf(jws: string): unknown {
+  const [header] = jws.split(".");
+  return JSON.parse(Buffer.from(String(header), "base64url").toString("utf8"));
+}
+
+/** The payload as the bytes it was signed as, rather than as an object parsed out of them. */
+function payloadTextOf(jws: string): string {
+  const [, payload] = jws.split(".");
+  return Buffer.from(String(payload), "base64url").toString("utf8");
+}
+
+/**
+ * One verification, done the way a third party does it: fetch the key set, take the key, split
+ * the artifact, and check with the built-in.
+ *
+ * The signing input is **reconstructed by splitting the emitted string** and never rebuilt
+ * from a header and a payload of this file's own, which is the whole point: a rebuilt input
+ * would agree with a `sign` that had serialized something else, and the artifact would still
+ * be unverifiable by everybody.
+ */
+async function checks(jws: string): Promise<boolean> {
+  const answered = await publicServer.fastify.inject({ method: "GET", url: "/jwks.json" });
+  const [key] = answered.json<{ keys: JsonWebKey[] }>().keys;
+  assert.ok(key !== undefined, answered.body);
+
+  const [header, payload, signature] = jws.split(".");
+  if (header === undefined || payload === undefined || signature === undefined) return false;
+  return verify(
+    null,
+    Buffer.from(`${header}.${payload}`, "utf8"),
+    createPublicKey({ key, format: "jwk" }),
+    Buffer.from(signature, "base64url"),
+  );
+}
+
+/** SHA-256 in hex, computed here so that the assertion is not a copy of the code under test. */
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}

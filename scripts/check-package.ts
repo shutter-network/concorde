@@ -8,8 +8,8 @@
  *  - `dist` mirrors `src`, which is what makes a migration folder reached from
  *    `import.meta.url` the same folder in the repository and in the package.
  *  - the tarball installs into a fresh project.
- *  - the root, `/pi`, `/users` and `/http-messenger` subpaths resolve there, both to
- *    the type checker and to Node at runtime.
+ *  - the root, `/pi`, `/users`, `/http-messenger`, `/signatures` and `/decisions`
+ *    subpaths resolve there, both to the type checker and to Node at runtime.
  *  - the shipped migration folders **apply to a real database from inside the
  *    installed package**, with a working directory that holds no `migrations`
  *    folder of its own. Resolving against `process.cwd()` passes every test in
@@ -49,12 +49,14 @@ import { createTestDatabase } from "../src/test-support/database.ts";
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const migrationsRoot = path.join(repoRoot, "migrations");
 
-/** The consumer's imports, spelled once: the type checker and Node see the same four. */
+/** The consumer's imports, spelled once: the type checker and Node see the same six. */
 const consumerImports = [
   'import { createAgentContainerRuntime, createGateway, createGatewayWithDefaults, createSignalWorker, defaultLogger, openDb, resolveMountTable, serverComponent, signalsMigrations, templateHandler } from "shared-agent-framework";',
   'import { createPiRuntime, interpretPiOutput, piRun } from "shared-agent-framework/pi";',
   'import { createUsers, usersMigrations } from "shared-agent-framework/users";',
   'import { createHttpMessenger, httpMessagesMigrations, messageReceivedKind } from "shared-agent-framework/http-messenger";',
+  'import { createSignatures } from "shared-agent-framework/signatures";',
+  'import { createDecisions, decisionsMigrations } from "shared-agent-framework/decisions";',
 ];
 
 function run(command: string, args: string[], cwd: string): string {
@@ -190,6 +192,28 @@ try {
     "dist/http-messenger/routes.js",
     "dist/http-messenger/routes.d.ts",
     "dist/http-messenger/schema.js",
+    // Signatures, under its own subpath and with **no migration descriptor**: it is the one
+    // part of the framework that stores nothing, so there is no `migrations.js` beside these
+    // and no folder for one to resolve (ADR-0042). It is also the only module that imports
+    // `jose`, which the runtime step below is what proves is declared rather than merely
+    // present in our own tree.
+    "dist/signatures/index.js",
+    "dist/signatures/index.d.ts",
+    "dist/signatures/signatures.js",
+    "dist/signatures/signatures.d.ts",
+    "dist/signatures/routes.js",
+    "dist/signatures/routes.d.ts",
+    // Decisions, under its own subpath and with a descriptor of its own:
+    // `dist/decisions/migrations.js` resolves `../../migrations/decisions` from its own
+    // module, so its position in `dist` is what makes that folder reachable (ADR-0043).
+    "dist/decisions/index.js",
+    "dist/decisions/index.d.ts",
+    "dist/decisions/decisions.js",
+    "dist/decisions/decisions.d.ts",
+    "dist/decisions/migrations.js",
+    "dist/decisions/routes.js",
+    "dist/decisions/routes.d.ts",
+    "dist/decisions/schema.js",
     // The template Handler is public surface of its own, and the only module that
     // reaches for `handlebars` — so a missing `dependencies` entry surfaces when the
     // scratch project imports it below rather than at an Operator's first Signal.
@@ -439,6 +463,24 @@ try {
       "  HttpMessengerOptions,",
       "  MessageRecord,",
       '} from "shared-agent-framework/http-messenger";',
+      // Signatures' own types, from its own subpath. `SignedClaims` is among them because the
+      // caller builds the payload and therefore decides the bytes that get signed: the claims
+      // are serialized in the order they were written, and nothing re-serializes them
+      // (ADR-0042).
+      "import type {",
+      "  Signatures,",
+      "  SignaturesOptions,",
+      "  SignedClaims,",
+      '} from "shared-agent-framework/signatures";',
+      // And Decisions', whose `DecisionRecord` is the one shape every surface of that part
+      // answers with. No route plugin type is among either set, because neither part exports
+      // one (ADR-0034).
+      "import type {",
+      "  DecisionRecord,",
+      "  Decisions,",
+      "  DecisionsOptions,",
+      '} from "shared-agent-framework/decisions";',
+      'import { createPrivateKey, generateKeyPairSync, type KeyObject } from "node:crypto";',
       'import { pgSchema, text } from "drizzle-orm/pg-core";',
       // Fastify is public API (ADR-0021) and the consumer's own dependency: the
       // framework constructs no server, so the instance comes from this call.
@@ -672,6 +714,43 @@ try {
       "  createdAt: new Date().toISOString(),",
       "};",
       "",
+      "// Signatures: a key and the Public server, and **no Db at all** — the one part of the",
+      "// framework that stores nothing, so there is no descriptor beside it and nothing to",
+      "// migrate (ADR-0042). The key is a `KeyObject` the consumer loaded however they like,",
+      "// because the framework parses no PEM, reads no environment and generates nothing",
+      "// (ADR-0041). Generated here rather than read off disk only because this file has no",
+      "// disk; `createPrivateKey` is annotated below to show the shape an Operator actually",
+      "// writes.",
+      "const { privateKey } = generateKeyPairSync('ed25519');",
+      "export const loaded: (pem: string) => KeyObject = (pem) => createPrivateKey(pem);",
+      "const signaturesOptions: SignaturesOptions = {",
+      "  signingKey: privateKey, publicServer: publicComponent, logger: log,",
+      "};",
+      "export const signatures: Signatures = createSignatures(signaturesOptions);",
+      "// The one method it carries, and the claims the caller builds: `statement` is required",
+      "// and everything beside it is the caller's, in the order they wrote it, because that",
+      "// order is the order of the signed bytes (ADR-0042).",
+      "const claims: SignedClaims = { seq: 7, createdAt: new Date().toISOString(), statement: 'we will ship on Friday' };",
+      "",
+      "// Decisions: the Db, Signatures it signs through in process, the User Manager whose hook",
+      "// refuses an unauthenticated read, and both servers. Written after Signatures because it",
+      "// holds it — a Decision that was not signed is not a Decision — and in **no** particular",
+      "// order relative to the User Manager, since there is no foreign key here (ADR-0043).",
+      "const decisionsOptions: DecisionsOptions = {",
+      "  db, signatures, users, publicServer: publicComponent, agentServer: agentComponent,",
+      "};",
+      "export const decisions: Decisions = createDecisions(decisionsOptions);",
+      "export const decisionsDescriptor: MigrationDescriptor = decisionsMigrations;",
+      "// The one shape every surface of that part answers with, annotated so a field that went",
+      "// missing from the declaration fails here. `jws` is not optional and never will be: the",
+      "// number is drawn before the signature precisely so that the column can be NOT NULL.",
+      "const committed: DecisionRecord = {",
+      "  seq: 7,",
+      '  statement: "we will honour the terms as written",',
+      '  jws: "eyJhbGciOiJFZERTQSJ9.e30.AA",',
+      "  createdAt: new Date().toISOString(),",
+      "};",
+      "",
       "// A Handler factory of the consumer's own, and the shape the construction cycle takes",
       "// in their code: it closes over the Db and the HTTP Messenger, and its post phase is the",
       "// only path by which a failed Run reaches the person waiting (ADR-0017, ADR-0024). Both",
@@ -726,6 +805,9 @@ try {
       "const assembly: DefaultGatewayOptions<{ ownLoop: Component }> = {",
       '  databaseUrl: "postgres://nobody@example.invalid/none",',
       "  runtime,",
+      "  // Required of every deployment, including one that publishes nothing: the assembly is",
+      "  // one fixed shape and nothing in it branches on whether a key was passed (ADR-0041).",
+      "  signingKey: privateKey,",
       "  // No default, because the trade a Token's lifetime settles is the deployment's, and a",
       "  // convenience constructor is not a reason to reverse a deliberate refusal (ADR-0030).",
       "  tokenTtl: 30 * 24 * 60 * 60 * 1000,",
@@ -735,7 +817,7 @@ try {
       "  // right for a Producer, wrong for a resource the drain uses, and the answer to the",
       "  // second is `createGateway` (ADR-0038).",
       "  extend: (defaults: DefaultComponents) => ({ ownLoop: heartbeat(defaults.db, defaults.worker) }),",
-      "  // Given the six *and* the extension, and this is where the cycle is broken: the map is",
+      "  // Given the eight *and* the extension, and this is where the cycle is broken: the map is",
       "  // written into the Signal Worker after the Messenger the Handler needs was built. The",
       "  // second entry is the extension's own Producer answered, which is only expressible",
       "  // because `handlers` runs after `extend` (ADR-0038).",
@@ -754,6 +836,8 @@ try {
       "export const assembledDb: Db = assembled.components.db;",
       "export const assembledUsers: Users = assembled.components.users;",
       "export const assembledMessenger: HttpMessenger = assembled.components.messenger;",
+      "export const assembledSignatures: Signatures = assembled.components.signatures;",
+      "export const assembledDecisions: Decisions = assembled.components.decisions;",
       "export const assembledWorker: SignalWorker = assembled.components.worker;",
       "export const assembledLoop: Component = assembled.components.ownLoop;",
       "// The two servers the framework constructed, reachable so that the consumer's own",
@@ -872,7 +956,7 @@ try {
       "  // The descriptors registered here as well as by the parts that export them: this",
       "  // is what the pre-deploy migration entry point does, and the identical descriptor",
       "  // twice is one registration (ADR-0032).",
-      "  db.registerMigrations(descriptor, usersDescriptor, messagesDescriptor);",
+      "  db.registerMigrations(descriptor, usersDescriptor, messagesDescriptor, decisionsDescriptor);",
       "  await db.migrate();",
       "  await write(db.handle({ notes }));",
       "  await db.tx(async (tx: Transaction) => write(tx));",
@@ -929,9 +1013,16 @@ try {
       "  const whole: MessageRecord[] = await messenger.history(admitted.id, { limit: 1000 });",
       "  const since: MessageRecord[] = await messenger.history(admitted.id, { after: answered.seq });",
       '  shipped.info({ said, answered, log: whole.length, since: since.length }, "a Message has one shape on every surface");',
+      "  // The one method Signatures carries, called rather than only named: signing is in",
+      "  // process and never an HTTP request, which is what lets a Handler publish inside a",
+      "  // transaction. It is also what proves `jose` is a declared dependency rather than one",
+      "  // merely present in our own node_modules, since nothing else in this project installs it.",
+      "  const artifact: string = await signatures.sign('saf-decision+jws', claims);",
+      "  shipped.info({ committed, segments: artifact.split('.').length }, \"a Statement was signed\");",
       "  // One record, under the consumer's own words for its parts, that starts in key",
       "  // order and stops in the reverse of it. **Every** part is in it, the User Manager and",
-      "  // the HTTP Messenger included, and those two come off subpaths of their own — so this",
+      "  // the HTTP Messenger, Signatures and Decisions included, and those four come off subpaths",
+      "  // of their own — so this",
       "  // record is also what proves the installed `.d.ts` files agree with the root's",
       "  // `Component` (ADR-0037). The order is the consumer's own and comes from one rule: the",
       "  // Signal Worker's `stop` is the only one that does work, so it is keyed after every part",
@@ -941,8 +1032,8 @@ try {
       "  // the drain, and last in the record is what buys that. Nothing in the framework checks",
       "  // any of it.",
       "  const gateway = createGateway({",
-      "    db, agentServer: agentComponent, publicServer: publicComponent, users, messenger,",
-      "    worker: workerComponent, ownLoop,",
+      "    db, agentServer: agentComponent, publicServer: publicComponent, users, signatures,",
+      "    decisions, messenger, worker: workerComponent, ownLoop,",
       "  });",
       "  // The record comes back with its types intact, so a part is reached by the key it was",
       "  // filed under and is still what was put there — and the Gateway is itself a Component,",
@@ -950,7 +1041,7 @@ try {
       "  const reached: Db = gateway.components.db;",
       "  const nested: Gateway<{ db: Db }> = createGateway({ db: reached });",
       "  const asComponent: Component = nested;",
-      "  // And the same six from one call, which is the path an Operator's entry point actually",
+      "  // And the same eight from one call, which is the path an Operator's entry point actually",
       "  // takes: migrate between construction and start, because `start` refuses a schema the",
       "  // database is behind and never applies one (ADR-0032, ADR-0038).",
       "  await assembled.components.db.migrate();",
@@ -990,6 +1081,10 @@ try {
         // proof and the registration is the other half (ADR-0040).
         'import fastifySwagger from "@fastify/swagger";',
         'import fastifySwaggerUi from "@fastify/swagger-ui";',
+        // The three built-ins the signing path needs: one to make a keypair, and two to check
+        // the artifact the way a third party does — with `node:crypto` and not with `jose`,
+        // since `jose` is what signed it (ADR-0042).
+        'import { createPublicKey, generateKeyPairSync, verify } from "node:crypto";',
         // `templateHandler` is here because importing it loads `handlebars`: an
         // installed package resolves it only if it is declared as a dependency, and
         // our own `node_modules` would hide a missing entry in every other check.
@@ -1045,7 +1140,29 @@ try {
         // two of them to be in a Gateway's record at all (ADR-0037).
         "const messengerWorker = createSignalWorker({ db: scratch, runtime: { run: async () => ({ ok: true }) }, handlers: {} });",
         "const messenger = createHttpMessenger({ db: scratch, users: directory, worker: messengerWorker, publicServer: { fastify: Fastify() }, agentServer: { fastify: Fastify() } });",
-        // And the same six from one call, which is the path an Operator's entry point takes.
+        // Signatures and Decisions, constructed the way an Operator constructs them and in the
+        // order they must be: Decisions holds Signatures. Signatures takes **no Db**, being the
+        // one part with nothing to store, and the key is a `KeyObject` this project generated
+        // itself, because the framework parses no PEM and generates nothing (ADR-0041).
+        "const signaturesServer = Fastify();",
+        // A logger that says nothing, because stdout is this step's assertion channel and a
+        // signing line written to it would be part of what is compared. What that line carries
+        // is `src/signatures/signatures.test.ts`'s subject.
+        "const quiet = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };",
+        "const signatures = createSignatures({ signingKey: generateKeyPairSync('ed25519').privateKey, publicServer: { fastify: signaturesServer }, logger: quiet });",
+        "const decisions = createDecisions({ db: scratch, signatures, users: directory, publicServer: { fastify: signaturesServer }, agentServer: { fastify: Fastify() } });",
+        // And the artifact actually produced, in process, from the installed package. This is
+        // the whole proof that `jose` is a **declared** dependency rather than one merely
+        // present in our own tree: this project asked npm for the tarball, `@types/node` and
+        // `fastify` and nothing else, so a missing `dependencies` entry fails right here
+        // (ADR-0042). Verified with `node:crypto` against the key set the route serves, which
+        // is also what proves that route answers from an installed package.
+        "const jws = await signatures.sign('saf-decision+jws', { seq: 7, createdAt: new Date().toISOString(), statement: 'we will ship on Friday' });",
+        "await signaturesServer.ready();",
+        "const keySet = (await signaturesServer.inject({ method: 'GET', url: '/jwks.json' })).json();",
+        "const [jwsHeader, jwsPayload, jwsSignature] = jws.split('.');",
+        "const checked = verify(null, Buffer.from(jwsHeader + '.' + jwsPayload, 'utf8'), createPublicKey({ key: keySet.keys[0], format: 'jwk' }), Buffer.from(jwsSignature, 'base64url'));",
+        // And the same eight from one call, which is the path an Operator's entry point takes.
         // This is the one place anything proves the **value** import of `fastify` survives
         // installation: `dist/default-gateway.js` constructs the two servers itself, and a
         // peer dependency that failed to resolve would throw right here rather than at an
@@ -1055,6 +1172,7 @@ try {
         "const assembled = createGatewayWithDefaults({",
         "  databaseUrl: 'postgres://nobody@example.invalid/none',",
         "  runtime: { run: async () => ({ ok: true }) },",
+        "  signingKey: generateKeyPairSync('ed25519').privateKey,",
         "  tokenTtl: 60000,",
         "  agentListen: { port: 7411, host: 'localhost' },",
         "  publicListen: { port: 8080, host: '0.0.0.0' },",
@@ -1065,7 +1183,7 @@ try {
         // fetched the way an Agent Implementation fetches it. `ready` boots the plugins and
         // binds nothing, so this reaches no database and no socket; what it proves is that
         // the two plugins resolve from a consumer's tree, that the assembly registered them
-        // ahead of all three parts, and that the seven paths the framework's own routes make
+        // ahead of all five parts, and that the eight paths the framework's own routes make
         // are in the document rather than an empty `paths` (ADR-0040).
         "await assembled.components.agentServer.fastify.ready();",
         "const description = (await assembled.components.agentServer.fastify.inject({ method: 'GET', url: '/openapi.json' })).json();",
@@ -1091,7 +1209,7 @@ try {
         // because the module that used to hold one is gone from the package, and the
         // composed command line names no file for the agent to read either — the
         // Operator's `AGENTS.md` above is a mount and `pi` discovers it (ADR-0025).
-        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), resolvedMounts.containerArguments()[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersMigrations.schema, String(Object.keys(directory).sort()), httpMessagesMigrations.schema, String(Object.keys(messenger).sort()), messageReceivedKind, String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(',')];",
+        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), resolvedMounts.containerArguments()[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersMigrations.schema, String(Object.keys(directory).sort()), httpMessagesMigrations.schema, String(Object.keys(messenger).sort()), messageReceivedKind, decisionsMigrations.schema, String(Object.keys(signatures).sort()), String(Object.keys(decisions).sort()), jws.split('.').length + ' segments, ' + Buffer.from(jwsSignature, 'base64url').length + ' signature bytes, verified ' + checked + ', private member ' + Object.hasOwn(keySet.keys[0], 'd'), String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(',')];",
         "process.stdout.write(built.join(':'));",
       ].join("\n"),
     ],
@@ -1099,8 +1217,8 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword,start,stop:saf_http_messages:history,send,start,stop:message.received:db,agentServer,publicServer,users,messenger,worker,ownLoop:Shared Agent Gateway: Agent server describes 7 paths:by hand /healthz",
-    "all four subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Manager should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself, and both of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and one call should assemble all six of them from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the consumer's own Component appended last, and that assembly's Agent server should answer a description of its own seven paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand",
+    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword,start,stop:saf_http_messages:history,send,start,stop:message.received:saf_decisions:sign,start,stop:start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,signatures,decisions,messenger,worker,ownLoop:Shared Agent Gateway: Agent server describes 8 paths:by hand /healthz",
+    "all six subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Manager should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself, and both of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct from a key alone with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds, and one call should assemble all eight of them from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the consumer's own Component appended last, and that assembly's Agent server should answer a description of its own eight paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand",
   );
 
   step("applying a shipped migration folder from inside the installed package");
@@ -1120,6 +1238,9 @@ try {
       'import { createSignalWorker, openDb, signalsMigrations } from "shared-agent-framework";',
       'import { createUsers, usersMigrations } from "shared-agent-framework/users";',
       'import { createHttpMessenger, httpMessagesMigrations } from "shared-agent-framework/http-messenger";',
+      'import { createSignatures } from "shared-agent-framework/signatures";',
+      'import { createDecisions, decisionsMigrations } from "shared-agent-framework/decisions";',
+      'import { generateKeyPairSync } from "node:crypto";',
       'import Fastify from "fastify";',
       "",
       "const db = openDb(process.argv[2]);",
@@ -1143,13 +1264,22 @@ try {
       "// its first migration references `saf_users.users` (ADR-0036). Nothing is held: it",
       "// exports no plugin, and it put its own routes at `/messages` on both servers above.",
       "createHttpMessenger({ db, users, worker, publicServer: { fastify: publicServer }, agentServer: { fastify: agentServer } });",
+      "// Signatures and Decisions, in the one order that is forced: Decisions holds Signatures",
+      "// and signs through it in process. Neither imposes an order against anything else here —",
+      "// Signatures has no folder at all, and Decisions references no other part's schema, which",
+      "// is what makes its folder applicable wherever it lands (ADR-0042, ADR-0043).",
+      "// A logger that says nothing, for the reason the cost above is cheap: stdout is what",
+      "// this file reports through, and one signing writes one line to it by default.",
+      "const quiet = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };",
+      "const signatures = createSignatures({ signingKey: generateKeyPairSync('ed25519').privateKey, publicServer: { fastify: publicServer }, logger: quiet });",
+      "createDecisions({ db, signatures, users, publicServer: { fastify: publicServer }, agentServer: { fastify: agentServer } });",
       "try {",
       "  // Both descriptors registered explicitly, as a pre-deploy migration entry point",
       "  // does — each for the second time, since constructing a part is what registers",
       "  // its own, and an identical descriptor twice is one registration and not two.",
       "  // The exported descriptors are why that entry point need construct nothing at",
       "  // all (ADR-0032).",
-      "  db.registerMigrations(signalsMigrations, usersMigrations, httpMessagesMigrations);",
+      "  db.registerMigrations(signalsMigrations, usersMigrations, httpMessagesMigrations, decisionsMigrations);",
       "  await db.migrate();",
       "  // And started, which is what proves each shipped folder's `meta/_journal.json`",
       "  // resolves from inside the installed package: `start` reads one per registered",
@@ -1202,6 +1332,16 @@ try {
       '  const said = await agentServer.inject({ method: "POST", url: "/messages", payload: { userId: admitted.json().id, text: "the deploy finished" } });',
       '  const misaddressed = await agentServer.inject({ method: "POST", url: "/messages", payload: { userId: "2f1b4d54-1c3a-4f2e-9d7b-8e6a5c4b3a21", text: "nobody would ever read this" } });',
       '  const conversation = await agentServer.inject({ method: "GET", url: "/messages?user=" + admitted.json().id });',
+      "  // And Decisions' folder, which has no hand-edit to prove and one thing of its own: the",
+      "  // number comes from a PostgreSQL sequence rather than from a `max()+1`, so a publish",
+      "  // that reached the shipped table gets a number and one that did not gets an error. The",
+      "  // read back over the Public server, behind the User Manager's own hook, is what proves",
+      "  // the row was written rather than only accepted — and that both parts registered their",
+      "  // routes on the two servers this file constructed (ADR-0043).",
+      '  const committed = await agentServer.inject({ method: "POST", url: "/decisions", payload: { statement: "we will ship on Friday" } });',
+      "  const reading = await db.tx((tx) => users.issueToken(tx, oidcUser.id));",
+      '  const published = await publicServer.inject({ method: "GET", url: "/decisions", headers: { authorization: "Bearer " + reading.token } });',
+      '  const strangers = await publicServer.inject({ method: "GET", url: "/decisions" });',
       "  const applied =",
       "    id.length === 36 &&",
       "    user.id.length === 36 &&",
@@ -1228,8 +1368,15 @@ try {
       "    misaddressed.statusCode === 404 &&",
       "    conversation.statusCode === 200 &&",
       "    conversation.json().messages.length === 1 &&",
-      "    conversation.json().messages[0].id === said.json().id;",
-      '  process.stdout.write(applied ? "applied" : "unexpected " + id + " " + JSON.stringify(user) + " " + issued.statusCode + " " + issued.body + " " + refused.statusCode + " " + me.statusCode + " " + me.body + " " + anonymous.statusCode + " " + out.statusCode + " " + afterwards.statusCode + " " + noPassword.statusCode + " " + asOidc.statusCode + " " + asOidc.body + " " + said.statusCode + " " + said.body + " " + misaddressed.statusCode + " " + conversation.body);',
+      "    conversation.json().messages[0].id === said.json().id &&",
+      "    committed.statusCode === 201 &&",
+      "    committed.json().seq === 1 &&",
+      '    committed.json().jws.split(".").length === 3 &&',
+      "    published.statusCode === 200 &&",
+      "    published.json().decisions.length === 1 &&",
+      "    published.json().decisions[0].jws === committed.json().jws &&",
+      "    strangers.statusCode === 401;",
+      '  process.stdout.write(applied ? "applied" : "unexpected " + id + " " + JSON.stringify(user) + " " + issued.statusCode + " " + issued.body + " " + refused.statusCode + " " + me.statusCode + " " + me.body + " " + anonymous.statusCode + " " + out.statusCode + " " + afterwards.statusCode + " " + noPassword.statusCode + " " + asOidc.statusCode + " " + asOidc.body + " " + said.statusCode + " " + said.body + " " + misaddressed.statusCode + " " + conversation.body + " " + committed.statusCode + " " + committed.body + " " + published.statusCode + " " + published.body + " " + strangers.statusCode);',
       "} finally {",
       "  await db.stop();",
       "}",

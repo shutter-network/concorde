@@ -489,10 +489,10 @@ for a Run that never finishes.
 
 All JSON, all on the Agent server, and **all unscoped**. Which of them exist is a
 consequence of which parts were handed that server: four are the Signal Worker's, three the
-User Manager's and two the HTTP Messenger's. All three parts are handed it by
+User Manager's, two the HTTP Messenger's and two Decisions'. All four parts are handed it by
 `createGatewayWithDefaults`, so on the default path the agent gets the whole of that.
 
-**Which nine, though, is not written here and is not written in your `AGENTS.md`
+**Which eleven, though, is not written here and is not written in your `AGENTS.md`
 either.** The server describes itself: `GET /openapi.json` answers a current OpenAPI
 document generated from the routes that deployment actually registered, and `/docs` is the
 same thing as a browsable page. It carries every path, what each takes, the shape of every
@@ -575,8 +575,8 @@ it and gets exactly what it asked for
 Those three calls are **construct, migrate, start**, in that order and no other.
 
 1. **Construct.** `createGatewayWithDefaults({ … })` builds the Db, two `Fastify()`
-   instances, the User Manager, the HTTP Messenger and the Signal Worker, hands each of
-   them what it needs, and keys them in an order. Construction is also the whole of the
+   instances, the User Manager, Signatures, Decisions, the HTTP Messenger and the Signal
+   Worker, hands each of them what it needs, and keys them in an order. Construction is also the whole of the
    wiring: a part handed a server registers its routes on that server, and a part with
    tables of its own registers its migration descriptor with the Db, so there is no third
    item on a checklist for you to forget
@@ -608,9 +608,9 @@ it before you write a Component of your own.
 
 One word, since it is the only thing the framework asks a part to be. A **Component** is a
 `start` and a `stop` and nothing else: no name, no routes field, no declared dependency and
-nothing resolved. All six above are Components, the User Manager and the HTTP Messenger
-included, whose methods do nothing — membership in the record is what gives a part a key and
-a position, rather than owning a timer
+nothing resolved. All eight above are Components, the four whose methods do nothing
+included — the User Manager, Signatures, Decisions and the HTTP Messenger — because
+membership in the record is what gives a part a key and a position, rather than owning a timer
 ([ADR-0037](./adr/0037-the-gateway-is-a-record-of-components.md)).
 
 Then the one thing the framework does not do for you, at the bottom of the file:
@@ -1052,18 +1052,25 @@ that step any more, so here is the whole of it:
 
 ```ts
 import { openDb, signalsMigrations } from "shared-agent-framework";
+import { decisionsMigrations } from "shared-agent-framework/decisions";
 import { httpMessagesMigrations } from "shared-agent-framework/http-messenger";
 import { usersMigrations } from "shared-agent-framework/users";
 
 const db = openDb(process.env.DATABASE_URL ?? "postgres://saf:saf@postgres:5432/saf");
-db.registerMigrations(signalsMigrations, usersMigrations, httpMessagesMigrations);
+db.registerMigrations(
+  signalsMigrations,
+  usersMigrations,
+  httpMessagesMigrations,
+  decisionsMigrations,
+);
 await db.migrate();
 await db.stop();
 ```
 
 Each part with tables of its own exports one of those *migration descriptors* — inert data
 naming a folder, a schema and a tracking table — and constructing the part registers it,
-which is why `db.migrate()` takes no arguments anywhere. This job constructs nothing, so it
+which is why `db.migrate()` takes no arguments anywhere. Signatures exports none, because it
+stores nothing: it is the only part of the framework with no schema at all. This job constructs nothing, so it
 registers them by hand. No Gateway, no Runtime, and — the point of the shape — **no model
 credential and no agent image**, because a migration job that needs an `ANTHROPIC_API_KEY`
 is a broken migration job
@@ -1214,7 +1221,7 @@ exactly that kind and holds no privilege for being ours: it inserts a Message an
 **Your own Component.** Anything with a `start` and a `stop` starts and stops with
 everything else — a poller, a queue consumer, a metrics endpoint of your own. There is no
 base class, no `name`, and nothing to register: `extend` returns them under keys of your
-own, and they join the Gateway's record beside the six the call built.
+own, and they join the Gateway's record beside the eight the call built.
 
 ```ts
 let timer: ReturnType<typeof setInterval> | undefined;
@@ -1243,13 +1250,14 @@ stop first — before the Signal Worker has begun waiting for the Run in flight.
 for a Producer, which should stop producing before the drain rather than during it. It is
 **wrong for anything the drain uses**: an outbound client your Handlers call in their `post`
 phase, a cache they read, a connection to something of your own. That position is the one
-`extend` cannot express, and the answer is not a flag — it is `createGateway` with all seven
+`extend` cannot express, and the answer is not a flag — it is `createGateway` with all nine
 entries written out by hand and yours where it belongs. There is no partial exit
 ([ADR-0038](./adr/0038-the-default-assembly-is-a-constructor.md)).
 
-One thing about the keys. The six defaults — `db`, `agentServer`, `publicServer`, `users`,
-`messenger`, `worker` — are **type errors** in what `extend` returns, because a spread would
-overwrite one in place, keep its position, and say nothing (ADR-0037).
+One thing about the keys. The eight defaults — `db`, `agentServer`, `publicServer`, `users`,
+`signatures`, `decisions`, `messenger`, `worker` — are **type errors** in what `extend`
+returns, because a spread would overwrite one in place, keep its position, and say nothing
+(ADR-0037).
 
 **Your own tables.** `db.handle(yourSchema)` gives you a typed Drizzle handle through
 the same call the framework's own parts use, and `db.tx(cb)` a transaction you can pass
