@@ -15,8 +15,8 @@
  *
  * It is still not a registry and still not a plugin host. Every part below is constructed
  * by the same public constructor an Operator would call, with the same arguments, and
- * `createGateway` remains what this returns. An Operator who needs a different answer to
- * any of it calls `createGateway` with a record of their own — and that escape is not
+ * `createBareGateway` remains what this returns. An Operator who needs a different answer to
+ * any of it calls `createBareGateway` with a record of their own — and that escape is not
  * cheap, which is the price this module charges and ADR-0038 states.
  *
  * ## The order, and the one rule it comes from
@@ -123,7 +123,7 @@
  * The cost is one sentence long and worth writing down: this is the **only shipped module
  * that reads `process.env`**, and a library reaching into the environment has an input its
  * caller cannot see in the call. It is confined to this constructor and to one variable,
- * and `createGateway` reaches nothing.
+ * and `createBareGateway` reaches nothing.
  *
  * ## The one shipped module that imports a value from `fastify`
  *
@@ -141,7 +141,7 @@ import fastifySwagger from "@fastify/swagger";
 import fastifySwaggerUi from "@fastify/swagger-ui";
 import type { FastifyInstance, FastifyListenOptions } from "fastify";
 import Fastify from "fastify";
-import { type Component, createGateway, type Gateway, serverComponent } from "./components.ts";
+import { type Component, createBareGateway, type Gateway, serverComponent } from "./components.ts";
 import { type Db, openDb } from "./db/index.ts";
 import { createDecisions, type Decisions } from "./decisions/index.ts";
 import { createHttpMessenger, type HttpMessenger } from "./http-messenger/index.ts";
@@ -181,7 +181,7 @@ export type DefaultComponents = {
  * (ADR-0037). `?: never` is what makes it a compile error, and under
  * `exactOptionalPropertyTypes` it means the key may be absent and nothing else.
  *
- * An Operator who really wants to substitute one is writing `createGateway` by hand, which
+ * An Operator who really wants to substitute one is writing `createBareGateway` by hand, which
  * is the honest way to say it.
  *
  * It is written over `keyof DefaultComponents` rather than as a list, so a key added to the
@@ -281,7 +281,7 @@ export type DefaultGatewayOptions<E extends GatewayExtension> = {
    * returns is **appended**, so those Components start last and therefore stop *first* —
    * right for a Producer, which should stop producing before the worker drains, and wrong
    * for a resource the drain uses, such as an outbound client the Handlers call. The second
-   * case is the one `extend` cannot express, and the answer is `createGateway`.
+   * case is the one `extend` cannot express, and the answer is `createBareGateway`.
    */
   readonly extend?: (components: DefaultComponents) => E;
   /**
@@ -500,5 +500,5 @@ export function createGatewayWithDefaults<E extends GatewayExtension = Record<st
   // And the cycle closed, into the map the worker has been holding since it was built.
   Object.assign(handlers, options.handlers(components));
 
-  return createGateway(components);
+  return createBareGateway(components);
 }

@@ -22,7 +22,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { FastifyListenOptions } from "fastify";
 import {
   type Component,
-  createGateway,
+  createBareGateway,
   type ListeningServer,
   serverComponent,
 } from "./components.ts";
@@ -65,7 +65,7 @@ function mock(log: string[], name: string, behaviour: Behaviour = {}): Component
 describe("a record of Components", () => {
   it("starts in key order and stops in the reverse, awaiting each", async () => {
     const log: string[] = [];
-    const gateway = createGateway({
+    const gateway = createBareGateway({
       db: mock(log, "db", { delayMs: 6 }),
       agentServer: mock(log, "agentServer", { delayMs: 3 }),
       worker: mock(log, "worker"),
@@ -88,7 +88,7 @@ describe("a record of Components", () => {
   it("is a Component itself, and hands back the record it was given", async () => {
     const log: string[] = [];
     const db = mock(log, "db");
-    const gateway = createGateway({ db });
+    const gateway = createBareGateway({ db });
 
     // The same objects, under the same keys: the record is the Gateway's directory of
     // its own parts, so a part is reached by the word the Operator filed it under.
@@ -105,7 +105,7 @@ describe("a record of Components", () => {
   it("stops exactly what had started, in reverse, when a start throws", async () => {
     const log: string[] = [];
     const failed = new Error("the worker could not reach the queue");
-    const gateway = createGateway({
+    const gateway = createBareGateway({
       db: mock(log, "db"),
       agentServer: mock(log, "agentServer"),
       worker: mock(log, "worker", { failStart: failed }),
@@ -142,7 +142,7 @@ describe("a record of Components", () => {
     // Keyed with the Operator's own word for the part rather than the part's word for
     // itself, which is the whole of what replaced `name`: this Worker is filed under
     // `queue`, and that is what the message below has to say.
-    const gateway = createGateway({
+    const gateway = createBareGateway({
       db: mock(log, "db", { failStop: alsoFailed }),
       agentServer: mock(log, "agentServer"),
       queue: mock(log, "signal worker", { failStart: failed }),
@@ -176,7 +176,7 @@ describe("a record of Components", () => {
     const log: string[] = [];
     const first = new Error("the public server would not close");
     const second = new Error("the pool would not drain");
-    const gateway = createGateway({
+    const gateway = createBareGateway({
       db: mock(log, "db", { failStop: second }),
       worker: mock(log, "worker"),
       publicServer: mock(log, "publicServer", { failStop: first }),
@@ -204,7 +204,7 @@ describe("a record of Components", () => {
 
   it("does nothing the second time it is stopped", async () => {
     const log: string[] = [];
-    const gateway = createGateway({ db: mock(log, "db"), worker: mock(log, "worker") });
+    const gateway = createBareGateway({ db: mock(log, "db"), worker: mock(log, "worker") });
 
     await gateway.start();
     await gateway.stop();
@@ -220,7 +220,7 @@ describe("a record of Components", () => {
     // Recorded rather than guarded against (ADR-0037). JavaScript orders `"2"` before
     // every ordinary key in any object, so this Gateway starts the wrong part first and
     // nothing anywhere says so — which is the cost of not refusing it statically.
-    const gateway = createGateway({
+    const gateway = createBareGateway({
       db: mock(log, "db"),
       "2": mock(log, "2"),
       "2fa": mock(log, "2fa"),

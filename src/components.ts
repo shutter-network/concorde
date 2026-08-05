@@ -5,7 +5,7 @@
  * keyed by the Operator's own words
  * ([ADR-0037](../docs/adr/0037-the-gateway-is-a-record-of-components.md)). There is no
  * registry, nothing declares a dependency, and nothing here can say what depends on
- * what: `createGateway` receives objects that already hold each other, because
+ * what: `createBareGateway` receives objects that already hold each other, because
  * dependencies are ordinary constructor options and the wiring is where the Signal
  * Handlers are built. What it adds is an order and what happens when one of them
  * fails, which is the whole of what a lifecycle interface buys and the thing every
@@ -79,7 +79,7 @@ export type Gateway<C extends Record<string, Component>> = Component & {
  * ([ADR-0012](../docs/adr/0012-the-gateway-is-a-serial-signal-worker.md)), but it is
  * the Operator calling `start` twice in a file of their own.
  */
-export function createGateway<C extends Record<string, Component>>(components: C): Gateway<C> {
+export function createBareGateway<C extends Record<string, Component>>(components: C): Gateway<C> {
   /**
    * What is running, oldest first. Popping it is what makes `stop` idempotent, and
    * it is also what the unwind of a failed `start` walks — there is one teardown here

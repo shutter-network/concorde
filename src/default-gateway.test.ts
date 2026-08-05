@@ -993,7 +993,7 @@ describe("the defaults on their own", () => {
     // Six algorithms are valid for one RSA key and nothing in the key says which was meant,
     // so Signatures refuses one that arrives without an answer (ADR-0042). What this option
     // is for is that the refusal be *answerable* here: without it an Operator holding an RSA
-    // key would have to leave the assembly for `createGateway` to say PS256, and the
+    // key would have to leave the assembly for `createBareGateway` to say PS256, and the
     // assembly is how nearly every deployment builds a Gateway.
     const rsa = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey;
     const withRsa = {
@@ -1032,7 +1032,7 @@ describe("the defaults on their own", () => {
       // ours would have gone and nothing anywhere would say so. The refusal is a type error,
       // and this is where it is pinned: `@ts-expect-error` fails the typecheck if the line
       // below ever starts compiling (ADR-0037). An Operator who really wants to substitute
-      // one writes `createGateway` by hand, which is the honest way to say it.
+      // one writes `createBareGateway` by hand, which is the honest way to say it.
       // @ts-expect-error a default key may not be replaced by an extension
       extend: (defaults) => ({ notes: notebook(), messenger: defaults.messenger }),
       handlers: () => ({}),

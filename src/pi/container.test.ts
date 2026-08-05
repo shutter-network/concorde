@@ -64,7 +64,7 @@ import path from "node:path";
 import { after, before, describe, it, type TestContext } from "node:test";
 import { eq } from "drizzle-orm";
 import Fastify from "fastify";
-import { createGateway, serverComponent } from "../components.ts";
+import { createBareGateway, serverComponent } from "../components.ts";
 import type { Mount } from "../container/index.ts";
 import { openDb } from "../db/index.ts";
 import type { SignalHandler } from "../signals/handlers.ts";
@@ -423,7 +423,7 @@ async function withGateway(
   // Db first so it stops last, the Agent server before the Worker so it closes after the
   // drain, and `start` in one call that binds the port the agent was already told about
   // (ADR-0037, ADR-0038).
-  const gateway = createGateway({ db, agentServer, worker });
+  const gateway = createBareGateway({ db, agentServer, worker });
   await gateway.start();
   try {
     await body(rig);
