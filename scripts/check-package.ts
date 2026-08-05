@@ -8,8 +8,8 @@
  *  - `dist` mirrors `src`, which is what makes a migration folder reached from
  *    `import.meta.url` the same folder in the repository and in the package.
  *  - the tarball installs into a fresh project.
- *  - the root, `/pi`, `/users`, `/http-messenger`, `/signatures` and `/decisions`
- *    subpaths resolve there, both to the type checker and to Node at runtime.
+ *  - the root, `/pi`, `/users`, `/http-messenger`, `/signatures`, `/decisions` and
+ *    `/scheduler` subpaths resolve there, both to the type checker and to Node at runtime.
  *  - the shipped migration folders **apply to a real database from inside the
  *    installed package**, with a working directory that holds no `migrations`
  *    folder of its own. Resolving against `process.cwd()` passes every test in
@@ -49,7 +49,7 @@ import { createTestDatabase } from "../src/test-support/database.ts";
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const migrationsRoot = path.join(repoRoot, "migrations");
 
-/** The consumer's imports, spelled once: the type checker and Node see the same six. */
+/** The consumer's imports, spelled once: the type checker and Node see the same seven. */
 const consumerImports = [
   'import { createAgentContainerRuntime, createBareGateway, createGateway, createSignalWorker, defaultLogger, openDb, resolveMountTable, serverComponent, signalsMigrations, templateHandler } from "shared-agent-framework";',
   'import { createPiRuntime, interpretPiOutput, piRun } from "shared-agent-framework/pi";',
@@ -57,6 +57,7 @@ const consumerImports = [
   'import { createHttpMessenger, httpMessagesMigrations, messageReceivedKind } from "shared-agent-framework/http-messenger";',
   'import { createSignatures } from "shared-agent-framework/signatures";',
   'import { createDecisions, decisionsMigrations } from "shared-agent-framework/decisions";',
+  'import { createScheduler, scheduleFiredKind, schedulerMigrations } from "shared-agent-framework/scheduler";',
 ];
 
 function run(command: string, args: string[], cwd: string): string {
@@ -214,6 +215,22 @@ try {
     "dist/decisions/routes.js",
     "dist/decisions/routes.d.ts",
     "dist/decisions/schema.js",
+    // The Scheduler, under its own subpath and with a descriptor of its own:
+    // `dist/scheduler/migrations.js` resolves `../../migrations/scheduler` from its own
+    // module, so its position in `dist` is what makes that folder reachable. It is the second
+    // Producer and the one part that reaches for `cron-parser` and `luxon`, which the runtime
+    // step below is what proves are declared rather than merely present in our own tree
+    // (ADR-0018).
+    "dist/scheduler/index.js",
+    "dist/scheduler/index.d.ts",
+    "dist/scheduler/scheduler.js",
+    "dist/scheduler/scheduler.d.ts",
+    "dist/scheduler/schedules.js",
+    "dist/scheduler/schedules.d.ts",
+    "dist/scheduler/migrations.js",
+    "dist/scheduler/routes.js",
+    "dist/scheduler/routes.d.ts",
+    "dist/scheduler/schema.js",
     // The template Handler is public surface of its own, and the only module that
     // reaches for `handlebars` — so a missing `dependencies` entry surfaces when the
     // scratch project imports it below rather than at an Operator's first Signal.
@@ -480,6 +497,19 @@ try {
       "  Decisions,",
       "  DecisionsOptions,",
       '} from "shared-agent-framework/decisions";',
+      // The Scheduler's own types, from its own subpath, for the same reason: a deployment with no
+      // time-based behaviour imports nothing from there, and one that does is opting the second
+      // Producer in and wiring it like the HTTP Messenger (ADR-0018). No route plugin type is among
+      // them, because the part registers its routes itself and exports none.
+      "import type {",
+      "  ScheduleFiredRecord,",
+      "  ScheduleInput,",
+      "  ScheduleOutcome,",
+      "  ScheduleRecord,",
+      "  ScheduleSpec,",
+      "  Scheduler,",
+      "  SchedulerOptions,",
+      '} from "shared-agent-framework/scheduler";',
       'import { createPrivateKey, generateKeyPairSync, type KeyObject } from "node:crypto";',
       'import { pgSchema, text } from "drizzle-orm/pg-core";',
       // Fastify is public API (ADR-0021) and the consumer's own dependency: the
@@ -752,6 +782,43 @@ try {
       "  createdAt: new Date().toISOString(),",
       "};",
       "",
+      "// The Scheduler: the second Producer, constructed from the Db, the Signal Worker it emits",
+      "// into, and the Agent server so its routes register — omit the server and the whole",
+      "// agent-facing surface is off, the programmatic interface staying available regardless",
+      "// (ADR-0018). It imposes no construction-order constraint of its own, a Schedule referencing",
+      "// nobody. The options are annotated separately, so a field that went missing from the",
+      "// declaration fails here.",
+      "const schedulerOptions: SchedulerOptions = {",
+      "  db, worker, agentServer: agentComponent, maxSleepMs: 60_000,",
+      "};",
+      "export const scheduler: Scheduler = createScheduler(schedulerOptions);",
+      "export const schedulerDescriptor: MigrationDescriptor = schedulerMigrations;",
+      "// The one shape every read of a Schedule answers with, annotated so a field that went",
+      "// missing from the declaration fails here. `nextFireAt` is a plain string and not nullable: a",
+      "// read answers only live Schedules, and a create is refused unless it resolves to a fire.",
+      "const arranged: ScheduleRecord = {",
+      '  name: "daily-digest",',
+      '  spec: { kind: "cron", expr: "0 9 * * *", tz: "Europe/Berlin" },',
+      '  data: { digest: "daily" },',
+      "  until: null,",
+      "  nextFireAt: new Date().toISOString(),",
+      "};",
+      "// The upsert's own answer — whether it created and the resulting record — and the input it",
+      "// takes: a name, a spec that is the extensible tagged union, opaque data, and a cron's",
+      "// optional end instant. Annotated so a member that drifted fails here.",
+      'const onceSpec: ScheduleSpec = { kind: "once", at: new Date().toISOString() };',
+      'const scheduleInput: ScheduleInput = { name: "a-reminder", spec: onceSpec, data: { note: 1 } };',
+      "const upserted: ScheduleOutcome = { created: true, schedule: arranged };",
+      "// A Handler for the Scheduler's fixed `kind`, written against its exported payload type the",
+      "// way an Operator writes it — the reason `ScheduleFiredRecord` and `scheduleFiredKind` are",
+      "// exported, so a Handler map is neither a string literal that drifts nor a shape re-declared",
+      "// by hand (ADR-0018).",
+      "const whenFired: SignalHandler<ScheduleFiredRecord> = {",
+      "  handle: (signal: Signal<ScheduleFiredRecord>): Prompt[] => [",
+      '    { session: "schedule_" + signal.payload.scheduleName, text: String(signal.payload.scheduledFor) },',
+      "  ],",
+      "};",
+      "",
       "// A Handler factory of the consumer's own, and the shape the construction cycle takes",
       "// in their code: it closes over the Db, the HTTP Messenger and Decisions, and its post",
       "// phase is the only path by which a failed Run reaches the person waiting (ADR-0017,",
@@ -813,6 +880,7 @@ try {
       "  signatures: Signatures;",
       "  decisions: Decisions;",
       "  messenger: HttpMessenger;",
+      "  scheduler: Scheduler;",
       "  ownLoop: Component;",
       "};",
       "const assembly: GatewayOptions<Assembled> = {",
@@ -845,9 +913,17 @@ try {
       "      db: infra.db, users: gatewayUsers, worker: infra.worker,",
       "      publicServer: infra.publicServer, agentServer: infra.agentServer,",
       "    });",
+      "    // The Scheduler wired like the Messenger: the Db, the Worker it emits into, and the Agent",
+      "    // server for its routes. Keyed ahead of the Worker like every `extend` part, so its stop —",
+      "    // which cancels the firing timer — runs after the drain, a fire landing during it a pending",
+      "    // Signal the next boot handles (ADR-0018, ADR-0045).",
+      "    const gatewayScheduler = createScheduler({",
+      "      db: infra.db, worker: infra.worker, agentServer: infra.agentServer,",
+      "    });",
       "    return {",
       "      users: gatewayUsers, signatures: gatewaySignatures, decisions: gatewayDecisions,",
-      "      messenger: gatewayMessenger, ownLoop: heartbeat(infra.db, infra.worker),",
+      "      messenger: gatewayMessenger, scheduler: gatewayScheduler,",
+      "      ownLoop: heartbeat(infra.db, infra.worker),",
       "    };",
       "  },",
       "  // Given the four infrastructure Components *and* the extension, and this is where the cycle",
@@ -857,6 +933,10 @@ try {
       "  handlers: (all) => ({",
       "    [messageReceivedKind]: notifier(all.db, all.messenger, all.decisions),",
       '    "loop.ticked": greeter("the loop ticked in " + typeof all.ownLoop),',
+      "    // The Scheduler's fixed `kind`, routed to a Handler written against its exported payload",
+      "    // type — the second Producer's matured Schedule flowing through the same dispatch as any",
+      "    // other Signal, registering none of which would leave it permanently failed (ADR-0018).",
+      "    [scheduleFiredKind]: whenFired,",
       "  }),",
       "  logger: log,",
       "};",
@@ -871,6 +951,7 @@ try {
       "export const assembledMessenger: HttpMessenger = assembled.components.messenger;",
       "export const assembledSignatures: Signatures = assembled.components.signatures;",
       "export const assembledDecisions: Decisions = assembled.components.decisions;",
+      "export const assembledScheduler: Scheduler = assembled.components.scheduler;",
       "export const assembledWorker: SignalWorker = assembled.components.worker;",
       "export const assembledLoop: Component = assembled.components.ownLoop;",
       "// The two servers the framework constructed, reachable so that the consumer's own",
@@ -989,7 +1070,7 @@ try {
       "  // The descriptors registered here as well as by the parts that export them: this",
       "  // is what the pre-deploy migration entry point does, and the identical descriptor",
       "  // twice is one registration (ADR-0032).",
-      "  db.registerMigrations(descriptor, usersDescriptor, messagesDescriptor, decisionsDescriptor);",
+      "  db.registerMigrations(descriptor, usersDescriptor, messagesDescriptor, decisionsDescriptor, schedulerDescriptor);",
       "  await db.migrate();",
       "  await write(db.handle({ notes }));",
       "  await db.tx(async (tx: Transaction) => write(tx));",
@@ -1206,6 +1287,15 @@ try {
         "const quiet = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };",
         "const signatures = createSignatures({ signingKey: generateKeyPairSync('ed25519').privateKey, publicServer: { fastify: signaturesServer }, agentServer: { fastify: Fastify() }, users: directory, logger: quiet });",
         "const decisions = createDecisions({ db: scratch, signatures, users: directory, publicServer: { fastify: signaturesServer }, agentServer: { fastify: Fastify() } });",
+        // The Scheduler, constructed the way an Operator constructs it: the Db, the Signal Worker it
+        // emits into, and an Agent server for its routes. Nothing connects and nothing listens — what
+        // this proves is that the `/scheduler` subpath resolves at runtime from the installed package,
+        // that construction is free of side effects beyond registering its descriptor and its routes,
+        // and that the object it answers with carries its management surface plus the Component
+        // lifecycle (ADR-0018). `cron-parser` and `luxon` are the part's own dependencies, and the
+        // proof they resolve and are declared is `cronNext`/`zoneKnown` below, which call them
+        // directly rather than through a Schedule driven here.
+        "const scheduler = createScheduler({ db: scratch, worker: messengerWorker, agentServer: { fastify: Fastify() } });",
         // And the artifact actually produced, in process, from the installed package. This is
         // the whole proof that `jose` is a **declared** dependency rather than one merely
         // present in our own tree: this project asked npm for the tarball, `@types/node` and
@@ -1274,7 +1364,7 @@ try {
         // because the module that used to hold one is gone from the package, and the
         // composed command line names no file for the agent to read either — the
         // Operator's `AGENTS.md` above is a mount and `pi` discovers it (ADR-0025).
-        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), resolvedMounts.containerArguments()[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersMigrations.schema, String(Object.keys(directory).sort()), httpMessagesMigrations.schema, String(Object.keys(messenger).sort()), messageReceivedKind, decisionsMigrations.schema, String(Object.keys(signatures).sort()), String(Object.keys(decisions).sort()), jws.split('.').length + ' segments, ' + Buffer.from(jwsSignature, 'base64url').length + ' signature bytes, verified ' + checked + ', private member ' + Object.hasOwn(keySet.keys[0], 'd'), String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(','), 'cron ' + cronNext + ' zone ' + zoneKnown];",
+        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), resolvedMounts.containerArguments()[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersMigrations.schema, String(Object.keys(directory).sort()), httpMessagesMigrations.schema, String(Object.keys(messenger).sort()), messageReceivedKind, decisionsMigrations.schema, String(Object.keys(signatures).sort()), String(Object.keys(decisions).sort()), jws.split('.').length + ' segments, ' + Buffer.from(jwsSignature, 'base64url').length + ' signature bytes, verified ' + checked + ', private member ' + Object.hasOwn(keySet.keys[0], 'd'), String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(','), 'cron ' + cronNext + ' zone ' + zoneKnown, 'scheduler ' + String(Object.keys(scheduler).sort()) + ' fires ' + scheduleFiredKind + ' migrates ' + schedulerMigrations.schema];",
         "process.stdout.write(built.join(':'));",
       ].join("\n"),
     ],
@@ -1282,8 +1372,8 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword,start,stop:saf_http_messages:history,send,start,stop:message.received:saf_decisions:sign,start,stop:history,publish,start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,signatures,decisions,messenger,ownLoop,worker:Shared Agent Gateway: Agent server describes 10 paths:by hand /healthz:cron 2030-06-02T09:00:00.000Z zone true",
-    "all six subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Manager should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself, and both of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the four parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone",
+    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword,start,stop:saf_http_messages:history,send,start,stop:message.received:saf_decisions:sign,start,stop:history,publish,start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,signatures,decisions,messenger,ownLoop,worker:Shared Agent Gateway: Agent server describes 10 paths:by hand /healthz:cron 2030-06-02T09:00:00.000Z zone true:scheduler cancel,list,schedule,start,stop,tick fires saf_schedule_fired migrates saf_scheduler",
+    "all seven subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Manager should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself, and both of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the four parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone, and the Scheduler itself should construct from the installed `/scheduler` subpath and carry its management surface and its Component lifecycle, filing its table under a schema of its own",
   );
 
   step("applying a shipped migration folder from inside the installed package");

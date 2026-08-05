@@ -9,6 +9,11 @@ import {
   messageReceivedKind,
 } from "shared-agent-framework/http-messenger";
 import { createPiRuntime } from "shared-agent-framework/pi";
+import {
+  createScheduler,
+  type ScheduleFiredRecord,
+  scheduleFiredKind,
+} from "shared-agent-framework/scheduler";
 import { createSignatures } from "shared-agent-framework/signatures";
 import { createUsers } from "shared-agent-framework/users";
 
@@ -98,7 +103,15 @@ const gateway = createGateway({
     const signatures = createSignatures({ signingKey, agentServer, publicServer, users });
     const decisions = createDecisions({ db, signatures, users, agentServer, publicServer });
     const messenger = createHttpMessenger({ db, users, worker, publicServer, agentServer });
-    return { users, signatures, decisions, messenger };
+    // The Scheduler, the second Producer, opted in and wired like the HTTP Messenger: the Db and
+    // the Signal Worker it emits into, and the Agent server so the agent can create and cancel
+    // Schedules over HTTP (omit it to switch that surface off). It is keyed ahead of the Worker
+    // like every part `extend` returns, so its `stop` — which cancels the firing timer — runs
+    // *after* the Worker's drain: a fire that lands during the drain is written as a pending
+    // Signal the next boot handles, which is the residual ADR-0018 accepts rather than leaving
+    // `extend` for `createBareGateway` to stop it first (ADR-0045).
+    const scheduler = createScheduler({ db, worker, agentServer });
+    return { users, signatures, decisions, messenger, scheduler };
   },
   handlers: () => ({
     [messageReceivedKind]: templateHandler<MessageRecord>({
@@ -106,11 +119,32 @@ const gateway = createGateway({
       session: (signal) => `user_${signal.payload.userId}`,
       data: (signal) => signal.payload,
     }),
+    // The one Handler every matured Schedule flows through: the `kind` is fixed, so a Schedule
+    // from the agent and one the Operator declared below arrive here alike, and this Handler
+    // routes on the `data` each carried. Registering none would leave `scheduleFiredKind` a
+    // permanently failed Signal (ADR-0017, ADR-0018).
+    [scheduleFiredKind]: templateHandler<ScheduleFiredRecord>({
+      template: new URL("./prompts/schedule-fired.hbs", import.meta.url),
+      session: (signal) => `schedule_${signal.payload.scheduleName}`,
+      data: (signal) => signal.payload,
+    }),
   }),
 });
 
 await gateway.components.db.migrate();
 await gateway.start();
+
+// A standing Operator Schedule, declared in code once the Gateway is up and re-declared on every
+// boot: the upsert by name converges to one Schedule rather than accumulating a duplicate per
+// restart, so the same declaration is safe to re-run. This is the programmatic path — no HTTP and
+// no timer loop of the Operator's own — and its matured Signal is `scheduleFiredKind`, which the
+// Handler above routes (ADR-0018). Removing this line does not remove the Schedule; a removal is
+// an explicit `scheduler.cancel("daily-digest")`.
+await gateway.components.scheduler.schedule({
+  name: "daily-digest",
+  spec: { kind: "cron", expr: "0 9 * * *", tz: "Europe/Berlin" },
+  data: { digest: "daily" },
+});
 
 for (const stopping of ["SIGINT", "SIGTERM"] as const) {
   process.once(stopping, () => void gateway.stop());

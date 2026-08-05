@@ -86,6 +86,13 @@ import {
   messageReceivedKind,
 } from "./http-messenger/index.ts";
 import type { Logger } from "./logging.ts";
+import {
+  createScheduler,
+  type ScheduleFiredRecord,
+  type ScheduleRecord,
+  type Scheduler,
+  scheduleFiredKind,
+} from "./scheduler/index.ts";
 import type { RunRecord, SignalHandler, SignalRecord } from "./signals/index.ts";
 import { createSignatures, type Signatures } from "./signatures/index.ts";
 import { createTestDatabase, type TestDatabase } from "./test-support/database.ts";
@@ -120,12 +127,17 @@ const theInfra = ["db", "agentServer", "publicServer", "worker"];
  * What this deployment's Gateway consists of, in the order it starts and the reverse of the order
  * it stops, written once because more than one test is about exactly this list.
  *
- * The four opinionated parts are `extend`'s now, so they are keyed between the servers and the
- * Worker — the Worker keyed **last** so the drain runs while they are all still live (ADR-0045).
- * The User Manager is before the HTTP Messenger, a foreign-key ordering the Operator owns and can
- * get wrong loudly (ADR-0036); Signatures and Decisions sit between them and the Messenger, ahead
- * of the Worker, so a post phase that publishes on the way out reaches them inside the drain
- * (ADR-0043). `notes` is the Operator's own Component, keyed last of the extension.
+ * The parts are `extend`'s now, so they are keyed between the servers and the Worker — the Worker
+ * keyed **last** so the drain runs while they are all still live (ADR-0045). The User Manager is
+ * before the HTTP Messenger, a foreign-key ordering the Operator owns and can get wrong loudly
+ * (ADR-0036); Signatures and Decisions sit between them and the Messenger, ahead of the Worker, so
+ * a post phase that publishes on the way out reaches them inside the drain (ADR-0043). The
+ * **Scheduler** is keyed ahead of the Worker too, exactly like the HTTP Messenger and every other
+ * `extend` part: it is the second Producer, but a Producer built in `extend` stops *after* the
+ * drain, so its `stop` cancels the firing timer once the Worker has already drained, and a fire
+ * that lands during the drain is a pending Signal the next boot handles — the residual ADR-0018
+ * accepts rather than leaving `extend` for `createBareGateway` to stop it first. `notes` is the
+ * Operator's own Component, keyed last of the extension.
  */
 const theRecord = [
   "db",
@@ -135,6 +147,7 @@ const theRecord = [
   "signatures",
   "decisions",
   "messenger",
+  "scheduler",
   "notes",
   "worker",
 ];
@@ -168,12 +181,16 @@ function notebook(): Notebook {
   };
 }
 
-/** The four opinionated parts an Operator builds in `extend`, which is the full stack. */
+/**
+ * The parts an Operator builds in `extend`, which is the full stack: the four opinionated ones and
+ * the Scheduler, the second Producer, opted in and wired the same way (ADR-0018, ADR-0045).
+ */
 type Stack = {
   readonly users: Users;
   readonly signatures: Signatures;
   readonly decisions: Decisions;
   readonly messenger: HttpMessenger;
+  readonly scheduler: Scheduler;
 };
 
 /**
@@ -196,7 +213,12 @@ function fullStack({ db, agentServer, publicServer, worker }: InfraComponents): 
   });
   const decisions = createDecisions({ db, signatures, users, agentServer, publicServer });
   const messenger = createHttpMessenger({ db, users, worker, publicServer, agentServer });
-  return { users, signatures, decisions, messenger };
+  // The Scheduler, given the Agent server so its routes register and are discovered by the
+  // description plugin the constructor put on ahead of `extend` — the seam this file's document
+  // suite reads them out of (ADR-0040, ADR-0045). It imposes no construction-order constraint of
+  // its own: a Schedule references nobody, so its migration folder applies wherever it lands.
+  const scheduler = createScheduler({ db, worker, agentServer, logger: silent });
+  return { users, signatures, decisions, messenger, scheduler };
 }
 
 /** Which callback ran when, since "`extend` before `handlers`" is a claim about order. */
@@ -247,6 +269,19 @@ const roundTripSubmission = "and one from me, while everything is still up";
 /** A Handler whose only job is to produce one Run for the round trip to read. */
 const roundTripping: SignalHandler<{ readonly text: string }> = {
   handle: (signal) => [{ session: roundTripSession, text: signal.payload.text }],
+};
+
+/**
+ * A Handler for the Scheduler's fixed `kind`, written `SignalHandler<ScheduleFiredRecord>` the way
+ * an Operator writes it — the reason the record type is exported (ADR-0018).
+ *
+ * Nothing in this file makes a Schedule mature: the round trip below arms a `once` far in the
+ * future so the read model is what is under test, not a fire. It is registered anyway because the
+ * Scheduler is a Producer in this fixture, and registering no Handler for its `kind` would leave a
+ * matured Schedule a permanently failed Signal (ADR-0017).
+ */
+const scheduleFiring: SignalHandler<ScheduleFiredRecord> = {
+  handle: (signal) => [{ session: `schedule_${signal.payload.scheduleName}`, text: "fired" }],
 };
 
 /**
@@ -344,7 +379,11 @@ before(async () => {
       callbacks.push("handlers");
       // Given the four *and* the extension, which is the direction that makes a Handler able
       // to use an Operator's own Component.
-      return { [messageReceivedKind]: answering(all), [roundTripKind]: roundTripping };
+      return {
+        [messageReceivedKind]: answering(all),
+        [roundTripKind]: roundTripping,
+        [scheduleFiredKind]: scheduleFiring,
+      };
     },
     logger: silent,
   });
@@ -956,6 +995,57 @@ describe("a whole deployment from one call", () => {
     assert.deepEqual(JSON.parse(nonsenseBody), { verified: false });
   });
 
+  it("answers a Schedule as the Scheduler recorded it, and drops nothing", async () => {
+    // The same serializer hazard as the round trips above, on the Scheduler's read model: its
+    // response schema is the serializer `fast-json-stringify` compiles, so a field added to
+    // `ScheduleRecord` and forgotten in the route schema is dropped from the wire *and* the
+    // document, and no comparison of one HTTP response against another can see it because a
+    // uniformly stripped field is stripped on both sides (ADR-0040). This is the assertion that
+    // can: the record is produced through the part's own `schedule`, in this process, and the
+    // whole body read back over HTTP is compared against a literal the type checker holds to
+    // `ScheduleRecord`.
+    //
+    // A `once` far in the future, so it never matures and the read model is the subject rather
+    // than a fire, carrying the awkward JSON the empty `data` schema is meant to pass through
+    // byte intact.
+    const at = "2999-01-01T00:00:00.000Z";
+    const produced = await components.scheduler.schedule({
+      name: "the-round-trip-schedule",
+      spec: { kind: "once", at },
+      data: awkwardJson,
+    });
+    assert.equal(produced.created, true, "the round-trip Schedule should be newly created");
+
+    const expected = {
+      name: "the-round-trip-schedule",
+      spec: { kind: "once", at },
+      // Byte intact, nesting and nulls and all, which is what the empty schema on `data` is for:
+      // the Scheduler echoes it verbatim and the wire does not start.
+      data: awkwardJson,
+      // Null for a `once` and an unbounded cron, and a required field on the wire all the same.
+      until: null,
+      // A `once`'s sole occurrence is its instant, and it is still in the future, so it is both
+      // the `spec.at` and the next fire.
+      nextFireAt: at,
+    } satisfies ScheduleRecord;
+
+    // The part's own answer, which is the in-process side a dropped field cannot have gone
+    // missing from — the `schedule` call answers with the same shape the routes serialise.
+    assert.deepEqual(produced.schedule, expected);
+
+    // Read back over the assembled Agent server, whole-body against the same literal: add a field
+    // to `ScheduleRecord` and this file stops compiling; declare it nowhere in the route schema
+    // and this comparison fails.
+    const read = await agentJson<ScheduleRecord>("/schedules/the-round-trip-schedule");
+    assert.deepEqual(read, expected);
+
+    // And through the list route, a second response schema written separately: the same record in
+    // its envelope, so a field declared in one schema and forgotten in the other differs here. It
+    // is the only Schedule in this deployment, so the whole page is it.
+    const listed = await agentJson<{ schedules: ScheduleRecord[] }>("/schedules");
+    assert.deepEqual(listed.schedules, [expected]);
+  });
+
   it("drains with everything still up, and closes it all once the drain is done", async () => {
     const posted = await postMessage(inFlightAtShutdown);
     assert.equal(posted.status, 201);
@@ -1134,9 +1224,10 @@ describe("the infrastructure on its own", () => {
  * further up: that suite's subject is what is listening and when, and `inject` answers on
  * a server that has been closed. This one never starts or stops a Gateway.
  *
- * **All twenty-four routes declare what they answer with**, one part at a time: the Signal
- * Worker's four, the User Manager's eight, the HTTP Messenger's four, Decisions' five and
- * Signatures' three. What no test here can do is catch a *dropped* field, since a document and
+ * **All twenty-eight routes declare what they answer with**, one part at a time: the Signal
+ * Worker's four, the User Manager's eight, the HTTP Messenger's four, Decisions' five,
+ * Signatures' three and the Scheduler's four. What no test here can do is catch a *dropped*
+ * field, since a document and
  * the wire it describes are the same schema read twice. That is the round-trip assertions in
  * the first suite, which need records real parts recorded and therefore a real database.
  */
@@ -1163,6 +1254,8 @@ describe("the description both servers serve", () => {
     "/messages/",
     "/runs",
     "/runs/{id}",
+    "/schedules",
+    "/schedules/{name}",
     "/sign",
     "/signals",
     "/signals/{id}",
@@ -1823,6 +1916,86 @@ describe("the description both servers serve", () => {
     for (const [surface, served] of Object.entries(documents)) {
       assert.equal(JSON.stringify(served).includes('"d"'), false, surface);
     }
+  });
+
+  it("says what the Scheduler's four routes answer with, and that they are the agent's alone", async () => {
+    // The Scheduler is the second Producer and an opt-in part, built into the Agent server in
+    // `extend`; its routes are in this document only because the description plugin was registered
+    // ahead of `extend` and its `onRoute` hook saw them register inside the constructor (ADR-0040,
+    // ADR-0045). All four are the agent's, disableable as a group by constructing the part with no
+    // Agent server (ADR-0018).
+    const documents = {
+      agent: await documentOf(described.components.agentServer.fastify),
+      public: await documentOf(described.components.publicServer.fastify),
+    };
+    const byName = "/schedules/{name}";
+    const list = "/schedules";
+
+    const answers: readonly {
+      readonly path: string;
+      readonly method: Method;
+      readonly statuses: readonly string[];
+    }[] = [
+      { path: byName, method: "put", statuses: ["200", "201", "400"] },
+      { path: list, method: "get", statuses: ["200", "400"] },
+      { path: byName, method: "get", statuses: ["200", "400", "404"] },
+      { path: byName, method: "delete", statuses: ["204", "400", "404"] },
+    ];
+
+    for (const { path, method, statuses } of answers) {
+      const where = `${method.toUpperCase()} ${path}`;
+      const route = documents.agent.paths[path]?.[method];
+      assert.ok(route !== undefined, `${where} should be described`);
+      assert.deepEqual(Object.keys(route.responses).sort(), [...statuses].sort(), where);
+      for (const [status, answered] of Object.entries(route.responses)) {
+        // "Default Response" is what an undeclared response reads as, so this is the line that
+        // tells a described status from a status the plugin invented a sentence for.
+        assert.notEqual(answered.description, "Default Response", `${where} ${status}`);
+        // The DELETE's 204 carries **no `content`**, which is what stops the document from
+        // promising a body nobody sends; every other status here carries one.
+        assert.equal(Object.hasOwn(answered, "content"), status !== "204", `${where} ${status}`);
+      }
+      assert.ok(route.tags !== undefined && route.tags.length > 0, `${where} should be tagged`);
+      assert.ok(route.summary !== undefined && route.summary.length > 0, where);
+      assert.ok(route.description !== undefined && route.description.length > 0, where);
+    }
+
+    // Tagged as their own group, and on the Agent server alone: a `PUT /schedules` in the Public
+    // server's document would be advertising the agent's self-waking surface to whoever can reach
+    // the port.
+    assert.deepEqual(tagsOf(documents.agent, list, "get"), ["Schedules"]);
+    assert.equal(documents.public.paths[list], undefined);
+    assert.equal(documents.public.paths[byName], undefined);
+    assert.equal(JSON.stringify(documents.public.paths).includes("Schedules"), false);
+
+    // `PUT` carries a 201 and a 200 and **no 404**: it creates when the name is absent, so the
+    // create-versus-update is the whole of what its status says (ADR-0018).
+    const upsert = documents.agent.paths[byName]?.put;
+    assert.match(String(upsert?.description), /an upsert/);
+    assert.equal(Object.hasOwn(upsert?.responses ?? {}, "404"), false);
+
+    // The read model, one shape every read answers with: exactly five fields, named rather than
+    // counted, because the schema being a **positive list** is what keeps a column added to the
+    // table off the wire. `nextFireAt` is required — a read answers only live Schedules.
+    const record = schemaOf(documents.agent, byName, "get", "200");
+    const fields = ["data", "name", "nextFireAt", "spec", "until"];
+    assert.deepEqual(Object.keys(record.properties ?? {}).sort(), fields);
+    assert.deepEqual([...(record.required ?? [])].sort(), fields);
+
+    // `data` is declared with an **empty schema**, which passes arbitrary JSON through byte
+    // intact and renders as "any": a `type` here would be the Scheduler having an opinion about
+    // the payload it emits verbatim, and the round trip in the first suite proves it does not.
+    assert.equal(record.properties?.data?.type, undefined);
+
+    // The same shape under the list envelope, which is a second serializer written separately: one
+    // `schedules` array and the same five fields on its items, so a field dropped from one schema
+    // and not the other differs here (ADR-0040).
+    const page = schemaOf(documents.agent, list, "get", "200");
+    assert.deepEqual(Object.keys(page.properties ?? {}), ["schedules"]);
+    assert.deepEqual(
+      Object.keys(page.properties?.schedules?.items?.properties ?? {}).sort(),
+      fields,
+    );
   });
 
   it("serves a browsable page on both, at a path neither can be moved off", async () => {
