@@ -79,6 +79,13 @@ const databaseUrl = fromEnv(
 //
 // Nothing generates one, deliberately: a fresh key per restart would leave every Decision
 // ever published unverifiable, with nothing anywhere saying so.
+//
+// WARNING: in this reference stack `SIGNING_KEY_FILE` points at
+// `insecure-example-only-signing-key.pem`, a throwaway keypair committed to `example/` so the
+// stack comes up from a clone with one command. It is public and worthless: it signs nothing
+// anyone should verify, and carrying it into production would let anyone who read this repository
+// forge the agent's signature. A real deployment generates its own key and never commits it, and
+// the quickstart's "Generating a key" step is where that is taught.
 const signingKeyFile = process.env.SIGNING_KEY_FILE;
 if (signingKeyFile === undefined) {
   throw new Error(

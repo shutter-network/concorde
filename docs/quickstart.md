@@ -269,6 +269,169 @@ Seven things about that surface, and most of them are refusals:
 - **`limit` defaults to 50 and caps at 200**, and there is no `hasMore` in the envelope
   because `messages.length === limit` says it.
 
+## Generating a key
+
+The stack in front of you already has a signing identity. `main.ts` loaded a PEM private key at
+boot, Signatures derived the public half from it, and the agent can now put the Shared Agent's name
+to a string. That key is **`example/insecure-example-only-signing-key.pem`**, a throwaway keypair
+committed to this repository, mounted read-only, and named by `SIGNING_KEY_FILE` in
+[`../example/compose.yml`](../example/compose.yml). It is public and worthless: it is in the clone
+you just made, so anyone who read this repository can forge signatures under it, and it signs nothing
+anybody should ever verify. **A real deployment generates its own key and never commits it.** The
+decoy is here for one reason only, that a fresh clone comes up with one command and nothing to set up
+by hand first.
+
+The framework will not generate one for you, and that is deliberate rather than unfinished. A key it
+minted at boot would be a new identity on every restart, and every Decision published under the last
+one would become unverifiable with nothing anywhere saying so, which is the one failure a signing
+identity exists to prevent. So the Operator brings the key, and generating a real one is a single
+command:
+
+```sh
+openssl genpkey -algorithm ed25519 -out signing-key.pem
+```
+
+Ed25519 is what the reference deployment uses, and it is the easy case: the key type fixes the
+algorithm with no choice to make, so `main.ts` passes no `signingAlg` and Signatures reads `EdDSA`
+straight off the key. Point `SIGNING_KEY_FILE` at your own file, mount it where `compose.yml` mounts
+the decoy, and the identity is yours rather than the example's. `main.ts` reads it with
+`createPrivateKey(readFileSync(...))` and hands the framework a `KeyObject`; the framework parses no
+PEM, opens no file and generates nothing, so where the key came from is the entry point's business
+and nobody else's.
+
+## A Decision, published and read
+
+A **Decision** is a commitment the agent makes to everybody at once, on the record, signed with that
+key. Unlike a Message it is addressed to nobody in particular, and every authenticated User reads the
+whole log of them. Publishing is a route on the **Agent** server, `POST /decisions`, so during a Run
+the agent commits by calling it and can quote the number back to a person in the same answer.
+
+You can make one appear the same way you created a User in step one, over the Agent server from
+inside the Gateway's container, and it takes only a statement. This is the identical route a Run
+calls, so nothing here is a shortcut around the real path, and it needs no model:
+
+```sh
+docker compose exec gateway wget -qO- \
+  --header='content-type: application/json' \
+  --post-data='{"statement":"We will ship the release on Friday."}' \
+  http://127.0.0.1:7411/decisions
+```
+
+A **201**, carrying the Decision as it was stored, the first in the log so its `seq` is 1:
+
+```json
+{"seq":1,"statement":"We will ship the release on Friday.",
+ "jws":"eyJhbGciOiJFZERTQSIsInR5cCI6InNhZi1kZWNpc2lvbitqd3MifQ.eyJzZXEiOjEs...","createdAt":"2026-08-06T09:14:02.318Z"}
+```
+
+That `jws` field **is** the Decision. It is a compact JWS, `header.payload.signature`, one URL-safe
+string, and everything else in the record (the number, the timestamp, the statement) can be read
+back out of it by anybody holding the public key. The log row is where the Decision is kept, not what
+makes it real: a verifier holding a valid `jws` needs no row, and no row anyone could show them would
+change the answer.
+
+Now read it back the way a **User** does, over the **Public** server, with the Token you bought in
+step two. The log wants a Token because it is not a public bulletin board for whoever finds the port:
+
+```sh
+curl -s "localhost:8080/decisions/1" -H "authorization: Bearer $TOKEN"
+```
+
+The same record comes back. `GET /decisions` returns the whole log, ascending by `seq`, paged by the
+same cursor the Message log uses; `GET /decisions/1` is the one numbered 1. With no Token the answer
+is the User Manager's single **401**, the same refusal every Public read behind it gives.
+
+## Verifying it without us
+
+This is the beat the whole feature exists for, and the one place in this walkthrough where you stop
+trusting the Gateway. A Decision is worth showing to somebody who does not trust the Operator only if
+they can check it holding nothing but the agent's public key, asking this Gateway nothing.
+
+First fetch the key set. It is served without a Token, because a public key is public:
+
+```sh
+curl -s localhost:8080/jwks.json
+```
+
+```json
+{"keys":[{"kty":"OKP","crv":"Ed25519","x":"k6sRtxRWFpk748b-LbivLfty0nO9Tn68HnvDslVTOm0"}]}
+```
+
+One key, in RFC 7517's JWK Set container so any JOSE library consumes the URL with no glue, and **no
+`d` member**: this is the public half, and the private scalar is not in it. Keep the two things you
+have now, the key set and the artifact, in two shell variables, taking the `jws` out of the Decision
+you just read:
+
+```sh
+KEYS=$(curl -s localhost:8080/jwks.json)
+JWS=eyJhbGciOiJFZERTQSIsInR5cCI6InNhZi1kZWNpc2lvbitqd3MifQ.eyJzZXEiOjEs...   # the jws field above, in full
+```
+
+Then check the signature yourself. The Gateway's image has Node, so you need none of your own, and
+this uses only `node:crypto` and no JOSE library at all: split the artifact on `.`, and verify that
+the key signed the `header.payload` bytes exactly as they were emitted:
+
+```sh
+docker compose exec gateway node -e '
+  const { createPublicKey, verify } = require("node:crypto");
+  const jwk = JSON.parse(process.argv[1]).keys[0];
+  const [header, payload, signature] = process.argv[2].split(".");
+  const ok = verify(
+    null,
+    Buffer.from(`${header}.${payload}`),
+    createPublicKey({ key: jwk, format: "jwk" }),
+    Buffer.from(signature, "base64url"),
+  );
+  console.log(ok ? "verified" : "FORGED");
+' "$KEYS" "$JWS"
+```
+
+```
+verified
+```
+
+Now tamper with it. Change one character of the artifact and run the very same check, and the
+signature no longer matches the bytes it covers:
+
+```sh
+docker compose exec gateway node -e '
+  const { createPublicKey, verify } = require("node:crypto");
+  const jwk = JSON.parse(process.argv[1]).keys[0];
+  const [header, payload, signature] = process.argv[2].split(".");
+  const flipped = payload.slice(0, -1) + (payload.slice(-1) === "A" ? "B" : "A");
+  const ok = verify(
+    null,
+    Buffer.from(`${header}.${flipped}`),
+    createPublicKey({ key: jwk, format: "jwk" }),
+    Buffer.from(signature, "base64url"),
+  );
+  console.log(ok ? "verified" : "FORGED");
+' "$KEYS" "$JWS"
+```
+
+```
+FORGED
+```
+
+One flipped character in the payload and the artifact is dead. That is what makes it worth handing to
+a third party: they run this check, not you, and a Gateway that lied about what the agent committed
+to would be caught by anybody who kept the key. The header is signed too, so swapping the `typ` to
+pass a receipt off as a Decision fails the very same way.
+
+**There is a shortcut, and it is a convenience rather than the point.** `POST /verify` on the Public
+server takes an artifact and answers whether it is ours, so a User who trusts the Operator already
+and only wants a quick confirmation can ask rather than embed a crypto library. It is mentioned
+second on purpose: to the third party the identity exists for, a Gateway-supplied verdict is
+worthless, because a dishonest Gateway says `true` to anything. The offline check above is the real
+verification, and the route is the shortcut for when the offline check is more than the moment needs.
+
+And be exact about what you just proved, because it is easy to over-read. A valid signature proves
+**that the Operator committed to this string on the Shared Agent's behalf, and nothing about the
+agent's conduct.** It does not prove the agent reasoned well, behaved, or was not talked into
+publishing it: an injected agent can obtain a perfectly valid Decision. What the cryptography rules
+out is denial alone, that this identity put its name to this exact string, and it rules that out
+without the Gateway's help.
+
 ## Seeing what happened
 
 The Gateway's own record lives in PostgreSQL, and the agent reads it over HTTP. So can

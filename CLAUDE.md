@@ -26,10 +26,14 @@ deployment brings its own identity or does not start
 `createGateway` takes a required `databaseUrl` with no `DATABASE_URL` fallback, so where the
 Db connects is stated at the call site
 ([ADR-0045](./docs/adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md)). **Where the stack
-gets that file is not settled**: `compose.yml` neither passes the variable nor mounts a key,
-so `docker compose up -d --build` does not currently come up, and the one-command promise
-above is suspended until it does. The quickstart's arc stops short of Decisions for the same
-reason.
+gets that file is settled**: a throwaway PKCS8 keypair,
+`example/insecure-example-only-signing-key.pem`, is committed to the example, `compose.yml`
+passes `SIGNING_KEY_FILE` and mounts it read-only, and `docker compose up -d --build` comes up
+from a fresh clone with no manual signing-key step, so the one-command promise holds. The key is
+a decoy that signs nothing anyone verifies, and it shouts as much at every point of contact: its
+filename, `compose.yml`, `main.ts` and the quickstart each mark it worthless and each say a real
+deployment generates its own. The quickstart's arc now runs through a Decision published,
+fetched, and verified offline against the key set.
 The image builds the framework itself, from a context that is the repository root, which is
 what `.dockerignore` is for. Nothing in `example/` ships in the tarball; `tsconfig.json`
 type-checks it against `src` through a `paths` mapping, while the image resolves the same

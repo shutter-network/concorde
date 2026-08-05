@@ -19,11 +19,20 @@ services:
       PUBLIC_PORT: "8080"
       AGENT_HOST: 0.0.0.0
       AGENT_PORT: "7411"
+      # The Shared Agent's signing identity, which main.ts loads itself (the framework parses no
+      # PEM). WARNING: this points at insecure-example-only-signing-key.pem, a throwaway keypair
+      # committed to example/ so the stack comes up from a clone with one command. It is public and
+      # worthless and signs nothing anyone should verify; a real deployment generates its own key,
+      # mounts it here instead, and never commits it. See docs/quickstart.md, "Generating a key".
+      SIGNING_KEY_FILE: /app/example/insecure-example-only-signing-key.pem
     volumes:
       # Root on the host. See docs/quickstart.md, "The Gateway holds your Docker socket".
       - /var/run/docker.sock:/var/run/docker.sock
       - ./state/workspace:/app/example/state/workspace
       - ./state/agent:/app/example/state/agent
+      # The committed decoy signing key, read-only. WARNING: worthless and public; a real
+      # deployment mounts its own key here and generates it rather than reusing this one.
+      - ./insecure-example-only-signing-key.pem:/app/example/insecure-example-only-signing-key.pem:ro
     ports:
       # Publishes PUBLIC_PORT to loopback; AGENT_PORT is bound but published to nobody.
       - "127.0.0.1:8080:8080"
