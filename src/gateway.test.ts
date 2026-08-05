@@ -2,31 +2,31 @@
  * A whole deployment from one call, and the two things that call exists to settle.
  *
  * `components.test.ts` owns the ordering contract and proves it with mocks: key order out,
- * reverse order back, unwind on a failed start. What it cannot say is that the framework's
- * own six parts *fit* that record, or that the order they go in is the right one. This file
- * is the other half. Every part here is real — real PostgreSQL, two real Fastify instances
- * on real sockets, a real started Signal Worker, the real User Manager and the real HTTP
- * Messenger — and the Runtime is the one thing faked, as everywhere else (ADR-0022).
+ * reverse order back, unwind on a failed start. What it cannot say is that the real parts *fit*
+ * that record, or that the order they go in is the right one. This file is the other half. Every
+ * part here is real — real PostgreSQL, two real Fastify instances on real sockets, a real started
+ * Signal Worker, the real User Manager and the real HTTP Messenger — and the Runtime is the one
+ * thing faked, as everywhere else (ADR-0022).
  *
- * What is different since the record was written by hand is that the order is no longer the
- * Operator's to write:
+ * The infrastructure comes from `createGateway`; the four opinionated parts are built by hand in
+ * `extend`, exactly as `example/main.ts` builds them, so the fixture is a mirror of the reference
+ * deployment (ADR-0045). What the framework still settles is the key order:
  *
- *     db -> agentServer -> publicServer -> users -> messenger -> worker -> extend
+ *     db -> agentServer -> publicServer -> <extend's parts> -> worker
  *
- * comes out of `createGatewayWithDefaults`, and it comes from one rule. **The Signal
- * Worker's `stop` is the only stop that does work.** Every other one releases something;
- * the worker's waits for the Run in flight and never cancels it (ADR-0017), and that Run
- * reads the Db, calls the Agent server and reaches the Messenger through a Signal Handler's
- * post phase. So the drain goes first, while everything it uses is still up (ADR-0038).
+ * comes from one rule. **The Signal Worker's `stop` is the only stop that does work.** Every other
+ * one releases something; the worker's waits for the Run in flight and never cancels it
+ * (ADR-0017), and that Run reads the Db, calls the Agent server and reaches the Messenger through
+ * a Signal Handler's post phase. So the drain goes first, while everything it uses is still up —
+ * which is why the Worker is keyed **last** even though it is constructed early (ADR-0045).
  *
  * That is what the last test asserts, and it is the assertion `src/pi/container.test.ts`
  * says it does not make: a Run is parked in flight, `stop` is called around it, and the Run
  * then reports what it can still reach. Nothing is inspected from the side — the report
  * comes back from inside the Run itself, which is the only vantage point from which "still
  * up during the drain" is a fact rather than a guess. The Operator's own Component is in
- * that report too, and it is the one line that says **stopped**: `extend` appends, so an
- * Operator's Components stop *first*, which is right for a Producer and wrong for a
- * resource the drain uses (ADR-0038).
+ * that report too, and it says **still running**: whatever `extend` returns is keyed ahead of
+ * the Worker now, so it stops *after* the drain rather than before it (ADR-0045).
  *
  * The other thing settled here is the **construction cycle**. The worker takes its Handler
  * map at construction, the Messenger takes the worker, and the Handler's post phase sends a
@@ -52,12 +52,13 @@
  * subject is what is listening and when cannot use it.
  *
  * The last suite is the odd one and is here rather than in a file of its own because this
- * module is what put it at risk: assembling by default is what made the package root import
- * `./users` and `./http-messenger`, and constructing a Runtime would be the obvious next
- * convenience. It reads no database and starts nothing — it walks the import graph from
- * `src/index.ts` and asserts what is *not* in it.
+ * module is what put it at risk: `createGateway` reaches the Db, the servers and the Signal
+ * Worker, and constructing a Runtime would be the obvious next convenience. It reads no database
+ * and starts nothing — it walks the import graph from `src/index.ts` and asserts the one edge
+ * worth keeping absent, an Agent Implementation, is *not* in it, and that the four parts are not
+ * either now that they are the Operator's (ADR-0045).
  *
- * **One password is in this file, and one only.** The defaults constructor exposes no
+ * **One password is in this file, and one only.** This fixture builds the User Manager with no
  * `scrypt` option, so every derivation here is at OWASP's 32 MiB cost, and the User this
  * suite is otherwise built around is admitted and handed a Token from trusted code
  * instead, which is the same two calls an OIDC callback makes (ADR-0030), so that four
@@ -76,19 +77,21 @@ import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 import type { Component, Gateway } from "./components.ts";
 import type { Db } from "./db/index.ts";
-import type { DecisionRecord } from "./decisions/index.ts";
+import { createDecisions, type DecisionRecord, type Decisions } from "./decisions/index.ts";
+import { createGateway, describedVersion, type InfraComponents } from "./gateway.ts";
 import {
-  createGatewayWithDefaults,
-  type DefaultComponents,
-  describedVersion,
-} from "./default-gateway.ts";
-import { type MessageRecord, messageReceivedKind } from "./http-messenger/index.ts";
+  createHttpMessenger,
+  type HttpMessenger,
+  type MessageRecord,
+  messageReceivedKind,
+} from "./http-messenger/index.ts";
 import type { Logger } from "./logging.ts";
 import type { RunRecord, SignalHandler, SignalRecord } from "./signals/index.ts";
+import { createSignatures, type Signatures } from "./signatures/index.ts";
 import { createTestDatabase, type TestDatabase } from "./test-support/database.ts";
 import { fakeRuntime } from "./test-support/fake-runtime.ts";
 import { waitUntil } from "./test-support/wait.ts";
-import type { IssuedToken, UserRecord } from "./users/index.ts";
+import { createUsers, type IssuedToken, type UserRecord, type Users } from "./users/index.ts";
 
 const hour = 60 * 60 * 1000;
 
@@ -107,16 +110,24 @@ const nobody = "2f1b4d54-1c3a-4f2e-9d7b-8e6a5c4b3a21";
 const { privateKey: signingKey } = generateKeyPairSync("ed25519");
 
 /**
- * What a deployment consists of, in the order it starts and the reverse of the order it stops,
- * written once because three tests are about exactly this list.
- *
- * Signatures and Decisions were **inserted** rather than appended, and the two constraints
- * they had to satisfy are what this array is for: no existing pair moved relative position, so
- * every claim the six made about their own order still holds, and both sit ahead of the Signal
- * Worker so that they outlive the drain — which is when a Signal Handler's post phase may still
- * publish (ADR-0038, ADR-0043).
+ * What `createGateway` builds and hands `extend`: the infrastructure every deployment has, in
+ * the order it keys it. **The Worker is in this record but keyed last in the returned Gateway**,
+ * so this is what `extend` receives rather than the start order (ADR-0045).
  */
-const theEight = [
+const theInfra = ["db", "agentServer", "publicServer", "worker"];
+
+/**
+ * What this deployment's Gateway consists of, in the order it starts and the reverse of the order
+ * it stops, written once because more than one test is about exactly this list.
+ *
+ * The four opinionated parts are `extend`'s now, so they are keyed between the servers and the
+ * Worker — the Worker keyed **last** so the drain runs while they are all still live (ADR-0045).
+ * The User Manager is before the HTTP Messenger, a foreign-key ordering the Operator owns and can
+ * get wrong loudly (ADR-0036); Signatures and Decisions sit between them and the Messenger, ahead
+ * of the Worker, so a post phase that publishes on the way out reaches them inside the drain
+ * (ADR-0043). `notes` is the Operator's own Component, keyed last of the extension.
+ */
+const theRecord = [
   "db",
   "agentServer",
   "publicServer",
@@ -124,6 +135,7 @@ const theEight = [
   "signatures",
   "decisions",
   "messenger",
+  "notes",
   "worker",
 ];
 
@@ -154,6 +166,37 @@ function notebook(): Notebook {
       running = false;
     },
   };
+}
+
+/** The four opinionated parts an Operator builds in `extend`, which is the full stack. */
+type Stack = {
+  readonly users: Users;
+  readonly signatures: Signatures;
+  readonly decisions: Decisions;
+  readonly messenger: HttpMessenger;
+};
+
+/**
+ * The four parts, built by hand from the infrastructure `createGateway` hands `extend`, exactly
+ * as `example/main.ts` does it — which is what makes this fixture a mirror of the reference
+ * deployment (ADR-0045). The User Manager is constructed **before** the HTTP Messenger, because
+ * `messages.user_id` is a foreign key onto `saf_users.users.id` and `db.migrate()` applies
+ * descriptors in registration order (ADR-0036); Signatures before Decisions, which holds it and
+ * signs through it in process (ADR-0043). The order the framework used to hide is on display
+ * here, which is the whole point of the parts being the Operator's now.
+ */
+function fullStack({ db, agentServer, publicServer, worker }: InfraComponents): Stack {
+  const users = createUsers({ db, tokenTtl: hour, agentServer, publicServer });
+  const signatures = createSignatures({
+    signingKey,
+    agentServer,
+    publicServer,
+    users,
+    logger: silent,
+  });
+  const decisions = createDecisions({ db, signatures, users, agentServer, publicServer });
+  const messenger = createHttpMessenger({ db, users, worker, publicServer, agentServer });
+  return { users, signatures, decisions, messenger };
 }
 
 /** Which callback ran when, since "`extend` before `handlers`" is a claim about order. */
@@ -224,9 +267,13 @@ const inFlightAtShutdown = "are you still there?";
  */
 const decidedOnTheWayOut = "the March rollout is off, decided while the Gateway was stopping";
 
+/** The whole record this file's shared Gateway holds: the infrastructure, the four parts, and
+ * the Operator's own notebook. */
+type Full = InfraComponents & Stack & { notes: Notebook };
+
 let database: TestDatabase;
-let gateway: Gateway<DefaultComponents & { notes: Notebook }>;
-let components: DefaultComponents & { notes: Notebook };
+let gateway: Gateway<Full>;
+let components: Full;
 
 /** The one User in this file, and the Token trusted code handed them. */
 let client: { readonly id: string; readonly token: string };
@@ -270,31 +317,32 @@ const runtime = fakeRuntime(async (prompt) => {
 });
 
 before(async () => {
-  database = await createTestDatabase("default_gateway");
+  database = await createTestDatabase("gateway");
 
-  // The whole assembly, and the whole of what this deployment says about it. There is no
-  // construction order here to get wrong and no record to key: the six parts, the pair of
-  // servers, the three migration registrations and the position of every stop are the
-  // framework's now (ADR-0038).
-  gateway = createGatewayWithDefaults({
+  // The infrastructure from one call, and the four parts built by hand in `extend` — the whole
+  // stack, and the construction order and wiring the Operator now owns and can see (ADR-0045).
+  // Only the Worker's key position and the description-before-`extend` registration are the
+  // framework's, and neither is expressible wrongly on this path.
+  gateway = createGateway({
     databaseUrl: database.url,
     runtime,
-    signingKey,
-    tokenTtl: hour,
     // Port 0 on both, because two suites must be able to run at once and neither address is
     // asserted on. Where they actually landed is read back off the instances after `start`.
     agentListen: { port: 0, host: "127.0.0.1" },
     publicListen: { port: 0, host: "127.0.0.1" },
-    extend: (defaults) => {
+    extend: (infra) => {
       callbacks.push("extend");
-      // Given the eight, and *not* the handlers: a Component that needed a Handler would be a
-      // Component that wanted to be a Signal Worker (ADR-0038).
-      assert.deepEqual(Object.keys(defaults), theEight);
-      return { notes: notebook() };
+      // Given the four infrastructure Components, and *not* the handlers: a Component that needed
+      // a Handler would be a Component that wanted to be a Signal Worker (ADR-0045).
+      assert.deepEqual(Object.keys(infra), theInfra);
+      // The four parts, plus the Operator's own notebook keyed last of them: this is a mirror of
+      // `example/main.ts` with one Component added, which is what proves `extend` reaches the
+      // infrastructure and returns Components of its own.
+      return { ...fullStack(infra), notes: notebook() };
     },
     handlers: (all) => {
       callbacks.push("handlers");
-      // Given the eight *and* the extension, which is the direction that makes a Handler able
+      // Given the four *and* the extension, which is the direction that makes a Handler able
       // to use an Operator's own Component.
       return { [messageReceivedKind]: answering(all), [roundTripKind]: roundTripping };
     },
@@ -333,21 +381,22 @@ after(async () => {
  *
  * A factory taking every Component, because that is what `handlers` is handed. Everything
  * it reaches (the Db, the Messenger, Decisions, the notebook) is constructed *after* the
- * Signal Worker that will dispatch to it, which is the cycle `createGatewayWithDefaults`
- * exists to break.
+ * Signal Worker that will dispatch to it, which is the cycle `createGateway` exists to break —
+ * even though the Messenger and Decisions are now the Operator's, built in `extend`, the worker
+ * is still constructed with an empty map and the map filled by `handlers` afterwards (ADR-0045).
  *
  * The publish is why Decisions is keyed **ahead of** the Signal Worker: a post phase runs after
  * the Runs arising from a Signal have finished, which during shutdown is inside the drain, and
- * a Decision reached by a failing Run should still be recorded (ADR-0038, ADR-0043).
+ * a Decision reached by a failing Run should still be recorded (ADR-0043, ADR-0045).
  *
  * What makes it *work* today is narrower than that, and worth saying rather than letting a
  * reader infer the stronger claim: the insert goes through the Db's handle, and the Db is keyed
  * first and therefore stopped last. Decisions' own `stop` does nothing, so moving its key
- * behind the worker's would leave this line passing and only the pinned order in `theEight`
+ * behind the worker's would leave this line passing and only the pinned order in `theRecord`
  * would report it. The position is the HTTP Messenger's anticipatory one, held for the day
  * either part's `stop` starts releasing something.
  */
-function answering(all: DefaultComponents & { notes: Notebook }): SignalHandler<MessageRecord> {
+function answering(all: Full): SignalHandler<MessageRecord> {
   return {
     handle(signal) {
       all.notes.lines.push(signal.payload.text);
@@ -382,23 +431,20 @@ function answering(all: DefaultComponents & { notes: Notebook }): SignalHandler<
 }
 
 describe("a whole deployment from one call", () => {
-  it("holds the eight defaults, in the order that is the start order, with the extension last", () => {
+  it("holds the infrastructure and the extension, in the start order, with the Worker keyed last", () => {
     // The keys are the start order, and they are the order the drain needs. That they are
-    // *acted on* in this order is `components.test.ts`'s claim; that these are what a
-    // deployment consists of, and in this order, is this one — and it is the framework's
-    // claim now rather than the Operator's (ADR-0038).
-    assert.deepEqual(Object.keys(components), [
-      ...theEight,
-      // Appended, which is why it stops first. The last test is where that is observed.
-      "notes",
-    ]);
+    // *acted on* in this order is `components.test.ts`'s claim; that these are what this
+    // deployment consists of, and in this order, is this one — the infrastructure the framework
+    // keyed and the four parts `extend` built, with the Worker keyed **last** so it stops first
+    // (ADR-0045).
+    assert.deepEqual(Object.keys(components), theRecord);
   });
 
   it("runs extend before handlers, so a Handler can reach a Component extend returned", () => {
     assert.deepEqual(callbacks, ["extend", "handlers"]);
-    // And the Component is started, in its position at the end of the order. Nothing has
-    // been written into it: the notebook is a Handler's to fill, and the drain test below is
-    // what makes a Handler run at all.
+    // And the Component is started, in its position ahead of the Worker. Nothing has been written
+    // into it: the notebook is a Handler's to fill, and the drain test below is what makes a
+    // Handler run at all.
     assert.equal(components.notes.running, true);
     assert.deepEqual(components.notes.lines, []);
   });
@@ -937,10 +983,10 @@ describe("a whole deployment from one call", () => {
 
     // What the Run reached from inside the drain, and the whole of the order's
     // justification. The Public server is in there deliberately: it goes on accepting
-    // submissions throughout, which is the trade ADR-0038 takes — that Message is stored,
-    // its Signal stays `pending`, and the next boot picks it up. The Operator's own
-    // Component is the one line that says stopped, because `extend` appends and appended
-    // Components stop first.
+    // submissions throughout, which is the trade ADR-0045 takes — that Message is stored,
+    // its Signal stays `pending`, and the next boot picks it up. The Operator's own Component
+    // is the one line that says **still running**, because whatever `extend` returns is keyed
+    // ahead of the Worker now and therefore stops *after* the drain, not before it (ADR-0045).
     //
     // The last line is what a Decision reached by a failing Run costs and buys: a post phase
     // that commits to something on the way out gets a row and an artifact, because the insert
@@ -950,7 +996,7 @@ describe("a whole deployment from one call", () => {
       "the User Manager read the Db: 1 User",
       "the Agent server answered: 200",
       "the Public server took a submission: 201",
-      "the Operator's own Component: stopped",
+      "the Operator's own Component: still running",
       "the HTTP Messenger sent a Message: outbound",
       "Decisions published a Decision: the same artifact",
     ]);
@@ -963,22 +1009,25 @@ describe("a whole deployment from one call", () => {
   });
 });
 
-describe("the defaults on their own", () => {
-  // Constructed and never started, which is free: `openDb` connects lazily and a Fastify
-  // instance that never listens holds nothing. What these two are about needs no database.
+describe("the infrastructure on its own", () => {
+  // Constructed and never started, which is free: `openDb` connects lazily, a Fastify instance
+  // that never listens holds nothing, and no `extend` means no part reaches a socket or a schema.
+  // What these tests are about needs no database.
 
-  it("is the eight and nothing else when no extend is passed", () => {
-    const bare = createGatewayWithDefaults({
+  it("is the four infrastructure Components and nothing else when no extend is passed", () => {
+    // No `extend`, and no `signingKey`: a deployment that publishes nothing builds neither
+    // Signatures nor Decisions and holds no key at all, which under ADR-0038 was unexpressible —
+    // the assembly required a key of every deployment — and is now the smallest possible Gateway
+    // (ADR-0045).
+    const bare = createGateway({
       databaseUrl: "postgres://nobody@example.invalid/none",
       runtime,
-      signingKey,
-      tokenTtl: hour,
       agentListen: { port: 0 },
       publicListen: { port: 0 },
       handlers: () => ({}),
     });
 
-    assert.deepEqual(Object.keys(bare.components), theEight);
+    assert.deepEqual(Object.keys(bare.components), theInfra);
 
     // And the record still has its types, which is a claim about the type parameter's
     // **default** rather than about the object. With `extend` omitted there is nothing to
@@ -989,87 +1038,84 @@ describe("the defaults on their own", () => {
     assert.equal(typeof db.migrate, "function");
   });
 
-  it("forwards signingAlg, which is the only way an RSA key reaches this assembly at all", async () => {
-    // Six algorithms are valid for one RSA key and nothing in the key says which was meant,
-    // so Signatures refuses one that arrives without an answer (ADR-0042). What this option
-    // is for is that the refusal be *answerable* here: without it an Operator holding an RSA
-    // key would have to leave the assembly for `createBareGateway` to say PS256, and the
-    // assembly is how nearly every deployment builds a Gateway.
-    const rsa = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey;
-    const withRsa = {
-      databaseUrl: "postgres://nobody@example.invalid/none",
-      runtime,
-      signingKey: rsa,
-      tokenTtl: hour,
-      agentListen: { port: 0 },
-      publicListen: { port: 0 },
-      handlers: () => ({}),
-    } as const;
-
-    // The refusal is this constructor's own, in the sense that it happens as it runs: nothing
-    // has listened, migrated or connected by the time an Operator reads it.
-    assert.throws(() => createGatewayWithDefaults(withRsa), /signingAlg/);
-
-    const answered = createGatewayWithDefaults({ ...withRsa, signingAlg: "PS256" });
-    const jws = await answered.components.signatures.sign("saf-decision+jws", {
-      statement: "we will ship on Friday",
-    });
-    const [header] = jws.split(".");
-
-    assert.deepEqual(decoded(String(header)), { alg: "PS256", typ: "saf-decision+jws" });
+  it("refuses to construct without a database, naming the option", () => {
+    // Required, and read from no environment: there is no `DATABASE_URL` fallback to fall through
+    // to any more, so the framework reads nothing (ADR-0045). The throw is the constructor's own
+    // and happens before `openDb`, which is lazy, so an Operator who omits it — a JavaScript
+    // caller, since the type forbids it — is told which option to pass rather than watching `pg`
+    // open a pool against its own defaults and fail on the first statement of the first Run.
+    assert.throws(
+      () =>
+        // @ts-expect-error databaseUrl is required; omitting it is the case under test
+        createGateway({
+          runtime,
+          agentListen: { port: 0, host: "127.0.0.1" },
+          publicListen: { port: 0, host: "127.0.0.1" },
+          handlers: () => ({}),
+        }),
+      /databaseUrl/,
+    );
   });
 
-  it("refuses an extend that returns one of the eight", () => {
-    const substituting = createGatewayWithDefaults({
+  it("refuses an extend that returns one of the four infrastructure keys", () => {
+    const substituting = createGateway({
       databaseUrl: "postgres://nobody@example.invalid/none",
       runtime,
-      signingKey,
-      tokenTtl: hour,
       agentListen: { port: 0 },
       publicListen: { port: 0 },
       // A JavaScript spread overwrites the value and keeps the original key's position, so
-      // substituting a default in place would start the Operator's Messenger exactly where
-      // ours would have gone and nothing anywhere would say so. The refusal is a type error,
-      // and this is where it is pinned: `@ts-expect-error` fails the typecheck if the line
-      // below ever starts compiling (ADR-0037). An Operator who really wants to substitute
-      // one writes `createBareGateway` by hand, which is the honest way to say it.
-      // @ts-expect-error a default key may not be replaced by an extension
-      extend: (defaults) => ({ notes: notebook(), messenger: defaults.messenger }),
+      // substituting an infrastructure Component in place would start the Operator's own where
+      // ours would have gone and nothing anywhere would say so. The refusal is a type error, and
+      // this is where it is pinned: `@ts-expect-error` fails the typecheck if the line below ever
+      // starts compiling (ADR-0037). An Operator who really wants a Worker of their own writes
+      // `createBareGateway` by hand, which is the honest way to say it.
+      // @ts-expect-error worker is an infrastructure key and may not be replaced by an extension
+      extend: (infra) => ({ notes: notebook(), worker: infra.worker }),
       handlers: () => ({}),
     });
 
     // And it is refused *statically only*, which is the reason the type has to carry it: at
-    // runtime the spread simply overwrites, and the substituted part keeps the position the
-    // framework gave it rather than the one at the end an Operator would have expected.
-    assert.deepEqual(Object.keys(substituting.components), [...theEight, "notes"]);
+    // runtime the returned record is assembled with `worker` as the final key regardless, so the
+    // Worker keeps the last position the framework gives it and `notes` sits ahead of it.
+    assert.deepEqual(Object.keys(substituting.components), [
+      "db",
+      "agentServer",
+      "publicServer",
+      "notes",
+      "worker",
+    ]);
   });
 
-  it("refuses an extend that returns either of the two newest keys", () => {
-    // The two keys added last, pinned separately, because the refusal comes from a mapped
-    // type over `keyof DefaultComponents` and a key added to the record without being added
-    // there would be silently substitutable. A substituted Signatures is the sharpest case in
-    // the record: it holds the private key, so an Operator's own under this key would start
-    // where ours would have, sign with whatever it liked, and nothing anywhere would say so.
-    createGatewayWithDefaults({
+  it("refuses an extend that returns any of the other three infrastructure keys", () => {
+    // The remaining three, pinned separately, because the refusal comes from a mapped type over
+    // `keyof InfraComponents` and a key added to that record without being added there would be
+    // silently substitutable. The Db is the sharpest: an Operator's own under this key would open
+    // where ours would have, and every part they built against it would use theirs instead.
+    createGateway({
       databaseUrl: "postgres://nobody@example.invalid/none",
       runtime,
-      signingKey,
-      tokenTtl: hour,
       agentListen: { port: 0 },
       publicListen: { port: 0 },
-      // @ts-expect-error signatures is a default key and may not be replaced by an extension
-      extend: (defaults) => ({ signatures: defaults.signatures }),
+      // @ts-expect-error db is an infrastructure key and may not be replaced by an extension
+      extend: (infra) => ({ db: infra.db }),
       handlers: () => ({}),
     });
-    createGatewayWithDefaults({
+    createGateway({
       databaseUrl: "postgres://nobody@example.invalid/none",
       runtime,
-      signingKey,
-      tokenTtl: hour,
       agentListen: { port: 0 },
       publicListen: { port: 0 },
-      // @ts-expect-error decisions is a default key and may not be replaced by an extension
-      extend: (defaults) => ({ decisions: defaults.decisions }),
+      // @ts-expect-error agentServer is an infrastructure key and may not be replaced
+      extend: (infra) => ({ agentServer: infra.agentServer }),
+      handlers: () => ({}),
+    });
+    createGateway({
+      databaseUrl: "postgres://nobody@example.invalid/none",
+      runtime,
+      agentListen: { port: 0 },
+      publicListen: { port: 0 },
+      // @ts-expect-error publicServer is an infrastructure key and may not be replaced
+      extend: (infra) => ({ publicServer: infra.publicServer }),
       handlers: () => ({}),
     });
   });
@@ -1179,7 +1225,7 @@ describe("the description both servers serve", () => {
     readonly paths: Readonly<Record<string, Partial<Record<Method, Operation>>>>;
   };
 
-  let described: Gateway<DefaultComponents>;
+  let described: Gateway<InfraComponents & Stack>;
 
   before(async () => {
     described = unstarted();
@@ -1845,21 +1891,23 @@ describe("the description both servers serve", () => {
   });
 
   /**
-   * A whole assembly, constructed and left alone: no pool opened, no port bound and no
-   * Handler that could do anything if one were.
+   * A whole stack, constructed and left alone: no pool opened, no port bound and no Handler that
+   * could do anything if one were. The four parts are built in `extend`, exactly as
+   * `example/main.ts` builds them, because that is where their routes are registered now — and
+   * the description this suite reads has to describe those routes, which it does only because the
+   * plugin is registered ahead of `extend` (ADR-0040, ADR-0045).
    *
    * Called twice: once for the pair every test below reads, and once by the test that
    * needs a Gateway of its own, since a route has to be registered before the instance
    * boots and the shared pair booted in `before`.
    */
-  function unstarted(): Gateway<DefaultComponents> {
-    return createGatewayWithDefaults({
+  function unstarted(): Gateway<InfraComponents & Stack> {
+    return createGateway({
       databaseUrl: nowhere,
       runtime,
-      signingKey,
-      tokenTtl: hour,
       agentListen: { port: 0 },
       publicListen: { port: 0 },
+      extend: (infra) => fullStack(infra),
       handlers: () => ({}),
     });
   }
@@ -1911,97 +1959,38 @@ describe("the description both servers serve", () => {
   }
 });
 
-describe("the two options a deployment may leave out", () => {
-  // A database of this suite's own, because the Gateway above is shared and started and
-  // this one constructs another. Neither test can be written without a real server: what a
-  // defaulted `databaseUrl` opened is only visible in something connecting, and what a
-  // defaulted `tokenTtl` decided is only visible on a Token that was written down.
-  let elsewhere: TestDatabase;
-  let inherited: string | undefined;
-
-  before(async () => {
-    elsewhere = await createTestDatabase("default_gateway_defaults");
-    // `src/test-support/database.ts` read this at import time, so moving it now moves it
-    // only for the code under test. It is put back regardless in `after`.
-    inherited = process.env.DATABASE_URL;
-  });
-
-  after(async () => {
-    if (inherited === undefined) delete process.env.DATABASE_URL;
-    else process.env.DATABASE_URL = inherited;
-    await elsewhere.drop();
-  });
-
-  it("opens DATABASE_URL, and issues a Token that lives thirty days", async () => {
-    process.env.DATABASE_URL = elsewhere.url;
-
-    const gateway = createGatewayWithDefaults({
-      runtime,
-      signingKey,
-      agentListen: { port: 0, host: "127.0.0.1" },
-      publicListen: { port: 0, host: "127.0.0.1" },
-      handlers: () => ({}),
-    });
-    const { db, users } = gateway.components;
-
-    // Nothing is started: `migrate` is enough, and it is also the proof. It applies three
-    // folders against the database the environment named, so it cannot pass unless the URL
-    // arrived and named something real.
-    await db.migrate();
-
-    const user = await db.tx((tx) => users.create(tx));
-    const issued = await db.tx((tx) => users.issueToken(tx, user.id));
-    const lifetime = Date.parse(issued.expiresAt) - Date.now();
-
-    // A minute of slack for the round trip, against a value of thirty days: wide enough
-    // never to flake, and narrow enough that any other lifetime in the file fails it.
-    assert.ok(
-      Math.abs(lifetime - 30 * 24 * 60 * 60 * 1000) < 60_000,
-      `a defaulted tokenTtl should be thirty days, and this Token lives ${lifetime}ms`,
-    );
-
-    await db.stop();
-  });
-
-  it("refuses to construct when neither the option nor the environment says where", () => {
-    delete process.env.DATABASE_URL;
-
-    // At construction, which is the point: `openDb` is lazy, so a Gateway built with no
-    // database would otherwise start, listen, and fail on the first statement of the first
-    // Run with whatever `pg` makes of its own defaults.
-    assert.throws(
-      () =>
-        createGatewayWithDefaults({
-          runtime,
-          signingKey,
-          agentListen: { port: 0, host: "127.0.0.1" },
-          publicListen: { port: 0, host: "127.0.0.1" },
-          handlers: () => ({}),
-        }),
-      /DATABASE_URL/,
-    );
-  });
-});
-
 describe("the package root", () => {
-  it("reaches no Agent Implementation, however far the imports go", () => {
-    // `createGatewayWithDefaults` is what made the root import `./users` and
-    // `./http-messenger`, and the edge worth keeping absent is the next one: the Runtime is
-    // an option rather than a spec precisely so that swapping `pi` for another Agent
-    // Implementation stays "this import and this function name, and nothing below"
-    // (ADR-0033, ADR-0038). A default assembly that constructed one would make that false
-    // for everyone on the default path, and it is an easy thing to add by accident.
+  it("reaches no Agent Implementation and none of the four parts, however far the imports go", () => {
+    // `createGateway` reaches the Db, the servers and the Signal Worker and nothing about the
+    // four opinionated parts: they are the Operator's now, built in `extend` and reached through
+    // their own subpath exports, so constructing none of them loads none of them (ADR-0045). The
+    // edge that stays absent is the one worth keeping absent — an Agent Implementation — since
+    // the Runtime is an option rather than a spec, so swapping `pi` for another stays "this
+    // import and this function name, and nothing below" (ADR-0033).
     const src = fileURLToPath(new URL(".", import.meta.url));
     const reached = reachableFrom(path.join(src, "index.ts"));
+
+    // No Agent Implementation, the one import edge worth keeping absent.
     assert.deepEqual(
       [...reached].filter((module) => module.startsWith(path.join(src, "pi/"))),
       [],
     );
 
-    // The check is only worth having if it is looking at something, and this is what says it
-    // is: the root does reach the two parts the default assembly constructs.
-    assert.ok(reached.has(path.join(src, "users", "users.ts")));
-    assert.ok(reached.has(path.join(src, "http-messenger", "http-messenger.ts")));
+    // And none of the four parts, which is ADR-0038's assertion inverted: the root used to reach
+    // `./users` and `./http-messenger` because the assembly built them, and now reaches neither,
+    // nor Signatures nor Decisions (ADR-0045).
+    for (const part of [
+      path.join(src, "users", "users.ts"),
+      path.join(src, "http-messenger", "http-messenger.ts"),
+      path.join(src, "signatures", "signatures.ts"),
+      path.join(src, "decisions", "decisions.ts"),
+    ]) {
+      assert.equal(reached.has(part), false, `the root should not reach ${part}`);
+    }
+
+    // The check is only worth having if it is looking at something, and this is what says it is:
+    // the root does reach the infrastructure `createGateway` builds — here the Signal Worker.
+    assert.ok(reached.has(path.join(src, "signals", "worker.ts")));
   });
 });
 
@@ -2033,9 +2022,9 @@ function reachableFrom(entry: string): Set<string> {
  *
  * Each one is asked through the part that owns it rather than through a connection of the
  * test's: the Db through the User Manager, the two servers over their own sockets. A Run
- * that could not reach one of these would be a Run the shutdown order had broken. The
- * Operator's own Component is the exception, and is asked about for the opposite reason: it
- * is *supposed* to be shut by now.
+ * that could not reach one of these would be a Run the shutdown order had broken — the
+ * Operator's own Component included now, since it is keyed ahead of the Worker and is therefore
+ * *supposed* to be still up through the drain (ADR-0045).
  */
 async function whatIsStillUp(): Promise<string[]> {
   return [

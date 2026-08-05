@@ -254,7 +254,7 @@ const seqParams = {
  * Fastify compiles a response schema with `fast-json-stringify`, which drops every field the
  * schema does not declare and says nothing about it, so a field added to the type in
  * `decisions.ts` and forgotten here is silently missing from every answer of this part
- * (ADR-0040). That is why `default-gateway.test.ts` reads a log this part actually recorded and
+ * (ADR-0040). That is why `gateway.test.ts` reads a log this part actually recorded and
  * compares the whole thing.
  *
  * One shape for all five routes, as there is one shape for every surface of this part: the 201 of

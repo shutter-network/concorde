@@ -21,18 +21,14 @@ export type {
   Transaction,
 } from "./db/index.ts";
 export { openDb } from "./db/index.ts";
-// The default assembly, from the package root, which is what makes the root import
-// `./users`, `./http-messenger`, `./signatures` and `./decisions`: the subpath exports are
-// organisation rather than optionality, so a deployment that constructs no Messenger still
-// loads the module. What the root does **not** import is `./pi`, and that edge is the one
-// worth keeping absent
-// ([ADR-0038](../docs/adr/0038-the-default-assembly-is-a-constructor.md)).
-export type {
-  DefaultComponents,
-  DefaultGatewayOptions,
-  GatewayExtension,
-} from "./default-gateway.ts";
-export { createGatewayWithDefaults } from "./default-gateway.ts";
+// The infrastructure constructor, from the package root — and it imports **none** of `./users`,
+// `./http-messenger`, `./signatures` or `./decisions`: those four are the Operator's now, built
+// in `extend` and reached through their own subpath exports, so constructing none of them loads
+// none of them. What the root reaches is the Db, the servers and the Signal Worker and nothing
+// about the four parts, and — as before — **not** `./pi`, the one import edge worth keeping
+// absent ([ADR-0045](../docs/adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md)).
+export type { GatewayExtension, GatewayOptions, InfraComponents } from "./gateway.ts";
+export { createGateway } from "./gateway.ts";
 export type { LogFields, Logger } from "./logging.ts";
 export { defaultLogger } from "./logging.ts";
 export type {

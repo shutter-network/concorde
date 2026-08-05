@@ -158,7 +158,7 @@ const rejectUnknownQuery = unknownQueryRefusal(unscoped);
  * the schema does not declare and says nothing about it, so a field added to the type
  * above and forgotten here is silently missing from the Agent server's answers
  * ([ADR-0040](../../docs/adr/0040-the-gateway-describes-its-own-http-api.md)). That is
- * why `default-gateway.test.ts` reads a Signal the Worker actually recorded and compares
+ * why `gateway.test.ts` reads a Signal the Worker actually recorded and compares
  * the whole body: the drift this shape can cause is invisible from either side alone.
  *
  * The property descriptions are only on the fields whose name is not the whole story.

@@ -65,7 +65,7 @@ const withAToken = { authorization: "Bearer whatever this file's hook accepts" }
  *
  * What that cannot say is that the hook is the Manager's own and that the refusal is therefore
  * the same single 401 the routes under `/auth` answer. That claim is about the assembly, and it
- * is made in `default-gateway.test.ts` against the real one (ADR-0030).
+ * is made in `gateway.test.ts` against the real one (ADR-0030).
  */
 const presentedUser: preHandlerAsyncHookHandler = async (request, reply) => {
   // Returning the reply is how an async hook says the lifecycle is over; without it Fastify
@@ -402,7 +402,7 @@ describe("the check it will do for a User", () => {
     assert.equal(answered.statusCode, 401, answered.body);
     // The artifact is genuinely ours, so a `true` here would be the handler having run behind
     // the refusal. That the 401 is the User Manager's own is the assembly's claim and is
-    // asserted in `default-gateway.test.ts`, this file's hook being a stand-in.
+    // asserted in `gateway.test.ts`, this file's hook being a stand-in.
     assert.equal(answered.body.includes("verified"), false, answered.body);
   });
 

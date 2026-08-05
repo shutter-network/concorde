@@ -278,7 +278,7 @@ const aQueryParameterWasWritten = "A query parameter was written, and these rout
  * reaches no response until somebody writes it here.
  *
  * The direction that costs something is the other one, and it is why
- * `default-gateway.test.ts` reads a User the Manager actually created and compares the
+ * `gateway.test.ts` reads a User the Manager actually created and compares the
  * whole body: a field added to `UserRecord` and forgotten here is silently missing from
  * every answer, and a comparison of one HTTP response against another would not see it.
  *

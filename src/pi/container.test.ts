@@ -336,15 +336,15 @@ function instructionsEntry(paths: Paths): Mount {
  *
  * One end-to-end path, so this is used once: a Signal Worker, a real database, the
  * Agent server with the Worker's routes on it, and the scripted model. Construct,
- * migrate, start, as every entry point does it — but by hand rather than through
- * `createGatewayWithDefaults`, because what this file needs is three of the six Components
- * and the defaults constructor has no partial exit (ADR-0038). Nothing here is about the
+ * migrate, start, as every entry point does it — but by hand through `createBareGateway`,
+ * because what this file needs is a subset of the infrastructure and none of the four parts
+ * `createGateway` hands the Operator through `extend` (ADR-0045). Nothing here is about the
  * assembly; the subject is a real container running a real `pi`.
  *
  * What it does **not** prove is the ordering: it stops nothing mid-Run, so that the
  * Agent server must outlive the Signal Worker is not asserted here.
- * `default-gateway.test.ts` is where it is, with a fake Runtime parked in flight while the
- * Gateway shuts down around it (ADR-0038).
+ * `gateway.test.ts` is where it is, with a fake Runtime parked in flight while the
+ * Gateway shuts down around it (ADR-0045).
  */
 async function withGateway(
   t: TestContext,

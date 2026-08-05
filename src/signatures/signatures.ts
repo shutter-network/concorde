@@ -146,7 +146,7 @@ export type SignaturesOptions = {
    * `requireUser` and there is no second thing it could ever want off the Manager, so asking
    * for the whole object would be asking for a Db-backed part in order to use a function.
    * What it costs is that the assembly, not the type, is what makes this the *real* Manager's
-   * hook — which is why `default-gateway.test.ts` is where the 401 on this route is proven to
+   * hook — which is why `gateway.test.ts` is where the 401 on this route is proven to
    * be the same 401 the routes under `/auth` answer.
    */
   readonly users: {

@@ -266,7 +266,7 @@ const ownHistorySchema = {
  * `messages.ts` and forgotten here is silently missing from every answer of this part,
  * including the Signal payload's twin, which is the same record and reaches a Handler
  * unserialized ([ADR-0040](../../docs/adr/0040-the-gateway-describes-its-own-http-api.md)).
- * That is why `default-gateway.test.ts` reads a log the Messenger actually recorded and
+ * That is why `gateway.test.ts` reads a log the Messenger actually recorded and
  * compares the whole thing.
  *
  * One shape for all four routes, as there is one shape for all six surfaces of this part:

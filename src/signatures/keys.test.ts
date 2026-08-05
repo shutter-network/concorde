@@ -302,7 +302,7 @@ function constructedWith(
     agentServer,
     publicServer,
     // Nothing here reaches the check's hook but the one test that does, and it presents a
-    // header; what the real 401 is belongs to `default-gateway.test.ts` (ADR-0030).
+    // header; what the real 401 is belongs to `gateway.test.ts` (ADR-0030).
     users: { requireUser: async () => undefined },
     logger: silent,
   });
