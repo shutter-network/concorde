@@ -25,6 +25,7 @@ import type { SignalRecord } from "../signals/routes.ts";
 import { createSignalWorker, type SignalWorker } from "../signals/worker.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
+import { waitUntil } from "../test-support/wait.ts";
 import { schedulerMigrations } from "./migrations.ts";
 import { createScheduler, type Scheduler, scheduleFiredKind } from "./scheduler.ts";
 import type { ScheduleFiredRecord } from "./schedules.ts";
@@ -42,6 +43,10 @@ let clockNow: Date;
 const nowhere = { port: 0, host: "127.0.0.1" } as const;
 
 const hour = 60 * 60 * 1000;
+const day = 24 * hour;
+
+/** A real-time pause, for the timer tests that assert something does *not* happen. */
+const delay = (ms: number) => new Promise((resume) => setTimeout(resume, ms));
 
 /** A fixed origin, so every instant in a test is a legible offset from it. */
 const t0 = new Date("2030-06-01T12:00:00.000Z").getTime();
@@ -104,6 +109,35 @@ async function fired(name: string): Promise<ScheduleFiredRecord[]> {
 /** The names in a Scheduler's list, which is what most retire/upsert assertions turn on. */
 async function names(instance: Scheduler): Promise<string[]> {
   return (await instance.list()).map((schedule) => schedule.name);
+}
+
+/** A cap short enough that the real timer wakes in milliseconds, so the timer tests stay fast. */
+const cappedMs = 20;
+
+/**
+ * A Scheduler with the firing cap set small, run through `body` and stopped after — even on a
+ * failure, so its live timer never outlives the test and keeps this process awake. Mirrors the
+ * Signal Worker tests' `withWorker`. `body` does its own `start`, because the timer tests differ in
+ * whether they arm before or after scheduling and one drives `stop` itself; `stop` is idempotent, so
+ * the `finally` is a backstop rather than a second teardown. `clock` is the wall clock the timer
+ * re-derives against: the smoke test passes real time, the rest a fake clock they advance.
+ */
+async function withScheduler(
+  clock: () => Date,
+  body: (instance: Scheduler) => Promise<void>,
+): Promise<void> {
+  const instance = createScheduler({
+    db,
+    worker,
+    now: clock,
+    maxSleepMs: cappedMs,
+    logger: silent,
+  });
+  try {
+    await body(instance);
+  } finally {
+    await instance.stop();
+  }
 }
 
 describe("a once Schedule", () => {
@@ -262,5 +296,151 @@ describe("cancelling a Schedule", () => {
     clockNow = new Date(t0 + 2 * hour);
     await instance.tick();
     assert.deepEqual(await fired("abandon"), []);
+  });
+});
+
+/**
+ * The autonomous timer, observed the same way: nobody calls `tick`, and a Signal on the wire is the
+ * proof it fired. Almost every test drives a **fake clock** (`() => clock`) so it does not sleep the
+ * real horizon — the timer polls at the small `maxSleepMs`, and advancing the fake clock is what
+ * makes a Schedule due. Exactly one, the smoke test, uses a **real** short horizon to prove the
+ * capped `setTimeout` truly calls `tick` end to end.
+ *
+ * Each started Scheduler owns a live timer that would keep this process alive, so every test stops
+ * it in a `finally`.
+ */
+describe("the autonomous firing timer", () => {
+  it("fires a real short-horizon Schedule with nobody calling tick (smoke)", async () => {
+    // The one real-time test: real clock, an instant ~60ms out, and a cap short enough to poll a
+    // few times before it. If the capped setTimeout did not call `tick`, nothing would ever fire.
+    await withScheduler(
+      () => new Date(),
+      async (instance) => {
+        await instance.schedule({
+          name: "smoke",
+          spec: { kind: "once", at: new Date(Date.now() + 60).toISOString() },
+          data: { via: "timer" },
+        });
+        await instance.start();
+        await waitUntil(
+          "the real timer fires the smoke Schedule",
+          async () => (await fired("smoke")).length === 1,
+        );
+        // Fired exactly once, retired, and with the data intact — the whole path, autonomously.
+        const [signal] = await fired("smoke");
+        assert.deepEqual(signal?.data, { via: "timer" });
+        assert.deepEqual(await names(instance), []);
+      },
+    );
+  });
+
+  it("does not overflow a far-future fire into an immediate one, and fires it once due", async () => {
+    // 30 days is 2.592e9 ms — past the ~2.147e9 signed-32-bit `setTimeout` ceiling, so a raw arm
+    // would overflow and wake almost immediately. The cap holds the armed delay to `maxSleepMs`.
+    let clock = new Date(t0);
+    await withScheduler(
+      () => clock,
+      async (instance) => {
+        await instance.schedule({
+          name: "far",
+          spec: { kind: "once", at: iso(t0 + 30 * day) },
+          data: "far",
+        });
+        await instance.start();
+
+        // Several cap intervals pass with the clock held at t0. An overflow would have fired by now;
+        // re-deriving against the wall clock on each wake keeps it silent.
+        await delay(80);
+        assert.deepEqual(await fired("far"), []);
+        assert.deepEqual(await names(instance), ["far"]);
+
+        // Now the instant passes. Because the timer polls at the cap rather than sleeping the whole
+        // 30 days, the next wake within ~20ms re-derives it as due and fires it — still no `tick`.
+        clock = new Date(t0 + 40 * day);
+        await waitUntil(
+          "the far Schedule fires once its instant has passed",
+          async () => (await fired("far")).length === 1,
+        );
+        assert.deepEqual(await names(instance), []);
+      },
+    );
+  });
+
+  it("re-arms when a Schedule is created after start, and fires it autonomously", async () => {
+    // Started with nothing scheduled, the timer is disarmed. Creating a Schedule must arm it, or it
+    // would never fire without a create-time re-arm.
+    let clock = new Date(t0);
+    await withScheduler(
+      () => clock,
+      async (instance) => {
+        await instance.start();
+        await instance.schedule({
+          name: "late-arrival",
+          spec: { kind: "once", at: iso(t0 + hour) },
+          data: "arrived",
+        });
+
+        clock = new Date(t0 + 2 * hour);
+        await waitUntil(
+          "the Schedule created after start fires",
+          async () => (await fired("late-arrival")).length === 1,
+        );
+        assert.deepEqual(await names(instance), []);
+      },
+    );
+  });
+
+  it("keeps firing the survivors after one is cancelled while running", async () => {
+    // Cancel re-arms too: the cancelled Schedule never fires, and the one left does — proving the
+    // timer was not left pointing only at the row that went away.
+    let clock = new Date(t0);
+    await withScheduler(
+      () => clock,
+      async (instance) => {
+        await instance.schedule({
+          name: "keep",
+          spec: { kind: "once", at: iso(t0 + hour) },
+          data: 1,
+        });
+        await instance.schedule({
+          name: "drop",
+          spec: { kind: "once", at: iso(t0 + hour) },
+          data: 2,
+        });
+        await instance.start();
+        assert.equal(await instance.cancel("drop"), true);
+
+        clock = new Date(t0 + 2 * hour);
+        await waitUntil(
+          "the surviving Schedule fires",
+          async () => (await fired("keep")).length === 1,
+        );
+        assert.deepEqual(await fired("drop"), []);
+        assert.deepEqual(await names(instance), []);
+      },
+    );
+  });
+
+  it("cancels the timer on stop, so nothing fires after", async () => {
+    let clock = new Date(t0);
+    await withScheduler(
+      () => clock,
+      async (instance) => {
+        await instance.schedule({
+          name: "post-stop",
+          spec: { kind: "once", at: iso(t0 + hour) },
+          data: {},
+        });
+        await instance.start();
+        await instance.stop();
+
+        // The instant passes after stop. With the timer cancelled, no wake re-derives it, so it
+        // stays unfired however far the clock advances — a real pause proves nothing wakes.
+        clock = new Date(t0 + 5 * hour);
+        await delay(80);
+        assert.deepEqual(await fired("post-stop"), []);
+        assert.deepEqual(await names(instance), ["post-stop"]);
+      },
+    );
   });
 });

@@ -186,6 +186,25 @@ export async function selectDue(
 }
 
 /**
+ * The instant the earliest-firing Schedule is next due, or `undefined` when none is armed.
+ *
+ * What the autonomous timer arms against: the soonest fire is the only one the next wake needs to
+ * know about, and the cap bounds how long it sleeps waiting for it. Mirrors `selectDue`'s reach —
+ * a `once` whose non-null `at` is the earliest — so the cron arm extends both the same way. A
+ * `null` `at` never wins the `asc` ordering here because only `once` rows are considered, and their
+ * `at` is guaranteed by the table's check constraint.
+ */
+export async function earliestFireAt(handle: SchedulerHandle): Promise<Date | undefined> {
+  const [row] = await handle
+    .select({ at: schedules.at })
+    .from(schedules)
+    .where(eq(schedules.kind, "once"))
+    .orderBy(asc(schedules.at))
+    .limit(1);
+  return row?.at ?? undefined;
+}
+
+/**
  * The read model of an armed `once` Schedule, built the one way both surfaces that answer with one
  * use it: the upsert response, which has the instant in hand before it reads a row back, and the
  * list, which has the row. A persisted `once` is armed, so its instant is both its `spec.at` and
