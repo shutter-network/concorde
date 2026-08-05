@@ -56,20 +56,20 @@ const runtime = createPiRuntime({
   mounts: {
     entries: [
       {
-        containerPath: "/workspace",
+        agentPath: "/workspace",
         gatewayPath: path.join(import.meta.dirname, "state", "workspace"),
       },
       {
-        containerPath: "/home/agent/.pi/agent",
+        agentPath: "/home/agent/.pi/agent",
         gatewayPath: path.join(import.meta.dirname, "state", "agent"),
       },
       {
-        containerPath: "/workspace/AGENTS.md",
+        agentPath: "/workspace/AGENTS.md",
         gatewayPath: path.join(import.meta.dirname, "AGENTS.md"),
         readOnly: true,
       },
       {
-        containerPath: "/home/agent/.pi/agent/settings.json",
+        agentPath: "/home/agent/.pi/agent/settings.json",
         gatewayPath: path.join(import.meta.dirname, "settings.json"),
         readOnly: true,
       },

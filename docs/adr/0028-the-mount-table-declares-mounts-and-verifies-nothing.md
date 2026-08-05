@@ -3,7 +3,7 @@
 The directories an agent's container sees are declared in a **Mount Table**: a list of entries and a translation table for a containerised Gateway. It resolves to `--mount` arguments and nothing else. It creates no directories, writes no files, starts no containers and performs no checks. Nothing in it knows about `pi`, and a second Agent Implementation would use the same one. An Agent Container ([ADR-0025](./0025-the-pi-adapter-spawns-one-confined-process-per-run.md)) carries one or carries none.
 
 ```
-entries    [{ containerPath, gatewayPath, readOnly? }]   a directory or a single file
+entries    [{ agentPath, gatewayPath, readOnly? }]       a directory or a single file
 hostPaths  {}                                            empty means the Gateway is on the host
 
 resolve    apply hostPaths (longest prefix), refuse an unmatched entry
@@ -69,7 +69,7 @@ ADR-0025 recorded four failures that were silent, and started a throwaway contai
 
 A pure pre-flight `stat` of every `gatewayPath` was considered, as the cheap remnant: no container, no image, roughly ten lines, and it would report every missing source at once and catch a file declared where a directory was meant. Rejected to keep the abstraction inert. A Mount Table that performs no I/O at all is a value and a pure function, and that is the property worth more than the check.
 
-Three things are still refused, and each is decidable from the value alone: a **missing image**, a **relative `containerPath`**, and a **`hostPaths` gap**. Two that look like they belong on that list are not on it. A **mount source that does not exist** is the daemon's refusal at the first Run, above. A **missing model** is now a line in a file the framework is not allowed to read ([ADR-0025](./0025-the-pi-adapter-spawns-one-confined-process-per-run.md)), so a deployment with no usable model constructs, starts, and fails its first Run permanently.
+Three things are still refused, and each is decidable from the value alone: a **missing image**, a **relative `agentPath`**, and a **`hostPaths` gap**. Two that look like they belong on that list are not on it. A **mount source that does not exist** is the daemon's refusal at the first Run, above. A **missing model** is now a line in a file the framework is not allowed to read ([ADR-0025](./0025-the-pi-adapter-spawns-one-confined-process-per-run.md)), so a deployment with no usable model constructs, starts, and fails its first Run permanently.
 
 ## Consequences
 

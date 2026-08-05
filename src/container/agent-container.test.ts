@@ -49,9 +49,9 @@ import {
 
 /** The three entries a deployment typically declares, and every test's default. */
 const entries: readonly Mount[] = [
-  { containerPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
-  { containerPath: "/home/agent/.pi/agent", gatewayPath: "/srv/saf/agent" },
-  { containerPath: "/sessions", gatewayPath: "/srv/saf/sessions" },
+  { agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
+  { agentPath: "/home/agent/.pi/agent", gatewayPath: "/srv/saf/agent" },
+  { agentPath: "/sessions", gatewayPath: "/srv/saf/sessions" },
 ];
 
 /** The least container the Runtime accepts, plus the mounts most tests want. */
@@ -234,7 +234,7 @@ describe("what the container runtime is told", () => {
     // point, then the flags the framework does not model, then the image, then the
     // agent's own. Written out because the order is the part a change silently breaks.
     const composed = commandFor({
-      mounts: { entries: [{ containerPath: "/workspace", gatewayPath: "/srv/saf/workspace" }] },
+      mounts: { entries: [{ agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" }] },
       networks: ["saf-agent", "saf-models"],
       env: { ANTHROPIC_API_KEY: "sk-test", HTTPS_PROXY: "" },
       entrypoint: ["agent"],
@@ -323,7 +323,7 @@ describe("the Mount Table on an Agent Container", () => {
         entries: [
           ...entries,
           {
-            containerPath: "/workspace/AGENTS.md",
+            agentPath: "/workspace/AGENTS.md",
             gatewayPath: "/srv/saf/AGENTS.md",
             readOnly: true,
           },
@@ -340,7 +340,7 @@ describe("the Mount Table on an Agent Container", () => {
 
   it("quotes a value containing a comma, which is what --mount splits its fields on", () => {
     const composed = commandFor({
-      mounts: { entries: [{ containerPath: "/work,space", gatewayPath: "/srv/a,b" }] },
+      mounts: { entries: [{ agentPath: "/work,space", gatewayPath: "/srv/a,b" }] },
     });
 
     assert.deepEqual(valuesOf(composed.args, "--mount"), [
@@ -354,8 +354,8 @@ describe("the Mount Table on an Agent Container", () => {
     const composed = commandFor({
       mounts: {
         entries: [
-          { containerPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
-          { containerPath: "/sessions", gatewayPath: "/srv/saf/sessions/live" },
+          { agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
+          { agentPath: "/sessions", gatewayPath: "/srv/saf/sessions/live" },
         ],
         hostPaths: { "/srv": "/host/gateway", "/srv/saf/sessions": "/mnt/fast-disk" },
       },
@@ -374,8 +374,8 @@ describe("the Mount Table on an Agent Container", () => {
     const composed = commandFor({
       mounts: {
         entries: [
-          { containerPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
-          { containerPath: "/sessions", gatewayPath: "/srv/saf/sessions" },
+          { agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
+          { agentPath: "/sessions", gatewayPath: "/srv/saf/sessions" },
         ],
         hostPaths: {
           "/srv/saf/workspace": "/var/lib/docker/volumes/saf-workspace/_data",
@@ -515,18 +515,18 @@ describe("a container that cannot work", () => {
         createAgentContainerRuntime({
           container: {
             image: "saf/agent",
-            mounts: { entries: [{ containerPath: "workspace", gatewayPath: "/srv" }] },
+            mounts: { entries: [{ agentPath: "workspace", gatewayPath: "/srv" }] },
           },
           run: agentRun,
         }),
-      /containerPath "workspace".*absolute/s,
+      /agentPath "workspace".*absolute/s,
     );
     assert.throws(
       () =>
         createAgentContainerRuntime({
           container: {
             image: "saf/agent",
-            mounts: { entries: [{ containerPath: "/workspace", gatewayPath: "./srv" }] },
+            mounts: { entries: [{ agentPath: "/workspace", gatewayPath: "./srv" }] },
           },
           run: agentRun,
         }),
@@ -568,7 +568,7 @@ describe("a container that cannot work", () => {
       createAgentContainerRuntime({
         container: {
           image: "saf/agent",
-          mounts: { entries: [{ containerPath: "/nowhere", gatewayPath: "/definitely/not/here" }] },
+          mounts: { entries: [{ agentPath: "/nowhere", gatewayPath: "/definitely/not/here" }] },
         },
         run: agentRun,
       }),

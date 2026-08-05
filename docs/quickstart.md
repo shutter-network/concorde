@@ -391,20 +391,20 @@ const runtime = createPiRuntime({
   mounts: {
     entries: [
       {
-        containerPath: "/workspace",
+        agentPath: "/workspace",
         gatewayPath: path.join(import.meta.dirname, "state", "workspace"),
       },
       {
-        containerPath: "/home/agent/.pi/agent",
+        agentPath: "/home/agent/.pi/agent",
         gatewayPath: path.join(import.meta.dirname, "state", "agent"),
       },
       {
-        containerPath: "/workspace/AGENTS.md",
+        agentPath: "/workspace/AGENTS.md",
         gatewayPath: path.join(import.meta.dirname, "AGENTS.md"),
         readOnly: true,
       },
       {
-        containerPath: "/home/agent/.pi/agent/settings.json",
+        agentPath: "/home/agent/.pi/agent/settings.json",
         gatewayPath: path.join(import.meta.dirname, "settings.json"),
         readOnly: true,
       },
@@ -435,7 +435,7 @@ not have:
 | `logger` | yours, if you want [the line that diagnoses a mount](#the-line-you-need-to-diagnose-a-mount-or-a-network-is-off-by-default) |
 
 The Mount Table is a **field of it**, not a peer. One entry is one `--mount type=bind`: a
-`containerPath`, the `gatewayPath` it comes from on this machine, and `readOnly` if the
+`agentPath`, the `gatewayPath` it comes from on this machine, and `readOnly` if the
 agent must be unable to change it. An entry may name a directory or a single file, and the
 declaration does not say which, because nothing in the Mount Table looks. Who the
 container runs as is not in the table and is not configuration at all — always this
@@ -472,7 +472,7 @@ third entry of its Mount Table:
 
 ```ts
 {
-  containerPath: "/workspace/AGENTS.md",
+  agentPath: "/workspace/AGENTS.md",
   gatewayPath: path.join(import.meta.dirname, "AGENTS.md"),
   readOnly: true,
 }
@@ -822,7 +822,7 @@ program it does not depend on — so it cannot refuse any of it
 | What you got wrong | What it looks like |
 | --- | --- |
 | **No usable model.** `settings.json` missing, not mounted where `pi` looks, or naming a model your key cannot reach | a **permanently failed first Run**, carrying the provider's own message |
-| **An agent directory `pi` will not look in.** Your mount's `containerPath` and the image's `PI_CODING_AGENT_DIR` disagree | a **permanently failed first Run**: the mounted `settings.json` is inside that directory too, so `pi` reads no model — and if nothing declares the variable at all, `HOME=/` makes the default `/.pi/agent`, which the agent cannot create |
+| **An agent directory `pi` will not look in.** Your mount's `agentPath` and the image's `PI_CODING_AGENT_DIR` disagree | a **permanently failed first Run**: the mounted `settings.json` is inside that directory too, so `pi` reads no model — and if nothing declares the variable at all, `HOME=/` makes the default `/.pi/agent`, which the agent cannot create |
 | **A mount source that is not there.** A typo, or a directory you did not create | a **permanently failed first Run**, refused by the daemon before the agent starts |
 | **No mounts at all.** A legitimate deployment, and also what you get by deleting one entry too many | **no failure whatsoever.** Every Run succeeds and the agent quietly forgets: nothing survives a `--rm` container, so every Session is empty every time, and no log line anywhere says so |
 
@@ -858,7 +858,7 @@ teeth pulled. The second row fails loudly only because the reference deployment 
 `settings.json` **inside** the agent directory, so a directory `pi` does not look in is
 also a model it never reads. Bake your settings into the image instead and the same
 mismatch stops failing and starts forgetting. So if the agent has amnesia: check that your
-mount's `containerPath` is exactly the image's `PI_CODING_AGENT_DIR`, then look for the
+mount's `agentPath` is exactly the image's `PI_CODING_AGENT_DIR`, then look for the
 `.jsonl` transcripts under it on disk.
 
 ### The line you need to diagnose a mount or a network is off by default
@@ -1301,11 +1301,11 @@ serve if your schema is behind, on exactly the same terms.
 privileged position for the Workspace, which is an ordinary entry like the rest:
 
 ```ts
-{ containerPath: "/reference", gatewayPath: "/srv/handbook", readOnly: true }
+{ agentPath: "/reference", gatewayPath: "/srv/handbook", readOnly: true }
 ```
 
 Both paths are absolute — a relative one on either side is refused where you wrote it — and
-`containerPath` is POSIX however your own platform spells a path. Create the source
+`agentPath` is POSIX however your own platform spells a path. Create the source
 yourself before the first Run: nothing else will, and the daemon refuses what is not there.
 
 ## Choosing a model is a file you mount
@@ -1509,8 +1509,8 @@ typical one, with the state somewhere of its own:
 ```ts
 mounts: {
   entries: [
-    { containerPath: "/workspace", gatewayPath: "/srv/state/workspace" },
-    { containerPath: "/home/agent/.pi/agent", gatewayPath: "/srv/state/agent" },
+    { agentPath: "/workspace", gatewayPath: "/srv/state/workspace" },
+    { agentPath: "/home/agent/.pi/agent", gatewayPath: "/srv/state/agent" },
   ],
   // this container's /srv/state is the host's /var/lib/saf
   hostPaths: { "/srv/state": "/var/lib/saf" },

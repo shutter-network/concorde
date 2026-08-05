@@ -263,7 +263,7 @@ async function placeSettings(paths: Paths): Promise<void> {
 /** That file as an entry: read-only, inside the agent directory, from outside it. */
 function settingsEntry(paths: Paths): Mount {
   return {
-    containerPath: "/home/agent/.pi/agent/settings.json",
+    agentPath: "/home/agent/.pi/agent/settings.json",
     gatewayPath: paths.settingsFile,
     readOnly: true,
   };
@@ -306,8 +306,8 @@ function runtimeOn(paths: Paths, extraEntries: readonly Mount[] = []): Runtime {
     // mounts by destination depth itself, which is what makes a nested entry work at all.
     mounts: {
       entries: [
-        { containerPath: "/workspace", gatewayPath: paths.workspace },
-        { containerPath: "/home/agent/.pi/agent", gatewayPath: paths.agentDir },
+        { agentPath: "/workspace", gatewayPath: paths.workspace },
+        { agentPath: "/home/agent/.pi/agent", gatewayPath: paths.agentDir },
         ...extraEntries,
       ],
     },
@@ -325,7 +325,7 @@ function runtimeOn(paths: Paths, extraEntries: readonly Mount[] = []): Runtime {
  */
 function instructionsEntry(paths: Paths): Mount {
   return {
-    containerPath: `/workspace/${agentsFileName}`,
+    agentPath: `/workspace/${agentsFileName}`,
     gatewayPath: paths.agentsFile,
     readOnly: true,
   };

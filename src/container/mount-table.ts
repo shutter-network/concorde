@@ -34,11 +34,19 @@ import path from "node:path";
  *
  * The declaration does not say which of the two it is, because nothing here stats
  * anything and the daemon does not need to be told.
+ *
+ * Each path is named for the actor that resolves it — `agentPath` the agent's own
+ * container, `gatewayPath` the Gateway process, and through the translation the host —
+ * so "container" is never the claimed word for one of them and the next path field
+ * arrives named the same way, after who reads it rather than where it happens to run.
  */
 export type Mount = {
-  /** Where it appears inside the agent's container. Absolute, and always POSIX. */
-  readonly containerPath: string;
-  /** Where it is on the Gateway's own side. Absolute. */
+  /**
+   * Where the agent's container resolves it: the mount point the agent sees. Absolute,
+   * and always POSIX whatever this platform is.
+   */
+  readonly agentPath: string;
+  /** Where the Gateway process resolves it, on its own side. Absolute. */
   readonly gatewayPath: string;
   /**
    * Whether the agent may write it. Defaults to `false`.
@@ -144,7 +152,7 @@ export function mountArguments(table: MountTable): readonly string[] {
  * asks for the emitted arguments.
  */
 type ResolvedEntry = {
-  readonly containerPath: string;
+  readonly agentPath: string;
   /**
    * What the daemon is given as the bind source: the `gatewayPath` through `hostPaths`.
    *
@@ -159,9 +167,9 @@ type ResolvedEntry = {
 function resolveEntry(entry: Mount, hostPaths: Readonly<Record<string, string>>): ResolvedEntry {
   // A path inside the container, which the container runtime requires to be absolute,
   // and which is POSIX whatever this platform is.
-  if (!entry.containerPath.startsWith("/")) {
+  if (!entry.agentPath.startsWith("/")) {
     throw new Error(
-      `the mount's containerPath ${JSON.stringify(entry.containerPath)} is not absolute; it is a path inside the agent's container, which the container runtime requires to be absolute`,
+      `the mount's agentPath ${JSON.stringify(entry.agentPath)} is not absolute; it is a path inside the agent's container, which the container runtime requires to be absolute`,
     );
   }
   if (!path.isAbsolute(entry.gatewayPath)) {
@@ -170,7 +178,7 @@ function resolveEntry(entry: Mount, hostPaths: Readonly<Record<string, string>>)
     );
   }
   return {
-    containerPath: entry.containerPath,
+    agentPath: entry.agentPath,
     hostPath: hostPathFor(entry.gatewayPath, hostPaths),
     readOnly: entry.readOnly ?? false,
   };
@@ -207,11 +215,7 @@ function hostPathFor(gatewayPath: string, hostPaths: Readonly<Record<string, str
  * one string, and `hostPaths` is what tells them apart when they are not.
  */
 function mountArgument(entry: ResolvedEntry): string {
-  const fields = [
-    "type=bind",
-    field("source", entry.hostPath),
-    field("target", entry.containerPath),
-  ];
+  const fields = ["type=bind", field("source", entry.hostPath), field("target", entry.agentPath)];
   if (entry.readOnly) fields.push("readonly");
   return fields.join(",");
 }
