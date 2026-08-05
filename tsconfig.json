@@ -40,7 +40,8 @@
       "shared-agent-framework/users": ["./src/users/index.ts"],
       "shared-agent-framework/http-messenger": ["./src/http-messenger/index.ts"],
       "shared-agent-framework/signatures": ["./src/signatures/index.ts"],
-      "shared-agent-framework/decisions": ["./src/decisions/index.ts"]
+      "shared-agent-framework/decisions": ["./src/decisions/index.ts"],
+      "shared-agent-framework/scheduler": ["./src/scheduler/index.ts"]
     }
   },
   // The `drizzle.*.config.ts` files are included but not built: they are how the
@@ -55,6 +56,7 @@
     "drizzle.users.config.ts",
     "drizzle.http-messages.config.ts",
     "drizzle.decisions.config.ts",
+    "drizzle.scheduler.config.ts",
     "example"
   ]
 }
