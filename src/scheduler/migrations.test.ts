@@ -79,6 +79,49 @@ describe("the Scheduler's migrations", () => {
     assert.match(String(rejection.cause), /schedules_kind_known/);
   });
 
+  it("stores a cron Schedule's expression, zone, bound, and materialised next fire", async () => {
+    const handle = db.handle({ schedules });
+    const at = new Date("2030-03-31T07:00:00.000Z");
+    const until = new Date("2030-12-31T00:00:00.000Z");
+
+    const [row] = await handle
+      .insert(schedules)
+      .values({
+        name: "berlin-digest",
+        kind: "cron",
+        at,
+        cronExpr: "0 9 * * *",
+        tz: "Europe/Berlin",
+        until,
+        data: { topic: "digest" },
+      })
+      .returning();
+    assert.ok(row, "inserting a cron Schedule should return the row");
+    assert.equal(row.kind, "cron");
+    assert.equal(row.cronExpr, "0 9 * * *");
+    assert.equal(row.tz, "Europe/Berlin");
+    assert.equal(row.at?.toISOString(), at.toISOString());
+    assert.equal(row.until?.toISOString(), until.toISOString());
+    assert.deepEqual(row.data, { topic: "digest" });
+  });
+
+  it("refuses a cron with no expression, zone, or next fire", async () => {
+    const rejection = await db
+      .handle({})
+      .execute(
+        // The cron analogue of `schedules_once_has_at`: a cron row must carry the three columns a
+        // fire and a re-arm read. `drizzle-kit` generates this check, so unlike the HTTP
+        // Messenger's foreign key it is not at risk of being dropped on regeneration.
+        sql`insert into "saf_scheduler"."schedules" ("name", "kind", "at") values ('bare-cron', 'cron', now())`,
+      )
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    assert.ok(rejection instanceof Error, "a cron with no expression should be refused");
+    assert.match(String(rejection.cause), /schedules_cron_has_fields/);
+  });
+
   it("refuses a once with no instant to fire at", async () => {
     const rejection = await db
       .handle({})

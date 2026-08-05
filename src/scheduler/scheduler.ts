@@ -33,10 +33,14 @@
  *    retire the spent one-shot — and per ADR-0023 `worker.emit(tx, signal)` takes the caller's
  *    transaction, so the Scheduler does both inside one and they commit together. A crash between
  *    them is impossible: either both happened or neither.
- *  - **Missed fires are skipped by deriving forward from now.** The persisted source of truth is
- *    the Schedule's definition, not a due-timestamp that could outlive a restart sitting in the
- *    past. A `once` is armed only while its instant is still in the future — an already-past one is
- *    never persisted — so nothing in the past is ever enumerated and no missed fire replays.
+ *  - **Missed fires are skipped by deriving forward from now.** Each fire is derived as the next
+ *    occurrence strictly after `now`, never a backlog enumerated out of the past. A `once` is armed
+ *    only while its instant is still in the future, so an already-past one is never persisted. A
+ *    `cron` materialises its next occurrence into `at`, and when an outage leaves a *later*
+ *    occurrence already passed too, every occurrence in that gap is skipped and the Schedule jumps
+ *    forward — a daily digest after a week down fires next, not seven times. The single-interval
+ *    boundary is a deliberate residual (a fire at most one interval late still lands once), the same
+ *    one the `once` arm accepts; `matureOf` documents why.
  */
 
 import type { Component } from "../components.ts";
@@ -45,15 +49,19 @@ import { defaultLogger, type Logger } from "../logging.ts";
 import type { SignalWorker } from "../signals/worker.ts";
 import { schedulerMigrations } from "./migrations.ts";
 import {
+  advanceSchedule,
   asScheduleRecord,
   deleteSchedule,
   earliestFireAt,
+  matureOf,
   nextFireOf,
-  onceRecord,
+  parseUntil,
   type ScheduleFiredRecord,
   type ScheduleInput,
   type ScheduleOutcome,
   type ScheduleRecord,
+  scheduleRecord,
+  scheduleRow,
   selectDue,
   selectSchedules,
   upsertSchedule,
@@ -249,30 +257,48 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
   }
 
   /**
-   * Matures one Schedule: emit its Signal and retire it, in one transaction so a crash between
-   * them is impossible (ADR-0023). `firedAt` is the Scheduler's own `now`, so it is deterministic
-   * and a Handler can compare it to `scheduledFor` to judge lateness.
+   * Matures one Schedule: announce its Signal and advance it — to its next fire, or to retirement —
+   * in one transaction so a crash between the two is impossible (ADR-0023). `matureOf` decides both,
+   * deriving forward from `now`: a `once` announces and retires, a current `cron` announces and
+   * advances, and a `cron` whose stored occurrence is a stale miss from an outage is skipped
+   * (announces nothing) and jumped forward. `firedAt` is the Scheduler's own `now`, deterministic
+   * and comparable to `scheduledFor` so a Handler can judge lateness.
    */
   async function fire(row: typeof schedules.$inferSelect): Promise<void> {
-    const at = row.at;
-    if (at === null) return; // Guarded by `selectDue`; the column is nullable for the cron arm.
-    const payload: ScheduleFiredRecord = {
-      scheduleName: row.name,
-      data: row.data,
-      scheduledFor: at.toISOString(),
-      firedAt: now().toISOString(),
-    };
+    const firedAt = now();
+    const maturation = matureOf(row, firedAt);
     await options.db.tx(async (tx) => {
-      await options.worker.emit(tx, { kind: scheduleFiredKind, payload });
-      await deleteSchedule(tx, row.name);
+      if (maturation.emit) {
+        const payload: ScheduleFiredRecord = {
+          scheduleName: row.name,
+          data: row.data,
+          scheduledFor: maturation.scheduledFor.toISOString(),
+          firedAt: firedAt.toISOString(),
+        };
+        await options.worker.emit(tx, { kind: scheduleFiredKind, payload });
+      }
+      if (maturation.next === undefined) {
+        await deleteSchedule(tx, row.name);
+      } else {
+        await advanceSchedule(tx, row.name, maturation.next);
+      }
     });
-    log.info({ schedule: row.name, kind: scheduleFiredKind }, "Schedule fired");
+    if (maturation.emit) {
+      log.info({ schedule: row.name, kind: scheduleFiredKind }, "Schedule fired");
+    }
   }
 
   return {
     async schedule(input) {
       const at = now();
-      const next = nextFireOf(input.spec, at);
+      // A malformed `until`, a bad cron `expr`, or an unknown `tz` throws `ScheduleSpecError` here,
+      // before anything is written — the refusal a later ticket surfaces as a 400. `until` is a
+      // cron bound only; a `once` bounds itself by firing once, so its `until` is ignored.
+      const until =
+        input.spec.kind === "cron" && input.until !== undefined
+          ? parseUntil(input.until)
+          : undefined;
+      const next = nextFireOf(input.spec, at, until);
       const data = input.data ?? null;
       if (next === undefined) {
         // No future fire: spent. Honour the upsert by removing any row under this name, so a name
@@ -280,22 +306,14 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
         await deleteSchedule(handle, input.name);
         // The removed row may have been the earliest, so the timer's target changed.
         await arm();
-        return {
-          created: false,
-          schedule: { name: input.name, spec: input.spec, data, nextFireAt: null },
-        };
+        return { created: false, schedule: scheduleRecord(input, undefined, until, data) };
       }
-      const { created } = await upsertSchedule(handle, {
-        name: input.name,
-        kind: input.spec.kind,
-        at: next,
-        data,
-      });
+      const { created } = await upsertSchedule(handle, scheduleRow(input, next, until, data));
       // A new or moved fire may now be the earliest, so re-derive the timer against it.
       await arm();
-      // The same builder `list` reads a row through, so this answer and a later list agree
+      // The same shape `list` reads a row through, so this answer and a later list agree
       // byte-for-byte on the same Schedule without reading the row back.
-      return { created, schedule: onceRecord(input.name, next, data) };
+      return { created, schedule: scheduleRecord(input, next, until, data) };
     },
 
     async list() {

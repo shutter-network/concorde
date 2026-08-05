@@ -18,6 +18,14 @@
  * rather than kept in a lifecycle state — a spent one-shot, a cancellation, a boot-time drop are
  * all the same row's absence — so there is no `state` column and nothing sweeps: the row *is* the
  * arming.
+ *
+ * `at` is the **next fire** for both kinds — for a `once` it is the caller's chosen instant, and
+ * for a `cron` it is the next occurrence materialised forward from now, recomputed on every fire.
+ * That is what lets `selectDue` and `earliestFireAt` order and select both kinds off one column
+ * (ADR-0018). The cron arm's own columns — `cron_expr`, `tz`, and an optional `until` — are added
+ * additively over ticket 01's shape: the discriminant was already here and `at` was already
+ * nullable, so the arm is an `ALTER` that adds columns and a check rather than a rethink of the
+ * table.
  */
 
 import { type SQL, sql } from "drizzle-orm";
@@ -34,12 +42,9 @@ export const schedulerSchema = pgSchema("saf_scheduler");
 /**
  * The two shapes a Schedule's recurrence takes, and the discriminant the row branches on
  * (ADR-0018). `once` is a single absolute instant and needs no library; `cron` is a recurring
- * expression in a named time zone, whose firing arrives in a later ticket. The value is stored so
- * that the cron arm can be added without a fresh rethink of the row: the discriminant is already
- * here, and a cron row is one whose `at` is null and whose own columns a later migration adds.
- *
- * `cron` is in the domain now even though nothing writes it yet, so that adding it is code and
- * data rather than an `ALTER` of this constraint.
+ * expression in a named time zone, parsed by `cron-parser`. Ticket 01 put `cron` in this domain
+ * before anything wrote it, so that its arm was additive: this array is unchanged, and the cron
+ * arm arrived as a migration that adds columns rather than one that widens the discriminant.
  */
 export const scheduleKinds = ["once", "cron"] as const;
 export type ScheduleKind = (typeof scheduleKinds)[number];
@@ -77,17 +82,37 @@ export const schedules = schedulerSchema.table(
      */
     name: text("name").primaryKey(),
     /**
-     * Which recurrence shape this row is, the discriminant `at` and the cron columns branch on.
-     * Only `once` is written today; `cron` is in the check constraint's domain so that its arm
-     * is additive later.
+     * Which recurrence shape this row is, the discriminant `at`, the cron columns, and the read
+     * model branch on. Both `once` and `cron` are written; the check constraints below hold each
+     * kind to the columns it requires.
      */
     kind: text("kind").$type<ScheduleKind>().notNull(),
     /**
-     * The one-shot instant, for a `once` Schedule. Null for a `cron` one, whose next fire is
-     * computed from its expression rather than stored — which is why this column is nullable and
-     * the check below only requires it for `once`.
+     * The next fire instant, for **both** kinds: a `once`'s chosen instant, or a `cron`'s next
+     * occurrence materialised forward from now and recomputed on every fire. Nullable at the column
+     * level because ticket 01 left it so for the cron arm to grow into, but a persisted row of
+     * either kind always has one — the two checks below require it — so `selectDue` and
+     * `earliestFireAt` read a fire off this column for every row.
      */
     at: timestamp("at", { withTimezone: true }),
+    /**
+     * The cron expression, for a `cron` Schedule. Null for a `once` one. Parsed and validated by
+     * `cron-parser` at creation, never by the database, so this column only stores the text the
+     * Scheduler already accepted.
+     */
+    cronExpr: text("cron_expr"),
+    /**
+     * The IANA time zone the cron expression is evaluated in, for a `cron` Schedule. Null for a
+     * `once` one, whose instant is absolute. Stored resolved — a caller who omits it gets `UTC`,
+     * never the server's local zone — so the read model shows the zone that is actually in force.
+     */
+    tz: text("tz"),
+    /**
+     * The optional end instant of a `cron` Schedule: after its last occurrence at or before this,
+     * the Schedule is retired (deleted). Null for an unbounded cron and for every `once`, which
+     * bounds itself by firing once.
+     */
+    until: timestamp("until", { withTimezone: true }),
     /**
      * The creator's opaque data, emitted verbatim inside the fired Signal's payload. `jsonb` for
      * the reason `signals.payload` is: the Scheduler never interprets it, so what a given
@@ -100,9 +125,17 @@ export const schedules = schedulerSchema.table(
     check("schedules_kind_known", kindIsKnown(table.kind, scheduleKinds)),
     // A `once` Schedule with no instant has no fire and could never be enumerated, so the database
     // refuses one rather than storing a row nothing can act on. Written as "not once, or has an
-    // `at`" so that a `cron` row — whose `at` is legitimately null — is unaffected, and so that the
-    // cron arm adds its own analogue rather than loosening this one.
+    // `at`" so that a `cron` row is judged by its own check below rather than this one.
     check("schedules_once_has_at", sql`${table.kind} <> 'once' or ${table.at} is not null`),
+    // A `cron` Schedule carries its expression, its zone, and a materialised next fire — the three
+    // a fire and a re-arm read. Written as "not cron, or has all three" so that a `once` row, whose
+    // `cron_expr` and `tz` are legitimately null, is unaffected. `until` is deliberately absent: an
+    // unbounded cron has none, and the row is deleted the moment its next fire would pass `until`,
+    // so a persisted cron always has a future `at` regardless.
+    check(
+      "schedules_cron_has_fields",
+      sql`${table.kind} <> 'cron' or (${table.cronExpr} is not null and ${table.tz} is not null and ${table.at} is not null)`,
+    ),
   ],
 );
 

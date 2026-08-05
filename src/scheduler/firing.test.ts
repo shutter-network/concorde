@@ -15,7 +15,7 @@
  */
 
 import assert from "node:assert/strict";
-import { after, before, describe, it } from "node:test";
+import { after, before, beforeEach, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
 import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
@@ -28,7 +28,8 @@ import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
 import { schedulerMigrations } from "./migrations.ts";
 import { createScheduler, type Scheduler, scheduleFiredKind } from "./scheduler.ts";
-import type { ScheduleFiredRecord } from "./schedules.ts";
+import { type ScheduleFiredRecord, ScheduleSpecError } from "./schedules.ts";
+import { schedules } from "./schema.ts";
 
 let database: TestDatabase;
 let db: Db;
@@ -80,6 +81,15 @@ after(async () => {
   await agentServer.stop();
   await worker.stop();
   await database.drop();
+});
+
+// Each test observes a fresh, empty table. Unlike a spent `once` or a cancelled Schedule, a
+// recurring cron persists after it fires, so without this a test's survivors would leak into the
+// next and the global `list` a `names` assertion reads would no longer be that test's alone. The
+// Signals a fire emits are not cleared — they accumulate in the shared Signal Worker — so every
+// Schedule name in this file is globally unique and `fired` filters on it.
+beforeEach(async () => {
+  await db.handle({ schedules }).delete(schedules);
 });
 
 /** A Scheduler on the shared Db and worker, reading a clock this file moves. */
@@ -296,6 +306,243 @@ describe("cancelling a Schedule", () => {
     clockNow = new Date(t0 + 2 * hour);
     await instance.tick();
     assert.deepEqual(await fired("abandon"), []);
+  });
+});
+
+describe("a cron Schedule", () => {
+  it("fires on each occurrence, advances, and keeps firing with the fixed kind and verbatim data", async () => {
+    clockNow = new Date(t0);
+    const instance = scheduler();
+
+    // Every hour on the hour, no tz (so UTC). Created exactly on the hour at t0, so the next fire
+    // is the *following* hour — cron's next is strictly after now.
+    const outcome = await instance.schedule({
+      name: "hourly",
+      spec: { kind: "cron", expr: "0 * * * *" },
+      data: { check: "health" },
+    });
+    assert.equal(outcome.created, true);
+    assert.deepEqual(outcome.schedule.spec, { kind: "cron", expr: "0 * * * *", tz: "UTC" });
+    assert.equal(outcome.schedule.nextFireAt, iso(t0 + hour));
+
+    // Before the first occurrence: nothing fires.
+    await instance.tick();
+    assert.deepEqual(await fired("hourly"), []);
+
+    // The first occurrence matures: one fire, the fixed kind, the data verbatim, and the Schedule
+    // stays — advanced to the next hour.
+    clockNow = new Date(t0 + hour);
+    await instance.tick();
+    assert.deepEqual(await fired("hourly"), [
+      {
+        scheduleName: "hourly",
+        data: { check: "health" },
+        scheduledFor: iso(t0 + hour),
+        firedAt: iso(t0 + hour),
+      },
+    ]);
+    assert.deepEqual(await names(instance), ["hourly"]);
+    assert.equal((await instance.list())[0]?.nextFireAt, iso(t0 + 2 * hour));
+
+    // The second occurrence: it keeps firing without being re-armed. `fired` returns newest-first,
+    // so sort by the instant to compare against the occurrences in order.
+    clockNow = new Date(t0 + 2 * hour);
+    await instance.tick();
+    const byInstant = (await fired("hourly")).sort((a, b) =>
+      a.scheduledFor.localeCompare(b.scheduledFor),
+    );
+    assert.deepEqual(byInstant, [
+      {
+        scheduleName: "hourly",
+        data: { check: "health" },
+        scheduledFor: iso(t0 + hour),
+        firedAt: iso(t0 + hour),
+      },
+      {
+        scheduleName: "hourly",
+        data: { check: "health" },
+        scheduledFor: iso(t0 + 2 * hour),
+        firedAt: iso(t0 + 2 * hour),
+      },
+    ]);
+  });
+
+  it("treats a cron with no time zone as UTC, never the server's local zone", async () => {
+    clockNow = new Date(t0);
+    const instance = scheduler();
+
+    // 08:30 daily, no tz. From noon on 2030-06-01 the next 08:30 is the next day — and it is 08:30
+    // *UTC*, the instant asserted below, which only holds if the omitted zone resolved to UTC.
+    const outcome = await instance.schedule({
+      name: "utc-default",
+      spec: { kind: "cron", expr: "30 8 * * *" },
+      data: null,
+    });
+    assert.equal(outcome.schedule.spec.kind, "cron");
+    assert.deepEqual(outcome.schedule.spec, { kind: "cron", expr: "30 8 * * *", tz: "UTC" });
+    assert.equal(outcome.schedule.nextFireAt, "2030-06-02T08:30:00.000Z");
+  });
+
+  it("stops after its last occurrence at or before until, and is retired", async () => {
+    clockNow = new Date(t0);
+    const instance = scheduler();
+
+    // Hourly, bounded at t0 + 2h. The occurrences at t0+1h and t0+2h are at or before the bound and
+    // fire; the one at t0+3h is past it, so the Schedule retires after t0+2h.
+    const outcome = await instance.schedule({
+      name: "bounded",
+      spec: { kind: "cron", expr: "0 * * * *" },
+      data: 1,
+      until: iso(t0 + 2 * hour),
+    });
+    assert.equal(outcome.schedule.until, iso(t0 + 2 * hour));
+    assert.equal(outcome.schedule.nextFireAt, iso(t0 + hour));
+
+    clockNow = new Date(t0 + hour);
+    await instance.tick();
+    assert.deepEqual(await names(instance), ["bounded"]); // still going
+
+    clockNow = new Date(t0 + 2 * hour);
+    await instance.tick();
+    // The bound's own occurrence fired, and there is no occurrence at or before the bound left, so
+    // the Schedule is gone.
+    assert.deepEqual(await names(instance), []);
+    assert.deepEqual((await fired("bounded")).map((f) => f.scheduledFor).sort(), [
+      iso(t0 + hour),
+      iso(t0 + 2 * hour),
+    ]);
+
+    // Past the bound: nothing more fires.
+    clockNow = new Date(t0 + 5 * hour);
+    await instance.tick();
+    assert.equal((await fired("bounded")).length, 2);
+  });
+
+  it("skips missed occurrences after an outage, resuming forward with no backlog", async () => {
+    clockNow = new Date(t0);
+    const instance = scheduler();
+
+    await instance.schedule({
+      name: "outage",
+      spec: { kind: "cron", expr: "0 * * * *" },
+      data: "d",
+    });
+
+    // The clock jumps ten hours, clean past ten occurrences — a Gateway that was down. The first
+    // tick must not enumerate that gap into the serial lane: it skips every stale occurrence and
+    // re-derives the next fire forward from now.
+    clockNow = new Date(t0 + 10 * hour + 15 * 60 * 1000); // t0 + 10h15m
+    await instance.tick();
+    assert.deepEqual(await fired("outage"), [], "no backlog of missed fires should be emitted");
+    assert.deepEqual(await names(instance), ["outage"]);
+    // Resumed at the next occurrence strictly after now: 11h past t0 (the :00 after 10h15m).
+    assert.equal((await instance.list())[0]?.nextFireAt, iso(t0 + 11 * hour));
+
+    // And from there it fires normally again.
+    clockNow = new Date(t0 + 11 * hour);
+    await instance.tick();
+    assert.deepEqual(await fired("outage"), [
+      {
+        scheduleName: "outage",
+        data: "d",
+        scheduledFor: iso(t0 + 11 * hour),
+        firedAt: iso(t0 + 11 * hour),
+      },
+    ]);
+  });
+
+  it("fires once, late, across a gap of a single interval, then resumes forward", async () => {
+    // The boundary of the skip: a gap of *one* interval is not "well past" and is indistinguishable
+    // from a live process frozen through one fire, so the stored occurrence fires once, late — the
+    // same residual the `once` arm accepts. Only a *later* occurrence also passing (the test above)
+    // is skipped. Pinned here so the residual is deliberate, not an accident.
+    clockNow = new Date(t0);
+    const instance = scheduler();
+    await instance.schedule({
+      name: "single-gap",
+      spec: { kind: "cron", expr: "0 * * * *" }, // hourly; first fire at t0 + 1h
+      data: "g",
+    });
+
+    // Now is 30 minutes past the t0+1h occurrence but before the t0+2h one: one interval late.
+    clockNow = new Date(t0 + hour + 30 * 60 * 1000);
+    await instance.tick();
+    assert.deepEqual(await fired("single-gap"), [
+      {
+        scheduleName: "single-gap",
+        data: "g",
+        scheduledFor: iso(t0 + hour),
+        firedAt: iso(t0 + hour + 30 * 60 * 1000),
+      },
+    ]);
+    // Advanced to the next occurrence, not skipped forward past it.
+    assert.equal((await instance.list())[0]?.nextFireAt, iso(t0 + 2 * hour));
+  });
+
+  it("holds the wall-clock time across a daylight-saving boundary in the named zone", async () => {
+    // 09:00 every day in Berlin, across the 2030 spring-forward (clocks jump 02:00->03:00 on
+    // 2030-03-31). The wall-clock 09:00 holds, so the UTC instant shifts from 08:00 (CET, UTC+1)
+    // to 07:00 (CEST, UTC+2) across the boundary. Driven by moving `now` across the transition.
+    clockNow = new Date("2030-03-29T00:00:00.000Z");
+    const instance = scheduler();
+
+    await instance.schedule({
+      name: "berlin",
+      spec: { kind: "cron", expr: "0 9 * * *", tz: "Europe/Berlin" },
+      data: null,
+    });
+
+    for (const at of [
+      "2030-03-29T08:00:00.000Z", // 09:00 CET, before the boundary
+      "2030-03-30T08:00:00.000Z", // 09:00 CET, still before
+      "2030-03-31T07:00:00.000Z", // 09:00 CEST, after the boundary
+    ]) {
+      clockNow = new Date(at);
+      await instance.tick();
+    }
+
+    assert.deepEqual(
+      (await fired("berlin")).map((f) => f.scheduledFor).sort(),
+      ["2030-03-29T08:00:00.000Z", "2030-03-30T08:00:00.000Z", "2030-03-31T07:00:00.000Z"],
+      "09:00 Berlin should hold across DST while its UTC instant shifts by an hour",
+    );
+  });
+
+  it("refuses an invalid cron expression and an unknown time zone at creation, persisting nothing", async () => {
+    clockNow = new Date(t0);
+    const instance = scheduler();
+
+    await assert.rejects(
+      instance.schedule({ name: "bad-expr", spec: { kind: "cron", expr: "not a cron" } }),
+      (error: unknown) => error instanceof ScheduleSpecError,
+      "an invalid cron expression should throw ScheduleSpecError",
+    );
+    await assert.rejects(
+      instance.schedule({
+        name: "bad-zone",
+        spec: { kind: "cron", expr: "0 9 * * *", tz: "Mars/Phobos" },
+      }),
+      (error: unknown) => error instanceof ScheduleSpecError,
+      "an unknown time zone should throw ScheduleSpecError",
+    );
+    await assert.rejects(
+      instance.schedule({
+        name: "bad-until",
+        spec: { kind: "cron", expr: "0 9 * * *" },
+        until: "not an instant",
+      }),
+      (error: unknown) => error instanceof ScheduleSpecError,
+      "a malformed until should throw ScheduleSpecError",
+    );
+
+    // A refusal persists nothing: none of the three names is armed, so a tick far in the future
+    // fires none of them.
+    assert.deepEqual(await names(instance), []);
+    clockNow = new Date(t0 + 100 * day);
+    await instance.tick();
+    assert.deepEqual(await fired("bad-expr"), []);
+    assert.deepEqual(await fired("bad-zone"), []);
+    assert.deepEqual(await fired("bad-until"), []);
   });
 });
 

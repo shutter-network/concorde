@@ -1,0 +1,89 @@
+{
+  "id": "28583aaa-d037-4ad0-acf9-1641f591df8e",
+  "prevId": "2b62b6e6-e407-4527-9fe6-d546d55d3729",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "saf_scheduler.schedules": {
+      "name": "schedules",
+      "schema": "saf_scheduler",
+      "columns": {
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "at": {
+          "name": "at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cron_expr": {
+          "name": "cron_expr",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tz": {
+          "name": "tz",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "until": {
+          "name": "until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "data": {
+          "name": "data",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "schedules_kind_known": {
+          "name": "schedules_kind_known",
+          "value": "\"saf_scheduler\".\"schedules\".\"kind\" in ('once', 'cron')"
+        },
+        "schedules_once_has_at": {
+          "name": "schedules_once_has_at",
+          "value": "\"saf_scheduler\".\"schedules\".\"kind\" <> 'once' or \"saf_scheduler\".\"schedules\".\"at\" is not null"
+        },
+        "schedules_cron_has_fields": {
+          "name": "schedules_cron_has_fields",
+          "value": "\"saf_scheduler\".\"schedules\".\"kind\" <> 'cron' or (\"saf_scheduler\".\"schedules\".\"cron_expr\" is not null and \"saf_scheduler\".\"schedules\".\"tz\" is not null and \"saf_scheduler\".\"schedules\".\"at\" is not null)"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {
+    "saf_scheduler": "saf_scheduler"
+  },
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

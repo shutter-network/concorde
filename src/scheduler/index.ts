@@ -13,7 +13,10 @@
  * HTTP Messenger: a Schedule references nobody, so its migration folder applies wherever it lands.
  *
  * What it answers with is the programmatic interface an Operator always has: `schedule` (an upsert
- * by name), `list`, `cancel`, and the awaitable `tick` due-check.
+ * by name), `list`, `cancel`, and the awaitable `tick` due-check. A `schedule` call whose `spec` is
+ * a cron with an invalid `expr` or an unknown `tz`, or whose `until` is malformed, throws
+ * `ScheduleSpecError` before anything is persisted — the refusal the agent-facing routes a later
+ * ticket surface as a 400, exported here so that layer can catch exactly it.
  *
  * `scheduleFiredKind` and `ScheduleFiredRecord` are the two halves of this part's Signal contract,
  * exported so that an Operator's Handler map is neither a string literal that can drift nor a
@@ -38,3 +41,4 @@ export type {
   ScheduleRecord,
   ScheduleSpec,
 } from "./schedules.ts";
+export { ScheduleSpecError } from "./schedules.ts";
