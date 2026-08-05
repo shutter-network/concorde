@@ -211,7 +211,28 @@ export function nextFireOf(spec: ScheduleSpec, now: Date, until?: Date): Date | 
   return at;
 }
 
-/** What advancing a due row decides: the occurrence to announce, whether to announce it, and the
+/**
+ * The next fire of a persisted **row** strictly after `now`, or `undefined` when it has none — the
+ * row-shaped counterpart of `nextFireOf`, which works from an input spec before a row exists.
+ *
+ *  - A `cron` derives its next occurrence strictly after `now` in its stored zone, or `undefined`
+ *    when that would fall past `until` (the bounded Schedule has spent its last fire).
+ *  - A `once` is its stored instant while that is still in the future, and `undefined` once `now` has
+ *    reached it — a spent one-shot.
+ *
+ * The one place the Scheduler turns a stored row into a fire, shared by the boot re-derivation and
+ * by maturing a due row, so both derive forward the same way (ADR-0018).
+ */
+export function nextFireOfRow(row: typeof schedules.$inferSelect, now: Date): Date | undefined {
+  if (row.kind === "cron" && row.cronExpr !== null && row.tz !== null) {
+    return cronNextAfter(row.cronExpr, row.tz, now, row.until ?? undefined);
+  }
+  const at = row.at;
+  if (at === null || at.getTime() <= now.getTime()) return undefined;
+  return at;
+}
+
+/** What maturing a due row decides: the occurrence to announce, whether to announce it, and the
  * fire to advance to (`undefined` retires the Schedule). */
 export type Maturation = {
   readonly scheduledFor: Date;
@@ -220,26 +241,20 @@ export type Maturation = {
 };
 
 /**
- * What firing a due row does, deriving the next fire forward from `now` rather than enumerating the
- * past (ADR-0018).
+ * What maturing a due row does: announce the occurrence it was armed for and advance to the next
+ * fire strictly after `now`, both in one act so a crash cannot split them (ADR-0023).
  *
- *  - A `once` fires for its instant and retires, even when `now` has jumped clean past it — the
- *    accepted "fired once, late" residual.
- *  - A `cron` fires for its stored occurrence **only while `now` is still inside that occurrence's
- *    own interval** — while the occurrence after it is still in the future. Once a *later* occurrence
- *    has itself come and gone (a gap of two or more intervals), every occurrence in the gap is
- *    skipped, not announced, and the Schedule jumps to the next occurrence strictly after `now`. So
- *    an outage of many intervals produces no backlog into the serial lane and no enumeration of the
- *    gap — the ticket's "missed fires are skipped".
+ * The stored `at` is the occurrence this fire is *for*, and it is announced verbatim: a `once`
+ * announces its instant and retires (`next` is `undefined`), and a `cron` announces its stored
+ * occurrence and advances to the next one strictly after `now` (retiring if that passes `until`).
  *
- *    The boundary is a deliberate residual, not a clean-restart guarantee: a gap of a *single*
- *    interval — a live process frozen through one fire, or a restart down across exactly one — fires
- *    that occurrence once, late, because with the next fire persisted as the trigger (ticket 01's
- *    shape, extended here) the two are indistinguishable without re-deriving every row forward on
- *    boot. That matches the `once` arm's own accepted residual; the spec's stricter "the restart
- *    case is clean" would need that boot re-derivation for both arms, which is out of this additive
- *    ticket's scope.
- *  - A bounded `cron` whose next occurrence would pass `until` retires after announcing its last.
+ * The only accepted residual is a **continuously-live process frozen straight through a fire time**:
+ * its timer wakes late, `now` is past `at`, and the armed occurrence is announced once, late — but
+ * `next` is still derived strictly forward from `now`, so the frozen gap is jumped, never enumerated
+ * into the serial lane. A **restart** never lands here: `start` re-derives every row's next fire
+ * forward before the timer is armed (`nextFireOfRow` above), so a booted Scheduler's `at` is always
+ * strictly in the future and a missed occurrence is dropped, not replayed — the restart case is
+ * clean however many occurrences fell during the outage (ADR-0018).
  */
 export function matureOf(row: typeof schedules.$inferSelect, now: Date): Maturation {
   const at = row.at;
@@ -248,22 +263,7 @@ export function matureOf(row: typeof schedules.$inferSelect, now: Date): Maturat
     // fire for an instant that does not exist.
     return { scheduledFor: now, emit: false, next: undefined };
   }
-  if (row.kind === "cron" && row.cronExpr !== null && row.tz !== null) {
-    const until = row.until ?? undefined;
-    const afterAt = cronNextAfter(row.cronExpr, row.tz, at, until);
-    if (afterAt !== undefined && afterAt.getTime() <= now.getTime()) {
-      // Superseded: a later occurrence has already passed too, so the stored one is stale. Skip it
-      // and derive forward from now — the skip *is* deriving forward, not a policy on top of it.
-      return {
-        scheduledFor: at,
-        emit: false,
-        next: cronNextAfter(row.cronExpr, row.tz, now, until),
-      };
-    }
-    // Current: announce this occurrence and advance to the next, which is strictly after now.
-    return { scheduledFor: at, emit: true, next: afterAt };
-  }
-  return { scheduledFor: at, emit: true, next: undefined };
+  return { scheduledFor: at, emit: true, next: nextFireOfRow(row, now) };
 }
 
 /** The columns a row is written from, derived once from an input and a computed next fire. */

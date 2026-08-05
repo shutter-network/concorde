@@ -98,6 +98,19 @@ function scheduler(): Scheduler {
 }
 
 /**
+ * Simulates a restart: a fresh Scheduler over the same persisted rows, booted so its `start`
+ * re-derives every next fire forward from the current clock, then its live timer stopped so the test
+ * goes on driving `tick`/`now` deterministically. What survives a restart is the database, not the
+ * instance — so this is the seam that tells a booted Scheduler apart from a continuously-live one.
+ */
+async function restart(): Promise<Scheduler> {
+  const instance = scheduler();
+  await instance.start();
+  await instance.stop();
+  return instance;
+}
+
+/**
  * The fired-Schedule Signals for one Schedule name, over the worker's own Agent routes.
  *
  * That seam rather than the `signals` table: what a transaction committed is observable where a
@@ -235,6 +248,27 @@ describe("a once Schedule", () => {
       },
     ]);
     assert.deepEqual(await names(instance), []);
+  });
+
+  it("is dropped on boot, not fired late, when its instant passed while the process was down", async () => {
+    clockNow = new Date(t0);
+    const armed = scheduler();
+    await armed.schedule({
+      name: "boot-drop",
+      spec: { kind: "once", at: iso(t0 + hour) },
+      data: 1,
+    });
+    assert.deepEqual(await names(armed), ["boot-drop"]);
+
+    // The instant passes while the process is down, then it restarts. Boot re-derives forward, and a
+    // once with no future instant is dropped rather than replayed — the same rule creation applies,
+    // now at boot too, so a reminder for a moment the process was down is simply lost, not fired late
+    // (ADR-0018). This is the restart counterpart of the live-frozen "fires late" case above.
+    clockNow = new Date(t0 + 2 * hour);
+    const rebooted = await restart();
+    assert.deepEqual(await names(rebooted), []);
+    await rebooted.tick();
+    assert.deepEqual(await fired("boot-drop"), []);
   });
 });
 
@@ -418,29 +452,29 @@ describe("a cron Schedule", () => {
     assert.equal((await fired("bounded")).length, 2);
   });
 
-  it("skips missed occurrences after an outage, resuming forward with no backlog", async () => {
+  it("re-derives forward on boot, so a restart skips every missed occurrence — one or many", async () => {
     clockNow = new Date(t0);
-    const instance = scheduler();
+    const armed = scheduler();
+    await armed.schedule({ name: "outage", spec: { kind: "cron", expr: "0 * * * *" }, data: "d" });
+    // Armed at t0 + 1h.
 
-    await instance.schedule({
-      name: "outage",
-      spec: { kind: "cron", expr: "0 * * * *" },
-      data: "d",
-    });
+    // A restart down across a SINGLE occurrence: now is 30m past the t0+1h fire, before the t0+2h
+    // one. Boot must not replay t0+1h — it re-derives forward to t0+2h and fires nothing late.
+    clockNow = new Date(t0 + hour + 30 * 60 * 1000);
+    const afterOne = await restart();
+    assert.deepEqual(await fired("outage"), [], "a single missed occurrence must not fire on boot");
+    assert.equal((await afterOne.list())[0]?.nextFireAt, iso(t0 + 2 * hour));
 
-    // The clock jumps ten hours, clean past ten occurrences — a Gateway that was down. The first
-    // tick must not enumerate that gap into the serial lane: it skips every stale occurrence and
-    // re-derives the next fire forward from now.
-    clockNow = new Date(t0 + 10 * hour + 15 * 60 * 1000); // t0 + 10h15m
-    await instance.tick();
-    assert.deepEqual(await fired("outage"), [], "no backlog of missed fires should be emitted");
-    assert.deepEqual(await names(instance), ["outage"]);
-    // Resumed at the next occurrence strictly after now: 11h past t0 (the :00 after 10h15m).
-    assert.equal((await instance.list())[0]?.nextFireAt, iso(t0 + 11 * hour));
+    // A restart down across MANY occurrences: now jumps ten hours on. Same rule, no backlog — the
+    // one-occurrence and many-occurrence outages are identical, both clean.
+    clockNow = new Date(t0 + 10 * hour + 15 * 60 * 1000);
+    const afterMany = await restart();
+    assert.deepEqual(await fired("outage"), [], "many missed occurrences must not fire on boot");
+    assert.equal((await afterMany.list())[0]?.nextFireAt, iso(t0 + 11 * hour));
 
-    // And from there it fires normally again.
+    // And once genuinely live again, the next occurrence fires normally.
     clockNow = new Date(t0 + 11 * hour);
-    await instance.tick();
+    await afterMany.tick();
     assert.deepEqual(await fired("outage"), [
       {
         scheduleName: "outage",
@@ -451,25 +485,27 @@ describe("a cron Schedule", () => {
     ]);
   });
 
-  it("fires once, late, across a gap of a single interval, then resumes forward", async () => {
-    // The boundary of the skip: a gap of *one* interval is not "well past" and is indistinguishable
-    // from a live process frozen through one fire, so the stored occurrence fires once, late — the
-    // same residual the `once` arm accepts. Only a *later* occurrence also passing (the test above)
-    // is skipped. Pinned here so the residual is deliberate, not an accident.
+  it("fires once, late, when a continuously-live process is frozen through a fire (the only residual)", async () => {
+    // The single accepted residual: a process that never restarted, whose timer wakes late because it
+    // was frozen straight through the fire time. No boot re-derivation runs here — the test drives
+    // `tick` on a live instance — so the armed occurrence is announced once, late, and the next fire
+    // is then derived strictly forward. A restart, by contrast, re-derives on boot and fires nothing
+    // late, however few or many occurrences it missed (the test above). Pinned so the split between a
+    // live freeze and a restart is deliberate.
     clockNow = new Date(t0);
     const instance = scheduler();
     await instance.schedule({
-      name: "single-gap",
+      name: "live-frozen",
       spec: { kind: "cron", expr: "0 * * * *" }, // hourly; first fire at t0 + 1h
       data: "g",
     });
 
-    // Now is 30 minutes past the t0+1h occurrence but before the t0+2h one: one interval late.
+    // Now is 30 minutes past the t0+1h occurrence but before the t0+2h one, with no restart between.
     clockNow = new Date(t0 + hour + 30 * 60 * 1000);
     await instance.tick();
-    assert.deepEqual(await fired("single-gap"), [
+    assert.deepEqual(await fired("live-frozen"), [
       {
-        scheduleName: "single-gap",
+        scheduleName: "live-frozen",
         data: "g",
         scheduledFor: iso(t0 + hour),
         firedAt: iso(t0 + hour + 30 * 60 * 1000),

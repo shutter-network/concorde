@@ -33,14 +33,14 @@
  *    retire the spent one-shot — and per ADR-0023 `worker.emit(tx, signal)` takes the caller's
  *    transaction, so the Scheduler does both inside one and they commit together. A crash between
  *    them is impossible: either both happened or neither.
- *  - **Missed fires are skipped by deriving forward from now.** Each fire is derived as the next
- *    occurrence strictly after `now`, never a backlog enumerated out of the past. A `once` is armed
- *    only while its instant is still in the future, so an already-past one is never persisted. A
- *    `cron` materialises its next occurrence into `at`, and when an outage leaves a *later*
- *    occurrence already passed too, every occurrence in that gap is skipped and the Schedule jumps
- *    forward — a daily digest after a week down fires next, not seven times. The single-interval
- *    boundary is a deliberate residual (a fire at most one interval late still lands once), the same
- *    one the `once` arm accepts; `matureOf` documents why.
+ *  - **Missed fires are skipped by deriving forward from now.** The persisted `at` is display-only
+ *    and never trusted as a trigger across a restart: `start` re-derives every row's next fire
+ *    strictly forward from `now` before arming, so an occurrence that fell during an outage is
+ *    dropped (a spent `once`) or jumped (a `cron`), never replayed — a daily digest after a week down
+ *    fires next, not seven times, and the restart is clean however many occurrences were missed. The
+ *    one accepted residual is a *continuously-live* process frozen straight through a fire time,
+ *    which fires once late because no boot ran to re-derive it; `matureOf` and `deriveForward`
+ *    document the split.
  */
 
 import type { Component } from "../components.ts";
@@ -55,6 +55,7 @@ import {
   earliestFireAt,
   matureOf,
   nextFireOf,
+  nextFireOfRow,
   parseUntil,
   type ScheduleFiredRecord,
   type ScheduleInput,
@@ -159,13 +160,17 @@ export type Scheduler = Component & {
   tick(): Promise<void>;
 
   /**
-   * Arms the autonomous firing timer, so the Scheduler fires on its own with nobody calling `tick`.
+   * Re-derives every Schedule's next fire forward from `now`, then arms the autonomous firing timer
+   * so the Scheduler fires on its own with nobody calling `tick`.
    *
-   * A single capped `setTimeout`, armed to the earliest Schedule's next fire and re-armed after
-   * every fire and on every `schedule` and `cancel`. Idempotent-enough for a Component's contract:
-   * a second `start` is a no-op rather than a second timer. There is nothing to recover on start —
-   * unlike the Signal Worker, a Scheduler holds no in-flight state across a restart, deriving its
-   * next fire forward from `now` (ADR-0018).
+   * The re-derivation is what makes a restart clean: the persisted `at` is display-only and not
+   * trusted as a trigger across a boot, so an occurrence that fell during an outage is recomputed
+   * forward — dropped for a spent `once`, jumped for a `cron` — rather than replayed (ADR-0018). Only
+   * a continuously-live process frozen through a fire time fires once late, because no boot ran.
+   *
+   * The timer itself is a single capped `setTimeout`, armed to the earliest Schedule's next fire and
+   * re-armed after every fire and on every `schedule` and `cancel`. Idempotent-enough for a
+   * Component's contract: a second `start` is a no-op rather than a second timer.
    */
   start(): Promise<void>;
 
@@ -214,6 +219,32 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
   }
 
   /**
+   * Re-derives every Schedule's next fire strictly forward from `now`, run once by `start` before
+   * the timer is armed. This is what makes a restart clean: the persisted `at` is display-only and is
+   * **not trusted as a trigger** across a boot (ADR-0018). An outage leaves `at` in the past, and
+   * firing it would replay an occurrence that fell while the process was down, so boot recomputes it
+   * forward — a `cron` to its next strictly-future occurrence (retired if that passes `until`), a
+   * `once` dropped if its instant has already passed, the same rule `schedule` applies at creation.
+   * Nothing in the past is ever enumerated, so however many occurrences were missed, none fires.
+   *
+   * Each row is re-derived on the part's own handle rather than in one transaction — unlike `fire`,
+   * whose emit and advance must commit together. There is nothing here to keep atomic: every step is
+   * an idempotent forward derivation, so a boot that dies half-way simply re-derives the rest on the
+   * next start, and a single instance means no concurrent boot to race (ADR-0018).
+   */
+  async function deriveForward(): Promise<void> {
+    const at = now();
+    for (const row of await selectSchedules(handle)) {
+      const next = nextFireOfRow(row, at);
+      if (next === undefined) {
+        await deleteSchedule(handle, row.name);
+      } else if (row.at === null || next.getTime() !== row.at.getTime()) {
+        await advanceSchedule(handle, row.name, next);
+      }
+    }
+  }
+
+  /**
    * Arms the single timer to the earliest Schedule's next fire, capped at `maxSleepMs`, or leaves
    * it disarmed when nothing is scheduled — a later `schedule` re-arms it.
    *
@@ -257,12 +288,15 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
   }
 
   /**
-   * Matures one Schedule: announce its Signal and advance it — to its next fire, or to retirement —
-   * in one transaction so a crash between the two is impossible (ADR-0023). `matureOf` decides both,
-   * deriving forward from `now`: a `once` announces and retires, a current `cron` announces and
-   * advances, and a `cron` whose stored occurrence is a stale miss from an outage is skipped
-   * (announces nothing) and jumped forward. `firedAt` is the Scheduler's own `now`, deterministic
-   * and comparable to `scheduledFor` so a Handler can judge lateness.
+   * Matures one due Schedule: announce its Signal and advance it — to its next fire, or to
+   * retirement — in one transaction so a crash between the two is impossible (ADR-0023). `matureOf`
+   * decides both, deriving the next fire forward from `now`: a `once` announces its instant and
+   * retires, and a `cron` announces its stored occurrence and advances to the next one strictly after
+   * `now` (retiring if that passes `until`). A stored occurrence is only ever announced late here
+   * when the process was *continuously live* and frozen through the fire time; a restart re-derives
+   * every row forward before firing, so a booted Scheduler never reaches this with a stale `at`.
+   * `firedAt` is the Scheduler's own `now`, deterministic and comparable to `scheduledFor` so a
+   * Handler can judge lateness.
    */
   async function fire(row: typeof schedules.$inferSelect): Promise<void> {
     const firedAt = now();
@@ -335,6 +369,9 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
       // arm once, and let `schedule`, `cancel`, and each wake re-derive from there.
       if (started) return;
       started = true;
+      // Boot: re-derive every row's next fire forward from now before arming, so a stale `at` left
+      // by an outage is recomputed rather than fired — the restart case is clean (ADR-0018).
+      await deriveForward();
       await arm();
     },
 
