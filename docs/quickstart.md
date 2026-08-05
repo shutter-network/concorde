@@ -489,9 +489,9 @@ for a Run that never finishes.
 
 All JSON, all on the Agent server, and **all unscoped**. Which of them exist is a
 consequence of which parts were handed that server: four are the Signal Worker's, three the
-User Manager's, two the HTTP Messenger's, three Decisions' and one Signatures'. All five
-parts are handed it by `createGatewayWithDefaults`, so on the default path the agent gets
-the whole of that.
+User Manager's, two the HTTP Messenger's, three Decisions' and one Signatures'. The Signal
+Worker is handed it by `createGateway`, and the reference deployment hands it to the other
+four in `extend`, so an agent talking to that Gateway gets the whole of that.
 
 **Which thirteen, though, is not written here and is not written in your `AGENTS.md`
 either.** The server describes itself: `GET /openapi.json` answers a current OpenAPI
@@ -542,7 +542,7 @@ beside ours, and there is nothing left to compare against this page when you upg
 agent fetches it each Run and gets what the Gateway it is talking to actually serves.
 
 The hazard that replaces it is ours rather than yours, and it is why the round-trip
-assertions in `src/default-gateway.test.ts` exist: a response schema is both what the
+assertions in `src/gateway.test.ts` exist: a response schema is both what the
 document describes a route with **and** what Fastify serialises the answer through, so a
 record that gains a field its schema does not declare loses that field on the wire,
 silently, in the answer and in the description alike
@@ -553,8 +553,9 @@ silently, in the answer and in the description alike
 Read [`../example/main.ts`](../example/main.ts) — seventy-odd lines including the comments,
 and the best documentation this project has. Most of it is the Agent Container above; the
 deployment itself is three calls, one Signal Handler, and the loop at the bottom the
-framework does not ship. It is a **consumer** of the framework's own assembly rather than
-a demonstration of one, which is why there is so little of it.
+framework does not ship. It builds the four opinionated parts by hand in `extend` and is
+otherwise a thin consumer of `createGateway`, which is why there is so little of it even
+with the wiring on display.
 
 Three things in it are the framework's to describe and **yours to do**, and all three are
 near the top. It reads `HOST_DIR` and refuses to start without it, because a Gateway
@@ -566,18 +567,43 @@ and which is the only thing that tells the agent the Agent server exists. And a
 the agent which model to use. The framework creates no directory and writes no file, ever
 ([ADR-0028](./adr/0028-the-mount-table-declares-mounts-and-verifies-nothing.md)).
 
-Two things that used to be in it are **gone**, and both are defaults now. There is no
-`databaseUrl`, because `createGatewayWithDefaults` reads `DATABASE_URL` when it is given
-none, and `compose.yml` sets it. There is no `tokenTtl` either, because it defaults to
-thirty days. Both remain options, and a deployment for which either is load-bearing states
-it and gets exactly what it asked for
-([ADR-0038](./adr/0038-the-default-assembly-is-a-constructor.md)).
+Two more things it reads for itself, because the framework reads no environment and defaults
+no policy. It reads `DATABASE_URL` and passes it as the required `databaseUrl`, since
+`createGateway` has no environment fallback and where the Db connects is stated at the call
+site. And it sets `tokenTtl` to thirty days when it builds the User Manager in `extend`, since
+nothing defaults it, which is a trade the framework will not make for a deployment
+([ADR-0045](./adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md),
+[ADR-0030](./adr/0030-passwords-are-traded-for-bearer-tokens.md)).
+
+The construct call is the whole of the wiring, and `extend` is where the four opinionated
+parts are built by hand from the infrastructure `createGateway` handed back, each a one-line
+`create*` call and only the ones this deployment wants:
+
+```ts
+const gateway = createGateway({
+  databaseUrl,
+  runtime,
+  publicListen: { port: 8080, host: "0.0.0.0" },
+  agentListen: { port: 7411, host: "0.0.0.0" },
+  extend: ({ db, agentServer, publicServer, worker }) => {
+    // The User Manager before the HTTP Messenger, because the Messenger's `user_id` is a
+    // foreign key onto the User Manager's schema and migrations apply in construction order.
+    const users = createUsers({ db, tokenTtl, agentServer, publicServer });
+    const signatures = createSignatures({ signingKey, agentServer, publicServer, users });
+    const decisions = createDecisions({ db, signatures, users, agentServer, publicServer });
+    const messenger = createHttpMessenger({ db, users, worker, publicServer, agentServer });
+    return { users, signatures, decisions, messenger };
+  },
+  handlers: () => ({ [messageReceivedKind]: /* your Signal Handler */ }),
+});
+```
 
 Those three calls are **construct, migrate, start**, in that order and no other.
 
-1. **Construct.** `createGatewayWithDefaults({ … })` builds the Db, two `Fastify()`
-   instances, the User Manager, Signatures, Decisions, the HTTP Messenger and the Signal
-   Worker, hands each of them what it needs, and keys them in an order. Construction is also the whole of the
+1. **Construct.** `createGateway({ … })` builds the Db, two `Fastify()`
+   instances and the Signal Worker, and calls your `extend`, where the reference deployment
+   builds the User Manager, Signatures, Decisions and the HTTP Messenger by hand and returns
+   them. It hands each part what it needs and keys them in an order. Construction is also the whole of the
    wiring: a part handed a server registers its routes on that server, and a part with
    tables of its own registers its migration descriptor with the Db, so there is no third
    item on a checklist for you to forget
@@ -603,9 +629,9 @@ Those three calls are **construct, migrate, start**, in that order and no other.
 wrote out under eighteen lines of comment arguing for each position — reasoning that was
 correct, unavoidable, and identical in every deployment built out of these parts, so it now
 sits beside the constructor instead of in your file.
-[ADR-0038](./adr/0038-the-default-assembly-is-a-constructor.md) has it: the order, the single
-rule it all comes from, and what that rule costs. You need none of it to run this, and all of
-it before you write a Component of your own.
+[ADR-0045](./adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md) has it: the
+order, the single rule it all comes from, and what that rule costs. You need none of it to run
+this, and all of it before you write a Component of your own.
 
 One word, since it is the only thing the framework asks a part to be. A **Component** is a
 `start` and a `stop` and nothing else: no name, no routes field, no declared dependency and
@@ -625,14 +651,15 @@ Messaging is one call and five options, and every one of them is required:
 const messenger = createHttpMessenger({ db, users, worker, publicServer, agentServer });
 ```
 
-You do not write that line — `createGatewayWithDefaults` does, and hands the result back at
-`gateway.components.messenger`. Two things that used to be the entry point's to get right
-are the framework's now. **Its position is decided**: it is a Component whose `start` and
-`stop` do nothing, keyed after the servers and before the worker so that it outlives the
-drain, which is when a Handler's `post` phase reaches it (ADR-0037, ADR-0038). And **the
+You write that line yourself, in `extend`, and the Gateway hands the result back at
+`gateway.components.messenger`. Two things about it are still not yours to get wrong. **Its
+position is decided by where `extend`'s parts are keyed**: it is a Component whose `start` and
+`stop` do nothing, keyed after the servers and ahead of the worker so that it outlives the
+drain, which is when a Handler's `post` phase reaches it (ADR-0037, ADR-0045). And **the
 order it must be constructed in cannot be written wrongly**, because the User Manager is an
-argument to this call — [the migration step](#migrations-as-a-separate-step) is where that
-matters and where the wrong order is still expressible.
+argument to this call, so you build `users` before you can name it here;
+[the migration step](#migrations-as-a-separate-step) is where that matters and where the
+wrong order is still expressible.
 
 That call registers its own migration descriptor with the Db and its two route groups at
 `/messages`, the Public pair behind the Manager's `requireUser` and the Agent pair behind
@@ -681,7 +708,7 @@ either. Both are **required options** of the one call, written next to each othe
 is Fastify's own `listen` options object handed over unread:
 
 ```ts
-const gateway = createGatewayWithDefaults({
+const gateway = createGateway({
   publicListen: { port: 8080, host: "0.0.0.0" },
   agentListen: { port: 7411, host: "0.0.0.0" },
   // …
@@ -691,8 +718,8 @@ const gateway = createGatewayWithDefaults({
 They are the only thing that call states about either server. `Fastify()` is called with no
 options at all and there is no bring-your-own-instance escape, which is a real limit rather
 than an oversight: a Public server behind a reverse proxy wants `trustProxy`, and getting it
-means leaving this constructor for `createGateway` and `serverComponent`
-([ADR-0038](./adr/0038-the-default-assembly-is-a-constructor.md)). Nothing *after*
+means leaving this constructor for `createBareGateway` and `serverComponent`
+([ADR-0045](./adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md)). Nothing *after*
 construction is out of reach — the instances are at `gateway.components.publicServer.fastify`
 and `.agentServer.fastify`, so routes, plugins and hooks go on the same servers ours do.
 
@@ -844,7 +871,7 @@ turning on before you need it rather than after. It logs at **`debug`**, and the
 every part falls back to when you supply none runs at `info`. So by default you do not see
 it.
 
-Supply your own logger to get it. The Runtime takes one, and so does the assembly, which
+Supply your own logger to get it. The Runtime takes one, and so does `createGateway`, which
 forwards it to the Signal Worker. The seam is structural — four methods,
 `debug`/`info`/`warn`/`error`, each taking fields then a message — so anything your system
 already logs through satisfies it without wrapping:
@@ -852,7 +879,7 @@ already logs through satisfies it without wrapping:
 ```ts
 const logger = pino({ level: "debug" });          // or your own object with those four
 const runtime = createPiRuntime({ image: "saf-agent:0.83.0", mounts, logger });
-const gateway = createGatewayWithDefaults({ runtime, logger, /* … */ });
+const gateway = createGateway({ runtime, logger, /* … */ });
 ```
 
 A second line follows every Run, carrying the two things nothing else records: the
@@ -959,7 +986,7 @@ Node's default, which kills the process mid-drain. That is an escalation policy,
 this file's choice, and `process.on` is how you decline it.
 
 What that reverse order is, and the one rule the whole of it comes from, is
-[ADR-0038](./adr/0038-the-default-assembly-is-a-constructor.md)'s and not this file's. The
+[ADR-0045](./adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md)'s and not this file's. The
 short of it: the **Signal Worker's `stop` is the only stop that does work** — every other
 one releases something — so the drain goes first, while both servers are still listening,
 the HTTP Messenger is still live and the pool is still open. Everything the Run in flight needs
@@ -1114,7 +1141,7 @@ parts this call is in the middle of building — `handlers: ({ db, messenger }) 
 the reference deployment writes. It reaches the Signal Worker as a construction option and
 never as an argument to `start`, so a Worker with no Handlers is not something you can
 construct, let alone run
-([ADR-0038](./adr/0038-the-default-assembly-is-a-constructor.md)).
+([ADR-0045](./adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md)).
 
 `session: null` asks for a fresh Session; a string continues a named one. One Session per
 user, one per Run, one for the whole agent, or a hybrid — all four are things you just
@@ -1145,25 +1172,25 @@ missing from the document, because Fastify fires the discovery hook as a route i
 and the plugin adding that hook has not run yet. The route works either way; only the
 description differs, and wrapping it in a `register` call is the whole fix.
 
-**Users and authentication.** The assembly already does this: it constructs the **User
-Manager** and hands it both servers, which is the whole of the wiring, and gives it back at
+**Users and authentication.** The reference deployment does this itself, in `extend`: it
+constructs the **User Manager** and hands it both servers, which is the whole of the wiring,
+and returns it so it comes back at
 `gateway.components.users`. There is no separate registration call and no descriptor to
-remember, because handing a part a server *is* how its routes get registered. The call it
-makes for you is this one:
+remember, because handing a part a server *is* how its routes get registered. The call the
+reference deployment writes is this one:
 
 ```ts
 const users = createUsers({
   db,
-  tokenTtl: 30 * 24 * 60 * 60 * 1000,   // required here; only the defaults constructor defaults it
+  tokenTtl: 30 * 24 * 60 * 60 * 1000,   // the Operator's now: nothing defaults it
   agentServer,      // `POST /users` and the two reads, at `/users`
   publicServer,     // logging in, logging out, reading and replacing your own credential, at `/auth`
 });
 ```
 
-**Omitting a server is how you switch that group off** — on the by-hand path only. Leave
+**Omitting a server is how you switch that group off.** Leave
 `agentServer` out and the agent cannot create a User; there is no flag and no route to
-guard, and no way to ask the defaults constructor for it either, since both servers are
-things it builds. Leave both out and you still have `users` in hand for your own routes.
+guard. Leave both out and you still have `users` in hand for your own routes.
 
 The prefixes are defaults rather than policy, and the way out of them is the exported
 plugins, which are ordinary Fastify plugins with no prefix of their own:
@@ -1222,12 +1249,13 @@ exactly that kind and holds no privilege for being ours: it inserts a Message an
 **Your own Component.** Anything with a `start` and a `stop` starts and stops with
 everything else — a poller, a queue consumer, a metrics endpoint of your own. There is no
 base class, no `name`, and nothing to register: `extend` returns them under keys of your
-own, and they join the Gateway's record beside the eight the call built.
+own, and they join the Gateway's record beside the infrastructure the call built and the
+parts you built in `extend`.
 
 ```ts
 let timer: ReturnType<typeof setInterval> | undefined;
 
-const gateway = createGatewayWithDefaults({
+const gateway = createGateway({
   // …
   extend: ({ db }) => ({
     sweeper: {
@@ -1245,18 +1273,18 @@ an order-bearing record is silent by construction. So a part with nothing to run
 with two methods that do nothing, which is exactly what the User Manager and the HTTP
 Messenger do ([ADR-0037](./adr/0037-the-gateway-is-a-record-of-components.md)).
 
-**The one thing about `extend` you cannot guess from its signature: your Components stop
-*before* the drain.** What it returns is appended, so those keys start last and therefore
-stop first — before the Signal Worker has begun waiting for the Run in flight. That is right
-for a Producer, which should stop producing before the drain rather than during it. It is
-**wrong for anything the drain uses**: an outbound client your Handlers call in their `post`
-phase, a cache they read, a connection to something of your own. That position is the one
-`extend` cannot express, and the answer is not a flag — it is `createGateway` with all nine
-entries written out by hand and yours where it belongs. There is no partial exit
-([ADR-0038](./adr/0038-the-default-assembly-is-a-constructor.md)).
+**The one thing about `extend` worth knowing: your Components stop *after* the drain.** What
+it returns is keyed ahead of the Signal Worker, so those keys start before it and therefore
+stop after it, once the Worker has finished waiting for the Run in flight. That is right for
+**anything the drain uses**: an outbound client your Handlers call in their `post`
+phase, a cache they read, a connection to something of your own. It is **wrong for a
+Producer**, which should stop producing before the drain rather than after it. That position
+is the one `extend` cannot express, and the answer is not a flag: it is `createBareGateway`
+with the whole record written out by hand and yours where it belongs
+([ADR-0045](./adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md)).
 
-One thing about the keys. The eight defaults — `db`, `agentServer`, `publicServer`, `users`,
-`signatures`, `decisions`, `messenger`, `worker` — are **type errors** in what `extend`
+One thing about the keys. The four infrastructure keys (`db`, `agentServer`,
+`publicServer`, `worker`) are **type errors** in what `extend`
 returns, because a spread would overwrite one in place, keep its position, and say nothing
 (ADR-0037).
 
@@ -1393,8 +1421,8 @@ const runtime = createAgentContainerRuntime({
 });
 ```
 
-That `runtime` is a Runtime, so it goes straight into `createGatewayWithDefaults({ runtime,
-… })` — or into `createSignalWorker({ db, runtime, handlers })` if you assemble by hand —
+That `runtime` is a Runtime, so it goes straight into `createGateway({ runtime,
+… })` (or into `createSignalWorker({ db, runtime, handlers })` if you assemble by hand),
 and nothing else in the entry point changes. `createPiRuntime` is that same
 call with two defaults spread beneath the Operator's own, and it is under ten lines: the
 whole of the `pi` Agent Implementation is

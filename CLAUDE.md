@@ -4,9 +4,12 @@
 agent Run, and [`example/`](./example/) is the reference deployment it describes:
 `main.ts` is the worked entry point, `compose.yml` the whole stack, `gateway/Dockerfile`
 the Gateway image, `agent/Dockerfile` the agent image. It is a **consumer** of
-`createGatewayWithDefaults` rather than a demonstration of the assembly it replaced
-([ADR-0038](./docs/adr/0038-the-default-assembly-is-a-constructor.md)), so what is left in
-it is the Runtime, one Signal Handler and shutdown.
+`createGateway`, which builds the irreducible infrastructure and hands it to the Operator's
+`extend`
+([ADR-0045](./docs/adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md)), so
+what is left in it is the Runtime, the four opinionated parts built by hand in `extend`, one
+Signal Handler and shutdown. `createBareGateway` is the escape one layer down, for a
+deployment whose infrastructure shape itself differs.
 
 **It runs only as a Compose stack**, `cd example && docker compose up -d --build`, from
 that directory and not the repository root
@@ -14,9 +17,13 @@ that directory and not the repository root
 Gateway is a container holding the host's Docker socket, so `main.ts` requires
 `HOST_DIR` and declares `hostPaths`, and running it with `node` is not supported. It also
 requires `SIGNING_KEY_FILE`, a PEM private key it loads itself and hands to
-`createGatewayWithDefaults`: the framework parses nothing and generates nothing, so a
+`createSignatures` in `extend`: the framework parses nothing and generates nothing, so a
 deployment brings its own identity or does not start
-([ADR-0041](./docs/adr/0041-the-shared-agent-has-a-signing-identity.md)). **Where the stack
+([ADR-0041](./docs/adr/0041-the-shared-agent-has-a-signing-identity.md)). It reads
+`DATABASE_URL` itself for the same reason the framework reads no environment at all:
+`createGateway` takes a required `databaseUrl` with no `DATABASE_URL` fallback, so where the
+Db connects is stated at the call site
+([ADR-0045](./docs/adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md)). **Where the stack
 gets that file is not settled**: `compose.yml` neither passes the variable nor mounts a key,
 so `docker compose up -d --build` does not currently come up, and the one-command promise
 above is suspended until it does. The quickstart's arc stops short of Decisions for the same
@@ -157,9 +164,10 @@ Conventions the build depends on:
   the whole tree but `src/db/**`, so a new directory is covered without being
   listed.
 - **Exactly one shipped module imports a *value* from `fastify`, and it is
-  `dist/default-gateway.js`.** It constructs the default assembly's two servers and
+  `dist/gateway.js`.** It constructs the two infrastructure servers and
   cannot do it any other way
-  ([ADR-0038](./docs/adr/0038-the-default-assembly-is-a-constructor.md)); everywhere
+  ([ADR-0045](./docs/adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md));
+  everywhere
   else names Fastify's types and never its runtime, which is what keeps
   `serverComponent` structural and `fastify` an honest **peer** dependency.
   `scripts/check-package.ts` compares the emitted files that import it against an
@@ -169,26 +177,29 @@ Conventions the build depends on:
   resolve. A second module that genuinely needs one is a new allowlist entry, and it
   should arrive with the sentence saying why.
 - **Both servers describe themselves, and a route declares what it answers with.**
-  `createGatewayWithDefaults` registers `@fastify/swagger` and `@fastify/swagger-ui` on
-  each instance **before it constructs the first part**, because route discovery is an
-  `onRoute` hook and every part registers its routes inside its own constructor
-  ([ADR-0040](./docs/adr/0040-the-gateway-describes-its-own-http-api.md)). Move that
-  registration below a part and the document is empty, which is why construction order in
-  `src/default-gateway.ts` is load-bearing for a third reason, alongside the migration
+  `createGateway` registers `@fastify/swagger` and `@fastify/swagger-ui` on
+  each instance **before it calls `extend`**, because route discovery is an
+  `onRoute` hook and every part registers its routes inside its own constructor, including
+  the parts an Operator builds in `extend`,
+  ([ADR-0040](./docs/adr/0040-the-gateway-describes-its-own-http-api.md),
+  [ADR-0045](./docs/adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md)).
+  Move that
+  registration below `extend` and the document is empty, which is why construction order in
+  `src/gateway.ts` is load-bearing for a third reason, alongside the migration
   registration order and the worker-before-Messenger cycle. So a route arrives with
   `tags`, a `summary`, a `description` and a `response` schema per status it can answer,
   or it arrives half-described: those sentences *are* the API documentation now, and
   `example/AGENTS.md` holds a URL and no route table. An Operator's own route is described
   only if it was `register`ed: one written straight onto the instance after the
   constructor returns is served and absent from the document, and both spellings are
-  pinned in `src/default-gateway.test.ts`.
+  pinned in `src/gateway.test.ts`.
 - **A response schema is a serializer, and its drift is silent.** Fastify compiles one
   with `fast-json-stringify`, which drops every field the schema does not declare with no
   warning anywhere and answers 500 for a declared-required field the handler omits. A
   field added to a record type and forgotten in its schema is therefore missing from the
   wire *and* from the document, and no comparison of one HTTP response against another can
   see it, because a uniformly stripped field is stripped on both sides. That is what the
-  round-trip assertions in `src/default-gateway.test.ts` are for: each record type is
+  round-trip assertions in `src/gateway.test.ts` are for: each record type is
   produced through its part's own method, read back over HTTP, and the whole body compared
   against a literal the type checker holds to the record type. Same rule as the two
   migration hand-edits: a silent failure gets something that scans for it rather than a
