@@ -572,6 +572,107 @@ describe("a container that cannot work", () => {
     );
   });
 
+  it("refuses a '.' or '..' segment in an agentPath, gatewayPath, or the hostRoot's gatewayPath", () => {
+    // Both are decidable from the value with no I/O (ADR-0028). A '..' segment silently
+    // escapes the declared root — string-prefix matching is only sound over normalized
+    // paths — and a '.' straddling the boundary falsely reads as not covered. The table
+    // is refused where it was written, and the Operator is told to normalize the path
+    // rather than having it normalized on their behalf.
+    const refuses = (mounts: NonNullable<AgentContainer["mounts"]>, offending: string) =>
+      assert.throws(
+        () =>
+          createAgentContainerRuntime({ container: { image: "saf/agent", mounts }, run: agentRun }),
+        (error: Error) => {
+          assert.ok(error.message.includes(offending), error.message);
+          assert.match(error.message, /normaliz/i);
+          return true;
+        },
+      );
+
+    refuses({ entries: [{ agentPath: "/work/../etc", gatewayPath: "/srv" }] }, "/work/../etc");
+    refuses({ entries: [{ agentPath: "/work/./here", gatewayPath: "/srv" }] }, "/work/./here");
+    refuses({ entries: [{ agentPath: "/ok", gatewayPath: "/srv/../etc" }] }, "/srv/../etc");
+    refuses(
+      {
+        entries: [{ agentPath: "/state", gatewayPath: "/srv/saf" }],
+        hostRoot: { gatewayPath: "/srv/../saf", hostPath: "/host" },
+      },
+      "/srv/../saf",
+    );
+  });
+
+  it("allows double slashes, dotted filenames, and dot segments in the hostRoot's hostPath", () => {
+    // A double slash cannot escape the root and the daemon collapses it, so an empty
+    // segment is legal; a filename that merely contains dots is not a dot segment; and
+    // `hostPath` stays an opaque value handed to the daemon unread (ADR-0028), so a '..'
+    // in it is none of resolution's business.
+    assert.doesNotThrow(() =>
+      createAgentContainerRuntime({
+        container: {
+          image: "saf/agent",
+          mounts: {
+            entries: [
+              { agentPath: "/work//nested", gatewayPath: "/srv//a" },
+              { agentPath: "/cfg/..hidden", gatewayPath: "/srv/my.file" },
+            ],
+            hostRoot: { gatewayPath: "/srv", hostPath: "/host/../elsewhere" },
+          },
+        },
+        run: agentRun,
+      }),
+    );
+  });
+
+  it("refuses two entries that name the same agentPath, even differing only by a trailing slash", () => {
+    // Two sources at one target is the daemon's refusal at the first Run today, which
+    // under ADR-0017 is a permanently dead Signal — and it needs no I/O to see (ADR-0028).
+    // The comparison grants the same trailing-slash tolerance the prefix matching does.
+    const refuses = (entries: readonly Mount[]) =>
+      assert.throws(
+        () =>
+          createAgentContainerRuntime({
+            container: { image: "saf/agent", mounts: { entries } },
+            run: agentRun,
+          }),
+        (error: Error) => {
+          assert.match(error.message, /"\/workspace"/);
+          return true;
+        },
+      );
+
+    refuses([
+      { agentPath: "/workspace", gatewayPath: "/srv/a" },
+      { agentPath: "/workspace", gatewayPath: "/srv/b" },
+    ]);
+    refuses([
+      { agentPath: "/workspace", gatewayPath: "/srv/a" },
+      { agentPath: "/workspace/", gatewayPath: "/srv/b" },
+    ]);
+  });
+
+  it("no longer lets a '..' under a declared root resolve outside it", () => {
+    // The escape this refusal closes: '/srv/saf/../secrets' string-prefixes '/srv/saf'
+    // and once resolved to a host path, so it read as covered while mounting outside
+    // every declared prefix. The '..' segment now refuses the table before it can.
+    assert.throws(
+      () =>
+        createAgentContainerRuntime({
+          container: {
+            image: "saf/agent",
+            mounts: {
+              entries: [{ agentPath: "/secrets", gatewayPath: "/srv/saf/../secrets" }],
+              hostRoot: { gatewayPath: "/srv/saf", hostPath: "/host/gateway" },
+            },
+          },
+          run: agentRun,
+        }),
+      (error: Error) => {
+        assert.match(error.message, /normaliz/i);
+        return true;
+      },
+    );
+  });
+
   it("touches no filesystem doing it, so none of these paths need exist", () => {
     // Resolution is pure. Whether a source is really there is the daemon's answer at the
     // first Run and deliberately nobody else's (ADR-0028).

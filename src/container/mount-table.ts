@@ -134,8 +134,9 @@ export type MountTable = {
  * no caller that uses its structure — a claim nothing tests — so it goes by the same
  * logic ADR-0028 used to delete `gatewayPathFor`.
  *
- * Pure and total: it applies `hostRoot`, refuses a relative path on either side, and
- * refuses an entry falling outside the root. It performs no I/O, so what it cannot
+ * Pure and total: it applies `hostRoot`, refuses a relative path on either side, refuses
+ * a `.` or `..` segment in any path it resolves, refuses an entry falling outside the
+ * root, and refuses two entries naming one target. It performs no I/O, so what it cannot
  * tell you is whether any of these paths exists — that is the daemon's answer at the
  * first Run, and deliberately nobody else's (ADR-0028).
  *
@@ -149,10 +150,12 @@ export type MountTable = {
  * work is refused where the Operator wrote it rather than at the first Signal.
  */
 export function mountArguments(table: MountTable): readonly string[] {
-  return table.entries.flatMap((entry) => [
-    "--mount",
-    mountArgument(resolveEntry(entry, table.hostRoot)),
-  ]);
+  if (table.hostRoot !== undefined) {
+    refuseDotSegment("hostRoot's gatewayPath", table.hostRoot.gatewayPath);
+  }
+  const resolved = table.entries.map((entry) => resolveEntry(entry, table.hostRoot));
+  refuseDuplicateAgentPath(resolved);
+  return resolved.flatMap((entry) => ["--mount", mountArgument(entry)]);
 }
 
 /**
@@ -181,11 +184,13 @@ function resolveEntry(entry: Mount, hostRoot: MountTable["hostRoot"]): ResolvedE
       `the mount's agentPath ${JSON.stringify(entry.agentPath)} is not absolute; it is a path inside the agent's container, which the container runtime requires to be absolute`,
     );
   }
+  refuseDotSegment("mount's agentPath", entry.agentPath);
   if (!path.isAbsolute(entry.gatewayPath)) {
     throw new Error(
       `the mount's gatewayPath ${JSON.stringify(entry.gatewayPath)} is not absolute, so which directory it names would depend on the working directory the Gateway was started from`,
     );
   }
+  refuseDotSegment("mount's gatewayPath", entry.gatewayPath);
   return {
     agentPath: entry.agentPath,
     hostPath: hostPathFor(entry.gatewayPath, hostRoot),
@@ -243,6 +248,64 @@ function field(name: string, value: string): string {
 }
 
 /**
+ * Refuses a `.` or `..` **segment** in a path the framework resolves, naming the path and
+ * telling the Operator to write it normalized rather than normalizing it for them.
+ *
+ * A segment is a component between slashes; only a whole `.` or `..` is one. A filename
+ * that merely contains dots — `my.file`, `..hidden` — is not, and an empty segment from a
+ * doubled slash is not either: `//` cannot escape the root and the daemon collapses it.
+ *
+ * Resolution treats these paths as plain strings and never normalizes them, so a dot
+ * segment makes every comparison it does unsound. It is worst for `gatewayPath` under a
+ * `hostRoot`, where `..` string-prefixes a root it resolves outside of and an entry reads
+ * as covered while mounting anywhere; but it also defeats the duplicate-target check, for
+ * which `/work/../etc` and `/etc` are one target the strings disagree on. Decidable from
+ * the value with no I/O, which is ADR-0028's criterion for what resolution refuses.
+ * `hostPath` is exempt: it is handed to the daemon unread, so it is not passed here.
+ */
+function refuseDotSegment(label: string, value: string): void {
+  if (value.split("/").some((segment) => segment === "." || segment === "..")) {
+    throw new Error(
+      `the ${label} ${JSON.stringify(value)} has a "." or ".." segment; write it as a normalized path, because resolution treats these paths as plain strings and a "." or ".." makes matching one against another unsound`,
+    );
+  }
+}
+
+/**
+ * Refuses two entries that resolve to one target: `agentPath`s equal after the one
+ * trailing-slash trim the prefix matching also grants, since a directory is the same
+ * directory written with or without it.
+ *
+ * Mounting two sources at one target is otherwise the daemon's refusal at the first Run,
+ * which under [ADR-0017](../../docs/adr/0017-failed-runs-are-not-retried.md) is a
+ * permanently dead Signal — and it needs no I/O to see, which is ADR-0028's criterion. An
+ * image-internal symlink aliasing two distinct targets stays the daemon's business: the
+ * value never names what the image's own filesystem links where, so it is undecidable
+ * from here.
+ */
+function refuseDuplicateAgentPath(entries: readonly ResolvedEntry[]): void {
+  const seen = new Set<string>();
+  for (const { agentPath } of entries) {
+    const target = withoutTrailingSlash(agentPath);
+    if (seen.has(target)) {
+      throw new Error(
+        `two entries name the same agentPath ${JSON.stringify(target)}; a Mount Table cannot mount two sources at one target, and a trailing slash does not make them different directories`,
+      );
+    }
+    seen.add(target);
+  }
+}
+
+/**
+ * A path with one trailing separator removed, since a directory is the same directory
+ * written with or without it. This is the one tolerance the string matching grants, and
+ * both the prefix matching and the duplicate check grant exactly it.
+ */
+function withoutTrailingSlash(value: string): string {
+  return value.endsWith("/") ? value.slice(0, -1) : value;
+}
+
+/**
  * What is left of `candidate` below `prefix`, or `undefined` if it is not below it. `""`
  * where the two name the same thing, and otherwise leading-separated.
  *
@@ -251,7 +314,7 @@ function field(name: string, value: string): string {
  * statement.
  */
 function remainderUnder(candidate: string, prefix: string): string | undefined {
-  const withoutTrailing = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
+  const withoutTrailing = withoutTrailingSlash(prefix);
   if (candidate === withoutTrailing) return "";
   return candidate.startsWith(`${withoutTrailing}/`)
     ? candidate.slice(withoutTrailing.length)
