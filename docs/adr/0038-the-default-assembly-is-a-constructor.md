@@ -1,5 +1,13 @@
 # The default assembly is a constructor
 
+> **Superseded by [ADR-0045](./0045-the-framework-builds-only-the-irreducible-infrastructure.md).**
+> The constructor stays, renamed `createGateway`, but it now builds only the Db, both servers
+> and the Signal Worker. The four opinionated parts below, the User Manager, Signatures,
+> Decisions and the HTTP Messenger, move into the Operator's `extend`, and no deployment is
+> required to hold a `signingKey` any more. The reasoning about wiring, order and the two
+> callbacks in this ADR still holds for what the constructor kept; what reversed is the claim
+> that every deployment wants all eight parts. The record below is preserved as written.
+
 `createGatewayWithDefaults` builds the Db, both Fastify servers, the User Manager, the
 HTTP Messenger and the Signal Worker, wires them to each other, puts them in an order, and
 returns a Gateway ([ADR-0037](./0037-the-gateway-is-a-record-of-components.md)). It is the

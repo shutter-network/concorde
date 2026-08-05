@@ -1,5 +1,13 @@
 # The Gateway describes its own HTTP API
 
+> **Names updated by [ADR-0045](./0045-the-framework-builds-only-the-irreducible-infrastructure.md).**
+> `createGatewayWithDefaults` is now `createGateway`, and `src/default-gateway.ts` is now
+> `src/gateway.ts`. The parts this ADR says register their routes "inside the constructor"
+> now register them inside the Operator's `extend`, which the constructor calls after it has
+> registered `@fastify/swagger`. So the ordering argument below is unchanged: the hook is in
+> place before any part's routes, and this constructor is still the only party that can
+> arrange it. The decision itself stands.
+
 Both servers carry an OpenAPI 3.0.3 description of themselves, generated from the route
 schemas the framework already validates with, served as JSON at `/openapi.json` and as a
 browsable UI at `/docs`. `createGatewayWithDefaults` registers `@fastify/swagger` and

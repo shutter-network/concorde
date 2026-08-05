@@ -17,7 +17,7 @@ Whoever runs and configures a Shared Agent. Trusted by every Party: holds the ag
 _Avoid_: builder, host, admin, provider, owner, integrator, implementor
 
 **Gateway**:
-The trusted application that mediates every interaction into and out of a Shared Agent. One deployable, and now a thing rather than only an assembly: a record of Components, started in the order of its keys and stopped in the reverse of it, and structurally a Component itself. It is still not a registry and not a plugin host, since it resolves nothing, injects nothing and cannot say what depends on what. The Operator's entry point still constructs and still holds; what it no longer writes is the order. `createGatewayWithDefaults` builds the eight Components a deployment using our parts would otherwise build by hand, and `createGateway` takes a record of anything. See [ADR-0037](./docs/adr/0037-the-gateway-is-a-record-of-components.md), [ADR-0038](./docs/adr/0038-the-default-assembly-is-a-constructor.md) and [ADR-0020](./docs/adr/0020-producers-are-trusted-components-of-the-gateway.md).
+The trusted application that mediates every interaction into and out of a Shared Agent. One deployable, and now a thing rather than only an assembly: a record of Components, started in the order of its keys and stopped in the reverse of it, and structurally a Component itself. It is still not a registry and not a plugin host, since it resolves nothing, injects nothing and cannot say what depends on what. The Operator's entry point still constructs and still holds. `createGateway` builds the irreducible infrastructure a deployment using our parts always needs (the Db, both self-describing servers and the Signal Worker) and hands it to the Operator's `extend`, where the opinionated parts (the User Manager, Signatures, Decisions, the HTTP Messenger) are constructed by hand, each a one-liner, and only the ones a deployment wants. `createBareGateway` takes a record of anything. See [ADR-0037](./docs/adr/0037-the-gateway-is-a-record-of-components.md), [ADR-0045](./docs/adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md) and [ADR-0020](./docs/adr/0020-producers-are-trusted-components-of-the-gateway.md).
 _Avoid_: proxy, broker, shield, warden, sidecar
 
 **Component**:
@@ -61,7 +61,7 @@ The Component that owns the one global log of Decisions: it accepts the agent's 
 _Avoid_: Decision Log, Decision Registry, Decision Manager, ledger, bulletin, minutes
 
 **Scheduler**:
-The Producer that owns recurrence, cancellation, and next-fire computation, and emits a Signal when a schedule matures. See [ADR-0018](./docs/adr/0018-scheduling-is-a-separate-component.md).
+The Producer that owns Schedules: recurrence, one-shots, cancellation, next-fire computation, and time zones. It emits a Signal when a Schedule matures, and serves two creators of one shared model: the agent, through an API on the Agent server that both creates and manages Schedules, and the Operator, through a programmatic interface in code. Every matured Schedule emits the same fixed Signal `kind`, `scheduleFiredKind`, carrying the creator's opaque data beside the fire's metadata, so the Scheduler is a timer in front of the ordinary Signal dispatch and adds no new Handler concept. The agent's route is disableable, and that switch is the only guard on it: a self-waking agent can loop the single serial lane (ADR-0018), and since the model has no per-creator scoping, the same switch is what keeps a prompt-injectable agent (ADR-0003) away from the Operator's Schedules. Opted into by the deployment like the HTTP Messenger rather than built by default (ADR-0045). See [ADR-0018](./docs/adr/0018-scheduling-is-a-separate-component.md).
 _Avoid_: cron, timer, job queue
 
 **Agent Implementation**:
@@ -143,6 +143,14 @@ _Avoid_: notification, reply, response, event
 **Message log**:
 The HTTP Messenger's record of every Message in both directions. The **durable** record of what was said — a Session is a lossy cache of it, since compaction discards what it holds, and what another User said was never in a given Session at all. One User's slice of it is a single sequence across both directions, read by cursor: that one read serves a client's first page, its scroll backwards and its poll forwards alike. The agent queries any User's; a User reads only their own. See [ADR-0035](./docs/adr/0035-a-users-messages-are-one-log-read-by-cursor.md).
 _Avoid_: history, transcript, archive, outbox
+
+## Scheduling
+
+Owned by the Scheduler.
+
+**Schedule**:
+A named, persisted instruction to emit a Signal at one or more future times: either a recurring cron expression or a one-shot instant, in a named time zone. The `name` is its identity in one flat namespace shared by both creators, and creating a Schedule with a name that already exists updates it in place rather than adding a second, so both the agent's API and the Operator's boot-time code are safe to re-run. The name is the only identifier: it addresses the Schedule for reading and cancellation, and it is the reference carried in every Signal the Schedule emits. So a name reused for a fresh Schedule after cancellation is indistinguishable in fire history from an update of one continuous Schedule, which is accepted rather than guarded against. Missed fires, those that would have come due while the Gateway was down, are skipped rather than replayed: the next fire is always derived forward from now, so an occurrence in the past is never produced. A one-shot is spent once it fires; a recurring one runs until cancelled or until an optional end instant. Nothing removes a Schedule but an explicit cancellation, so a standing Schedule outlives the code or the Run that declared it.
+_Avoid_: job, task, cron job, timer, alarm, reminder
 
 ## Signing
 
