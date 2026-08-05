@@ -16,7 +16,8 @@
  * networks, the environment, the entry point, the unmodelled flags, spawning, stdin,
  * stderr, the exit status, and the diagnosis appended to a failure. What it refuses,
  * at construction rather than at the first Signal, is the three things decidable from
- * the value alone: a missing image, a relative agent path, and a `hostPaths` gap.
+ * the value alone: a missing image, a relative agent path, and an entry falling outside
+ * the `hostRoot`.
  * Everything else a deployment can get wrong is a file the framework does not read, for
  * a program it does not depend on, and arrives as a permanently failed first Run
  * ([ADR-0017](../../docs/adr/0017-failed-runs-are-not-retried.md)).

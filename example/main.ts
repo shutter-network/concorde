@@ -74,7 +74,7 @@ const runtime = createPiRuntime({
         readOnly: true,
       },
     ],
-    hostPaths: { [import.meta.dirname]: hostDir },
+    hostRoot: { gatewayPath: import.meta.dirname, hostPath: hostDir },
   },
 });
 

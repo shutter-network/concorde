@@ -348,45 +348,56 @@ describe("the Mount Table on an Agent Container", () => {
     ]);
   });
 
-  it("translates every source through one mapping for a Gateway in a container", () => {
-    // The daemon resolves a bind source on the *host*, and only a Gateway running on the
-    // host sees the same strings it does. Two prefixes, and the deeper one wins.
+  it("leaves every source untranslated with no hostRoot, which is a Gateway on the host", () => {
+    // The common case: the daemon resolves the same strings this process does, so the
+    // Gateway-side path is its own host source and there is nothing to say.
     const composed = commandFor({
-      mounts: {
-        entries: [
-          { agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
-          { agentPath: "/sessions", gatewayPath: "/srv/saf/sessions/live" },
-        ],
-        hostPaths: { "/srv": "/host/gateway", "/srv/saf/sessions": "/mnt/fast-disk" },
-      },
+      mounts: { entries: [{ agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" }] },
     });
 
     assert.deepEqual(valuesOf(composed.args, "--mount"), [
-      "type=bind,source=/host/gateway/saf/workspace,target=/workspace",
-      "type=bind,source=/mnt/fast-disk/live,target=/sessions",
+      "type=bind,source=/srv/saf/workspace,target=/workspace",
     ]);
   });
 
-  it("hands a key matched exactly to the daemon whole, which is how a volume is named", () => {
-    // No runtime will mount a *subpath* of a named volume, so a value with a remainder
-    // composed onto it would look right and be wrong. An exact key never composes, and
-    // the Workspace proves it by not becoming `/host/gateway/workspace`.
+  it("translates every source through the one hostRoot pair for a Gateway in a container", () => {
+    // The daemon resolves a bind source on the *host*, and only a Gateway running on the
+    // host sees the same strings it does. One pair does the whole translation: the entry
+    // that *is* the root resolves to the host value whole, and one below it resolves to
+    // the host value with its remainder appended.
     const composed = commandFor({
       mounts: {
         entries: [
+          { agentPath: "/state", gatewayPath: "/srv/saf" },
           { agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
-          { agentPath: "/sessions", gatewayPath: "/srv/saf/sessions" },
         ],
-        hostPaths: {
-          "/srv/saf/workspace": "/var/lib/docker/volumes/saf-workspace/_data",
-          "/srv/saf": "/host/gateway",
-        },
+        hostRoot: { gatewayPath: "/srv/saf", hostPath: "/host/gateway/state" },
       },
     });
 
     assert.deepEqual(valuesOf(composed.args, "--mount"), [
-      "type=bind,source=/var/lib/docker/volumes/saf-workspace/_data,target=/workspace",
-      "type=bind,source=/host/gateway/sessions,target=/sessions",
+      "type=bind,source=/host/gateway/state,target=/state",
+      "type=bind,source=/host/gateway/state/workspace,target=/workspace",
+    ]);
+  });
+
+  it("treats a trailing slash on the root's gatewayPath as the same directory", () => {
+    // An Operator writing the root with a trailing separator is not making a different
+    // statement, so the entry equal to it still resolves whole and one below it still
+    // composes.
+    const composed = commandFor({
+      mounts: {
+        entries: [
+          { agentPath: "/state", gatewayPath: "/srv/saf" },
+          { agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
+        ],
+        hostRoot: { gatewayPath: "/srv/saf/", hostPath: "/host/gateway/state" },
+      },
+    });
+
+    assert.deepEqual(valuesOf(composed.args, "--mount"), [
+      "type=bind,source=/host/gateway/state,target=/state",
+      "type=bind,source=/host/gateway/state/workspace,target=/workspace",
     ]);
   });
 });
@@ -534,28 +545,28 @@ describe("a container that cannot work", () => {
     );
   });
 
-  it("refuses an entry the hostPaths mapping does not cover, naming it and the prefixes", () => {
-    // A mapping that covers two of three mounts is the mistake this shape exists to
-    // catch, and catching it means refusing: falling back to identity for the third
-    // would start, serve, and read an empty directory.
+  it("refuses an entry that falls outside the hostRoot, naming the entry's path and the root", () => {
+    // A root that does not cover an entry is the mistake this shape exists to catch, and
+    // catching it means refusing: falling back to identity for the stray one would start,
+    // serve, and read an empty directory.
     assert.throws(
       () =>
         createAgentContainerRuntime({
           container: {
             image: "saf/agent",
             mounts: {
-              entries,
-              hostPaths: {
-                "/srv/saf/workspace": "/host/workspace",
-                "/srv/saf/agent": "/host/agent",
-              },
+              entries: [
+                { agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
+                { agentPath: "/elsewhere", gatewayPath: "/opt/other" },
+              ],
+              hostRoot: { gatewayPath: "/srv/saf", hostPath: "/host/gateway" },
             },
           },
           run: agentRun,
         }),
       (error: Error) => {
-        assert.match(error.message, /"\/srv\/saf\/sessions"/);
-        assert.match(error.message, /"\/srv\/saf\/workspace".*"\/srv\/saf\/agent"/s);
+        assert.match(error.message, /"\/opt\/other"/);
+        assert.match(error.message, /"\/srv\/saf"/);
         return true;
       },
     );

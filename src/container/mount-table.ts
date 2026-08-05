@@ -71,7 +71,11 @@ export type Mount = {
  */
 export type MountTable = {
   /**
-   * What the container sees, in the order it is declared.
+   * What the container sees.
+   *
+   * The order they are written in is preserved but means nothing: the daemon sorts bind
+   * mounts by destination depth, so a nested entry nests under its parent whatever order
+   * the two were declared in, and reordering the list changes no mount.
    *
    * An empty list is a deployment too, and is not refused: an image that bakes in its
    * own configuration and keeps no state between Runs mounts nothing. The cost is
@@ -82,29 +86,30 @@ export type MountTable = {
   /**
    * How this Gateway's own filesystem maps to the host's, for a Gateway in a container.
    *
-   * Absent or empty means the Gateway runs on the host, which is the common case and
-   * costs nothing to say: every entry's `gatewayPath` is its own source, because the
-   * daemon resolves the same string this process does.
+   * Absent means the Gateway runs on the host, which is the common case and costs
+   * nothing to say: every entry's `gatewayPath` is its own source, because the daemon
+   * resolves the same string this process does.
    *
    * They part company only when the Gateway is itself in a container, and that is **one
-   * fact about the deployment** rather than a property of each mount. Stated here, it is
-   * stated in the place where it is true: a map from a `gatewayPath` prefix to the host
-   * source it corresponds to, matched longest-first.
+   * fact about the deployment** rather than a property of each mount — so it is one pair,
+   * not a map. `gatewayPath` is where the shared tree sits inside this container;
+   * `hostPath` is where the daemon finds that same tree on the host. Stated here, it is
+   * stated in the place where it is true.
    *
-   * Once non-empty it is exhaustive. An entry falling under no key is **refused at
-   * resolution**, naming the path and listing the prefixes declared, rather than falling
-   * back to identity. A fallback is what turns forgetting the third of three mappings
-   * into a deployment that starts, serves, and has one silently empty directory in it.
+   * Present, it is exhaustive. A `gatewayPath` equal to the root resolves to `hostPath`
+   * whole; one below it resolves to `hostPath` plus the remainder; a trailing slash on
+   * the root's `gatewayPath` is the same directory and means nothing. An entry falling
+   * **outside** the root is **refused at resolution**, naming the entry's path and the
+   * declared root, rather than falling back to identity — because a fallback is what turns
+   * forgetting to widen the root into a deployment that starts, serves, and has one
+   * silently empty directory in it.
    *
-   * A key matched exactly resolves to its value **whole**, with nothing appended. That is
-   * how a named volume is expressed: a runtime will not mount a *subpath* of one, so a
-   * composed source would look right and be wrong, and only an exact key never composes.
-   * Values are handed to the daemon unread. Nothing here requires one to look like a
-   * path, checks that a subpath of it can exist, or knows what a volume is: a volume
-   * stays a value, and whether a given runtime accepts the value is between the Operator
-   * and their runtime. Note that mounts are emitted as `type=bind`, whose source a daemon
-   * does resolve as a path, so under Docker the value for a volume is where that volume
-   * lives on the host rather than its name.
+   * `hostPath` is handed to the daemon unread: nothing here requires it to look like a
+   * path or checks that a subpath of it can exist. A Gateway whose shared tree spans more
+   * than one host mount cannot say so through one pair; its escape is to declare no
+   * `hostRoot` and write daemon-namespace paths straight into `gatewayPath`, which works
+   * because translation is the only thing done with `gatewayPath` (ADR-0028), at the price
+   * of entries this process cannot itself `ls`.
    *
    * Nothing discovers this. Reading the process's own mount information returns a
    * confident wrong path whenever a directory sits on a separate filesystem, a subvolume
@@ -112,7 +117,12 @@ export type MountTable = {
    * gone. ADR-0028 records the deferral and the constraint on whoever picks it up: an
    * exact mechanism that fails loudly, or none.
    */
-  readonly hostPaths?: Readonly<Record<string, string>>;
+  readonly hostRoot?: {
+    /** Where the shared tree sits inside this Gateway's own container. Absolute. */
+    readonly gatewayPath: string;
+    /** Where the daemon finds that same tree on the host. Absolute, and handed over unread. */
+    readonly hostPath: string;
+  };
 };
 
 /**
@@ -124,25 +134,24 @@ export type MountTable = {
  * no caller that uses its structure — a claim nothing tests — so it goes by the same
  * logic ADR-0028 used to delete `gatewayPathFor`.
  *
- * Pure and total: it applies `hostPaths`, refuses a relative path on either side, and
- * refuses an entry no `hostPaths` prefix covers. It performs no I/O, so what it cannot
+ * Pure and total: it applies `hostRoot`, refuses a relative path on either side, and
+ * refuses an entry falling outside the root. It performs no I/O, so what it cannot
  * tell you is whether any of these paths exists — that is the daemon's answer at the
  * first Run, and deliberately nobody else's (ADR-0028).
  *
  * The result is one `--mount` per entry, in declaration order, and nothing else at all.
  * There is no reverse lookup beside it: one existed, for the Gateway-side path of a
  * Session's transcript, and its only caller was a debug line that went with the Session
- * root; an honest one is three-way anyway, since `hostPaths` gives every mount three
+ * root; an honest one is three-way anyway, since `hostRoot` gives every mount three
  * names, and a two-way one silently picks an answer (ADR-0028).
  *
  * `createAgentContainerRuntime` calls it during construction, so a table that cannot
  * work is refused where the Operator wrote it rather than at the first Signal.
  */
 export function mountArguments(table: MountTable): readonly string[] {
-  const hostPaths = table.hostPaths ?? {};
   return table.entries.flatMap((entry) => [
     "--mount",
-    mountArgument(resolveEntry(entry, hostPaths)),
+    mountArgument(resolveEntry(entry, table.hostRoot)),
   ]);
 }
 
@@ -154,7 +163,7 @@ export function mountArguments(table: MountTable): readonly string[] {
 type ResolvedEntry = {
   readonly agentPath: string;
   /**
-   * What the daemon is given as the bind source: the `gatewayPath` through `hostPaths`.
+   * What the daemon is given as the bind source: the `gatewayPath` through `hostRoot`.
    *
    * The same string as `gatewayPath` for a Gateway on the host, and the two are kept
    * apart anyway, because they are answers to different questions asked in different
@@ -164,7 +173,7 @@ type ResolvedEntry = {
   readonly readOnly: boolean;
 };
 
-function resolveEntry(entry: Mount, hostPaths: Readonly<Record<string, string>>): ResolvedEntry {
+function resolveEntry(entry: Mount, hostRoot: MountTable["hostRoot"]): ResolvedEntry {
   // A path inside the container, which the container runtime requires to be absolute,
   // and which is POSIX whatever this platform is.
   if (!entry.agentPath.startsWith("/")) {
@@ -179,7 +188,7 @@ function resolveEntry(entry: Mount, hostPaths: Readonly<Record<string, string>>)
   }
   return {
     agentPath: entry.agentPath,
-    hostPath: hostPathFor(entry.gatewayPath, hostPaths),
+    hostPath: hostPathFor(entry.gatewayPath, hostRoot),
     readOnly: entry.readOnly ?? false,
   };
 }
@@ -187,24 +196,22 @@ function resolveEntry(entry: Mount, hostPaths: Readonly<Record<string, string>>)
 /**
  * What the daemon should be given for a Gateway-side path.
  *
- * Identity while `hostPaths` is empty, which is a Gateway on the host. Otherwise the
- * longest key covering the path, with whatever is left of the path appended, and nothing
- * appended at all where the key matched exactly, so a value that is not a path survives
- * whole.
+ * Identity while `hostRoot` is absent, which is a Gateway on the host. Otherwise the one
+ * pair does the whole translation: a `gatewayPath` equal to the root's resolves to
+ * `hostPath` whole, one below it resolves to `hostPath` with the remainder appended, and
+ * one outside the root is refused. A trailing slash on the root's `gatewayPath` is the
+ * same directory and changes nothing.
  */
-function hostPathFor(gatewayPath: string, hostPaths: Readonly<Record<string, string>>): string {
-  const prefixes = Object.keys(hostPaths);
-  if (prefixes.length === 0) return gatewayPath;
+function hostPathFor(gatewayPath: string, hostRoot: MountTable["hostRoot"]): string {
+  if (hostRoot === undefined) return gatewayPath;
 
-  const longestFirst = [...prefixes].sort((a, b) => b.length - a.length);
-  for (const prefix of longestFirst) {
-    const rest = remainderUnder(gatewayPath, prefix);
-    if (rest !== undefined) return `${hostPaths[prefix]}${rest}`;
+  const rest = remainderUnder(gatewayPath, hostRoot.gatewayPath);
+  if (rest === undefined) {
+    throw new Error(
+      `the mount's gatewayPath ${JSON.stringify(gatewayPath)} falls outside the hostRoot ${JSON.stringify(hostRoot.gatewayPath)} this Gateway declared, so there is no host path the container runtime's daemon could resolve it to`,
+    );
   }
-
-  throw new Error(
-    `the mount's gatewayPath ${JSON.stringify(gatewayPath)} falls under none of the hostPaths prefixes this Gateway declared (${prefixes.map((prefix) => JSON.stringify(prefix)).join(", ")}), so there is no host path the container runtime's daemon could resolve it to`,
-  );
+  return `${hostRoot.hostPath}${rest}`;
 }
 
 /**
@@ -212,7 +219,7 @@ function hostPathFor(gatewayPath: string, hostPaths: Readonly<Record<string, str
  *
  * The source is the entry's *host* path, because the daemon resolves it on the host and
  * not in whatever namespace this process is in. For a Gateway on the host the two are
- * one string, and `hostPaths` is what tells them apart when they are not.
+ * one string, and `hostRoot` is what tells them apart when they are not.
  */
 function mountArgument(entry: ResolvedEntry): string {
   const fields = ["type=bind", field("source", entry.hostPath), field("target", entry.agentPath)];
