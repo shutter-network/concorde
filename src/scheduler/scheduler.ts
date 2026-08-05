@@ -8,9 +8,9 @@
  *
  * The storage, the Signal contract, and the firing core are the awaitable `tick` due-check plus
  * `schedule` (an upsert by name), `list`, and `cancel`. Over that core, `start` arms a single
- * **capped, self-correcting timer** that calls the same `tick` on its own, and `stop` cancels it —
- * the autonomous firing this ticket adds. The agent-facing HTTP routes arrive in a later ticket, so
- * there is no server option yet.
+ * **capped, self-correcting timer** that calls the same `tick` on its own, and `stop` cancels it,
+ * the autonomous firing over the core. The agent-facing HTTP routes register on an Agent server when
+ * one is passed, and omitting it is the disable switch.
  *
  * The timer is one `setTimeout`, armed to the earliest Schedule's next fire but never for longer
  * than `maxSleepMs` (~a minute, Operator-configurable), and re-derived against the wall clock on
@@ -142,7 +142,7 @@ export type SchedulerOptions = {
 
 /**
  * What the constructor answers with: the programmatic interface the Operator always has, whether
- * or not the agent-facing routes are switched on (which is a later ticket).
+ * or not the agent-facing routes are switched on.
  *
  * `schedule`, `list` and `cancel` are the management surface; `tick` is the due-check the internal
  * timer also calls, exposed as the testing seam (ADR-0018). `start` arms that timer and `stop`

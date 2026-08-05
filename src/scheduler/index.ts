@@ -28,7 +28,8 @@
  * construct the part that owns the tables — and, for this part, should not have to construct a
  * Signal Worker and a Runtime to get at them.
  *
- * The agent-facing routes are a later ticket, so no route plugin is exported yet.
+ * The agent-facing routes register on the Agent server the constructor is given; passing none is the
+ * disable switch, so a route plugin is an internal of the part rather than a separate export.
  */
 
 export { schedulerMigrations } from "./migrations.ts";
