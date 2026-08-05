@@ -7,11 +7,9 @@ export type {
   ComposedCommand,
   Mount,
   MountTable,
-  ResolvedMount,
-  ResolvedMountTable,
   RunPlan,
 } from "./container/index.ts";
-export { createAgentContainerRuntime, resolveMountTable } from "./container/index.ts";
+export { createAgentContainerRuntime, mountArguments } from "./container/index.ts";
 export type {
   ChannelListener,
   Db,

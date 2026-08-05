@@ -9,8 +9,8 @@
  *  - `AgentContainer` is the declaration, and only its `image` is required.
  *  - `createAgentContainerRuntime` turns one plus a single function into a Runtime, and
  *    that function is the whole of what an Agent Implementation adds.
- *  - `resolveMountTable` settles what the container sees on disk into `--mount`
- *    arguments, and refuses a table that cannot mean what it says.
+ *  - `mountArguments` turns what the container sees on disk into `--mount` arguments,
+ *    and refuses a table that cannot mean what it says.
  */
 
 export type {
@@ -21,5 +21,5 @@ export type {
   RunPlan,
 } from "./agent-container.ts";
 export { createAgentContainerRuntime } from "./agent-container.ts";
-export type { Mount, MountTable, ResolvedMount, ResolvedMountTable } from "./mount-table.ts";
-export { resolveMountTable } from "./mount-table.ts";
+export type { Mount, MountTable } from "./mount-table.ts";
+export { mountArguments } from "./mount-table.ts";

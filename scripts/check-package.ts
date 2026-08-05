@@ -51,7 +51,7 @@ const migrationsRoot = path.join(repoRoot, "migrations");
 
 /** The consumer's imports, spelled once: the type checker and Node see the same seven. */
 const consumerImports = [
-  'import { createAgentContainerRuntime, createBareGateway, createGateway, createSignalWorker, defaultLogger, openDb, resolveMountTable, serverComponent, signalsMigrations, templateHandler } from "shared-agent-framework";',
+  'import { createAgentContainerRuntime, createBareGateway, createGateway, createSignalWorker, defaultLogger, mountArguments, openDb, serverComponent, signalsMigrations, templateHandler } from "shared-agent-framework";',
   'import { createPiRuntime, interpretPiOutput, piRun } from "shared-agent-framework/pi";',
   'import { createUsers, usersMigrations } from "shared-agent-framework/users";',
   'import { createHttpMessenger, httpMessagesMigrations, messageReceivedKind } from "shared-agent-framework/http-messenger";',
@@ -439,8 +439,6 @@ try {
       "  MountTable,",
       "  PostOutcome,",
       "  Prompt,",
-      "  ResolvedMount,",
-      "  ResolvedMountTable,",
       "  RunOutcome,",
       "  RunPlan,",
       "  RunPrompt,",
@@ -978,8 +976,10 @@ try {
       '    { containerPath: "/home/agent/.pi/agent/settings.json", gatewayPath: "/srv/saf/settings.json", readOnly: true },',
       "  ],",
       "};",
-      "export const piMounts: ResolvedMountTable = resolveMountTable(mounts);",
-      "export const piWorkspace: ResolvedMount | undefined = piMounts.entries[0];",
+      "// One exported function and no resolved layer beside it: what a consumer holds is",
+      "// the `--mount` argument list itself. Type-annotated, so a declaration that resolved",
+      "// to `any` or went missing fails here (ADR-0028).",
+      "export const piMountArguments: readonly string[] = mountArguments(mounts);",
       "",
       "// The Agent Container and the generic Runtime built from it, from the package root",
       "// rather than from `/pi`, because nothing in either has heard of an Agent",
@@ -1237,7 +1237,7 @@ try {
         "  { containerPath: '/srv/saf/agent', gatewayPath: '/srv/saf/agent' },",
         "  { containerPath: '/workspace/AGENTS.md', gatewayPath: '/srv/saf/AGENTS.md', readOnly: true },",
         "] };",
-        "const resolvedMounts = resolveMountTable(mounts);",
+        "const mountArgs = mountArguments(mounts);",
         // And the generic Runtime, constructed and asked for a command line from the
         // package root. `commandFor` is pure, so this proves the whole of the argument
         // assembly runs out of an installed package with no Docker anywhere near it —
@@ -1364,7 +1364,7 @@ try {
         // because the module that used to hold one is gone from the package, and the
         // composed command line names no file for the agent to read either — the
         // Operator's `AGENTS.md` above is a mount and `pi` discovers it (ADR-0025).
-        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), resolvedMounts.containerArguments()[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersMigrations.schema, String(Object.keys(directory).sort()), httpMessagesMigrations.schema, String(Object.keys(messenger).sort()), messageReceivedKind, decisionsMigrations.schema, String(Object.keys(signatures).sort()), String(Object.keys(decisions).sort()), jws.split('.').length + ' segments, ' + Buffer.from(jwsSignature, 'base64url').length + ' signature bytes, verified ' + checked + ', private member ' + Object.hasOwn(keySet.keys[0], 'd'), String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(','), 'cron ' + cronNext + ' zone ' + zoneKnown, 'scheduler ' + String(Object.keys(scheduler).sort()) + ' fires ' + scheduleFiredKind + ' migrates ' + schedulerMigrations.schema];",
+        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), mountArgs[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersMigrations.schema, String(Object.keys(directory).sort()), httpMessagesMigrations.schema, String(Object.keys(messenger).sort()), messageReceivedKind, decisionsMigrations.schema, String(Object.keys(signatures).sort()), String(Object.keys(decisions).sort()), jws.split('.').length + ' segments, ' + Buffer.from(jwsSignature, 'base64url').length + ' signature bytes, verified ' + checked + ', private member ' + Object.hasOwn(keySet.keys[0], 'd'), String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(','), 'cron ' + cronNext + ' zone ' + zoneKnown, 'scheduler ' + String(Object.keys(scheduler).sort()) + ' fires ' + scheduleFiredKind + ' migrates ' + schedulerMigrations.schema];",
         "process.stdout.write(built.join(':'));",
       ].join("\n"),
     ],

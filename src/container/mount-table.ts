@@ -107,10 +107,44 @@ export type MountTable = {
   readonly hostPaths?: Readonly<Record<string, string>>;
 };
 
-/** An entry with its defaults settled. */
-export type ResolvedMount = {
+/**
+ * Turns a Mount Table into its `--mount` arguments, or refuses it.
+ *
+ * One exported function and no structured intermediate between the table and the
+ * arguments: the only consumer asks for the arguments and nothing else, and even the
+ * tests assert on the emitted strings. An exported resolved layer would be a value with
+ * no caller that uses its structure — a claim nothing tests — so it goes by the same
+ * logic ADR-0028 used to delete `gatewayPathFor`.
+ *
+ * Pure and total: it applies `hostPaths`, refuses a relative path on either side, and
+ * refuses an entry no `hostPaths` prefix covers. It performs no I/O, so what it cannot
+ * tell you is whether any of these paths exists — that is the daemon's answer at the
+ * first Run, and deliberately nobody else's (ADR-0028).
+ *
+ * The result is one `--mount` per entry, in declaration order, and nothing else at all.
+ * There is no reverse lookup beside it: one existed, for the Gateway-side path of a
+ * Session's transcript, and its only caller was a debug line that went with the Session
+ * root; an honest one is three-way anyway, since `hostPaths` gives every mount three
+ * names, and a two-way one silently picks an answer (ADR-0028).
+ *
+ * `createAgentContainerRuntime` calls it during construction, so a table that cannot
+ * work is refused where the Operator wrote it rather than at the first Signal.
+ */
+export function mountArguments(table: MountTable): readonly string[] {
+  const hostPaths = table.hostPaths ?? {};
+  return table.entries.flatMap((entry) => [
+    "--mount",
+    mountArgument(resolveEntry(entry, hostPaths)),
+  ]);
+}
+
+/**
+ * An entry with its defaults settled and its bind source resolved. Internal to this
+ * module: nothing outside it names the structure, because the one consumer immediately
+ * asks for the emitted arguments.
+ */
+type ResolvedEntry = {
   readonly containerPath: string;
-  readonly gatewayPath: string;
   /**
    * What the daemon is given as the bind source: the `gatewayPath` through `hostPaths`.
    *
@@ -122,43 +156,7 @@ export type ResolvedMount = {
   readonly readOnly: boolean;
 };
 
-/** A Mount Table that has been settled and found usable. */
-export type ResolvedMountTable = {
-  readonly entries: readonly ResolvedMount[];
-  /**
-   * The container-runtime arguments this table contributes: one `--mount` per entry,
-   * and nothing else at all.
-   *
-   * There is no reverse lookup beside it. One existed, for the Gateway-side path of a
-   * Session's transcript, and its only caller was a debug line that went with the
-   * Session root; an honest one is three-way anyway, since `hostPaths` gives every
-   * mount three names, and a two-way one silently picks an answer (ADR-0028).
-   */
-  containerArguments(): readonly string[];
-};
-
-/**
- * Settles a Mount Table, or refuses it.
- *
- * Pure and total: it applies `hostPaths`, refuses a relative path on either side, and
- * refuses an entry no `hostPaths` prefix covers. It performs no I/O, so what it cannot
- * tell you is whether any of these paths exists — that is the daemon's answer at the
- * first Run, and deliberately nobody else's (ADR-0028).
- *
- * `createAgentContainerRuntime` calls it during construction, so a table that cannot
- * work is refused where the Operator wrote it rather than at the first Signal.
- */
-export function resolveMountTable(table: MountTable): ResolvedMountTable {
-  const hostPaths = table.hostPaths ?? {};
-  const entries = table.entries.map((entry) => resolveEntry(entry, hostPaths));
-
-  return {
-    entries,
-    containerArguments: () => entries.flatMap((entry) => ["--mount", mountArgument(entry)]),
-  };
-}
-
-function resolveEntry(entry: Mount, hostPaths: Readonly<Record<string, string>>): ResolvedMount {
+function resolveEntry(entry: Mount, hostPaths: Readonly<Record<string, string>>): ResolvedEntry {
   // A path inside the container, which the container runtime requires to be absolute,
   // and which is POSIX whatever this platform is.
   if (!entry.containerPath.startsWith("/")) {
@@ -173,7 +171,6 @@ function resolveEntry(entry: Mount, hostPaths: Readonly<Record<string, string>>)
   }
   return {
     containerPath: entry.containerPath,
-    gatewayPath: entry.gatewayPath,
     hostPath: hostPathFor(entry.gatewayPath, hostPaths),
     readOnly: entry.readOnly ?? false,
   };
@@ -209,7 +206,7 @@ function hostPathFor(gatewayPath: string, hostPaths: Readonly<Record<string, str
  * not in whatever namespace this process is in. For a Gateway on the host the two are
  * one string, and `hostPaths` is what tells them apart when they are not.
  */
-function mountArgument(entry: ResolvedMount): string {
+function mountArgument(entry: ResolvedEntry): string {
   const fields = [
     "type=bind",
     field("source", entry.hostPath),

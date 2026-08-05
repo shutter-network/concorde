@@ -24,7 +24,7 @@
 
 import { defaultLogger, type Logger } from "../logging.ts";
 import type { RunOutcome, RunPrompt, Runtime } from "../signals/runtime.ts";
-import { type MountTable, resolveMountTable } from "./mount-table.ts";
+import { type MountTable, mountArguments } from "./mount-table.ts";
 import { runContainer } from "./process.ts";
 
 /**
@@ -272,7 +272,7 @@ function composeArgv(
   // `--mount type=bind` per entry and never `-v`, which is what makes the daemon refuse
   // a source that is not there instead of inventing it as a `root`-owned directory
   // (ADR-0028). An absent table contributes nothing at all.
-  args.push(...resolveMountTable(container.mounts ?? { entries: [] }).containerArguments());
+  args.push(...mountArguments(container.mounts ?? { entries: [] }));
 
   const user = ownUser();
   if (user !== undefined) args.push("--user", user);
