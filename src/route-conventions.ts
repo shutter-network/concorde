@@ -178,6 +178,35 @@ export const idParams = {
 } as const;
 
 /**
+ * The shape of a **name** in a path, for a route that addresses a record by a key its caller
+ * chose rather than by a surrogate uuid.
+ *
+ * Pattern-validated for the discipline `idSchema` applies to a uuid, though the hazard it guards
+ * is a different one: PostgreSQL stores any text a client sends as a primary key without
+ * complaint, so an unbounded or control-character name would be accepted rather than refused by
+ * the column, and the addressing key of a record is the wrong place to discover that. The pattern
+ * bounds the length and holds the name to a legible, url-safe charset — letters, digits, and the
+ * three separators a caller reaches for — so a name is safe to put in a path and stable to
+ * address, refused as a 400 at the door rather than stored as a key nothing can cleanly reference.
+ *
+ * The one Agent route family that addresses by name is the Scheduler's, a deliberate divergence
+ * from the id-addressing every other Agent route uses: a Schedule's identity is a client-chosen
+ * key and `PUT` on that key is the honest verb for its create-or-update.
+ */
+export const nameSchema = {
+  type: "string",
+  pattern: "^[A-Za-z0-9._-]{1,128}$",
+} as const;
+
+/** The params of a route whose path ends in one name, `/:name`. */
+export const nameParams = {
+  type: "object",
+  properties: { name: nameSchema },
+  required: ["name"],
+  additionalProperties: false,
+} as const;
+
+/**
  * Builds the hook that refuses a query parameter a route does not have, before
  * validation strips it.
  *

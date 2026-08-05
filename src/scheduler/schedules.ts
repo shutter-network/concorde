@@ -212,6 +212,43 @@ export function nextFireOf(spec: ScheduleSpec, now: Date, until?: Date): Date | 
 }
 
 /**
+ * Refuses a create that could never fire, throwing `ScheduleSpecError` so the agent-facing route
+ * answers it as a 400 — the loud refusal a caller in the moment earns, where boot re-derivation
+ * drops the very same Schedule silently because it has nobody to answer (ADR-0018).
+ *
+ * The programmatic `schedule` is deliberately lenient about this: an Operator re-running a boot-time
+ * declaration whose `once` has since passed converges to a spent, unarmed Schedule rather than a
+ * thrown boot. The agent submitting the same over HTTP is a caller making a mistake it should learn
+ * of at once, so the route runs this **first** — before anything is written, so a 400 never mutates —
+ * and only calls `schedule` once a live fire is assured, which is also what keeps the read model's
+ * `nextFireAt` non-null on every answer.
+ *
+ * Every refusal reuses the very derivation `schedule` will run, so the two cannot disagree about what
+ * is acceptable: a bad cron `expr` or an unknown `tz` throws out of `nextFireOf`, and a malformed
+ * `until` out of `parseUntil`. What this adds over those is the two cases `nextFireOf` reports as
+ * *spent* rather than throwing — a `once` whose instant is malformed or already past — and the cron
+ * whose `until` already sits at or before its next occurrence, which is a create that resolves to no
+ * fire at all.
+ */
+export function assertCreatable(input: ScheduleInput, now: Date): void {
+  const until =
+    input.spec.kind === "cron" && input.until !== undefined ? parseUntil(input.until) : undefined;
+  if (nextFireOf(input.spec, now, until) !== undefined) return;
+  if (input.spec.kind === "once") {
+    const at = new Date(input.spec.at);
+    if (Number.isNaN(at.getTime())) {
+      throw new ScheduleSpecError(`malformed once instant ${JSON.stringify(input.spec.at)}`);
+    }
+    throw new ScheduleSpecError(
+      `the once instant ${JSON.stringify(input.spec.at)} is already in the past`,
+    );
+  }
+  throw new ScheduleSpecError(
+    `the cron until ${JSON.stringify(input.until)} is at or before the Schedule's next fire, so it would never fire`,
+  );
+}
+
+/**
  * The next fire of a persisted **row** strictly after `now`, or `undefined` when it has none — the
  * row-shaped counterpart of `nextFireOf`, which works from an input spec before a row exists.
  *
@@ -373,11 +410,33 @@ export async function deleteSchedule<TSchema extends Record<string, unknown>>(
  *
  * Ordered by `at` — the next fire for both kinds — and by `name` to break the tie deterministically.
  * On the part's own handle: a read takes no transaction (ADR-0023).
+ *
+ * `limit` bounds the page for the agent's `GET /schedules`, which caps its envelope like every
+ * other list (ADR-0035); the boot re-derivation calls this with none, because it must re-derive
+ * **every** row's next fire and a cap would silently leave the rest armed on a stale `at`.
  */
 export async function selectSchedules(
   handle: SchedulerHandle,
+  limit?: number,
 ): Promise<(typeof schedules.$inferSelect)[]> {
-  return handle.select().from(schedules).orderBy(asc(schedules.at), asc(schedules.name));
+  const ordered = handle.select().from(schedules).orderBy(asc(schedules.at), asc(schedules.name));
+  return limit === undefined ? ordered : ordered.limit(limit);
+}
+
+/**
+ * One Schedule by name, or `undefined` when the name addresses none — what the agent's
+ * `GET /schedules/:name` reads.
+ *
+ * A row exists only while a Schedule is armed, so a found row is a **live** Schedule with a
+ * future `at`, which is why the read model it becomes always has a non-null `nextFireAt`
+ * (ADR-0018). On the part's own handle: a read takes no transaction (ADR-0023).
+ */
+export async function selectSchedule(
+  handle: SchedulerHandle,
+  name: string,
+): Promise<typeof schedules.$inferSelect | undefined> {
+  const [row] = await handle.select().from(schedules).where(eq(schedules.name, name));
+  return row;
 }
 
 /**

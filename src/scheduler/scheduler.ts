@@ -43,11 +43,13 @@
  *    document the split.
  */
 
+import type { FastifyInstance } from "fastify";
 import type { Component } from "../components.ts";
 import type { Db } from "../db/index.ts";
 import { defaultLogger, type Logger } from "../logging.ts";
 import type { SignalWorker } from "../signals/worker.ts";
 import { schedulerMigrations } from "./migrations.ts";
+import { scheduleRoutes } from "./routes.ts";
 import {
   advanceSchedule,
   asScheduleRecord,
@@ -64,6 +66,7 @@ import {
   scheduleRecord,
   scheduleRow,
   selectDue,
+  selectSchedule,
   selectSchedules,
   upsertSchedule,
 } from "./schedules.ts";
@@ -118,6 +121,21 @@ export type SchedulerOptions = {
    * small so the real timer proves itself in milliseconds.
    */
   readonly maxSleepMs?: number;
+  /**
+   * The Agent server, if the agent is to create, list, read, and cancel Schedules over HTTP.
+   *
+   * Given one, the constructor registers the Scheduler's routes on the Fastify instance it carries
+   * at no prefix — `PUT`, `GET`, and `DELETE` on `/schedules` and `/schedules/:name` (ADR-0032).
+   * **Omitted, nothing is registered anywhere, and that omission is the disable switch** the spec
+   * turns on for a deployment that does not want the agent waking itself or touching Operator
+   * Schedules — the programmatic interface below stays available regardless (ADR-0018, ADR-0010).
+   *
+   * Structural, and asks for nothing but the Fastify instance, so what satisfies it is what
+   * `serverComponent` returns — the same shape the Signal Worker's `agentServer` takes.
+   */
+  readonly agentServer?: {
+    readonly fastify: FastifyInstance;
+  };
   /** Defaults to a `pino` instance on stdout. */
   readonly logger?: Logger;
 };
@@ -322,45 +340,79 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
     }
   }
 
+  /**
+   * Creates a Schedule or updates the one already under the name — the upsert the programmatic
+   * interface and the agent's `PUT` both go through. Deliberately lenient about a spent create: a
+   * `once` already in the past resolves to no future fire, so any row under the name is removed and
+   * the answer carries a `null` `nextFireAt` rather than throwing. The agent-facing route refuses that
+   * same case loudly with `assertCreatable` first (ADR-0018); an Operator re-running a boot-time
+   * declaration converges here instead of crashing.
+   */
+  async function doSchedule(input: ScheduleInput): Promise<ScheduleOutcome> {
+    const at = now();
+    // A malformed `until`, a bad cron `expr`, or an unknown `tz` throws `ScheduleSpecError` here,
+    // before anything is written — the refusal the agent route surfaces as a 400. `until` is a
+    // cron bound only; a `once` bounds itself by firing once, so its `until` is ignored.
+    const until =
+      input.spec.kind === "cron" && input.until !== undefined ? parseUntil(input.until) : undefined;
+    const next = nextFireOf(input.spec, at, until);
+    const data = input.data ?? null;
+    if (next === undefined) {
+      // No future fire: spent. Honour the upsert by removing any row under this name, so a name
+      // that mapped to a live Schedule maps to nothing rather than to a stale one.
+      await deleteSchedule(handle, input.name);
+      // The removed row may have been the earliest, so the timer's target changed.
+      await arm();
+      return { created: false, schedule: scheduleRecord(input, undefined, until, data) };
+    }
+    const { created } = await upsertSchedule(handle, scheduleRow(input, next, until, data));
+    // A new or moved fire may now be the earliest, so re-derive the timer against it.
+    await arm();
+    // The same shape `list` reads a row through, so this answer and a later list agree
+    // byte-for-byte on the same Schedule without reading the row back.
+    return { created, schedule: scheduleRecord(input, next, until, data) };
+  }
+
+  /** Every live Schedule as a read model, ascending by next fire then name, bounded by `limit`. */
+  async function listRecords(limit?: number): Promise<ScheduleRecord[]> {
+    const rows = await selectSchedules(handle, limit);
+    return rows.map(asScheduleRecord);
+  }
+
+  /** One live Schedule by name as a read model, or `undefined` when the name addresses none. */
+  async function readRecord(name: string): Promise<ScheduleRecord | undefined> {
+    const row = await selectSchedule(handle, name);
+    return row === undefined ? undefined : asScheduleRecord(row);
+  }
+
+  /** Cancels a Schedule by name, re-arming the timer, and answers whether one was there. */
+  async function doCancel(name: string): Promise<boolean> {
+    const removed = await deleteSchedule(handle, name);
+    // Cancelling may have removed the earliest fire, so re-derive the timer's target.
+    await arm();
+    return removed;
+  }
+
+  // The agent-facing routes, registered on the Agent server only when one is given — the disable
+  // switch (ADR-0010, ADR-0018). Not awaited: Fastify defers a plugin until the server is ready, so
+  // this is a registration made at construction and loaded at `listen`, the same as every other
+  // part's. The routes reach the part through these operations and the part's own clock.
+  options.agentServer?.fastify.register(
+    scheduleRoutes({
+      now,
+      schedule: doSchedule,
+      list: listRecords,
+      read: readRecord,
+      cancel: doCancel,
+    }),
+  );
+
   return {
-    async schedule(input) {
-      const at = now();
-      // A malformed `until`, a bad cron `expr`, or an unknown `tz` throws `ScheduleSpecError` here,
-      // before anything is written — the refusal a later ticket surfaces as a 400. `until` is a
-      // cron bound only; a `once` bounds itself by firing once, so its `until` is ignored.
-      const until =
-        input.spec.kind === "cron" && input.until !== undefined
-          ? parseUntil(input.until)
-          : undefined;
-      const next = nextFireOf(input.spec, at, until);
-      const data = input.data ?? null;
-      if (next === undefined) {
-        // No future fire: spent. Honour the upsert by removing any row under this name, so a name
-        // that mapped to a live Schedule maps to nothing rather than to a stale one.
-        await deleteSchedule(handle, input.name);
-        // The removed row may have been the earliest, so the timer's target changed.
-        await arm();
-        return { created: false, schedule: scheduleRecord(input, undefined, until, data) };
-      }
-      const { created } = await upsertSchedule(handle, scheduleRow(input, next, until, data));
-      // A new or moved fire may now be the earliest, so re-derive the timer against it.
-      await arm();
-      // The same shape `list` reads a row through, so this answer and a later list agree
-      // byte-for-byte on the same Schedule without reading the row back.
-      return { created, schedule: scheduleRecord(input, next, until, data) };
-    },
+    schedule: doSchedule,
 
-    async list() {
-      const rows = await selectSchedules(handle);
-      return rows.map(asScheduleRecord);
-    },
+    list: () => listRecords(),
 
-    async cancel(name) {
-      const removed = await deleteSchedule(handle, name);
-      // Cancelling may have removed the earliest fire, so re-derive the timer's target.
-      await arm();
-      return removed;
-    },
+    cancel: doCancel,
 
     tick,
 
