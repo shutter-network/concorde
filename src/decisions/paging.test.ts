@@ -238,6 +238,19 @@ describe("the cursor cases, and what a client is refused", () => {
     for (const window of ["?limit=0", "?limit=none", "?after=-1", "?before=x"]) {
       assert.equal((await reading(window)).statusCode, 400, window);
     }
+
+    // A cursor above the column's `integer` range is refused on both surfaces rather than
+    // reaching the database, where it would come back a 500 carrying the text of the query.
+    // The 400 names the parameter and carries no query text: that is the whole of the fix.
+    for (const answered of [
+      await reading("?after=2147483648"),
+      await asAgent("?after=2147483648"),
+    ]) {
+      assert.equal(answered.statusCode, 400, answered.body);
+      const { message } = answered.json<{ message: string }>();
+      assert.match(message, /after/);
+      assert.doesNotMatch(message, /select|from/i);
+    }
   });
 
   it("refuses a parameter this log has no answer for", async () => {

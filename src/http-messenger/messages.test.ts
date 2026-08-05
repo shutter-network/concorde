@@ -223,7 +223,16 @@ describe("reading a User's Message log over the Agent server", () => {
     // anything, and the descending selection behind `limit` is invisible from here.
     assert.deepEqual(numbers(await log(user, "&limit=2")), [3, 4]);
 
-    for (const window of ["&limit=0", "&limit=201", "&limit=none", "&after=-1", "&before=x"]) {
+    // A cursor above the column's `integer` range is refused rather than reaching the
+    // database, where it would come back a 500 carrying the text of the query.
+    for (const window of [
+      "&limit=0",
+      "&limit=201",
+      "&limit=none",
+      "&after=-1",
+      "&before=x",
+      "&after=2147483648",
+    ]) {
       assert.equal((await read(`?user=${user}${window}`)).statusCode, 400, window);
     }
   });

@@ -87,8 +87,13 @@ export type CursorWindow = {
  * asks for a log **from its beginning**, oldest first, which no other spelling expresses,
  * since no cursor at all means the newest page instead and `after=1` would skip the first
  * record.
+ *
+ * The `maximum` is the column type and not a policy: every `seq` a cursor points into is a
+ * PostgreSQL `integer`, so `2147483647` is the largest a record can hold and a cursor above
+ * it is a number no record has. Capped here it is a 400 naming the parameter; left uncapped
+ * it reaches the database and returns as a 500 carrying the text of the query.
  */
-const cursorSchema = { type: "integer", minimum: 0 } as const;
+const cursorSchema = { type: "integer", minimum: 0, maximum: 2147483647 } as const;
 
 /**
  * The same cursor twice, described as the two different motions it is.
