@@ -54,7 +54,7 @@ against the compose file's own directory, while `${PWD}` is wherever you invoked
 command, and the stack needs the two to be the same place. Running `docker compose -f
 example/compose.yml up` from the root starts a Gateway that works and hands the agent a
 Workspace nobody is looking at. This is the single sharpest edge in the whole file, and it
-comes from a mechanism that [does not exist yet](#if-you-containerise-your-own-gateway-hostpaths).
+comes from a mechanism that [does not exist yet](#if-you-containerise-your-own-gateway-hostroot).
 
 The forgotten key fails immediately and says so, before anything starts:
 
@@ -100,9 +100,9 @@ now.
 
 `docker compose up -d --build` again. The `npm ci` layer is cached, so a change under
 `src/` or to `example/main.ts` rebuilds in seconds rather than a minute. There is no
-supported way to run `example/main.ts` on your host: it reads `HOST_DIR` and
-refuses to start without it, and supporting both would put three conditionals into the
-shortest honest deployment this repository has
+supported way to run `example/main.ts` on your host: it reads `BASE_DIR_GATEWAY` and
+`BASE_DIR_HOST` from compose and refuses to start without them, and supporting both would
+put three conditionals into the shortest honest deployment this repository has
 ([ADR-0039](./adr/0039-the-reference-deployment-runs-in-a-compose-stack.md)).
 
 Two files are the exception, and they are the two the *agent* reads: `example/AGENTS.md`
@@ -392,33 +392,36 @@ const runtime = createPiRuntime({
     entries: [
       {
         agentPath: "/workspace",
-        gatewayPath: path.join(import.meta.dirname, "state", "workspace"),
+        gatewayPath: path.join(baseDirGateway, "state", "workspace"),
       },
       {
         agentPath: "/home/agent/.pi/agent",
-        gatewayPath: path.join(import.meta.dirname, "state", "agent"),
+        gatewayPath: path.join(baseDirGateway, "state", "agent"),
       },
       {
         agentPath: "/workspace/AGENTS.md",
-        gatewayPath: path.join(import.meta.dirname, "AGENTS.md"),
+        gatewayPath: path.join(baseDirGateway, "AGENTS.md"),
         readOnly: true,
       },
       {
         agentPath: "/home/agent/.pi/agent/settings.json",
-        gatewayPath: path.join(import.meta.dirname, "settings.json"),
+        gatewayPath: path.join(baseDirGateway, "settings.json"),
         readOnly: true,
       },
     ],
-    hostPaths: { [import.meta.dirname]: hostDir },
+    hostRoot: { gatewayPath: baseDirGateway, hostPath: baseDirHost },
   },
 });
 ```
 
-`hostPaths` is the one line this deployment needs and yours may not: it is what a Gateway
+`hostRoot` is the one line this deployment needs and yours may not: it is what a Gateway
 that is **itself in a container** has to say, because a `gatewayPath` is resolved by the
-daemon on the *host* and not in this process's filesystem. One entry, one fact, "this
-directory, over there", and every entry above falls under it. See ["If you containerise
-your own Gateway"](#if-you-containerise-your-own-gateway-hostpaths).
+daemon on the *host* and not in this process's filesystem. One pair, one fact, "this
+directory, over there", and every entry above falls under it. `baseDirGateway` and
+`baseDirHost` are the two sides of it, both read from compose (`BASE_DIR_GATEWAY` and
+`BASE_DIR_HOST`) rather than derived here, so the image's internal layout is not
+load-bearing for this file. See ["If you containerise your own
+Gateway"](#if-you-containerise-your-own-gateway-hostroot).
 
 Eight fields, and seven of them are optional — a default, or a fact most deployments do
 not have:
@@ -473,7 +476,7 @@ third entry of its Mount Table:
 ```ts
 {
   agentPath: "/workspace/AGENTS.md",
-  gatewayPath: path.join(import.meta.dirname, "AGENTS.md"),
+  gatewayPath: path.join(baseDirGateway, "AGENTS.md"),
   readOnly: true,
 }
 ```
@@ -558,8 +561,9 @@ otherwise a thin consumer of `createGateway`, which is why there is so little of
 with the wiring on display.
 
 Three things in it are the framework's to describe and **yours to do**, and all three are
-near the top. It reads `HOST_DIR` and refuses to start without it, because a Gateway
-in a container cannot work out where it is on the host and a wrong answer is silent. An
+near the top. It reads `BASE_DIR_GATEWAY` and `BASE_DIR_HOST` and refuses to start without
+them, because a Gateway in a container cannot work out where it is on the host and a wrong
+answer is silent. The two are the two sides of `hostRoot`, and compose states both. An
 `AGENTS.md` sits committed beside it — not written by anything at runtime, just a file in
 the repository — which the Mount Table's third entry mounts into the Workspace read-only,
 and which is the only thing that tells the agent the Agent server exists. And a
@@ -583,8 +587,8 @@ parts are built by hand from the infrastructure `createGateway` handed back, eac
 const gateway = createGateway({
   databaseUrl,
   runtime,
-  publicListen: { port: 8080, host: "0.0.0.0" },
-  agentListen: { port: 7411, host: "0.0.0.0" },
+  publicListen: { port: publicPort, host: publicHost },
+  agentListen: { port: agentPort, host: agentHost },
   extend: ({ db, agentServer, publicServer, worker }) => {
     // The User Manager before the HTTP Messenger, because the Messenger's `user_id` is a
     // foreign key onto the User Manager's schema and migrations apply in construction order.
@@ -709,13 +713,16 @@ is Fastify's own `listen` options object handed over unread:
 
 ```ts
 const gateway = createGateway({
-  publicListen: { port: 8080, host: "0.0.0.0" },
-  agentListen: { port: 7411, host: "0.0.0.0" },
+  publicListen: { port: publicPort, host: publicHost },
+  agentListen: { port: agentPort, host: agentHost },
   // …
 });
 ```
 
-They are the only thing that call states about either server. `Fastify()` is called with no
+They are the only thing that call states about either server, and the reference deployment
+fills each side from `compose.yml` rather than a literal: `PUBLIC_HOST`/`PUBLIC_PORT` and
+`AGENT_HOST`/`AGENT_PORT`, read in `main.ts` and set beside the `ports:` they must agree
+with, because the framework defaults neither address. `Fastify()` is called with no
 options at all and there is no bring-your-own-instance escape, which is a real limit rather
 than an oversight: a Public server behind a reverse proxy wants `trustProxy`, and getting it
 means leaving this constructor for `createBareGateway` and `serverComponent`
@@ -756,10 +763,10 @@ second is a **string in your own `AGENTS.md`**, and there is nowhere else for it
 the Agent Container has no field for it, nothing has ever read it, and the Runtime never
 sees that address at all.
 
-The reference deployment uses **`http://gateway:7411`**, which is three facts that have to
-agree and are stated in three files: `gateway` is the service name in `compose.yml`, `7411`
-is the port in `main.ts`, and `AGENTS.md` is the only place the two are ever written
-together.
+The reference deployment uses **`http://gateway:7411`**, which is facts that have to agree
+across two files: `gateway` is the service name in `compose.yml`, `7411` is `AGENT_PORT` in
+`compose.yml` too (which `main.ts` reads and the Agent server binds), and `AGENTS.md` is the
+only place a URL puts the two together.
 
 It works because Compose gives each service its own name as a **network alias** on
 `saf_agent`, and the daemon's DNS answers for that alias to anything on that network —
@@ -814,7 +821,7 @@ who pays it.
 
 **Three things are refused where you wrote them**, at construction, as a pure function of
 the value: a missing `image`, a relative path on **either** side of a mount entry, and a
-`gatewayPath` no `hostPaths` prefix covers. That is the complete list. Everything below is
+`gatewayPath` the `hostRoot` does not cover. That is the complete list. Everything below is
 a file the framework does not read, at a path it was told about rather than chose, for a
 program it does not depend on — so it cannot refuse any of it
 ([ADR-0033](./adr/0033-an-agent-is-a-container-and-one-function.md)).
@@ -1480,7 +1487,7 @@ Two answers change that, and one of them is worth your time:
 If you take this design to production, rootless is the first thing to change.
 [ADR-0039](./adr/0039-the-reference-deployment-runs-in-a-compose-stack.md) has the rest.
 
-### If you containerise your own Gateway: `hostPaths`
+### If you containerise your own Gateway: `hostRoot`
 
 A Mount Table entry is two values — where a directory or file appears **to the agent**,
 and where it is **as this process sees it** — and the second is what the container
@@ -1489,22 +1496,24 @@ and only two of the names are in that entry. They are the same string while the 
 runs on the host, and they part company the moment it does not.
 
 That is **one fact about your deployment** rather than a property of each mount, so it is
-stated once, on the table. Here is the reference deployment's, which is as small as one gets:
+stated once, on the table, as a single pair: where the shared tree sits inside this
+container, and where the daemon finds that same tree on the host. Here is the reference
+deployment's, which is as small as one gets:
 
 ```ts
 mounts: {
   entries: [
     /* … */
   ],
-  // this container's /app/example is the host's ${PWD}, passed in by compose.yml
-  hostPaths: { [import.meta.dirname]: hostDir },
+  // this container's /app/example is the host's ${PWD}; compose.yml passes both in
+  hostRoot: { gatewayPath: baseDirGateway, hostPath: baseDirHost },
 }
 ```
 
-The key is `import.meta.dirname` rather than a literal, so the path is derived rather than
-stated twice, and every entry sits under it because the state directories were deliberately
-put *inside* `example/` instead of beside it. One prefix is the whole mapping. A more
-typical one, with the state somewhere of its own:
+Both sides come from compose (`BASE_DIR_GATEWAY` and `BASE_DIR_HOST`) rather than being
+derived here, and every entry sits under `baseDirGateway` because the state directories
+were deliberately put *inside* `example/` instead of beside it. One pair is the whole
+mapping. A more typical one, with the state somewhere of its own:
 
 ```ts
 mounts: {
@@ -1513,7 +1522,7 @@ mounts: {
     { agentPath: "/home/agent/.pi/agent", gatewayPath: "/srv/state/agent" },
   ],
   // this container's /srv/state is the host's /var/lib/saf
-  hostPaths: { "/srv/state": "/var/lib/saf" },
+  hostRoot: { gatewayPath: "/srv/state", hostPath: "/var/lib/saf" },
 }
 ```
 
@@ -1522,25 +1531,23 @@ relies on it: `AGENTS.md` and `settings.json` are named at paths that are not in
 Gateway's image at all, because the daemon resolves them on the host where they really are.
 Resolving a Mount Table performs no I/O, so nothing ever looks.
 
-Keys are matched **longest prefix first**, so a general mapping and a specific exception
-coexist. Leave `hostPaths` out and every entry is its own source, which is what a Gateway
-running on a host wants.
+The root is applied by prefix: a `gatewayPath` equal to it resolves to `hostPath` whole, one
+below it resolves to `hostPath` with the remainder appended, and a trailing slash on the
+root changes nothing. Leave `hostRoot` out and every entry is its own source, which is what
+a Gateway running on a host wants.
 
-Once you write one it is **exhaustive**. An entry whose `gatewayPath` falls under no key
-is refused when you construct the Runtime, with a message naming the path and listing the
-prefixes you declared. It deliberately does not fall back to identity: a fallback is what
-turns forgetting the third of three mappings into a deployment that starts, serves, and
-has one silently empty directory in it. And because resolution is a pure function of what
-you wrote, you find out with no daemon, no image and no container.
+Once you write one it is **exhaustive**. An entry whose `gatewayPath` falls **outside** the
+root is refused when you construct the Runtime, with a message naming the path and the root
+you declared. It deliberately does not fall back to identity: a fallback is what turns
+forgetting to widen the root into a deployment that starts, serves, and has one silently
+empty directory in it. And because resolution is a pure function of what you wrote, you find
+out with no daemon, no image and no container.
 
-A key matched **exactly** contributes its value whole, with nothing appended, and that is
-how a named volume is expressed — no runtime will mount a *subpath* of one, so a composed
-source would look right and be wrong. The value is handed to the daemon unread; nothing
-here knows what a volume is, and a volume stays a value rather than becoming a framework
-concept. One sharp edge follows from mounts being emitted as `type=bind`, whose source a
-daemon resolves as a path: under Docker the value has to be **where the volume lives on
-the host**, `/var/lib/docker/volumes/saf-workspace/_data` and not `saf-workspace`, which
-is refused as a non-absolute source.
+**One pair means one host mount.** A Gateway whose shared tree spans more than one host
+mount cannot say so through `hostRoot`, and its escape is to declare none and write
+daemon-namespace paths straight into each `gatewayPath`, which works because translation is
+the only thing the framework ever does with a `gatewayPath`, at the price of entries this
+process cannot itself `ls`.
 
 **Nothing discovers this mapping for you, and that is a deferral rather than an
 omission.** Two mechanisms would work — `/proc/self/mountinfo`, and `docker inspect` on

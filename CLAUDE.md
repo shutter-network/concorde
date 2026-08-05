@@ -15,7 +15,9 @@ deployment whose infrastructure shape itself differs.
 that directory and not the repository root
 ([ADR-0039](./docs/adr/0039-the-reference-deployment-runs-in-a-compose-stack.md)). The
 Gateway is a container holding the host's Docker socket, so `main.ts` requires
-`HOST_DIR` and declares `hostPaths`, and running it with `node` is not supported. It also
+`BASE_DIR_GATEWAY` and `BASE_DIR_HOST` (the two sides of `hostRoot`, both set in
+`compose.yml` beside the binds they must agree with), and running it with `node` is not
+supported. It also
 requires `SIGNING_KEY_FILE`, a PEM private key it loads itself and hands to
 `createSignatures` in `extend`: the framework parses nothing and generates nothing, so a
 deployment brings its own identity or does not start

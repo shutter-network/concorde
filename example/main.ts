@@ -17,27 +17,65 @@ import {
 import { createSignatures } from "shared-agent-framework/signatures";
 import { createUsers } from "shared-agent-framework/users";
 
-const hostDir = process.env.HOST_DIR;
-if (hostDir === undefined) {
-  throw new Error(
-    "set HOST_DIR to this directory's path on the host: the agent's mounts are resolved there, not here",
-  );
+// The framework reads no environment at all (ADR-0045), so every value this deployment takes
+// from outside is read here, in the one place a reader looks to see whose job that is. A missing
+// one refuses to start, naming the variable and why it exists, the same shape the
+// `SIGNING_KEY_FILE` read below spells out by hand.
+function fromEnv(name: string, description: string): string {
+  const value = process.env[name];
+  if (value === undefined) {
+    throw new Error(`set ${name} ${description}`);
+  }
+  return value;
 }
+
+// The shared tree, named twice because a Gateway in a container and the daemon resolving its
+// mounts see it at two different paths: `BASE_DIR_GATEWAY` is where this process sees it, and
+// `BASE_DIR_HOST` is where it is on the host. Both feed the Mount Table below field for field,
+// and compose.yml sets them beside the bind that makes them true, so the image's internal layout
+// is not load-bearing here (ADR-0028).
+const baseDirGateway = fromEnv(
+  "BASE_DIR_GATEWAY",
+  "to the shared tree's path inside this container: the agent's mounts are built from there",
+);
+const baseDirHost = fromEnv(
+  "BASE_DIR_HOST",
+  "to the shared tree's path on the host: the daemon resolves the agent's mounts there, not in this container",
+);
+
+// Where each server binds, read here because the framework defaults neither address and each has
+// to agree with the `ports:` compose publishes it on (quickstart, "Where each server binds is
+// yours to state"). The Public server is the one meant to be reached; the Agent server is
+// unauthenticated, so reaching its port is access, which is why moving it is stated out loud.
+const publicHost = fromEnv(
+  "PUBLIC_HOST",
+  "to the Public server's bind address: the framework defaults none",
+);
+const publicPort = Number(
+  fromEnv("PUBLIC_PORT", "to the Public server's port: it must match the ports: compose publishes"),
+);
+const agentHost = fromEnv(
+  "AGENT_HOST",
+  "to the Agent server's bind address: the framework defaults none",
+);
+const agentPort = Number(
+  fromEnv("AGENT_PORT", "to the Agent server's port: it must match the ports: compose publishes"),
+);
 
 // Where the Db connects, read here because the framework reads no environment at all: `databaseUrl`
 // is a required option and there is no `DATABASE_URL` fallback inside `createGateway`, so reading
-// the variable is on the same footing as reading `HOST_DIR` above and `SIGNING_KEY_FILE` below
-// (ADR-0045).
-const databaseUrl = process.env.DATABASE_URL;
-if (databaseUrl === undefined) {
-  throw new Error("set DATABASE_URL to where the Db connects: the framework reads no environment");
-}
+// the variable is on the same footing as reading the base directory above and `SIGNING_KEY_FILE`
+// below (ADR-0045).
+const databaseUrl = fromEnv(
+  "DATABASE_URL",
+  "to where the Db connects: the framework reads no environment",
+);
 
 // The Shared Agent's identity, read here because the framework reads nothing: it takes a
 // `KeyObject` and parses no PEM, opens no file and looks at no environment variable, so
 // whether this path came from a file, a secrets manager or a shell is this entry point's
-// business and nobody else's (ADR-0016, ADR-0041). It is the same division `HOST_DIR` above
-// is on, and this is the one place a reader sees whose job it is.
+// business and nobody else's (ADR-0016, ADR-0041). It is the same division `BASE_DIR_HOST`
+// above is on, and this is the one place a reader sees whose job it is.
 //
 // Nothing generates one, deliberately: a fresh key per restart would leave every Decision
 // ever published unverifiable, with nothing anywhere saying so.
@@ -57,24 +95,24 @@ const runtime = createPiRuntime({
     entries: [
       {
         agentPath: "/workspace",
-        gatewayPath: path.join(import.meta.dirname, "state", "workspace"),
+        gatewayPath: path.join(baseDirGateway, "state", "workspace"),
       },
       {
         agentPath: "/home/agent/.pi/agent",
-        gatewayPath: path.join(import.meta.dirname, "state", "agent"),
+        gatewayPath: path.join(baseDirGateway, "state", "agent"),
       },
       {
         agentPath: "/workspace/AGENTS.md",
-        gatewayPath: path.join(import.meta.dirname, "AGENTS.md"),
+        gatewayPath: path.join(baseDirGateway, "AGENTS.md"),
         readOnly: true,
       },
       {
         agentPath: "/home/agent/.pi/agent/settings.json",
-        gatewayPath: path.join(import.meta.dirname, "settings.json"),
+        gatewayPath: path.join(baseDirGateway, "settings.json"),
         readOnly: true,
       },
     ],
-    hostRoot: { gatewayPath: import.meta.dirname, hostPath: hostDir },
+    hostRoot: { gatewayPath: baseDirGateway, hostPath: baseDirHost },
   },
 });
 
@@ -85,8 +123,8 @@ const tokenTtl = 30 * 24 * 60 * 60 * 1000;
 const gateway = createGateway({
   databaseUrl,
   runtime,
-  publicListen: { port: 8080, host: "0.0.0.0" },
-  agentListen: { port: 7411, host: "0.0.0.0" },
+  publicListen: { port: publicPort, host: publicHost },
+  agentListen: { port: agentPort, host: agentHost },
   // The four opinionated parts, built by hand from the infrastructure `createGateway` hands us
   // and returned so they become Components of the Gateway — keyed ahead of the Signal Worker, so
   // they stop after the drain a Handler's post phase reaches them through (ADR-0045). This is the

@@ -8,13 +8,24 @@ services:
     environment:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set it in your shell; the agent's model needs it}
       DATABASE_URL: postgres://saf:saf@postgres:5432/saf
-      HOST_DIR: ${PWD}
+      # The shared tree, named on both sides: BASE_DIR_GATEWAY is where this container sees it
+      # (the binds below mount into it), BASE_DIR_HOST is where it is on the host, and main.ts
+      # feeds the pair to hostRoot so the daemon resolves the agent's mounts on the host.
+      BASE_DIR_GATEWAY: /app/example
+      BASE_DIR_HOST: ${PWD}
+      # Where each server binds inside the container. The ports: below publish PUBLIC_PORT and
+      # must agree with it; AGENT_PORT is bound but published to nobody.
+      PUBLIC_HOST: 0.0.0.0
+      PUBLIC_PORT: "8080"
+      AGENT_HOST: 0.0.0.0
+      AGENT_PORT: "7411"
     volumes:
       # Root on the host. See docs/quickstart.md, "The Gateway holds your Docker socket".
       - /var/run/docker.sock:/var/run/docker.sock
       - ./state/workspace:/app/example/state/workspace
       - ./state/agent:/app/example/state/agent
     ports:
+      # Publishes PUBLIC_PORT to loopback; AGENT_PORT is bound but published to nobody.
       - "127.0.0.1:8080:8080"
     networks: [db, agent]
     depends_on:
