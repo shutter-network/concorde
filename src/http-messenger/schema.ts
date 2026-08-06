@@ -54,8 +54,8 @@ import { users } from "../users/schema.ts";
 /**
  * The HTTP Messenger's schema, prefixed for the reason the other two are: the framework
  * is installed into a database it does not own, and this name is not an Operator's to
- * change — the table below is compiled against it, so a descriptor naming a different
- * schema would migrate one place and read another.
+ * change — the table below is compiled against it, and an Operator's generation reads that
+ * same object, so renaming it is a migration in somebody else's database.
  *
  * It carries the **part** and not only its subject, against the rule the other two
  * follow. What that rule protects against is a part rename becoming a migration, and

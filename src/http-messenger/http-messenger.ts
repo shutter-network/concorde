@@ -2,8 +2,8 @@
  * The HTTP Messenger: the part of the Gateway that owns Messages.
  *
  * Constructed like every other part — one call, an ordinary object back, and nothing to
- * register it with. It wires itself the way every part does, registering its own migration
- * descriptor with the Db and its two plugins on the two servers it is handed (ADR-0032).
+ * register it with. It wires itself the way every part does, registering its two plugins on
+ * the two servers it is handed (ADR-0032).
  *
  * It is a **Component whose `start` and `stop` do nothing**. No timers and no connection of
  * its own, so there is nothing to begin and nothing to release; it is in the Gateway's
@@ -43,16 +43,16 @@
  *    caller's behalf, and `history` goes through the part's own handle. The consequence is
  *    worth stating where it will be met: a caller **cannot read its own uncommitted write**,
  *    so `send` returns the record and a read-back has no reason to exist.
- *  - **Construction order is load-bearing.** `db.migrate()` applies descriptors in
- *    registration order, which is construction order, and this part's first migration
- *    references `saf_users.users` — so the User Manager must be constructed **before**
- *    this. Nothing checks it; the failure is PostgreSQL's `schema "saf_users" does not
- *    exist`, or `relation "saf_users.users" does not exist` where the schema is there and
- *    the table is not (ADR-0036).
+ *  - **Construction order against the User Manager is no longer load-bearing.** The
+ *    framework applies no DDL, so there is no registration order to get wrong: the foreign
+ *    key onto `saf_users.users.id` is declared in `schema.ts` and ordered by the single
+ *    generation the Operator runs (ADR-0046). What remains is a requirement on their
+ *    barrel — export this part's schema without the User Manager's and generation
+ *    references a table it never creates.
  *  - **`users` and `worker` are named nominally.** A structural type on `users` would
  *    advertise a substitutability the foreign key has made false: this part needs *our*
  *    User Manager at the schema level, and the constructor is where that should be
- *    visible rather than at `migrate`.
+ *    visible rather than at the Operator's first `generate`.
  *  - **A submitted Message and its Signal are one transaction**, and nothing else is in it.
  *    PostgreSQL's `NOTIFY` is transactional, so the row and the wakeup become visible
  *    together: a Signal from a transaction that rolled back wakes nobody, and a Message that
@@ -78,7 +78,6 @@ import {
   type MessageWindow,
   selectMessages,
 } from "./messages.ts";
-import { httpMessagesMigrations } from "./migrations.ts";
 import { agentMessageRoutes, publicMessageRoutes } from "./routes.ts";
 import { httpMessagesTables } from "./schema.ts";
 
@@ -293,11 +292,8 @@ export function createHttpMessenger(options: HttpMessengerOptions): HttpMessenge
     options.users.requireUser,
   );
 
-  // The three acts of wiring, all of them here so that an Operator's entry point does none
-  // of them (ADR-0032). Registering the descriptor is bookkeeping the Db does nothing with
-  // until `migrate` or `start` — and the order it lands in is this call's position in the
-  // entry point, which the foreign key makes matter (ADR-0036).
-  options.db.registerMigrations(httpMessagesMigrations);
+  // The two acts of wiring, both of them here so that an Operator's entry point does neither
+  // (ADR-0032).
   // Not awaited: Fastify defers a plugin until the server is ready, so this is a
   // registration made at construction and loaded at `listen` — which is also why a server
   // that is already listening refuses one.

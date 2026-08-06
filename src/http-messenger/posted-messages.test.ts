@@ -17,8 +17,9 @@
  * A whole Gateway per test, because the Handler map is a construction option and each test
  * brings its own: two started workers on one database would break the serial guarantee
  * (ADR-0012), so each is constructed, started, and stopped again before the next. The
- * migrations are applied once up front, the way a pre-deploy entry point applies them —
- * from the descriptors the parts export, in the order the foreign key requires (ADR-0036).
+ * schemas are pushed once up front, the way an Operator applies theirs — every part's
+ * together, the User Manager's among them because the foreign key needs it (ADR-0036,
+ * ADR-0046).
  *
  * The Runtime is the one thing faked (ADR-0022): what it records is that a Run happened,
  * with the Prompt the Handler wrote.

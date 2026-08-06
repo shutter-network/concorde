@@ -2,8 +2,8 @@
  * Decisions: the part of the Gateway that owns the one global log of Decisions.
  *
  * Constructed like every other part — one call, an ordinary object back, and nothing to
- * register it with. It wires itself the way every part does, registering its own migration
- * descriptor with the Db and its two plugins on the two servers it is handed (ADR-0032).
+ * register it with. It wires itself the way every part does, registering its two plugins on
+ * the two servers it is handed (ADR-0032).
  *
  * It is a **Component whose `start` and `stop` do nothing**, for the reason the User Manager's
  * and the HTTP Messenger's are: no timers and no connection of its own, and membership in the
@@ -47,7 +47,6 @@ import type { Db, Handle } from "../db/index.ts";
 import { type CursorWindow, limitSchema } from "../route-conventions.ts";
 import type { Signatures } from "../signatures/index.ts";
 import type { Users } from "../users/users.ts";
-import { decisionsMigrations } from "./migrations.ts";
 import { agentDecisionRoutes, publicDecisionRoutes } from "./routes.ts";
 import { decisions, decisionsSchema, decisionsTables } from "./schema.ts";
 
@@ -130,8 +129,8 @@ export type DecisionsOptions = {
    * no header of its own and its one refusal is the Manager's single 401 (ADR-0030).
    *
    * **Unlike the HTTP Messenger's, this is not a schema-level dependency.** There is no foreign
-   * key onto `saf_users.users` and nothing here references a User at all, so construction order
-   * is free: this part's migration folder applies wherever it lands (ADR-0043).
+   * key onto `saf_users.users` and nothing here references a User at all, so a barrel may carry
+   * this part's schema without the User Manager's (ADR-0043).
    */
   readonly users: Users;
   /**
@@ -306,10 +305,8 @@ export function createDecisions(options: DecisionsOptions): Decisions {
     options.users.requireUser,
   );
 
-  // The three acts of wiring, all of them here so that an Operator's entry point does none of
-  // them (ADR-0032). Registering the descriptor is bookkeeping the Db does nothing with until
-  // `migrate` or `start`, and unlike the HTTP Messenger's the order it lands in does not matter.
-  options.db.registerMigrations(decisionsMigrations);
+  // The two acts of wiring, both of them here so that an Operator's entry point does neither
+  // (ADR-0032).
   // Not awaited: Fastify defers a plugin until the server is ready, so this is a registration
   // made at construction and loaded at `listen` — which is also why a server that is already
   // listening refuses one.

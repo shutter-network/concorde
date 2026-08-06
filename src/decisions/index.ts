@@ -6,8 +6,8 @@
  * to nothing imports nothing from here.
  *
  * `createDecisions` is the whole of it for an Operator: hand it the Db, Signatures, the User
- * Manager and both servers, and it registers `decisionsMigrations` with that Db and its two
- * route groups at `/decisions` on the two servers (ADR-0032). Then put it in the Gateway's
+ * Manager and both servers, and it registers its two route groups at `/decisions` on the two
+ * servers (ADR-0032). Then put it in the Gateway's
  * record like every other part: it is a Component whose `start` and `stop` do nothing, keyed
  * **before** the Signal Worker so that it is stopped after the drain, which is when a Signal
  * Handler's post phase may still publish (ADR-0037, ADR-0038).
@@ -21,13 +21,13 @@
  *
  * **Construct it after Signatures**, which it holds: a Decision that was not signed is not a
  * Decision, so there is no degraded mode in which this part writes rows without artifacts. It
- * imposes **no** construction order on the User Manager, unlike the HTTP Messenger: there is no
- * foreign key here and nothing references a User at all, so this folder applies wherever it
- * lands in the migration order ([ADR-0043](../../docs/adr/0043-decisions-are-one-global-log.md)).
+ * imposes **no** construction order on the User Manager: there is no foreign key here and
+ * nothing references a User at all
+ * ([ADR-0043](../../docs/adr/0043-decisions-are-one-global-log.md)).
  *
- * `decisionsMigrations` is exported because a pre-deploy migration entry point should not have
- * to construct the part that owns the tables — and, for this part, should not have to load a
- * signing key to get at them.
+ * It registers **no migration**. The table comes from
+ * `shared-agent-framework/decisions/schema`, which an Operator barrels and applies with their
+ * own `drizzle-kit` ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)).
  *
  * `DecisionRecord` is the one shape every surface of this part answers with, and the field on
  * it that matters is `jws`: the artifact is the Decision, and the log is where Decisions are
@@ -41,4 +41,3 @@
 
 export type { DecisionRecord, Decisions, DecisionsOptions } from "./decisions.ts";
 export { createDecisions } from "./decisions.ts";
-export { decisionsMigrations } from "./migrations.ts";

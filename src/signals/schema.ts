@@ -11,9 +11,8 @@
  * root export"; no part reading another's tables remains a discipline, and an Operator who
  * wants tables of their own still gets them through `db.handle(theirOwnSchema)`.
  *
- * `drizzle-kit` reads this file to generate `migrations/signals`, so keep it to the
- * tables and the values they are defined in terms of. The descriptor that ships
- * those migrations lives in `migrations.ts` for that reason.
+ * An Operator's `drizzle-kit` reads this file, through their barrel, so keep it to the
+ * tables and the values they are defined in terms of.
  */
 
 import { type SQL, sql } from "drizzle-orm";
@@ -36,8 +35,9 @@ import {
  *
  * Prefixed because the framework is installed into a database it does not own: an
  * unprefixed `signals` is a plausible name for a schema an Operator already has, and
- * this name is not theirs to change — the tables below are compiled against it, so a
- * descriptor naming a different schema would migrate one place and read another.
+ * this name is not theirs to change — the tables below are compiled against it, and an
+ * Operator's generation reads those same objects, so renaming it is a migration in
+ * somebody else's database.
  */
 export const workerSchema = pgSchema("saf_signals");
 

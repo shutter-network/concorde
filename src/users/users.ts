@@ -2,9 +2,8 @@
  * The User Manager: the part of the Gateway that owns Users.
  *
  * Constructed like every other part — one call, an ordinary object back, and nothing
- * to register it with. It wires itself the way every part does, registering its own
- * migration descriptor with the Db and its routes on whichever servers it is handed
- * (ADR-0032).
+ * to register it with. It wires itself the way every part does, registering its routes
+ * on whichever servers it is handed (ADR-0032).
  *
  * It is a **Component whose `start` and `stop` do nothing**. There are no timers and no
  * connection of its own, so there is nothing to begin and nothing to release; what a
@@ -45,7 +44,6 @@ import type { FastifyInstance, FastifyPluginAsync, preHandlerAsyncHookHandler } 
 import type { Component } from "../components.ts";
 import type { Db, Handle } from "../db/index.ts";
 import { limitSchema } from "../route-conventions.ts";
-import { usersMigrations } from "./migrations.ts";
 import {
   agentUserRoutes,
   type Credentials,
@@ -396,11 +394,8 @@ export function createUsers(options: UsersOptions): Users {
     presentedUser,
   );
 
-  // The three acts of wiring, all of them here so that an Operator's entry point does
-  // none of them (ADR-0032). Registering the descriptor is bookkeeping the Db does
-  // nothing with until `migrate` or `start`, and it is the identical descriptor a
-  // pre-deploy migration entry point registers, which is one registration and not two.
-  options.db.registerMigrations(usersMigrations);
+  // The two acts of wiring, both of them here so that an Operator's entry point does
+  // neither (ADR-0032).
   // Under the prefixes every document about this part already writes, and not awaited:
   // Fastify defers a plugin until the server is ready, so this is a registration made
   // at construction and loaded at `listen` — which is also why a server that is already

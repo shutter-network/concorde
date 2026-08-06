@@ -10,14 +10,7 @@ export type {
   RunPlan,
 } from "./container/index.ts";
 export { createAgentContainerRuntime, mountArguments } from "./container/index.ts";
-export type {
-  ChannelListener,
-  Db,
-  Handle,
-  Listening,
-  MigrationDescriptor,
-  Transaction,
-} from "./db/index.ts";
+export type { ChannelListener, Db, Handle, Listening, Transaction } from "./db/index.ts";
 export { openDb } from "./db/index.ts";
 // The infrastructure constructor, from the package root — and it imports **none** of `./users`,
 // `./http-messenger`, `./signatures` or `./decisions`: those four are the Operator's now, built
@@ -46,6 +39,6 @@ export type {
   SignalWorker,
   SignalWorkerOptions,
 } from "./signals/index.ts";
-export { createSignalWorker, signalsMigrations } from "./signals/index.ts";
+export { createSignalWorker } from "./signals/index.ts";
 export type { TemplateHandlerOptions } from "./template-handler.ts";
 export { templateHandler } from "./template-handler.ts";

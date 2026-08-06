@@ -78,7 +78,7 @@
  * `send` on it. A callback gives the Handler's *author* every part, named and precisely typed,
  * one step earlier and at no cost.
  *
- * ## The third reason the order is load-bearing
+ * ## The second reason the order is load-bearing
  *
  * Both servers describe themselves, in OpenAPI at `/openapi.json` and as a browsable page at
  * `/docs`, and **this constructor is the only party that can arrange it**
@@ -91,8 +91,10 @@
  *
  * That is the whole of why the description registration is here rather than anywhere an Operator
  * could put it, and construction order in this function is load-bearing for it as well as for
- * the cycle above. It fails the most quietly of the two: get it wrong and both documents are
- * empty, with no error anywhere.
+ * the cycle above. Those two are the whole list now — migration registration order used to be a
+ * third, and it is gone with the subsystem
+ * ([ADR-0046](../docs/adr/0046-the-operator-owns-migrations.md)). It fails the most quietly of
+ * the two: get it wrong and both documents are empty, with no error anywhere.
  *
  * ## What it declines to construct
  *
@@ -103,10 +105,10 @@
  * constructor options**, so there is no bring-your-own-instance escape and the only thing stated
  * is where each server listens. **Either bind address**, which is the one pair of values where a
  * wrong default is worse than no default: a Public server on loopback serves nobody, and an
- * Agent server anywhere else is an unauthenticated API on a reachable port. And **migrations**:
- * `start` does not apply them, and the Operator calls `gateway.components.db.migrate()` between
- * construction and `start`
- * ([ADR-0032](../docs/adr/0032-components-wire-themselves-at-construction.md)).
+ * Agent server anywhere else is an unauthenticated API on a reachable port. And **migrations**,
+ * whole: nothing here applies DDL and `start` verifies nothing, because the Operator generates
+ * and applies their own from the parts' `/schema` subpaths
+ * ([ADR-0046](../docs/adr/0046-the-operator-owns-migrations.md)).
  *
  * ## It reads no environment
  *
@@ -229,10 +231,9 @@ export type GatewayOptions<E extends GatewayExtension> = {
    * A callback because it needs objects constructed in this function's body. What it returns is
    * keyed **ahead of the Worker**, so those Components start before the Worker and therefore stop
    * *after* the drain — right for a resource the drain uses, such as the Messenger a Handler's
-   * post phase calls. An Operator building the full stack constructs the User Manager **before**
-   * the HTTP Messenger, because `messages.user_id` is a foreign key onto `saf_users.users.id` and
-   * `db.migrate()` applies descriptors in registration order (ADR-0036); getting it wrong fails
-   * loudly at the first migration.
+   * post phase calls. Construction order among the parts themselves is now only what each
+   * constructor's arguments force — Signatures before Decisions, which holds it — since the
+   * framework applies no DDL and there is no registration order to get wrong (ADR-0046).
    */
   readonly extend?: (components: InfraComponents) => E;
   /**
@@ -321,8 +322,9 @@ function describeSurface(fastify: FastifyInstance, title: string, description: s
  * intersects with `InfraComponents` to leave it exactly as it is.
  *
  * Nothing here connects, listens or migrates: construction is free of side effects beyond the
- * registrations each part makes on the Db and on the two servers (ADR-0032). The Operator calls
- * `gateway.components.db.migrate()` next, and then `gateway.start()`.
+ * route registrations each part makes on the two servers (ADR-0032). The Operator's database is
+ * already carrying their own applied schema by the time `gateway.start()` is called, and nothing
+ * here checks that it is (ADR-0046).
  */
 export function createGateway<E extends GatewayExtension = Record<string, never>>(
   options: GatewayOptions<E>,

@@ -55,19 +55,9 @@
       "shared-agent-framework/scheduler/schema": ["./src/scheduler/schema.ts"]
     }
   },
-  // The `drizzle.*.config.ts` files are included but not built: they are how the
-  // migration folders are generated, one per part, so a mistake in one should fail
-  // the typecheck rather than the next person to run the generator. `example` is
-  // included for the same reason — it is the reference deployment, and one that does
-  // not compile is worse than none.
-  "include": [
-    "src",
-    "scripts",
-    "drizzle.config.ts",
-    "drizzle.users.config.ts",
-    "drizzle.http-messages.config.ts",
-    "drizzle.decisions.config.ts",
-    "drizzle.scheduler.config.ts",
-    "example"
-  ]
+  // There are no `drizzle.*.config.ts` files here any more: the framework generates
+  // nothing, so the only one in the repository is `example/drizzle.config.ts`, the
+  // reference Operator's own (ADR-0046). `example` is included but not built — it is
+  // the reference deployment, and one that does not compile is worse than none.
+  "include": ["src", "scripts", "example"]
 }

@@ -6,8 +6,8 @@
  * of the two servers it is handed (ADR-0032): the signing on the Agent server, the lazy check
  * and the public key on the Public server.
  *
- * It is the **first part of the framework with no storage at all**: no schema, no tables, no
- * migrations and no migration descriptor, so there is no Db argument either
+ * It is the **first part of the framework with no storage at all**: no schema, no tables and
+ * no `/schema` subpath, so there is no Db argument either
  * ([ADR-0042](../../docs/adr/0042-a-signature-is-a-compact-jws.md)). It is a Component
  * anyway, on the User Manager's grounds: the Gateway's record holds every part and not only
  * the ones that run (ADR-0037). Both its methods do nothing.

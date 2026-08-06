@@ -7,8 +7,8 @@
  * freedoms rather than the framework's last word on messaging (ADR-0034).
  *
  * `createHttpMessenger` is the whole of it for an Operator: hand it the Db, the User
- * Manager, the Signal Worker and both servers, and it registers `httpMessagesMigrations`
- * with that Db and its two route groups at `/messages` on the two servers (ADR-0032). Then
+ * Manager, the Signal Worker and both servers, and it registers its two route groups at
+ * `/messages` on the two servers (ADR-0032). Then
  * put it in the Gateway's record like every other part: it is a Component whose `start` and
  * `stop` do nothing today, keyed **before** the Signal Worker so that it is stopped after
  * the drain, which is when a Signal Handler's post phase reaches it (ADR-0037, ADR-0038).
@@ -21,14 +21,18 @@
  * by the server a request arrived on, and nothing here puts words in a User's mouth
  * (ADR-0034).
  *
- * **Construct it after the User Manager.** `messages.user_id` is a foreign key onto
- * `saf_users.users.id`, `db.migrate()` applies descriptors in registration order, and
- * registration order is construction order — so the other way round fails with PostgreSQL's
- * `schema "saf_users" does not exist` (ADR-0036).
+ * **Construction order against the User Manager no longer matters**, and that is the one
+ * change ADR-0046 makes to ADR-0036. `messages.user_id` is still a foreign key onto
+ * `saf_users.users.id`, but it is declared in `schema.ts` now and ordered by the single
+ * generation an Operator runs, so nothing here applies DDL and nothing can apply it in the
+ * wrong order. What survives is a requirement on the *barrel*: a deployment running this
+ * part must also export the User Manager's schema, or generation references a table it does
+ * not create.
  *
- * `httpMessagesMigrations` is exported because a pre-deploy migration entry point should not
- * have to construct the part that owns the tables — and, for this part, should not have to
- * construct a Signal Worker and a Runtime to get at them.
+ * It registers **no migration**. The tables come from
+ * `shared-agent-framework/http-messenger/schema`, which an Operator barrels and applies with
+ * their own `drizzle-kit`
+ * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)).
  *
  * `messageReceivedKind` and `MessageRecord` are the two halves of this part's Signal
  * contract, and they are here so that an Operator's Handler map is neither a string literal
@@ -50,4 +54,3 @@
 export type { HttpMessenger, HttpMessengerOptions } from "./http-messenger.ts";
 export { createHttpMessenger, messageReceivedKind } from "./http-messenger.ts";
 export type { MessageRecord } from "./messages.ts";
-export { httpMessagesMigrations } from "./migrations.ts";

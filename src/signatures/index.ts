@@ -2,10 +2,11 @@
  * Signatures, from `shared-agent-framework/signatures`.
  *
  * A subpath of its own, like the User Manager's and the HTTP Messenger's, so that what a
- * deployment depends on is legible from its import statements. Unlike theirs it exports **no
- * migration descriptor**, because this part stores nothing: no schema, no tables, no
- * migrations, and therefore nothing for a pre-deploy migration entry point to register
- * ([ADR-0042](../../docs/adr/0042-a-signature-is-a-compact-jws.md)).
+ * deployment depends on is legible from its import statements. Unlike theirs it has **no
+ * `/schema` subpath**, because this part stores nothing: no schema, no tables, and therefore
+ * nothing for an Operator to barrel or generate
+ * ([ADR-0042](../../docs/adr/0042-a-signature-is-a-compact-jws.md),
+ * [ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)).
  *
  * `createSignatures` is the whole of it for an Operator: hand it the Shared Agent's private
  * key, both servers and the User Manager, and it derives the public half and registers three

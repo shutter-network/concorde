@@ -34,7 +34,6 @@ import type { Component } from "../components.ts";
 import type { Db, Handle, Listening } from "../db/index.ts";
 import { defaultLogger, type Logger } from "../logging.ts";
 import type { Prompt, Signal, SignalHandlers } from "./handlers.ts";
-import { signalsMigrations } from "./migrations.ts";
 import { agentReadRoutes } from "./routes.ts";
 import type { RunOutcome, RunPrompt, Runtime } from "./runtime.ts";
 import { runs, signals, workerTables } from "./schema.ts";
@@ -202,11 +201,8 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   // Db (ADR-0022).
   const handle = options.db.handle(workerTables);
 
-  // The two acts of wiring, both of them here so that an Operator's entry point does
-  // neither (ADR-0032). Registering the descriptor is bookkeeping the Db does nothing
-  // with until `migrate` or `start`, and it is the identical descriptor a pre-deploy
-  // migration step registers by hand, which is one registration and not two.
-  options.db.registerMigrations(signalsMigrations);
+  // The one act of wiring, here so that an Operator's entry point does not do it
+  // (ADR-0032).
   const agentRoutes = agentReadRoutes(handle);
   // At no prefix, and not awaited: Fastify defers a plugin until the server is ready,
   // so this is a registration made at construction and loaded at `listen` — which is

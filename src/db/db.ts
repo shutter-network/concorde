@@ -1,8 +1,6 @@
-import { fileURLToPath } from "node:url";
 import type { ExtractTablesWithRelations } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { migrate as applyFolder } from "drizzle-orm/node-postgres/migrator";
 import type { PgDatabase, PgQueryResultHKT, PgTransaction } from "drizzle-orm/pg-core";
 import { Client, Pool } from "pg";
 import type { Component } from "../components.ts";
@@ -33,42 +31,6 @@ export type Transaction = PgTransaction<
   Record<string, never>,
   ExtractTablesWithRelations<Record<string, never>>
 >;
-
-/**
- * Where one part's migrations live and how they are tracked. Inert data: each
- * part of the Gateway exports one and registers it with the Db it was given, and
- * `db.migrate()` applies whatever registered rather than any part applying its
- * own. It stays exported because the migration entry point registers it directly
- * — a pre-deploy migration job must not have to construct a Signal Worker, and
- * through it a Runtime and a model credential (ADR-0032).
- */
-export type MigrationDescriptor = {
-  /**
-   * The folder holding the generated `.sql` files and `meta/_journal.json`.
-   *
-   * A `URL` and not a path, so that `new URL("../../migrations/signals",
-   * import.meta.url)` is the only natural spelling and a working-directory
-   * relative path cannot be written by accident. That distinction is invisible
-   * in this repository and fatal outside it: the folder ships inside the
-   * package, so resolving it against `process.cwd()` passes every test here and
-   * breaks for every Operator.
-   */
-  readonly folder: URL;
-  /**
-   * The part's PostgreSQL schema. Created if absent, and holds `table` as well
-   * as the part's own tables, so dropping the schema removes the part whole.
-   */
-  readonly schema: string;
-  /**
-   * The part's own migration tracking table.
-   *
-   * Per-part tracking is mandatory rather than tidy. Drizzle's guard compares
-   * folder timestamps against only the newest row of a tracker, so two parts
-   * sharing one make the older part's migrations **silently skipped while
-   * `migrate` resolves successfully** (ADR-0022).
-   */
-  readonly table: string;
-};
 
 /**
  * What `db.listen` reports.
@@ -102,7 +64,10 @@ export type Listening = {
 
 /**
  * The Gateway's PostgreSQL client: the pool, the schema-typed handle each part
- * queries on, transactions, `LISTEN` registrations, and migrations.
+ * queries on, transactions and `LISTEN` registrations. **No migrations.** The
+ * Operator generates and applies their own DDL, so nothing here creates a schema,
+ * applies a folder or tracks what was applied
+ * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)).
  *
  * Named for the client and not for the state it holds. "Store" named the
  * persistent state, and persistent state has nothing to open and nothing to
@@ -163,29 +128,6 @@ export type Db = Component & {
    */
   listen(channel: string, listener: ChannelListener): Listening;
 
-  /**
-   * Takes these descriptors as ones `migrate` should apply. Nothing is applied
-   * here; this is bookkeeping a constructor can do.
-   *
-   * The identical descriptor twice is one registration, because two registrations
-   * of it are the normal case: a part registers the descriptor it exports at
-   * construction, and the migration entry point registers the same one directly.
-   * Two **different** folders naming one tracking table still throws — that is
-   * the failure where Drizzle compares folder timestamps against only the newest
-   * tracker row, silently skips the older folder's migrations, and resolves
-   * successfully (ADR-0022).
-   */
-  registerMigrations(...descriptors: MigrationDescriptor[]): void;
-
-  /**
-   * Applies every registered descriptor into its own schema with its own tracker,
-   * in the order it was registered. An explicit call and never a side effect of
-   * opening the Db or of starting it, so it can run from a separate entry point
-   * before a deploy — which is the ordering that works when the two are separate
-   * steps.
-   */
-  migrate(): Promise<void>;
-
   /** Runs `body` in a transaction: commits on return, rolls back on throw. */
   tx<T>(body: (tx: Transaction) => Promise<T>): Promise<T>;
 };
@@ -194,24 +136,19 @@ export type Db = Component & {
  * Opens the Db on a PostgreSQL connection URL.
  *
  * Synchronous, and connects lazily: the pool opens its first connection when
- * something is asked of it. That is what lets a part be constructed, and its
- * migrations registered, before anything is on the wire — and it is why `start`
- * opens the pool itself rather than leaving a bad URL to whichever query came
- * first.
+ * something is asked of it. That is what lets every part be constructed before
+ * anything is on the wire — and it is why `start` opens the pool itself rather
+ * than leaving a bad URL to whichever query came first.
  */
 export function openDb(url: string): Db {
   const pool = new Pool({ connectionString: url });
 
   // One schema-less handle for everything that does not belong to a part:
-  // migrating, transactions, and raw statements. Every handle shares the pool.
+  // transactions and raw statements. Every handle shares the pool.
   const bare = drizzle(pool);
 
   // Every registration still open, so `stop` can take them with it.
   const listeners = new Set<Listening>();
-
-  // What has registered, in registration order, which is the order `migrate`
-  // applies in and `start` verifies in.
-  const registered: MigrationDescriptor[] = [];
 
   return {
     handle(schema) {
@@ -222,23 +159,6 @@ export function openDb(url: string): Db {
       const listening = startListening(url, channel, listener, () => listeners.delete(listening));
       listeners.add(listening);
       return listening;
-    },
-
-    registerMigrations(...descriptors) {
-      for (const descriptor of descriptors) register(registered, descriptor);
-    },
-
-    async migrate() {
-      for (const descriptor of registered) {
-        await bare.execute(sql`create schema if not exists ${sql.identifier(descriptor.schema)}`);
-        await applyFolder(bare, {
-          // Drizzle reads the folder off disk with plain path concatenation, so
-          // the URL has to become a path here rather than anywhere later.
-          migrationsFolder: fileURLToPath(descriptor.folder),
-          migrationsSchema: descriptor.schema,
-          migrationsTable: descriptor.table,
-        });
-      }
     },
 
     tx(body) {
@@ -370,27 +290,4 @@ function startListening(
       if (client !== undefined) await client.end();
     },
   };
-}
-
-/**
- * Adds one descriptor to what `migrate` applies and `start` verifies, or refuses
- * it.
- *
- * Two descriptors naming one tracker is the failure ADR-0022 describes, and it
- * reports success, so it is refused where it is expressible rather than left to
- * be discovered as missing tables. The identical descriptor is not that failure:
- * it is a part registering what it exports and the migration entry point
- * registering the same thing, so it is one registration and no complaint.
- */
-function register(registered: MigrationDescriptor[], descriptor: MigrationDescriptor): void {
-  const tracker = `${descriptor.schema}.${descriptor.table}`;
-  const already = registered.find((other) => `${other.schema}.${other.table}` === tracker);
-  if (already === undefined) {
-    registered.push(descriptor);
-    return;
-  }
-  if (already.folder.href === descriptor.folder.href) return;
-  throw new Error(
-    `two migration descriptors would share the tracking table ${tracker}. Drizzle compares folder timestamps against only the newest row of a tracker, so a shared one skips the older folder's migrations and still resolves successfully. Give each part its own schema and tracking table.`,
-  );
 }

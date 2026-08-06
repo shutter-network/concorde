@@ -2,8 +2,8 @@
  * The Scheduler: the part of the Gateway that owns Schedules and emits a Signal when one matures.
  *
  * A **Producer** and a **Component**, constructed like every other part — one call, an ordinary
- * object back — and wiring itself the way every part does, registering its own migration
- * descriptor with the Db (ADR-0032). It is the second Producer, the peer ADR-0018 anticipated
+ * object back — and wiring itself the way every part does, registering its agent-facing routes on
+ * the server it is handed (ADR-0032). It is the second Producer, the peer ADR-0018 anticipated
  * alongside the HTTP Messenger, and reading that part is the closest prior art for this one.
  *
  * The storage, the Signal contract, and the firing core are the awaitable `tick` due-check plus
@@ -48,7 +48,6 @@ import type { Component } from "../components.ts";
 import type { Db } from "../db/index.ts";
 import { defaultLogger, type Logger } from "../logging.ts";
 import type { SignalWorker } from "../signals/worker.ts";
-import { schedulerMigrations } from "./migrations.ts";
 import { scheduleRoutes } from "./routes.ts";
 import {
   advanceSchedule,
@@ -208,11 +207,6 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
   const now = options.now ?? (() => new Date());
   const maxSleepMs = options.maxSleepMs ?? defaultMaxSleepMs;
   const log = options.logger ?? defaultLogger();
-
-  // Registering the descriptor is bookkeeping the Db does nothing with until `migrate` or `start`,
-  // and unlike the HTTP Messenger's the order it lands in does not matter — a Schedule references
-  // nobody (ADR-0018).
-  options.db.registerMigrations(schedulerMigrations);
 
   /** Whether the timer is armed to run, flipped by `start` and `stop` and read by `arm`. */
   let started = false;

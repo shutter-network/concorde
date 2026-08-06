@@ -7,10 +7,10 @@
  * (ADR-0018).
  *
  * `createScheduler` is the whole of it for an Operator: hand it the Db and the Signal Worker, and
- * it registers `schedulerMigrations` with that Db (ADR-0032). Then put it in the Gateway's record
- * like every other part: it is a Component, and the day its autonomous timer lands its `start`
- * arms one and its `stop` cancels it. It imposes **no** construction-order dependency, unlike the
- * HTTP Messenger: a Schedule references nobody, so its migration folder applies wherever it lands.
+ * it registers its agent-facing routes on the server it was given (ADR-0032). Then put it in the
+ * Gateway's record like every other part: it is a Component, and the day its autonomous timer
+ * lands its `start` arms one and its `stop` cancels it. It imposes **no** construction-order
+ * dependency: a Schedule references nobody.
  *
  * What it answers with is the programmatic interface an Operator always has: `schedule` (an upsert
  * by name), `list`, `cancel`, and the awaitable `tick` due-check. A `schedule` call whose `spec` is
@@ -24,15 +24,14 @@
  * `SignalHandler<ScheduleFiredRecord>`. Registering no Handler for that `kind` is a stored
  * Schedule that fires into a permanently failed Signal (ADR-0017).
  *
- * `schedulerMigrations` is exported because a pre-deploy migration entry point should not have to
- * construct the part that owns the tables — and, for this part, should not have to construct a
- * Signal Worker and a Runtime to get at them.
+ * It registers **no migration**. The table comes from
+ * `shared-agent-framework/scheduler/schema`, which an Operator barrels and applies with their own
+ * `drizzle-kit` ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)).
  *
  * The agent-facing routes register on the Agent server the constructor is given; passing none is the
  * disable switch, so a route plugin is an internal of the part rather than a separate export.
  */
 
-export { schedulerMigrations } from "./migrations.ts";
 export type { Scheduler, SchedulerOptions } from "./scheduler.ts";
 export { createScheduler, scheduleFiredKind } from "./scheduler.ts";
 export type {

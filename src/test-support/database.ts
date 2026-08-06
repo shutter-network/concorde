@@ -1,9 +1,9 @@
 /**
  * A throwaway PostgreSQL database, at least one per test file.
  *
- * PostgreSQL is real in every test (ADR-0022), and migration tests create and
- * drop whole schemas, so no two test files may share a database: `node --test`
- * runs them in parallel processes and they would migrate over each other. A file
+ * PostgreSQL is real in every test (ADR-0022), and a test pushing a part's schema
+ * creates whole schemas, so no two test files may share a database: `node --test`
+ * runs them in parallel processes and they would push over each other. A file
  * asks for one named after itself and drops it when it is done; a test whose
  * subject is what a *fresh* database ends up containing asks for its own.
  *

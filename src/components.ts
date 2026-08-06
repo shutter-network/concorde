@@ -25,7 +25,7 @@ import type { FastifyListenOptions } from "fastify";
  *
  * **Both methods are required**, and the reason is structural typing rather than
  * ceremony: a `Component` whose methods were both optional would be the empty type,
- * satisfied by every value in the program — a `MigrationDescriptor`, an options bag, a
+ * satisfied by every value in the program — a schema module, an options bag, a
  * string. The record is order-bearing, so a wrong entry in it is silent by
  * construction and the type has to be tight enough that an accident cannot happen. A
  * part with nothing to run and nothing to release says so with two methods that do

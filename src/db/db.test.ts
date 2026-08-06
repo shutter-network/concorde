@@ -16,8 +16,8 @@ before(async () => {
   database = await createTestDatabase("db");
   db = database.db;
   // One table is the whole of what the pool, the handle, the transactions and the
-  // listeners need to be observable. Nothing here is about migrations: `migrate.test.ts`
-  // is where the fixture's folders are the subject.
+  // listeners need to be observable, and it is pushed the way an Operator applies
+  // theirs: the Db applies nothing itself (ADR-0046).
   await applySchema(db, { alpha, widgets });
 });
 

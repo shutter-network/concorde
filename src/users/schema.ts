@@ -12,8 +12,8 @@
  * tables, and an Operator who wants tables of their own gets them through
  * `db.handle(theirOwnSchema)`, the same call the framework's parts use.
  *
- * `drizzle-kit` reads this file to generate `migrations/users`, through a config
- * file of this part's own, so keep it to the tables and the values they are
+ * An Operator's `drizzle-kit` reads this file, through their barrel and their own
+ * `drizzle.config.ts`, so keep it to the tables and the values they are
  * defined in terms of.
  */
 
@@ -24,8 +24,8 @@ import { index, jsonb, pgSchema, text, timestamp, uuid } from "drizzle-orm/pg-co
  * The User Manager's schema. Prefixed for the reason the Signal Worker's is: the framework
  * is installed into a database it does not own, an unprefixed `users` is a schema an
  * Operator plausibly already has, and this name is not theirs to change — the table
- * below is compiled against it, so a descriptor naming a different schema would
- * migrate one place and read another.
+ * below is compiled against it, and an Operator's generation reads that same object, so
+ * renaming it is a migration in somebody else's database.
  */
 export const usersSchema = pgSchema("saf_users");
 
@@ -83,9 +83,10 @@ export const tokens = usersSchema.table(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     /**
-     * A real foreign key, which is allowed **because it is within this part's own
-     * schema**: ADR-0022 forbids a reference across parts, and both of these tables
-     * are migrated by one descriptor.
+     * A real foreign key, and an uncomplicated one **because it is within this part's own
+     * schema**: both tables are in the same module, so any barrel carrying one carries the
+     * other. The cross-schema case is the HTTP Messenger's, and ADR-0046 is what made that
+     * one declarable too.
      *
      * `on delete cascade` is carried deliberately for a delete that cannot currently
      * happen (nothing removes a User, ADR-0029), so that the day one is added, the

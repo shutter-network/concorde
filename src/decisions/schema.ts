@@ -10,11 +10,9 @@
  * still the part's API and these objects are still not on it. No part reading another's
  * tables remains a discipline rather than something the objects being private enforces.
  *
- * `drizzle-kit` reads this file to generate `migrations/decisions`, through a config file of
- * this part's own, so keep it to the table and the values it is defined in terms of. Unlike
- * the HTTP Messenger's there is **no hand-edited foreign key** here and no import of another
- * part's schema to avoid: this log references nobody, so the only hand-edit a regeneration
- * needs is the `CREATE SCHEMA` removal every part needs
+ * An Operator's `drizzle-kit` reads this file, through their barrel, so keep it to the table
+ * and the values it is defined in terms of. Unlike the HTTP Messenger's it imports no other
+ * part's schema: this log references nobody, so a barrel carrying it alone generates cleanly
  * ([ADR-0043](../../docs/adr/0043-decisions-are-one-global-log.md)).
  *
  * A Decision is **immutable** — no column is ever updated, literally and not "not after
@@ -28,8 +26,9 @@ import { integer, pgSchema, text, timestamp } from "drizzle-orm/pg-core";
 /**
  * Decisions' schema, named for its subject rather than for the part, and prefixed for the
  * reason the other three are: the framework is installed into a database it does not own, and
- * this name is not an Operator's to change — the table below is compiled against it, so a
- * descriptor naming a different schema would migrate one place and read another.
+ * this name is not an Operator's to change — the table below is compiled against it, and an
+ * Operator's generation reads that same object, so renaming it is a migration in somebody
+ * else's database.
  */
 export const decisionsSchema = pgSchema("saf_decisions");
 

@@ -7,15 +7,17 @@
  * imports nothing from here (ADR-0029).
  *
  * `createUsers` is the whole of it for an Operator: hand it the Db, a Token lifetime
- * and the servers its two route groups belong on, and it registers `usersMigrations`
- * with that Db, `agentRoutes` under `/users` and `publicRoutes` under `/auth`
- * (ADR-0032). Then put it in the Gateway's record like every other part: it is a Component
+ * and the servers its two route groups belong on, and it registers `agentRoutes` under
+ * `/users` and `publicRoutes` under `/auth` (ADR-0032). Then put it in the Gateway's record
+ * like every other part: it is a Component
  * whose `start` and `stop` do nothing, because the record holds every part and not only the
  * ones that run (ADR-0037).
  *
- * `usersMigrations` stays exported because a pre-deploy migration entry point should
- * not have to construct the part that owns the tables, and the two route plugins stay
- * exported because a server option is a default rather than a policy: register either
+ * It registers **no migration** and applies no DDL: the tables it needs come from
+ * `shared-agent-framework/users/schema`, which an Operator barrels into their own
+ * `drizzle.config.ts` and applies with their own `drizzle-kit`
+ * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)). The two route plugins
+ * stay exported because a server option is a default rather than a policy: register either
  * yourself, under your own prefix or inside your own encapsulated plugin, and omit the
  * server it would have gone on.
  *
@@ -31,7 +33,6 @@
  * the alternative is a cast at every one of the Operator's own handlers.
  */
 
-export { usersMigrations } from "./migrations.ts";
 export type { IssuedToken, UserRecord } from "./routes.ts";
 export type { ScryptParameters } from "./secrets.ts";
 export type { Users, UsersOptions } from "./users.ts";

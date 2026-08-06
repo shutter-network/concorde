@@ -1142,7 +1142,7 @@ describe("the infrastructure on its own", () => {
     // to its constraint — which carries `db?: never` and would reduce the whole intersection
     // to `never`. This line is what stops compiling if that default is ever dropped.
     const db: Db = bare.components.db;
-    assert.equal(typeof db.migrate, "function");
+    assert.equal(typeof db.handle, "function");
   });
 
   it("refuses to construct without a database, naming the option", () => {

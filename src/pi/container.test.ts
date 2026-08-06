@@ -337,8 +337,8 @@ function instructionsEntry(paths: Paths): Mount {
  * Stands up a whole Gateway around one `pi` Runtime and hands it to `body`.
  *
  * One end-to-end path, so this is used once: a Signal Worker, a real database, the
- * Agent server with the Worker's routes on it, and the scripted model. Construct,
- * migrate, start, as every entry point does it — but by hand through `createBareGateway`,
+ * Agent server with the Worker's routes on it, and the scripted model. Construct and start,
+ * as every entry point does it — but by hand through `createBareGateway`,
  * because what this file needs is a subset of the infrastructure and none of the four parts
  * `createGateway` hands the Operator through `extend` (ADR-0045). Nothing here is about the
  * assembly; the subject is a real container running a real `pi`.

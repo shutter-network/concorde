@@ -5,7 +5,6 @@ export type {
   SignalHandler,
   SignalHandlers,
 } from "./handlers.ts";
-export { signalsMigrations } from "./migrations.ts";
 export type { RunRecord, SignalRecord } from "./routes.ts";
 export type { RunOutcome, RunPrompt, Runtime } from "./runtime.ts";
 // The states are exported now that they are on the wire: `SignalRecord.state` and
