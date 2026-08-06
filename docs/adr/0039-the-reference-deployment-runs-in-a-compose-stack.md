@@ -51,31 +51,31 @@ about themselves now lives in the documentation, which is where a reader of a re
 deployment is going anyway, and the files are short enough to read whole. The cost is that a
 reader who opens `compose.yml` alone learns nothing about why any of it is the way it is.
 
-## `hostPaths` stops being hypothetical
+## `hostRoot` stops being hypothetical
 
 [ADR-0028](./0028-the-mount-table-declares-mounts-and-verifies-nothing.md) introduced
-`hostPaths` for exactly one case, a Gateway that is itself in a container, and nothing in the
+`hostRoot` for exactly one case, a Gateway that is itself in a container, and nothing in the
 repository was that case. Now the reference deployment is, and three consequences follow that
 were previously only written down.
 
 **The Gateway cannot discover its own host path.** ADR-0028 deferred automatic discovery and
 set the bar for picking it up: an exact mechanism that fails loudly, or none. Nothing has
-changed, so the path arrives as `HOST_DIR` in the environment, `${PWD}` in the
+changed, so the path arrives as `BASE_DIR_HOST` in the environment, `${PWD}` in the
 compose file, and `main.ts` refuses to start without it. That refusal is the one guard in the
 entry point, and it is there because this is the deployment's one genuinely **silent**
 failure: a wrong value resolves to a directory that may exist, and the agent then works in a
 real directory that is not the one anybody is looking at.
 
-**One prefix, not two.** The state directories are mounted inside the container at the same
-place they sit relative to `example/` outside it, so `hostPaths` is a single entry keyed on
-`import.meta.dirname`, and every Mount Table entry keeps the `path.join(import.meta.dirname,
-…)` it had when the Gateway ran on the host. The cost is that `/app/example` is stated in
-three places (the Dockerfile's `COPY` targets, the compose mount targets, and the container's
-`WORKDIR`) and they have to agree.
+**One pair, not two.** The state directories are mounted inside the container at the same
+place they sit relative to `example/` outside it, so `hostRoot` is a single pair —
+`{ gatewayPath: BASE_DIR_GATEWAY, hostPath: BASE_DIR_HOST }` — and every Mount Table entry
+builds its gateway-side path from `BASE_DIR_GATEWAY` with `path.join`. The cost is that
+`/app/example` is stated in three places (the Dockerfile's `COPY` targets, the compose mount
+targets, and `BASE_DIR_GATEWAY` in `compose.yml`) and they have to agree.
 
 **Two mounts name paths that do not exist in the Gateway's filesystem.** `AGENTS.md` and
 `settings.json` are read by the *agent*, so they are not copied into the Gateway image; the
-daemon resolves them on the host through `hostPaths`. This is legal because resolving a Mount
+daemon resolves them on the host through `hostRoot`. This is legal because resolving a Mount
 Table performs no I/O, which ADR-0028 chose for other reasons and which turns out to be what
 makes a containerised Gateway expressible at all. Baking them into the *agent's* image was the
 alternative and does not work: `/workspace` and the agent directory are bind-mounted, and a
@@ -128,14 +128,14 @@ Three consequences accepted rather than solved:
 
 **Running the example on the host is no longer supported**, and that is a deliberate
 subtraction. Supporting both would put three conditionals into the shortest honest
-deployment we have (`hostPaths` present or absent, two bind addresses, two database hosts),
+deployment we have (`hostRoot` present or absent, two bind addresses, two database hosts),
 and the branch nobody ran would be the one nothing tested. `node example/main.ts` is gone
 from CLAUDE.md with it. The inner loop pays for this: an edit to `src` is now `docker compose
 up --build` rather than a `node` invocation, cached to the `tsc` layer but not instant.
 
 ## Consequences
 
-- **`example/` is bound to the checkout it runs from.** `HOST_DIR` is `${PWD}`, so
+- **`example/` is bound to the checkout it runs from.** `BASE_DIR_HOST` is `${PWD}`, so
   the stack must be brought up from `example/` and cannot be moved to a host that does not
   have the source. Compose resolves `./state` against the compose file's directory while
   `${PWD}` is the invocation's, and the two diverge under `-f example/compose.yml` from the

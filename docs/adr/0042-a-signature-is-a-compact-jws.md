@@ -96,7 +96,7 @@ Rejected, with reasons worth keeping:
 
 `signingKey` is a `crypto.KeyObject`; the framework parses no PEM and reads no environment.
 The Operator writes `createPrivateKey(readFileSync(path))` and decides for themselves whether
-that path came from a file, an env var or a secrets manager — the same division as `HOST_DIR`
+that path came from a file, an env var or a secrets manager — the same division as `BASE_DIR_HOST`
 in `example/main.ts`, and [ADR-0016](./0016-agent-configuration-is-opaque-to-the-framework.md)'s
 instinct applied to a secret. A `KeyObject` also holds its material in the OpenSSL layer rather
 than as a JS value, so it does not stringify into a log line by accident.

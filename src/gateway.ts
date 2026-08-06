@@ -113,7 +113,7 @@
  * `databaseUrl` is required, and there is no fallback to `DATABASE_URL`. That fallback was the
  * only `process.env` read in the shipped package, the one input a caller could not see at the
  * call site, and ADR-0038 recorded it as a wart rather than defending it. With the Operator
- * already reading `HOST_DIR`, `SIGNING_KEY_FILE` and the model credential by hand
+ * already reading `BASE_DIR_HOST`, `BASE_DIR_GATEWAY`, `SIGNING_KEY_FILE` and the model credential by hand
  * ([ADR-0016](../docs/adr/0016-agent-configuration-is-opaque-to-the-framework.md),
  * [ADR-0041](../docs/adr/0041-the-shared-agent-has-a-signing-identity.md)), the framework
  * reading a fourth variable for them was the odd one out. The Operator reads `DATABASE_URL`
@@ -191,7 +191,7 @@ export type GatewayOptions<E extends GatewayExtension> = {
    * reads `PGHOST` and friends and lands on `localhost:5432` with this process's login name as
    * the user and the database, which is a confident answer to a question nobody asked. Where the
    * URL comes from — a file, an environment variable, a secrets manager — is the Operator's, the
-   * same division `HOST_DIR` and `SIGNING_KEY_FILE` are on (ADR-0016, ADR-0045).
+   * same division `BASE_DIR_HOST` and `SIGNING_KEY_FILE` are on (ADR-0016, ADR-0045).
    */
   readonly databaseUrl: string;
   /**

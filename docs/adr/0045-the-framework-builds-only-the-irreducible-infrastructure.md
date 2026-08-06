@@ -72,7 +72,7 @@ by the same `?: never` that forbade them before.
 `databaseUrl` is required, and the fallback to `DATABASE_URL` in the environment is gone. It
 was the only `process.env` read in the shipped package, the one input a caller could not see
 at the call site, and ADR-0038 recorded it as a wart rather than defending it. With the
-Operator already reading `HOST_DIR`, `SIGNING_KEY_FILE` and the model credential by hand
+Operator already reading `BASE_DIR_HOST`, `BASE_DIR_GATEWAY`, `SIGNING_KEY_FILE` and the model credential by hand
 ([ADR-0016](./0016-agent-configuration-is-opaque-to-the-framework.md),
 [ADR-0041](./0041-the-shared-agent-has-a-signing-identity.md)), the framework reading a
 fourth variable for them was the odd one out. The Operator reads `DATABASE_URL` itself now,

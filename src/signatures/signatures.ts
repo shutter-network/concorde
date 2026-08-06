@@ -18,7 +18,7 @@
  *    no environment reading, no file paths. The Operator writes
  *    `createPrivateKey(readFileSync(path))` and decides for themselves whether that path came
  *    from a file, an environment variable or a secrets manager — the same division as
- *    `HOST_DIR` in the reference deployment, and ADR-0016's instinct applied to a secret. A
+ *    `BASE_DIR_HOST` in the reference deployment, and ADR-0016's instinct applied to a secret. A
  *    `KeyObject` also keeps its material in the OpenSSL layer rather than as a JS value, so it
  *    does not stringify into a log line by accident
  *    ([ADR-0041](../../docs/adr/0041-the-shared-agent-has-a-signing-identity.md)).
