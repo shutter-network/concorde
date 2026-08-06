@@ -1,30 +1,21 @@
 /**
  * The Signal Worker: the Signal queue, Signal Handler dispatch, and Run execution.
  *
- * It holds no identity and knows nothing about messaging (ADR-0020). What it does
- * hold is the one worker, and the worker is **serial globally** — one Run at a
- * time regardless of Session, which is the only reason a Workspace shared by every
- * Signal Handler and the agent is safe to have at all (ADR-0012).
+ * It holds no identity and knows nothing about messaging. It runs one Run at a time, whatever
+ * Session that Run is in. That is the only reason a Workspace shared by every Signal Handler and
+ * the agent is safe to have.
  *
- * Three things wake it, and the difference between them is the whole of this file's
- * subtlety:
+ * Three things wake it:
  *
- *  - **a notification**, sent by `emit` inside the caller's transaction. Because
- *    PostgreSQL notifications are transactional, the wakeup and the row becoming
- *    visible are one event: neither can happen without the other, and a Signal from
- *    a transaction that rolled back wakes nobody. Nudging the worker after commit
- *    was the alternative, and it puts that guarantee in every Producer's hands.
- *  - **the sweep**, an interval, because a notification sent while the listening
- *    connection is down is *gone* — PostgreSQL queues nothing for an absent
- *    listener. Without the sweep a dropped connection is a Signal stuck at
- *    `pending` with no error anywhere.
- *  - **the registration going in**, first time and after every reconnection, which
- *    is the same case caught early: a notification sent in the moment before the
- *    worker could hear it is lost exactly like one sent while it was disconnected.
+ *  - **a notification**, sent by `emit` inside the caller's transaction. The wakeup and the row
+ *    becoming visible are one event, so a Signal from a rolled-back transaction wakes nobody.
+ *  - **the sweep**, an interval, because PostgreSQL queues nothing for an absent listener. A
+ *    notification sent while the connection was down is gone.
+ *  - **the registration going in**, on the first connection and after every reconnection. It is
+ *    the same case caught early.
  *
- * None of them says how much there is to do, so the worker **drains**: it runs until
- * the queue is empty. That is what makes a duplicated or spurious wakeup harmless
- * and a burst one wakeup rather than five.
+ * None of them says how much there is to do. So the worker drains: it runs until the queue is
+ * empty. A duplicated or spurious wakeup is therefore harmless, and a burst is one wakeup.
  */
 
 import { randomUUID } from "node:crypto";
@@ -43,47 +34,39 @@ export type EmittedSignal = {
   /** Selects exactly one Signal Handler. A `kind` with no Handler fails the Signal. */
   readonly kind: string;
   /**
-   * Arbitrary JSON, taken as fact. Whatever a Producer writes here the Signal Worker
-   * believes, including any claim about who the Signal came from — which is
-   * precisely why Producers are parts of the Gateway rather than peers outside it
-   * (ADR-0020).
+   * Arbitrary JSON, taken as fact.
+   *
+   * The Signal Worker believes whatever a Producer writes here, including any claim about who the
+   * Signal came from. That is why Producers are parts of the Gateway rather than peers outside it.
    */
   readonly payload: unknown;
 };
 
+/** Everything `createSignalWorker` needs. Three required values, and three with defaults. */
 export type SignalWorkerOptions = {
   readonly db: Db;
-  /** Drives the Agent Implementation. One Run at a time; never called concurrently. */
+  /** Drives the Agent Implementation. One Run at a time, never concurrently. */
   readonly runtime: Runtime;
   /**
    * The `kind`-to-Handler map: what this Gateway can act on, and the whole of it.
    *
-   * A construction option rather than an argument to `start`, so a Signal Worker with
-   * no Handlers is *unconstructable* rather than merely unstartable — which matters
-   * because a Signal whose `kind` has no Handler fails permanently and is never
-   * retried (ADR-0017, ADR-0021).
+   * A construction option rather than an argument to `start`. So a Signal Worker with no Handlers
+   * is unconstructable, not merely unstartable. A Signal whose `kind` has no Handler fails
+   * permanently.
    *
-   * A plain map and not a callback handed the Worker, and that is the one thing this
-   * shape costs: a Handler can no longer close over the Signal Worker it runs under
-   * (ADR-0024). Nothing in this repository did. A Handler that emits is a `let` in the
-   * entry point assigned after construction, which is where ADR-0024 already puts
-   * Handler construction.
+   * A Handler cannot close over the Worker it runs under. A Handler that emits is a `let` in the
+   * entry point, assigned after construction.
    */
   readonly handlers: SignalHandlers;
   /**
    * The Agent server, if the agent is to read prior Signals and Runs.
    *
-   * Given one, the constructor registers `agentRoutes` on the Fastify instance it
-   * carries **at no prefix** — `/signals`, `/signals/:id`, `/runs`, `/runs/:id`, the
-   * layout `example/AGENTS.md` already hard-codes into the agent's own instructions
-   * (ADR-0032). Omitted, nothing is registered anywhere, and that omission is how the
-   * group is switched off (ADR-0010).
+   * Given one, the constructor registers `agentRoutes` on its Fastify instance at no prefix:
+   * `/signals`, `/signals/:id`, `/runs`, `/runs/:id`. Omit it and nothing is registered anywhere,
+   * which is how the group is switched off.
    *
-   * Structural, and asks for nothing but the Fastify instance: what satisfies it is
-   * what `serverComponent` returns, and the `start` and `stop` beside it are the
-   * Operator's record's business rather than ours. A server built with
-   * `withTypeProvider` or with a logger of its own satisfies it too; one built on
-   * http2 does not, and takes the plugin below instead.
+   * Structural, and it asks for nothing but the Fastify instance. What `serverComponent` returns
+   * satisfies it. A server built on http2 does not, and takes the `agentRoutes` plugin instead.
    */
   readonly agentServer?: {
     readonly fastify: FastifyInstance;
@@ -91,50 +74,41 @@ export type SignalWorkerOptions = {
   /** Defaults to a `pino` instance on stdout. */
   readonly logger?: Logger;
   /**
-   * How often the worker looks for pending Signals regardless of notifications, in
-   * milliseconds.
+   * How often the worker looks for pending Signals regardless of notifications, in milliseconds.
    *
-   * Deliberately not the latency of a Signal: emitting one wakes the worker
-   * immediately, and this is the safety net for the notification that was sent while
-   * the listening connection was down and so was never delivered. Lower it if a
-   * Signal waiting this long during a database restart is unacceptable; there is no
-   * correctness in the number.
+   * Not the latency of a Signal: emitting one wakes the worker immediately. This is the safety net
+   * for a notification sent while the listening connection was down. Lower it if a Signal waiting
+   * this long during a database restart is unacceptable. There is no correctness in the number.
    */
   readonly sweepIntervalMs?: number;
 };
 
+/**
+ * The one Signal Worker a Gateway runs: a queue to emit into, and a Component to start and stop.
+ */
 export type SignalWorker = Component & {
   /**
-   * The Signal Worker's Agent server routes — reading prior Signals and Runs — as a
-   * Fastify plugin, for an Operator who wants them somewhere other than where the
-   * `agentServer` option puts them.
+   * The Signal Worker's Agent server routes, as a Fastify plugin you can register yourself.
    *
-   * Passing the server is the easy path and the plugin is the door out (ADR-0032):
-   * hold it and you can register the routes under a prefix of your own, inside your
-   * own encapsulated plugin, or behind a hook you share with your own routes — which
-   * is Fastify's plugin system being the extension mechanism, and the reason ADR-0021
-   * chose Fastify rather than inventing one. Passing no server and never registering
-   * this is still how the group is switched off (ADR-0010).
+   * Register it under a prefix of your own, or inside your own encapsulated plugin. A hook you
+   * share with your own routes works too. Passing no server and never registering this is how
+   * the group is switched off.
    *
-   * The routes are the Signal Worker's own: they read its tables, and no other part's.
-   * The whole surface is read-only and deliberately **unscoped** — every Signal and
-   * every Run, whatever Session the Run doing the reading is in (ADR-0011).
+   * The routes read the Signal Worker's tables and no other component's. The whole surface is
+   * read-only and unscoped: every Signal and every Run, whatever Session the reading Run is in.
    */
   readonly agentRoutes: FastifyPluginAsync;
 
   /**
    * Records a Signal as `pending` and returns its id.
    *
-   * Takes the caller's transaction rather than finding one (ADR-0023), so a
-   * Producer that records something and tells the agent about it cannot have the
-   * two come apart: the Messenger writes the inbound Message and emits in one
-   * transaction, and a rollback loses both. Ambient enlistment is not available —
-   * a transaction started on one handle takes its own connection from the pool, so
-   * a second handle's writes survive its rollback with nothing reported.
+   * It takes the caller's transaction rather than finding one. A Producer therefore cannot
+   * record something and tell the agent about it separately. The Messenger writes the inbound
+   * Message and emits in one transaction, and a rollback loses both.
    *
-   * The schema parameter is widened rather than named, because the transaction
-   * carries the schema of the handle it was started on and that handle belongs to
-   * the caller.
+   * @param tx The caller's own handle or transaction. The schema is widened rather than named,
+   *   because the transaction carries the schema of the handle it started on.
+   * @returns The new Signal's id.
    */
   emit<TSchema extends Record<string, unknown>>(
     tx: Handle<TSchema>,
@@ -144,21 +118,18 @@ export type SignalWorker = Component & {
   /**
    * Starts looking for Signals, with the Handlers this Worker was constructed with.
    *
-   * Resolves immediately, and the first thing the worker goes on to do is **fail
-   * whatever a previous worker left `processing`** (ADR-0017). Nothing an Operator
-   * does next depends on that finishing: a Signal emitted in the meantime is a row in
-   * a queue, and it is drained once recovery is done. It resolves rather than returns
-   * only because a Component's `start` is asynchronous (ADR-0031).
+   * It resolves immediately. The first thing the worker then does is fail whatever a previous
+   * worker left `processing`. Nothing an Operator does next depends on that finishing. A Signal
+   * emitted meanwhile is a row in a queue, drained once recovery is done.
    */
   start(): Promise<void>;
 
   /**
    * Stops looking for Signals and waits for the one in flight to finish.
    *
-   * Not a shutdown protocol — ordering is the Operator's and the framework ships
-   * no signal handling (ADR-0021). There is no cancellation: a Run in flight runs
-   * to completion, because abandoning it would leave partial effects that nothing
-   * retries (ADR-0017).
+   * Not a shutdown protocol. Ordering is the Operator's, and the framework ships no signal
+   * handling. There is no cancellation. A Run in flight runs to completion, because abandoning
+   * it would leave partial effects nothing retries.
    */
   stop(): Promise<void>;
 };
@@ -166,12 +137,11 @@ export type SignalWorker = Component & {
 /**
  * The channel the Signal Worker notifies and listens on.
  *
- * Prefixed for the same reason the schema is: notification channels are per
- * database, and the framework is installed into one it does not own. Not
- * overridable — a Signal Worker notifying a channel a different one listens on is a
- * Gateway that looks healthy and never runs a Signal until the sweep, and there is
- * nothing an Operator gains by choosing the name. Exported for the tests, which send
- * spurious notifications on it, and not from the package.
+ * Prefixed for the same reason the schema is. Notification channels are per database, and the
+ * framework is installed into one it does not own.
+ *
+ * Not overridable. A Worker notifying a channel a different one listens on looks healthy and
+ * runs nothing until the sweep.
  */
 export const signalChannel = "saf_signals_signal";
 
@@ -184,29 +154,55 @@ const strandedSignal =
 const strandedRun = "the worker stopped before this Run finished; Runs are never re-run (ADR-0017)";
 
 /**
- * Why the worker woke, for the debug line — and for the tests that pin them.
+ * Why the worker woke, for the debug line.
  *
- * `listening` covers the first registration and every reconnection alike: both mean
- * the worker can now be notified and could not a moment ago.
+ * `listening` covers the first registration and every reconnection. Both mean the worker can now
+ * be notified, and a moment ago it was not.
  */
 type WakeupReason = "start" | "notification" | "listening" | "sweep";
 
+/**
+ * Builds a Signal Worker over a Db, a Runtime and a map of Signal Handlers.
+ *
+ * `createGateway` builds one for you and keys it last, so it drains first. Call this yourself only
+ * when you assemble a Gateway with `createBareGateway`.
+ *
+ * @param options The Db, the Runtime, the Handler map, and optionally the Agent server the read
+ *   routes go on.
+ *
+ * @example
+ * ```ts
+ * import { openDb } from "shared-agent-framework";
+ * import { createSignalWorker } from "shared-agent-framework/signals";
+ * import { createPiRuntime } from "shared-agent-framework/pi";
+ *
+ * const db = openDb(process.env.DATABASE_URL ?? "");
+ * const worker = createSignalWorker({
+ *   db,
+ *   runtime: createPiRuntime({ image: "my-agent:1" }),
+ *   handlers: {
+ *     "note.written": { handle: (signal) => [{ session: "notes", text: String(signal.payload) }] },
+ *   },
+ * });
+ *
+ * await db.start();
+ * await worker.start();
+ * ```
+ */
 export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   const log = options.logger ?? defaultLogger();
   const runtime = options.runtime;
   const handlers = options.handlers;
   const sweepIntervalMs = options.sweepIntervalMs ?? defaultSweepIntervalMs;
 
-  // The Signal Worker's own handle, typed to its own schema. `pg` never leaves the
-  // Db (ADR-0022).
+  // The Signal Worker's own handle, typed to its own schema. `pg` never leaves the Db.
   const handle = options.db.handle(workerTables);
 
-  // The one act of wiring, here so that an Operator's entry point does not do it
-  // (ADR-0032).
+  // The one act of wiring, here so that an Operator's entry point does not do it.
   const agentRoutes = agentReadRoutes(handle);
-  // At no prefix, and not awaited: Fastify defers a plugin until the server is ready,
-  // so this is a registration made at construction and loaded at `listen` — which is
-  // also why a server that is already listening refuses one.
+  // At no prefix, and not awaited. Fastify defers a plugin until the server is ready. So this is
+  // a registration made at construction and loaded at `listen`. That is also why a server which
+  // is already listening refuses one.
   options.agentServer?.fastify.register(agentRoutes);
 
   let started = false;
@@ -220,12 +216,10 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   let stopping = false;
 
   /**
-   * Takes the oldest pending Signal and marks it `processing`, or reports that
-   * there is none.
+   * Takes the oldest pending Signal and marks it `processing`, or reports that there is none.
    *
-   * The update is guarded on the state it read, so two Gateways pointed at one
-   * database cannot both claim a Signal — they would still break the serial
-   * guarantee in every other respect, but not by running the same Signal twice.
+   * The update is guarded on the state it read, so two Gateways cannot both claim a Signal. They
+   * would still break the serial guarantee in every other respect.
    */
   async function claim(): Promise<typeof signals.$inferSelect | undefined> {
     while (!stopping) {
@@ -250,8 +244,7 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   /**
    * Runs every pending Signal in arrival order and returns when none is left.
    *
-   * Draining rather than handling one Signal per wakeup is what makes a spurious
-   * or duplicated wakeup harmless, and what keeps a burst from waiting on the
+   * Draining is what makes a spurious wakeup harmless. It also keeps a burst from waiting on the
    * interval once per Signal.
    */
   async function drain(): Promise<void> {
@@ -273,8 +266,8 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
 
     const handler = handlers[signal.kind];
     if (handler === undefined) {
-      // A typo in a `kind` is visible rather than silent, and permanent: there is
-      // no Handler to run a post phase on, and nothing re-runs it (ADR-0017).
+      // A typo in a `kind` is visible rather than silent, and permanent. There is no Handler to
+      // run a post phase on, and nothing re-runs it.
       const failure = `no Signal Handler is registered for kind ${JSON.stringify(signal.kind)}`;
       log.error({ signalId: signal.id, kind: signal.kind }, failure);
       await settle(signal, failure);
@@ -286,9 +279,8 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
     try {
       prompts = await handler.handle(signal);
     } catch (error) {
-      // A Handler is the Operator's own code and may do anything, including
-      // throw. It fails its own Signal and nothing else: the worker carries on,
-      // and the post phase still runs.
+      // A Handler is the Operator's own code and may throw. It fails its own Signal and nothing
+      // else: the worker carries on, and the post phase still runs.
       prompts = undefined;
       failure = describe(error);
       log.error({ signalId: signal.id, kind: signal.kind, err: error }, "Signal Handler failed");
@@ -315,28 +307,25 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   }
 
   /**
-   * Executes one Run per Prompt, in the order the Handler returned them, and
-   * reports why the Signal failed if any of them did.
+   * Executes one Run per Prompt, in the order the Handler returned them. Reports why the Signal
+   * failed, if any Run did.
    *
-   * Every Prompt runs even after one fails. A Handler that fanned out to three
-   * Sessions asked for three Runs, and the post phase is told that one failed —
-   * that, and nothing more, is the framework's failure handling (ADR-0017).
+   * Every Prompt runs even after one fails. A Handler that fanned out to three Sessions asked for
+   * three Runs.
    */
   async function executeRuns(
     signal: Signal,
     prompts: readonly Prompt[],
   ): Promise<string | undefined> {
     if (prompts.length === 0) {
-      // Declining is not a special case: the Signal is `done` with no Runs, and
-      // the arrival record survives, which is what makes a refusal auditable.
+      // Declining is not a special case. The Signal is `done` with no Runs, and the arrival
+      // record survives, which is what makes a refusal auditable.
       return undefined;
     }
 
-    // Ids are generated here rather than by the database so that each Run is
-    // paired with the Prompt it came from without depending on the order a
-    // multi-row insert returns. Having the id in hand before the insert is also
-    // what lets the Session be named from it and written in the same row, rather
-    // than the row saying `null` and a second statement correcting it.
+    // Ids are generated here rather than by the database, so each Run is paired with its own
+    // Prompt. Nothing depends on the order a multi-row insert returns. Having the id in hand
+    // before the insert also lets the Session be named from it, in the same row.
     const queued = prompts.map((prompt) => {
       const id = randomUUID();
       return { id, prompt: promptForRun(id, prompt) };
@@ -409,23 +398,17 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   }
 
   /**
-   * Fails every Signal a previous worker left `processing`, and resolves the Runs
-   * under them.
+   * Fails every Signal a previous worker left `processing`, and resolves the Runs under them.
    *
-   * They are **not re-run** (ADR-0017): a Run may already have sent Messages, written
-   * the Workspace, or called something outside, and its Prompt is already in the
-   * Session on disk. Replaying it duplicates all of that. The Runs are failed too,
-   * including ones that were only recorded — a Run row saying `running` with nothing
-   * running is a lie an Operator has no way to see through.
+   * They are not re-run. A Run can already have sent Messages, written the Workspace, or called
+   * something outside. Its Prompt is already in the Session on disk.
    *
-   * This is why it must finish before anything is claimed: a drain alongside it would
-   * mark its own Signal `processing` and have recovery fail it underneath. It also
-   * assumes it is the only worker on this database, which ADR-0012 already requires —
-   * two Gateways sharing a queue break the serial guarantee before they get here.
+   * The Runs are failed too, including ones that were only recorded. A Run row saying `running`
+   * with nothing running is a lie.
    *
-   * A crash is not the only way in. So is a Db error inside a drain, which is
-   * exactly the case that convinced us this cannot be startup-only forever; for now
-   * the next start resolves it, and the row says why.
+   * This must finish before anything is claimed. A drain alongside it would mark its own Signal
+   * `processing` and have recovery fail it underneath. A Db error inside a drain gets here too, and
+   * the next start resolves it.
    */
   async function recover(): Promise<void> {
     const stranded = await options.db.tx(async (tx) => {
@@ -462,10 +445,9 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   /**
    * Notes that there is something to look at, and starts the worker if it is asleep.
    *
-   * A wakeup during a drain sets the flag rather than starting a second drain: two
-   * would break the serial guarantee, and dropping it would lose the Signal that
-   * committed just after the drain's last look at the queue — which is precisely the
-   * Signal a notification exists to deliver promptly.
+   * A wakeup during a drain sets the flag rather than starting a second drain. Two would break the
+   * serial guarantee. Dropping the flag would lose a Signal that committed just after the
+   * drain's last look.
    */
   function wakeup(reason: WakeupReason): void {
     log.debug({ reason }, "worker woken");
@@ -482,10 +464,9 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
           await drain();
         }
       } catch (error) {
-        // Only the Db can get here: Handler and adapter failures are handled per
-        // Signal. Whatever was claimed stays `processing` for the next start to
-        // resolve, `woken` is still set, and the worker tries again on the next
-        // wakeup rather than dying quietly.
+        // Only the Db can get here, because Handler and adapter failures are handled per Signal.
+        // Whatever was claimed stays `processing` for the next start to resolve. `woken` is still
+        // set, so the worker tries again on the next wakeup rather than dying quietly.
         log.error({ err: error }, "the Signal worker stopped short, and retries when next woken");
       } finally {
         working = undefined;
@@ -497,9 +478,8 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
     agentRoutes,
 
     async emit(tx, signal) {
-      // The query-builder form, not the relational one: it generates SQL from the
-      // table object and so works on a transaction carrying any part's schema,
-      // which is what a cross-part write is handed (ADR-0023).
+      // The query-builder form, not the relational one. It generates SQL from the table object,
+      // so it works on a transaction carrying any component's schema.
       const [inserted] = await tx
         .insert(signals)
         .values({ kind: signal.kind, payload: signal.payload })
@@ -508,18 +488,14 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
         throw new Error("emitting a Signal inserted no row");
       }
 
-      // The wakeup, in the caller's transaction with the row. PostgreSQL delivers a
-      // notification at commit and not at all on rollback, so this cannot wake the
-      // worker for a Signal that never existed, and cannot fail to wake it for one
-      // that does — which is the guarantee a post-commit nudge cannot make, since
-      // there is no post-commit hook and the Producer would have to remember.
+      // The wakeup, in the caller's transaction with the row. PostgreSQL delivers a notification
+      // at commit and not at all on rollback. So this cannot wake the worker for a Signal that
+      // never existed. Nor can it fail to wake it for one that does.
       //
-      // `pg_notify` and not `NOTIFY`, because a utility statement takes no bind
-      // parameters. The payload is empty on purpose: the worker drains the whole
-      // queue, so a notification means only "look again" and carries nothing worth
-      // saying — and identical notifications sent in one transaction are collapsed by
-      // PostgreSQL, so a Producer emitting a hundred Signals at once wakes the worker
-      // once.
+      // `pg_notify` and not `NOTIFY`, because a utility statement takes no bind parameters. The
+      // payload is empty on purpose: the worker drains the whole queue, so a notification means
+      // only "look again". PostgreSQL collapses identical notifications sent in one transaction.
+      // A Producer emitting a hundred Signals at once therefore wakes the worker once.
       await tx.execute(sql`select pg_notify(${signalChannel}, '')`);
       return inserted.id;
     },
@@ -532,19 +508,15 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
       }
       started = true;
 
-      // The connection carrying the notifications is the Db's to hold — a
-      // `LISTEN` registration cannot live on a pooled connection, and `pg` does not
-      // leave the Db to get one (ADR-0022).
+      // The connection carrying the notifications is the Db's to hold. A `LISTEN` registration
+      // cannot live on a pooled connection, and `pg` does not leave the Db to get one.
       listening = options.db.listen(signalChannel, {
         notified: () => wakeup("notification"),
         connected: () => {
           log.debug({ channel: signalChannel }, "listening for Signal notifications");
-          // Every registration is a reason to look, the first one included. Anything
-          // sent before it was in place was never delivered — and the first
-          // registration has a gap in front of it just as a reconnection does, because
-          // `start` returns before it completes and a Producer may well emit in
-          // between. Missing that is a Signal waiting a whole sweep on a Gateway that
-          // has only just started, which is exactly when someone is watching.
+          // Every registration is a reason to look, the first one included. Anything sent before
+          // it was in place was never delivered. The first registration has a gap in front of
+          // it, just as a reconnection does: `start` returns before it completes.
           wakeup("listening");
         },
         lost: (error) => {
@@ -555,9 +527,8 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
         },
       });
 
-      // Deliberately not unref'd: the worker is what keeps a Gateway alive, and a
-      // process whose only job is to run Signals should not exit because the queue
-      // happens to be empty.
+      // Deliberately not unref'd. The worker is what keeps a Gateway alive. A process whose only
+      // job is to run Signals must not exit on an empty queue.
       ticker = setInterval(() => wakeup("sweep"), sweepIntervalMs);
       wakeup("start");
     },
@@ -582,17 +553,11 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
 /**
  * The Prompt a Handler wrote, with its request for a fresh Session answered.
  *
- * `session: null` is a question, and this is the one place in the framework that
- * answers it (ADR-0033). `run_<runId>` is not a transcription of any agent's grammar
- * and nothing is checked against one — the framework holds no copy of what an Agent
- * Implementation will accept, and generating a conservative name is not checking one
- * (ADR-0025). What it buys is that the transcript of a fresh Session survives and can
- * be traced back to the Run that made it, from the Run's own row.
+ * `session: null` is a question, and this is the one place in the framework that answers it. A
+ * fresh Session is named `run_<runId>`, so its transcript can be traced back to the Run.
  *
- * Here rather than in each Runtime because the Worker owns the Run row: it has the id
- * before the row is written, so the name it derives goes into `runs.session` in the
- * same statement, and `runs.session` stops being null for exactly the case where the
- * name was worth having. A Runtime doing it could record nothing.
+ * Here rather than in each Runtime, because the Worker owns the Run row. It has the id before the
+ * row is written, so the name goes into `runs.session` in the same statement.
  */
 function promptForRun(runId: string, prompt: Prompt): RunPrompt {
   return { ...prompt, session: prompt.session ?? `run_${runId}` };

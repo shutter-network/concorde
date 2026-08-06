@@ -1,30 +1,16 @@
 /**
  * Starting a container and reading what it wrote.
  *
- * The one place in the framework that spawns anything, and it spawns one thing: a Run,
- * whose stdout is whatever the Agent Implementation writes. Four things have to be
- * right — write stdin and close it, read stdout to the end, collect stderr without
- * letting it fill, and wait for the process to be gone — and getting any of them wrong
- * produces a hang rather than a failure.
+ * The one place in the framework that spawns anything, and it spawns one thing: a Run. Four
+ * things have to be right, and getting any of them wrong produces a hang rather than a failure.
  *
- * Three of those are less obvious than they look:
- *
- *  - **stdout is read to the end even once the answer is known.** A process whose
- *    stdout stops being read blocks as soon as the pipe fills, so abandoning it
- *    early turns a finished Run into a hang — and there are no timeouts anywhere
- *    ([ADR-0017](../../docs/adr/0017-failed-runs-are-not-retried.md)).
- *  - **stderr is drained for the same reason**, not because anything decides
- *    anything by it. An agent that warns on stderr about a Session it is creating
- *    and then exits 0 is the ordinary case, so stderr is diagnosis and never a verdict.
- *  - **a write to stdin can fail**, with `EPIPE`, when the container exits before
- *    reading the Prompt. Unhandled, that is an error event on a stream nobody is
- *    listening to, which takes the Gateway's process down; the Run's real outcome
- *    is in the stream and is reported from there instead.
- *
- * Nothing here knows about any Agent Implementation, and nothing here interprets an
- * exit code. That was true while this module lived under `src/pi/` and is why it now
- * lives beside the Mount Table instead
- * ([ADR-0033](../../docs/adr/0033-an-agent-is-a-container-and-one-function.md)).
+ *  - **stdout is read to the end**, even once the answer is known. A process whose stdout stops
+ *    being read blocks when the pipe fills, and there are no timeouts anywhere.
+ *  - **stderr is drained for the same reason.** Nothing decides anything by it, so stderr is
+ *    diagnosis and never a verdict.
+ *  - **a write to stdin can fail** with `EPIPE`, when the container exits before reading the
+ *    Prompt. Unhandled, that takes the Gateway's process down.
+ *  - **the process is waited for**, so a Run is finished when the container is gone.
  */
 
 import { spawn } from "node:child_process";
@@ -45,11 +31,9 @@ export type ContainerResult<T> = {
   /**
    * The exit status, or `null` when a signal ended it.
    *
-   * Reported, never interpreted. An agent in machine-readable mode may well exit 0
-   * on a model or API error, so an exit code cannot say whether a Run succeeded, and
-   * only the Agent Implementation's own reader knows whether its agent's can
-   * (ADR-0025). It is worth putting in the message of a failure that was decided
-   * elsewhere, and worth nothing else.
+   * Reported, never interpreted. An agent in machine-readable mode can exit 0 on a model error.
+   * An exit code cannot say whether a Run succeeded. It is worth putting in the message of a
+   * failure that was decided elsewhere.
    */
   readonly exitCode: number | null;
   /** The signal that ended it, if one did. */
@@ -61,23 +45,20 @@ export type ContainerResult<T> = {
 /**
  * How much stderr is kept.
  *
- * The beginning rather than the end, because the container runtime's own refusals —
- * an image it cannot find, a flag it does not know — come first, and a wall of the
- * agent's own progress output would otherwise push them out. Bounded because this
- * ends up in a Run's `error` column and in a log line.
+ * The beginning rather than the end. The container runtime's own refusals come first: an image
+ * it cannot find, or a flag it does not know. A wall of the agent's progress output would
+ * otherwise push them out. Bounded, because this ends up in a Run's `error` column.
  */
 const stderrLimit = 4000;
 
 /**
  * Runs one container to completion and hands its stdout to `read`.
  *
- * `read` is given the raw bytes rather than text, so a multi-byte character split
- * across two chunks is the reader's to reassemble — which is the whole point of an
- * Agent Implementation's outcome reader taking bytes.
+ * There is no timeout, here or anywhere. A Run that never returns halts the Gateway.
  *
- * There is no timeout, here or anywhere (ADR-0017). A Run that never returns halts
- * the Gateway, and that hole is accepted rather than papered over with a number the
- * framework cannot know.
+ * @param read Given raw bytes rather than text. A multi-byte character split across two chunks
+ *   is the reader's to reassemble.
+ * @throws If the container runtime cannot be started, or if `read` threw.
  */
 export async function runContainer<T>(
   invocation: ContainerCommand,
@@ -87,8 +68,8 @@ export async function runContainer<T>(
     stdio: ["pipe", "pipe", "pipe"],
   });
 
-  // Node emits exactly one of these, so waiting for both settles the one question a
-  // later stream error cannot answer: whether the container runtime is there at all.
+  // Node emits exactly one of these. Waiting for both settles one question a later stream error
+  // cannot answer: whether the container runtime is there at all.
   const failedToStart = await new Promise<Error | undefined>((settled) => {
     child.once("spawn", () => settled(undefined));
     child.once("error", (error) => settled(error));
@@ -100,28 +81,28 @@ export async function runContainer<T>(
     );
   }
 
-  // Before anything is written, so a container that exits immediately cannot make
-  // this an unhandled error event on the way past.
+  // Before anything is written. A container that exits immediately cannot then make this an
+  // unhandled error event on the way past.
   child.stdin.on("error", () => {
-    // Deliberately nothing. A broken pipe means the container is already gone, and
-    // what it did or did not do is in the stream that is still being read.
+    // Deliberately nothing. A broken pipe means the container is already gone. What it did or
+    // did not do is in the stream that is still being read.
   });
   child.stdin.end(invocation.stdin, "utf8");
 
   const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((done) => {
     child.once("close", (code, signal) => done({ code, signal }));
   });
-  // Started before stdout is read rather than awaited after it, so stderr is
-  // draining the whole time and a chatty container cannot block on a full pipe.
+  // Started before stdout is read rather than awaited after it, so stderr drains the whole
+  // time. A chatty container cannot then block on a full pipe.
   const stderr = collect(child.stderr);
 
   let value: T;
   try {
     value = await read(child.stdout);
   } catch (error) {
-    // Only a stream failure gets here — a reader is expected to report a bad stream as
-    // a failed Run rather than throw. Whatever it was, the container must not outlive
-    // the call that started it: `docker run` forwards the signal and `--rm` cleans up.
+    // Only a stream failure gets here. A reader is expected to report a bad stream as a failed
+    // Run rather than throw. Whatever it was, the container must not outlive the call that
+    // started it: `docker run` forwards the signal and `--rm` cleans up.
     child.kill();
     throw error;
   }

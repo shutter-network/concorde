@@ -1,13 +1,9 @@
 /**
- * The logging seam.
+ * The logging seam: a structural interface, and a `pino` default.
  *
- * `Logger` is **structural**: any object with these four methods satisfies it, so
- * an Operator whose system logs through something else passes that instead
- * without either of us depending on `pino`'s types. The framework's own default
- * is a `pino` instance, which is why the parameters are in `pino`'s order —
- * fields first, message second. That order is not an aesthetic choice: reversing
- * it would mean `pino` no longer satisfies the interface it is the default for,
- * and every part would have to wrap it.
+ * Any object with the four methods satisfies `Logger`, so a deployment that logs through
+ * something else passes that instead. The parameters are in `pino`'s order, fields first,
+ * because `pino` is the default and must satisfy the interface unwrapped.
  */
 
 import { pino } from "pino";
@@ -16,9 +12,10 @@ import { pino } from "pino";
 export type LogFields = Record<string, unknown>;
 
 /**
- * What every part of the Gateway accepts. Four levels and no more: `fatal` and
- * `trace` exist in `pino` but nothing here has a use for them, and adding them
- * would make a hand-written logger harder to supply for no gain.
+ * What every part of the Gateway accepts. Four levels and no more.
+ *
+ * `fatal` and `trace` exist in `pino`, and nothing here has a use for them. Leaving them out
+ * keeps a hand-written logger short.
  */
 export type Logger = {
   debug(fields: LogFields, message: string): void;
@@ -28,11 +25,18 @@ export type Logger = {
 };
 
 /**
- * The logger a part uses when the Operator supplies none: JSON lines on stdout
- * at `info`.
+ * The logger a part uses when the Operator supplies none: JSON lines on stdout at `info`.
  *
- * The return type is annotated `Logger` rather than inferred, so `pino`'s own
- * types stay out of the emitted declarations and out of the public API.
+ * @returns A `pino` instance, typed as `Logger`, so `pino`'s own types stay out of the
+ *   public API.
+ *
+ * @example
+ * ```ts
+ * import { defaultLogger, type Logger } from "shared-agent-framework";
+ *
+ * const log: Logger = defaultLogger();
+ * log.info({ signalId: "abc" }, "Signal claimed");
+ * ```
  */
 export function defaultLogger(): Logger {
   return pino();

@@ -1,24 +1,22 @@
 /**
- * The Signal Handler seam — the framework's primary extension point, in the way
- * an endpoint handler is a web framework's (ADR-0009).
+ * The Signal Handler seam: the framework's primary extension point.
  *
- * A Handler is a plain object and receives **only the Signal**. There is no
- * context object: everything else it needs — a logger, the Workspace path, the
- * Messenger, its prompt template — it closes over, supplied by its factory in the
- * Operator's entry point, which already holds every object in the Gateway
- * (ADR-0024). The consequence worth knowing is that testing a Handler needs no
- * harness from us: it is a function of a Signal and whatever its factory was
- * given.
+ * A Handler is a plain object, and it receives only the Signal. There is no context object.
+ * It closes over everything else it needs: a logger, the Workspace path, the Messenger, its
+ * prompt template. Its factory in the Operator's entry point supplies them.
+ *
+ * So testing a Handler needs no harness. It is a function of a Signal and whatever its factory
+ * was given.
  */
 
 /**
- * What a Handler is given. The Signal's `state` and `error` are deliberately
- * absent: a Handler is running because the Signal is `processing`, and the
- * outcome is the framework's to record, not the Handler's to read.
+ * What a Handler is given.
  *
- * `TPayload` is a convenience for Handler authors — a Producer's payload shape is
- * that Producer's contract rather than the framework's ([`data-model.md`](../../docs/data-model.md)),
- * so the Signal Worker carries it as `unknown` and a Handler declares what it expects.
+ * The Signal's `state` and `error` are absent. A Handler runs because the Signal is
+ * `processing`, and the outcome is the framework's to record.
+ *
+ * @typeParam TPayload What this Handler expects in the payload. A Producer's payload shape is
+ *   that Producer's contract, so the Signal Worker carries it as `unknown`.
  */
 export type Signal<TPayload = unknown> = {
   readonly id: string;
@@ -28,17 +26,14 @@ export type Signal<TPayload = unknown> = {
 };
 
 /**
- * What a Handler produces, and the only form in which anything from outside
- * reaches the agent.
+ * What a Handler produces, and the only form in which anything reaches the agent.
  *
- * `session` names the Session this Prompt continues; `null` requests a fresh one
- * (ADR-0006). A Session is the agent's own conversation state, kept by the Agent
- * Implementation and continued by naming it again — which is what makes one Prompt
- * remember an earlier one. The framework holds no opinion about the names: any
- * string reaches the Runtime unchanged, and what a name may contain is a property
- * of the Agent Implementation an Operator chose. One it will not accept fails that
- * Prompt's Run alone, with its own words in the Run's `error` and the name in its
- * `session`.
+ * `session` names the Session this Prompt continues, and `null` requests a fresh one. A Session
+ * is the agent's own conversation state, kept by the Agent Implementation and continued by
+ * naming it again. That is what makes one Prompt remember an earlier one.
+ *
+ * The framework holds no opinion about the names. Any string reaches the Runtime unchanged, and
+ * a name the Agent Implementation will not accept fails that Prompt's Run alone.
  */
 export type Prompt = {
   readonly session: string | null;
@@ -53,12 +48,12 @@ export type PostOutcome = {
 /**
  * A Signal Handler: `handle`, and optionally `post`.
  *
- * `handle` returns zero, one, or many Prompts — declining, answering, and fanning
- * out are the same mechanism, and an empty array is not a special case. `post`
- * runs once after every Run arising from the Signal has finished, whether they
- * succeeded, failed, or were never created because `handle` itself threw. It
- * cannot produce Prompts: it is the place for cleanup and notification, and the
- * whole of the framework's failure handling (ADR-0017).
+ * `handle` returns zero, one, or many Prompts. Declining, answering, and fanning out are the
+ * same mechanism, and an empty array is not a special case.
+ *
+ * `post` runs once, after every Run arising from the Signal has finished. It runs whether they
+ * succeeded, failed, or were never created. It cannot produce Prompts. It is the place for
+ * cleanup and notification, and the whole of the framework's failure handling.
  */
 export type SignalHandler<TPayload = unknown> = {
   handle(signal: Signal<TPayload>): readonly Prompt[] | Promise<readonly Prompt[]>;
@@ -66,9 +61,8 @@ export type SignalHandler<TPayload = unknown> = {
 };
 
 /**
- * The `kind`-to-Handler map `worker.start` takes. A Signal whose `kind` is absent
- * fails permanently (ADR-0017), which is why the map is a parameter of `start`
- * rather than something registered afterwards: starting with none registered is
- * unrepresentable (ADR-0021).
+ * The `kind`-to-Handler map: what a Gateway can act on, and the whole of it.
+ *
+ * A Signal whose `kind` is absent from the map fails permanently.
  */
 export type SignalHandlers = Readonly<Record<string, SignalHandler>>;

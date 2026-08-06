@@ -2,15 +2,12 @@
  * The agent's container, from the package root.
  *
  * The package root rather than `./pi`, because nothing here knows about an Agent
- * Implementation: an Agent Container is a declaration of an image, what it sees on disk
- * and how it is confined, and the same one would serve a second Runtime unchanged
- * (ADR-0026, ADR-0028, ADR-0033).
+ * Implementation. An Agent Container declares an image, what it sees on disk, and how it is
+ * confined. A second Runtime needs the same declaration unchanged.
  *
  *  - `AgentContainer` is the declaration, and only its `image` is required.
- *  - `createAgentContainerRuntime` turns one plus a single function into a Runtime, and
- *    that function is the whole of what an Agent Implementation adds.
- *  - `mountArguments` turns what the container sees on disk into `--mount` arguments,
- *    and refuses a table that cannot mean what it says.
+ *  - `createAgentContainerRuntime` turns one plus a single function into a Runtime.
+ *  - `mountArguments` turns what the container sees on disk into `--mount` arguments.
  */
 
 export type {

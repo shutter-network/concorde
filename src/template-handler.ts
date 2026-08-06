@@ -1,115 +1,99 @@
 /**
  * A Signal Handler that renders its Prompt from a Handlebars file on disk.
  *
- * This is **one predefined Handler, not a framework special case** (ADR-0027). It
- * satisfies the ordinary contract in `signals/handlers.ts` and closes over everything
- * it needs, exactly as an Operator's own Handler does (ADR-0024) — so an Operator
- * who outgrows it stops calling it and writes the twenty lines themselves, with
- * nothing to unwire.
+ * It satisfies the ordinary `SignalHandler` contract and closes over what it needs. An
+ * Operator who outgrows it stops calling it and writes their own Handler, with nothing to
+ * unwire.
  *
- * The file is read and compiled **per Prompt**, which is per Run: an Operator
- * iterating on wording edits the file and the next Signal renders through it, with
- * no restart. A file read costs nothing next to a Run.
- *
- * Two compile options carry ADR-0027's decisions; the reasoning is there, and what
- * follows is only what someone editing this file has to know.
- *
- * **`noEscape: true` must not be "fixed".** It is the one thing here that looks like
- * a mistake to anyone who knows Handlebars from web work, and removing it is
- * invisible in every log and every Run outcome — the damage is prompts carrying
- * `&#x27;` where an apostrophe should be. `template-handler.test.ts` asserts the
- * substitution byte for byte for that reason and no other.
- *
- * **`strict: true`** turns a variable the data function did not supply into a failed
- * Signal instead of a hole in the Prompt. Its side effect is worth knowing before
- * writing a template: it **disables inverse sections**, so `{{^absent}}…{{/absent}}`
- * throws where `{{#if absent}}`, `{{#unless absent}}`, `{{#each absent}}` and
- * `{{else}}` all render as usual. Handlebars documents that, and a test pins it, so
- * the failure is not discovered by a Signal that fails permanently (ADR-0017).
- *
- * Both options apply inside partials as well, which is why partials are taken as
- * source strings rather than as already-compiled templates: a template compiled
- * elsewhere would carry someone else's options, and escaping would come back in
- * through it.
+ * The file is read and compiled once per Prompt, which is once per Run. Edit the wording and
+ * the next Signal renders through it, with no restart.
  */
 
 import { readFile } from "node:fs/promises";
 import Handlebars from "handlebars";
 import type { Prompt, Signal, SignalHandler } from "./signals/handlers.ts";
 
-/**
- * What `templateHandler` needs. Everything is supplied here rather than through a
- * context object, so a Handler's dependencies are enumerated in its own factory call
- * (ADR-0024).
- */
+/** What `templateHandler` needs. Every dependency is named here rather than in a context. */
 export type TemplateHandlerOptions<TPayload = unknown> = {
   /**
    * The Handlebars file, as a path or a `file:` URL. Re-read for every Prompt.
    *
-   * A relative path resolves against the process's working directory, which is the
-   * Operator's to know; a template that lives beside the module referring to it is
-   * better named with `new URL("./prompt.hbs", import.meta.url)`.
+   * A relative path resolves against the process's working directory. For a template beside
+   * the module that names it, write `new URL("./prompt.hbs", import.meta.url)`.
    */
   readonly template: string | URL;
 
   /**
-   * Which Session this Signal's Prompt continues, or `null` for a fresh one
-   * (ADR-0006). One per user, one per Run, one for the whole agent, or a hybrid: the
-   * topology is this function's to choose, and the framework prefers none of them.
+   * Which Session this Signal's Prompt continues, or `null` for a fresh one.
+   *
+   * The topology is yours to choose: one Session per User, one per Run, or one for the whole
+   * agent.
    */
   readonly session: (signal: Signal<TPayload>) => string | null | Promise<string | null>;
 
   /**
-   * The values the template substitutes. Anything the template references and this
-   * does not supply fails the Signal rather than rendering empty.
+   * The values the template substitutes. A referenced value this does not supply fails the
+   * Signal rather than rendering empty.
    *
-   * A returned Promise is awaited, so this may be `async` — which is where a Handler
-   * queries what the prompt needs: the Message log, the Workspace, the Operator's own
-   * tables, through whatever it closed over.
+   * A returned Promise is awaited, so this can be `async`. That is where a Handler queries
+   * what the Prompt needs: the Message log, the Workspace, or your own tables.
    */
   readonly data: (signal: Signal<TPayload>) => unknown;
 
   /**
-   * Handlebars helpers, registered on this Handler's own environment and invisible
-   * to every other (`Handlebars.create()`, per ADR-0027). Their output is
-   * substituted unescaped like everything else.
+   * Handlebars helpers, registered on this Handler's own environment and invisible to every
+   * other one. Their output is substituted unescaped, like everything else.
    */
   readonly helpers?: Readonly<Record<string, Handlebars.HelperDelegate>>;
 
   /**
-   * Handlebars partials, as template source. Compiled by this Handler's environment
-   * with the same options as the template itself, so `noEscape` and `strict` hold
-   * inside them too — which is exactly what passing a pre-compiled template would
-   * lose.
+   * Handlebars partials, as template source rather than as compiled templates.
+   *
+   * This Handler compiles them with the same options as the template itself, so `noEscape`
+   * and `strict` hold inside them too.
    */
   readonly partials?: Readonly<Record<string, string>>;
 };
 
 /**
- * The two options that are the whole of ADR-0027, spelled once.
+ * A Prompt is text for a model, not markup for a browser.
  *
- * Applied at `compile` because Handlebars carries compile options per template
- * rather than per environment — there is nowhere to set them once and be safe.
+ * `noEscape` must stay. Remove it and prompts carry `&#x27;` where an apostrophe belongs,
+ * with nothing in any log to say so.
+ *
+ * `strict` turns a variable the data function did not supply into a failed Signal. It also
+ * disables inverse sections, so `{{^absent}}…{{/absent}}` throws. Write `{{#unless absent}}`
+ * instead. `{{#if}}`, `{{#each}}` and `{{else}}` all render as usual.
  */
 const compileOptions: CompileOptions = { noEscape: true, strict: true };
 
 /**
- * A Signal Handler that renders one Prompt per Signal from a Handlebars template.
+ * Builds a Signal Handler that renders one Prompt per Signal from a Handlebars template.
  *
- * One Prompt, always: fanning out to several Sessions and declining a Signal
- * altogether are both things the contract allows and this Handler does not do,
- * because a template file says nothing about how many Prompts there should be. A
- * Handler that needs either is an Operator's own — and one that needs a post phase
- * can wrap this: `{ ...templateHandler(options), post }` is a valid Handler, since a
- * Handler is a plain object.
+ * One Prompt, always. This Handler does not fan out to several Sessions, and it does not
+ * decline a Signal. The contract allows both. To add a post phase, wrap it:
+ * `{ ...templateHandler(options), post }` is a valid Handler.
+ *
+ * @param options The template, the Session to continue, and the values to substitute.
+ *
+ * @example
+ * ```ts
+ * import { templateHandler } from "shared-agent-framework";
+ *
+ * const handler = templateHandler<{ userId: string; body: string }>({
+ *   template: new URL("./prompts/message-received.hbs", import.meta.url),
+ *   session: (signal) => `user_${signal.payload.userId}`,
+ *   data: (signal) => signal.payload,
+ *   helpers: { upper: (value: string) => value.toUpperCase() },
+ * });
+ * ```
  */
 export function templateHandler<TPayload = unknown>(
   options: TemplateHandlerOptions<TPayload>,
 ): SignalHandler<TPayload> {
-  // One environment per Handler, so registering a helper or a partial cannot reach
-  // another Handler's templates or the shared `Handlebars` instance the Operator may
-  // be using for something else (ADR-0027). Built once here rather than per Prompt:
-  // it holds only what was passed to this factory, and none of it changes.
+  // One environment per Handler, so a helper or a partial cannot reach another Handler's
+  // templates or the shared `Handlebars` instance. Built once, because it holds only what was
+  // passed to this factory and none of it changes.
   const environment = Handlebars.create();
   for (const [name, helper] of Object.entries(options.helpers ?? {})) {
     environment.registerHelper(name, helper);
@@ -123,15 +107,14 @@ export function templateHandler<TPayload = unknown>(
 
   return {
     async handle(signal: Signal<TPayload>): Promise<readonly Prompt[]> {
-      // Outside the wrapping below on purpose: these are the Operator's own
-      // functions, and an error from one is theirs to recognise, not something to
-      // re-blame on the template.
+      // Outside the wrapping below on purpose. These are the Operator's own functions, and an
+      // error from one is theirs to recognise rather than the template's.
       const session = await options.session(signal);
       const data = await options.data(signal);
 
-      // Read and compiled per Prompt, which is per Run. Separated from rendering
-      // because the two failures want different words: a path that is wrong and a
-      // template that is wrong are found in different places.
+      // Read and compiled per Prompt, which is per Run. Separated from rendering because the
+      // two failures want different words. A wrong path and a wrong template are found in
+      // different places.
       let source: string;
       try {
         source = await readFile(options.template, "utf8");
@@ -145,9 +128,9 @@ export function templateHandler<TPayload = unknown>(
       try {
         text = environment.compile(source, compileOptions)(data);
       } catch (error) {
-        // A parse error, or `strict` refusing a variable the data function did not
-        // supply. Handlebars names the variable and its line and column but never
-        // the file, which is the one thing an Operator with several templates needs.
+        // A parse error, or `strict` refusing a variable the data function did not supply.
+        // Handlebars names the variable, its line and its column, but never the file. That is
+        // the one thing an Operator with several templates needs.
         throw new Error(`the prompt template ${location} did not render: ${reason(error)}`, {
           cause: error,
         });
