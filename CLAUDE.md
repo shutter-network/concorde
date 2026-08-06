@@ -83,7 +83,7 @@ of the inner loop; it needs no database at all, because nothing in the package a
 DDL any more ([ADR-0046](./docs/adr/0046-the-operator-owns-migrations.md)). CI runs it
 as its own step.
 
-`npm run test:container` is the other separate one: the single end-to-end test
+`npm run test:container` is the second separate one: the single end-to-end test
 that starts a **real container** running a real `pi` against the real Agent
 server. It builds its own image from `src/test-support/pi-image/Dockerfile`, so it
 needs Docker and the network, and it takes about ten seconds. `npm run check`
@@ -94,6 +94,11 @@ fast test and the inner loop should stay one. CI runs it as its own step, so
 credentials: the model is a scripted OpenAI-compatible server on localhost, and
 everything else about the Run is real.
 
+`npm run check:docs` is the third, and it is described with the site below, since what it needs
+is what the site needs. It regenerates the committed API reference, fails when that reference
+has fallen behind the doc comments, and builds the site. CI runs it as its own step too. So
+there are four commands in CI and three of them are not the inner loop.
+
 `npm run docs:dev` and `npm run docs:build` are the API reference: TypeDoc reads the doc
 comments out of `src`, writes one markdown page per entry point, and VitePress serves or builds
 them. The pages are the eight subpaths of the export map
@@ -103,22 +108,42 @@ Developer imports from, and `example/` is not among them.
 **`site/` is an npm package of its own, with its own lockfile and its own `node_modules`**, and
 it buys exactly one thing: a second TypeScript, because TypeDoc peers a compiler up to `6.0.x`
 and this package pins 7. `site/README.md` argues that and states the **exit condition** — when
-TypeDoc supports the compiler the root pins, the sub-package collapses into the root. Both root
-scripts `npm ci` that tree themselves, so a fresh clone needs no separate step.
+TypeDoc supports the compiler the root pins, the sub-package collapses into the root. All three
+root scripts `npm ci` that tree themselves, so a fresh clone needs no separate step.
+
+**`site/reference` is committed**, nine markdown pages: one per entry point, plus the `index.md`
+that lists them and is the site root. That is what makes a change to the public API arrive as a
+readable diff in review rather than as something to notice in a source diff, and it only works
+because `typedoc.jsonc` sets `disableSources: true`. A file path, a line number and a commit
+hash under every symbol would churn the diff on edits that changed no API at all. Nothing under
+`reference/` is authored, so a page is never edited: change the doc comment and regenerate.
+
+`npm run check:docs` is the third command, and it is separate from `npm run check` for exactly
+the reason `check:package` is: it installs `site/`'s tree, so it needs the network and the
+second compiler. It regenerates `site/reference`, **fails on any difference against what is
+committed and names the files that differ**, and then builds the site so a broken configuration
+fails in a check rather than in a browser. It reports both failures rather than stopping at the
+first. It is also what makes the guard in `site/specifier-titles.mjs` unattended: that guard
+compares `typedoc.jsonc`'s entry points against `package.json` `exports` both ways and fails
+the generation if they disagree, and before this command nothing but a human running TypeDoc
+fired it. CI runs it as its own step. TypeDoc's *warnings* do not fail it, deliberately and
+statedly: one dangling reference is known and ticketed, and an export-map change is not
+something a documentation check gets to force.
 
 **The one command must stay ignorant of the second compiler.** `npm run check` installs none of
 `site/` and **must keep passing on a checkout where `site/node_modules` was never created** —
 that is the test, and it is run by moving that directory aside, not by reading the
 configuration. `tsconfig.json` does not include `site`, the test glob is `src/**`, and Biome
-ignores markdown entirely, so nothing TypeDoc writes can fail `npm run lint` — the generated
-`site/reference` is gitignored besides. What `npm run check` *does* cover is the four authored
-files in `site/`, because `biome check .` lints the whole tree; that is wanted, and it costs no
+ignores markdown entirely, which is what lets thousands of lines of generated markdown sit in
+the tree without touching `npm run lint`. Verified by running it, not by reading Biome's
+configuration. **The one exception is JSON, and it is why `site/reference/typedoc-sidebar.json`
+stays gitignored**: Biome formats JSON, TypeDoc's theme writes that file as one minified line,
+and committing it would fail the one command over a file nobody reads. Every command that reads
+it regenerates it first, so what leaving it out costs is that a change to the sidebar alone goes
+uncaught, and that is a theme upgrade rather than an API change. What `npm run check` *does*
+cover is the authored files in
+`site/`, because `biome check .` lints the whole tree; that is wanted, and it costs no
 documentation toolchain.
-
-Nothing in `npm run check` or in CI runs TypeDoc yet, so the guard in
-`site/specifier-titles.mjs` — it compares `typedoc.jsonc`'s entry points against `package.json`
-`exports` both ways and fails the generation if they disagree — fires only when someone
-generates. Making that unattended is the drift check's job, and the drift check is not written.
 
 `npm run format` applies Biome's fixes; `npm run check` fails on unformatted code
 rather than warning.

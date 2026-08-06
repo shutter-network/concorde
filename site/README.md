@@ -8,21 +8,30 @@ own. Run it from the repository root:
 ```sh
 npm run docs:dev     # serve on localhost and regenerate as doc comments are edited
 npm run docs:build   # generate and build the static site
+npm run check:docs   # regenerate, fail if the committed pages differ, then build
 ```
 
-Both install this package's dependencies from its lockfile first, so a fresh clone needs no
-separate step. The site is not published: the repository is private, so a public URL would be
-the wrong trade while the surface is still being judged.
+All three install this package's dependencies from its lockfile first, so a fresh clone needs
+no separate step. The site is not published: the repository is private, so a public URL would
+be the wrong trade while the surface is still being judged.
 
-`reference/` is generated in full on every run and is gitignored, as are `node_modules` and
-`.vitepress/cache`. Nothing under `reference/` is authored, which is why `.vitepress/` sits
-beside it rather than inside it — TypeDoc wipes its output directory before it writes. `dev`
-generates once before it starts the two watchers, because `.vitepress/config.ts` imports the
-generated sidebar and VitePress reads its config before TypeDoc has emitted anything.
+`reference/` is generated in full on every run and **is committed**, so a change to the public
+API arrives as a readable diff. Nothing under it is authored: TypeDoc wipes its output directory
+before it writes, which is why `.vitepress/` sits beside it rather than inside it, and why a page
+is never edited by hand. Change the doc comment in `../src` and regenerate. Regeneration
+is byte-identical when no doc comment moved, which is what `disableSources: true` in
+`typedoc.jsonc` buys, so a stray `docs:dev` during development leaves the tree clean and cannot
+be mistaken for a real change. `node_modules`, `.vitepress/cache` and `.vitepress/dist` are
+gitignored, and so is `reference/typedoc-sidebar.json`, for the reason `.gitignore` gives.
 
-A doc comment that still cites a decision record makes TypeDoc copy the record into
-`reference/_media/`. Those copies are excluded from the build and the links into them are not
-counted against it; both lines in `.vitepress/config.ts` go when the citations do.
+**So the committed pages are not a site on their own.** `.vitepress/config.ts` imports that
+gitignored sidebar, and VitePress reads its config before anything else, so both `dev` and
+`build` generate first. Neither is a script to skip because `reference/` looks present.
+
+`check:docs` is the guard on all of that, and it lives at the root because it is a check rather
+than a way to look at the site: it regenerates, names every page that differs from what is
+committed, and builds. It is not part of `npm run check`, for the reason the next section
+gives.
 
 ## Why this is a package of its own
 

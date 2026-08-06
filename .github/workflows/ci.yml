@@ -51,6 +51,14 @@ jobs:
       # nothing in it connects (ADR-0046).
       - run: npm run check:package
 
+      # Separate for the same reason: it installs `site/`'s own dependency tree, which
+      # carries the TypeScript 6 that TypeDoc peers, and keeping that compiler out of the
+      # inner loop is the whole reason `site/` is a package of its own (site/README.md). It
+      # regenerates the committed reference, fails if it has fallen behind the doc comments,
+      # and builds the site so a broken configuration fails here rather than in a browser.
+      # It needs the network and no database.
+      - run: npm run check:docs
+
       # The one end-to-end test: a real container running a real `pi` against the
       # real Agent server. Opt-in and therefore skipped by `npm run check`, which
       # is the inner loop — it builds an image over the network and takes about ten
