@@ -2,12 +2,15 @@
  * The User Manager's tables, in the part's own PostgreSQL schema
  * ([`data-model.md`](../../docs/data-model.md)).
  *
- * Not public API, for the same reason the Signal Worker's schema is not: every part of the
- * Gateway owns a schema and no part reads another's tables, so these objects are
- * exported for this part's own modules and are deliberately absent from the
- * package's `/users` subpath — an Operator who wants tables gets them through
- * `db.handle(theirOwnSchema)`, the same call the framework's parts use
- * (ADR-0021, ADR-0022).
+ * **Public API, on `shared-agent-framework/users/schema` and nowhere else.** An Operator
+ * barrels this module into their own `schema.ts` and generates from it, which is what the
+ * subpath is for
+ * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)); it reverses
+ * ADR-0021/0022's "deliberately absent from the `/users` subpath", and the separate door is
+ * the point — `/users` is still the part's API and these objects are still not on it. The
+ * discipline the old privacy enforced stands as a discipline: no part reads another's
+ * tables, and an Operator who wants tables of their own gets them through
+ * `db.handle(theirOwnSchema)`, the same call the framework's parts use.
  *
  * `drizzle-kit` reads this file to generate `migrations/users`, through a config
  * file of this part's own, so keep it to the tables and the values they are

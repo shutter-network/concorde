@@ -2,10 +2,16 @@
  * The HTTP Messenger's one table, in the part's own PostgreSQL schema
  * ([`data-model.md`](../../docs/data-model.md)).
  *
- * Not public API, for the reason the User Manager's schema is not: every part of the
- * Gateway owns a schema and no part reads another's tables, so these objects are
- * exported for this part's own modules and are deliberately absent from the package's
- * `/http-messenger` subpath (ADR-0021, ADR-0022).
+ * **Public API, on `shared-agent-framework/http-messenger/schema` and nowhere else**, for
+ * the reason the User Manager's schema is: an Operator barrels this module into their own
+ * `schema.ts` and generates from it
+ * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)). That reverses
+ * ADR-0021/0022's "deliberately absent from the `/http-messenger` subpath" — the part's own
+ * subpath still carries none of it. What the subpath does **not** carry is the User
+ * Manager's tables: the import below is a value used to declare a reference, not a
+ * re-export, so `users` and `tokens` are absent from this module's export surface and an
+ * Operator who barrels only this part gets a `messages` that references a table nothing in
+ * their graph creates. Barrel `shared-agent-framework/users/schema` beside it.
  *
  * `drizzle-kit` reads this file to generate the DDL, so keep it to the table and the
  * values it is defined in terms of. Two consequences of that reading follow:

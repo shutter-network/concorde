@@ -10,6 +10,14 @@
  *  - the tarball installs into a fresh project.
  *  - the root, `/pi`, `/users`, `/http-messenger`, `/signatures`, `/decisions` and
  *    `/scheduler` subpaths resolve there, both to the type checker and to Node at runtime.
+ *  - each part's `/schema` subpath resolves there the same two ways, and the tables
+ *    arrive as **top-level named exports**. That shape is the whole contract
+ *    ([ADR-0046](../docs/adr/0046-the-operator-owns-migrations.md)): `drizzle-kit`'s
+ *    exporter takes `Object.values` of a module and keeps what passes `is(x, PgTable)`,
+ *    never descending into a plain object, so a table reachable only through a wrapper
+ *    is dropped in silence and generates an **empty** migration. The runtime step below
+ *    reproduces that collection against a barrel the consumer wrote with `export *`,
+ *    which is what an Operator's `drizzle.config.ts` points at.
  *  - the shipped migration folders **apply to a real database from inside the
  *    installed package**, with a working directory that holds no `migrations`
  *    folder of its own. Resolving against `process.cwd()` passes every test in
@@ -49,15 +57,28 @@ import { createTestDatabase } from "../src/test-support/database.ts";
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const migrationsRoot = path.join(repoRoot, "migrations");
 
-/** The consumer's imports, spelled once: the type checker and Node see the same seven. */
+/**
+ * The consumer's imports, spelled once: the type checker and Node see the same twelve.
+ *
+ * The five `/schema` specifiers are the migration-generation door (ADR-0046), separate
+ * from each part's own subpath on purpose. Every table is named individually rather than
+ * pulled in as a namespace, because naming them is what proves the module flat-exports
+ * them: a table that had retreated into `usersTables` would fail to import here, where a
+ * `import * as` would resolve and say nothing.
+ */
 const consumerImports = [
   'import { createAgentContainerRuntime, createBareGateway, createGateway, createSignalWorker, defaultLogger, mountArguments, openDb, serverComponent, signalsMigrations, templateHandler } from "shared-agent-framework";',
+  'import { runs as runsTable, signals as signalsTable, workerSchema } from "shared-agent-framework/signals/schema";',
   'import { createPiRuntime, interpretPiOutput, piRun } from "shared-agent-framework/pi";',
   'import { createUsers, usersMigrations } from "shared-agent-framework/users";',
+  'import { tokens as tokensTable, users as usersTable, usersSchema } from "shared-agent-framework/users/schema";',
   'import { createHttpMessenger, httpMessagesMigrations, messageReceivedKind } from "shared-agent-framework/http-messenger";',
+  'import { httpMessagesSchema, messages as messagesTable } from "shared-agent-framework/http-messenger/schema";',
   'import { createSignatures } from "shared-agent-framework/signatures";',
   'import { createDecisions, decisionsMigrations } from "shared-agent-framework/decisions";',
+  'import { decisions as decisionsTable, decisionsSchema } from "shared-agent-framework/decisions/schema";',
   'import { createScheduler, scheduleFiredKind, schedulerMigrations } from "shared-agent-framework/scheduler";',
+  'import { schedulerSchema, schedules as schedulesTable } from "shared-agent-framework/scheduler/schema";',
 ];
 
 function run(command: string, args: string[], cwd: string): string {
@@ -161,6 +182,12 @@ try {
     // module, so its position in `dist` is what makes the shipped folder reachable.
     "dist/signals/migrations.js",
     "dist/signals/worker.js",
+    // Every part's schema module, `.d.ts` beside `.js`, because each is now a public
+    // subpath of its own and an Operator both imports and type-checks against it
+    // (ADR-0046). The Signal Worker's is the odd one: the part itself is exported from
+    // the package root and only its tables have a subpath.
+    "dist/signals/schema.js",
+    "dist/signals/schema.d.ts",
     // The Signal Worker's Agent server routes: a Fastify plugin, and the only shipped
     // module that names Fastify at all. Fastify is public API rather than an internal
     // (ADR-0021), so the consumer brings the instance and registers this on it.
@@ -176,6 +203,7 @@ try {
     "dist/users/routes.js",
     "dist/users/routes.d.ts",
     "dist/users/schema.js",
+    "dist/users/schema.d.ts",
     "dist/users/secrets.js",
     "dist/users/users.js",
     "dist/users/users.d.ts",
@@ -193,6 +221,7 @@ try {
     "dist/http-messenger/routes.js",
     "dist/http-messenger/routes.d.ts",
     "dist/http-messenger/schema.js",
+    "dist/http-messenger/schema.d.ts",
     // Signatures, under its own subpath and with **no migration descriptor**: it is the one
     // part of the framework that stores nothing, so there is no `migrations.js` beside these
     // and no folder for one to resolve (ADR-0042). It is also the only module that imports
@@ -215,6 +244,7 @@ try {
     "dist/decisions/routes.js",
     "dist/decisions/routes.d.ts",
     "dist/decisions/schema.js",
+    "dist/decisions/schema.d.ts",
     // The Scheduler, under its own subpath and with a descriptor of its own:
     // `dist/scheduler/migrations.js` resolves `../../migrations/scheduler` from its own
     // module, so its position in `dist` is what makes that folder reachable. It is the second
@@ -231,6 +261,7 @@ try {
     "dist/scheduler/routes.js",
     "dist/scheduler/routes.d.ts",
     "dist/scheduler/schema.js",
+    "dist/scheduler/schema.d.ts",
     // The template Handler is public surface of its own, and the only module that
     // reaches for `handlebars` — so a missing `dependencies` entry surfaces when the
     // scratch project imports it below rather than at an Operator's first Signal.
@@ -402,11 +433,30 @@ try {
           skipLibCheck: true,
           noEmit: true,
         },
-        include: ["main.ts"],
+        include: ["main.ts", "schema.ts"],
       },
       null,
       2,
     )}\n`,
+  );
+  // The Operator's migration barrel, which is the whole of what ADR-0046 asks them to
+  // write: `export *` of the parts they run, with a `drizzle.config.ts` pointing at it.
+  // It is a file of its own rather than lines in `main.ts` because that is the shape —
+  // and because `export *` carries names without unwrapping objects, which is the second
+  // half of why the `/schema` modules flat-export their tables. The User Manager is here
+  // beside the HTTP Messenger deliberately: `messages.user_id` references
+  // `saf_users.users.id`, so a barrel with one and not the other generates a foreign key
+  // onto a table it never creates.
+  writeFileSync(
+    path.join(consumer, "schema.ts"),
+    [
+      'export * from "shared-agent-framework/signals/schema";',
+      'export * from "shared-agent-framework/users/schema";',
+      'export * from "shared-agent-framework/http-messenger/schema";',
+      'export * from "shared-agent-framework/decisions/schema";',
+      'export * from "shared-agent-framework/scheduler/schema";',
+      "",
+    ].join("\n"),
   );
   writeFileSync(
     path.join(consumer, "main.ts"),
@@ -510,6 +560,10 @@ try {
       '} from "shared-agent-framework/scheduler";',
       'import { createPrivateKey, generateKeyPairSync, type KeyObject } from "node:crypto";',
       'import { pgSchema, text } from "drizzle-orm/pg-core";',
+      // The two types the `/schema` subpaths are annotated against below. They come from
+      // `drizzle-orm`, which is a *peer* dependency this project never asked npm for — so
+      // resolving them at all is the same proof the peer arrangement gets everywhere else.
+      'import type { PgSchema, PgTable } from "drizzle-orm/pg-core";',
       // Fastify is public API (ADR-0021) and the consumer's own dependency: the
       // framework constructs no server, so the instance comes from this call.
       // Importing the types here is also what proves they resolve from the installed
@@ -533,6 +587,32 @@ try {
       "// framework's own parts use.",
       'const own = pgSchema("consumer");',
       'const notes = own.table("notes", { body: text("body").notNull() });',
+      "",
+      "// And the framework's own, off the five `/schema` subpaths — the door ADR-0046 opens",
+      "// so that an Operator can generate DDL for the parts they run. Each table is imported",
+      "// by name at the top of this file rather than as a namespace, which is what states the",
+      "// shape: `drizzle-kit` reads `Object.values` of a module and keeps what passes",
+      "// `is(x, PgTable)`, so a table that had retreated into a wrapper object would be dropped",
+      "// in silence and generate an empty migration. Annotated as the two Drizzle types the",
+      "// exporter actually filters on, so a schema module that stopped exporting a table fails",
+      "// here rather than at an Operator's first `generate`.",
+      "export const partTables: readonly PgTable[] = [",
+      "  signalsTable, runsTable, usersTable, tokensTable, messagesTable, decisionsTable, schedulesTable,",
+      "];",
+      "export const partSchemas: readonly PgSchema[] = [",
+      "  workerSchema, usersSchema, httpMessagesSchema, decisionsSchema, schedulerSchema,",
+      "];",
+      "",
+      "// The consequence the ADR records rather than mitigates: an exported table object is",
+      "// both migratable and queryable, so the same `db.handle` that takes the Operator's own",
+      "// tables above takes a framework part's. Written as a real projection, so a column",
+      "// renamed out from under an Operator fails here.",
+      "export async function readMessages(): Promise<{ seq: number; text: string }[]> {",
+      "  return db",
+      "    .handle({ messages: messagesTable })",
+      "    .select({ seq: messagesTable.seq, text: messagesTable.text })",
+      "    .from(messagesTable);",
+      "}",
       "",
       "// The cross-part shape: widens the schema parameter, so a handle typed to",
       "// one schema and a transaction started on another both satisfy it.",
@@ -1221,6 +1301,14 @@ try {
         // exercised because the framework reaches for it directly to validate a zone name.
         'import { CronExpressionParser } from "cron-parser";',
         'import { IANAZone } from "luxon";',
+        // The Operator's barrel, imported as a namespace so that the collection below sees
+        // exactly what `drizzle-kit` would: the module's own values, after `export *` has
+        // carried five parts' names into one place.
+        'import * as barrel from "./schema.ts";',
+        // And the two things the exporter filters on, from the peer this project never
+        // installed directly.
+        'import { is } from "drizzle-orm";',
+        'import { getTableConfig, PgSchema, PgTable } from "drizzle-orm/pg-core";',
         // The three built-ins the signing path needs: one to make a keypair, and two to check
         // the artifact the way a third party does — with `node:crypto` and not with `jose`,
         // since `jose` is what signed it (ADR-0042).
@@ -1365,11 +1453,24 @@ try {
         // hold — which is what proves `cron-parser` and `luxon` are declared and resolve here.
         "const cronNext = CronExpressionParser.parse('0 9 * * *', { currentDate: new Date('2030-06-01T12:00:00.000Z'), tz: 'UTC' }).next().toDate().toISOString();",
         "const zoneKnown = IANAZone.isValidZone('Europe/Berlin') && !IANAZone.isValidZone('Mars/Phobos');",
+        // `drizzle-kit`'s `prepareFromExports`, reproduced line for line against the barrel:
+        // `Object.values`, filtered by `is(x, PgTable)` and `is(x, PgSchema)`, with **no
+        // recursion into a plain object**. `drizzle-kit` itself is not installed here and
+        // should not be — it is a development tool, and this is a consumer's runtime tree —
+        // so what runs is the collection rule rather than the tool, against the very
+        // module an Operator's `drizzle.config.ts` names (ADR-0046).
+        "const barrelled = Object.values(barrel).filter((value) => is(value, PgTable)).map((table) => getTableConfig(table).schema + '.' + getTableConfig(table).name).sort();",
+        "const barrelledSchemas = Object.values(barrel).filter((value) => is(value, PgSchema)).map((schema) => schema.schemaName).sort();",
+        // And the failure the flat shape exists to avoid, demonstrated rather than argued:
+        // the `*Tables` wrappers `db.handle` takes ride along in every one of these modules
+        // and the exporter sees **none** of them. A schema module that exported only its
+        // wrapper would collect zero tables and generate an empty migration in silence.
+        "const wrappersSeen = [barrel.workerTables, barrel.usersTables, barrel.httpMessagesTables, barrel.decisionsTables, barrel.schedulerTables].filter((wrapper) => is(wrapper, PgTable) || is(wrapper, PgSchema)).length;",
         // Nothing writes anything: there is no call between composing and interpreting,
         // because the module that used to hold one is gone from the package, and the
         // composed command line names no file for the agent to read either — the
         // Operator's `AGENTS.md` above is a mount and `pi` discovers it (ADR-0025).
-        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), mountArgs[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersMigrations.schema, String(Object.keys(directory).sort()), httpMessagesMigrations.schema, String(Object.keys(messenger).sort()), messageReceivedKind, decisionsMigrations.schema, String(Object.keys(signatures).sort()), String(Object.keys(decisions).sort()), jws.split('.').length + ' segments, ' + Buffer.from(jwsSignature, 'base64url').length + ' signature bytes, verified ' + checked + ', private member ' + Object.hasOwn(keySet.keys[0], 'd'), String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(','), 'cron ' + cronNext + ' zone ' + zoneKnown, 'scheduler ' + String(Object.keys(scheduler).sort()) + ' fires ' + scheduleFiredKind + ' migrates ' + schedulerMigrations.schema];",
+        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), mountArgs[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersMigrations.schema, String(Object.keys(directory).sort()), httpMessagesMigrations.schema, String(Object.keys(messenger).sort()), messageReceivedKind, decisionsMigrations.schema, String(Object.keys(signatures).sort()), String(Object.keys(decisions).sort()), jws.split('.').length + ' segments, ' + Buffer.from(jwsSignature, 'base64url').length + ' signature bytes, verified ' + checked + ', private member ' + Object.hasOwn(keySet.keys[0], 'd'), String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(','), 'cron ' + cronNext + ' zone ' + zoneKnown, 'scheduler ' + String(Object.keys(scheduler).sort()) + ' fires ' + scheduleFiredKind + ' migrates ' + schedulerMigrations.schema, 'barrel ' + barrelled.join(' ') + ' in ' + barrelledSchemas.join(' ') + ', wrappers seen ' + wrappersSeen];",
         "process.stdout.write(built.join(':'));",
       ].join("\n"),
     ],
@@ -1377,8 +1478,8 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword,start,stop:saf_http_messages:history,send,start,stop:message.received:saf_decisions:sign,start,stop:history,publish,start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,signatures,decisions,messenger,ownLoop,worker:Shared Agent Gateway: Agent server describes 10 paths:by hand /healthz:cron 2030-06-02T09:00:00.000Z zone true:scheduler cancel,list,schedule,start,stop,tick fires saf_schedule_fired migrates saf_scheduler",
-    "all seven subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Manager should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself, and both of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the four parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone, and the Scheduler itself should construct from the installed `/scheduler` subpath and carry its management surface and its Component lifecycle, filing its table under a schema of its own",
+    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword,start,stop:saf_http_messages:history,send,start,stop:message.received:saf_decisions:sign,start,stop:history,publish,start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,signatures,decisions,messenger,ownLoop,worker:Shared Agent Gateway: Agent server describes 10 paths:by hand /healthz:cron 2030-06-02T09:00:00.000Z zone true:scheduler cancel,list,schedule,start,stop,tick fires saf_schedule_fired migrates saf_scheduler:barrel saf_decisions.decisions saf_http_messages.messages saf_scheduler.schedules saf_signals.runs saf_signals.signals saf_users.tokens saf_users.users in saf_decisions saf_http_messages saf_scheduler saf_signals saf_users, wrappers seen 0",
+    "all twelve subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Manager should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself, and both of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the four parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone, and the Scheduler itself should construct from the installed `/scheduler` subpath and carry its management surface and its Component lifecycle, filing its table under a schema of its own, and an Operator's barrel — `export *` of all five `/schema` subpaths, which is the whole of what ADR-0046 asks them to write — should hand `drizzle-kit`'s own collection rule every one of the seven tables and all five schemas, and none of the `*Tables` wrappers, because a table reachable only through a wrapper object is dropped in silence and generates an empty migration",
   );
 
   step("applying a shipped migration folder from inside the installed package");

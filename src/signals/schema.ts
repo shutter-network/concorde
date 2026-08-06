@@ -2,11 +2,14 @@
  * The Signal Worker's tables: `signals` and `runs`, in its own PostgreSQL schema
  * ([`data-model.md`](../../docs/data-model.md)).
  *
- * Not public API. Every part of the Gateway owns a schema and no part reads
- * another's tables, so these objects are exported for this part's own modules and
- * are deliberately absent from the package's root export — an Operator who wants
- * tables gets them through `db.handle(theirOwnSchema)`, the same call the
- * framework's parts use (ADR-0021, ADR-0022).
+ * **Public API, on `shared-agent-framework/signals/schema` and nowhere else.** An Operator
+ * barrels this module into their own `schema.ts` and generates from it
+ * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)). The subpath is the
+ * part's only public surface that is not the package root: the Signal Worker itself is
+ * exported from `.`, and these objects deliberately are not, so the softening sits behind
+ * one labelled door. That reverses ADR-0021/0022's "deliberately absent from the package's
+ * root export"; no part reading another's tables remains a discipline, and an Operator who
+ * wants tables of their own still gets them through `db.handle(theirOwnSchema)`.
  *
  * `drizzle-kit` reads this file to generate `migrations/signals`, so keep it to the
  * tables and the values they are defined in terms of. The descriptor that ships

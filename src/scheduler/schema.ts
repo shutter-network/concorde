@@ -2,10 +2,13 @@
  * The Scheduler's one table, in the part's own PostgreSQL schema
  * ([`data-model.md`](../../docs/data-model.md)).
  *
- * Not public API, for the reason the other parts' schemas are not: every part of the Gateway
- * owns a schema and no part reads another's tables, so these objects are exported for this
- * part's own modules and are deliberately absent from the package's `/scheduler` subpath
- * (ADR-0021, ADR-0022).
+ * **Public API, on `shared-agent-framework/scheduler/schema` and nowhere else**, for the
+ * reason the other parts' schemas are: an Operator barrels this module into their own
+ * `schema.ts` and generates from it
+ * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)). That reverses
+ * ADR-0021/0022's "deliberately absent from the `/scheduler` subpath" — `/scheduler` is
+ * still the part's API and these objects are still not on it. No part reading another's
+ * tables remains a discipline rather than something the objects being private enforces.
  *
  * `drizzle-kit` reads this file to generate `migrations/scheduler`, through a config file of
  * this part's own, so keep it to the table and the values it is defined in terms of. Unlike the
