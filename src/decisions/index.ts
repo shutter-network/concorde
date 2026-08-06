@@ -25,9 +25,10 @@
  * nothing references a User at all
  * ([ADR-0043](../../docs/adr/0043-decisions-are-one-global-log.md)).
  *
- * It registers **no migration**. The table comes from
- * `shared-agent-framework/decisions/schema`, which an Operator barrels and applies with their
- * own `drizzle-kit` ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)).
+ * It registers **no migration**. The table is exported from here beside `createDecisions`, and
+ * an Operator barrels this subpath and applies it with their own `drizzle-kit`
+ * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md),
+ * [ADR-0047](../../docs/adr/0047-a-component-is-one-subpath.md)).
  *
  * `DecisionRecord` is the one shape every surface of this part answers with, and the field on
  * it that matters is `jws`: the artifact is the Decision, and the log is where Decisions are
@@ -41,3 +42,8 @@
 
 export type { DecisionRecord, Decisions, DecisionsOptions } from "./decisions.ts";
 export { createDecisions } from "./decisions.ts";
+// The table, on this subpath and no other, a component being one door (ADR-0047). A star rather
+// than a list, because a table an Operator's `drizzle-kit` cannot see as a top-level name is a
+// table it silently creates nothing for (ADR-0046). This log references nobody, so a barrel
+// carrying it alone generates cleanly (ADR-0043).
+export * from "./schema.ts";

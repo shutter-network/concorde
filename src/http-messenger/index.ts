@@ -29,10 +29,10 @@
  * part must also export the User Manager's schema, or generation references a table it does
  * not create.
  *
- * It registers **no migration**. The tables come from
- * `shared-agent-framework/http-messenger/schema`, which an Operator barrels and applies with
- * their own `drizzle-kit`
- * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)).
+ * It registers **no migration**. The tables are exported from here beside
+ * `createHttpMessenger`, and an Operator barrels this subpath and applies it with their own
+ * `drizzle-kit` ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md),
+ * [ADR-0047](../../docs/adr/0047-a-component-is-one-subpath.md)).
  *
  * `messageReceivedKind` and `MessageRecord` are the two halves of this part's Signal
  * contract, and they are here so that an Operator's Handler map is neither a string literal
@@ -47,10 +47,18 @@
  * needs these routes somewhere else wants a different messaging Producer (ADR-0034,
  * ADR-0021).
  *
- * The reserved and deliberately unresolvable `./messenger` subpath stays reserved, and now
- * says something it did not say before: that *the* Messenger is not what shipped.
+ * The reserved and deliberately unresolvable `./messenger` subpath is gone from the manifest.
+ * It was the placeholder for *the* Messenger, and it retired with the `/schema` subpaths
+ * (ADR-0047): the export map is eight entry points, each of them a thing that exists.
  */
 
 export type { HttpMessenger, HttpMessengerOptions } from "./http-messenger.ts";
 export { createHttpMessenger, messageReceivedKind } from "./http-messenger.ts";
 export type { MessageRecord } from "./messages.ts";
+// The table, on this subpath and no other, a component being one door (ADR-0047). A star
+// rather than a list, because a table an Operator's `drizzle-kit` cannot see as a top-level
+// name is a table it silently creates nothing for (ADR-0046). What it does **not** carry is
+// the User Manager's tables — `schema.ts` imports them to declare the foreign key and
+// re-exports nothing — so a barrel with this component and not that one generates a
+// reference to a table it never creates.
+export * from "./schema.ts";

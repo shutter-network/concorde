@@ -24,9 +24,10 @@
  * `SignalHandler<ScheduleFiredRecord>`. Registering no Handler for that `kind` is a stored
  * Schedule that fires into a permanently failed Signal (ADR-0017).
  *
- * It registers **no migration**. The table comes from
- * `shared-agent-framework/scheduler/schema`, which an Operator barrels and applies with their own
- * `drizzle-kit` ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)).
+ * It registers **no migration**. The table is exported from here beside `createScheduler`, and an
+ * Operator barrels this subpath and applies it with their own `drizzle-kit`
+ * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md),
+ * [ADR-0047](../../docs/adr/0047-a-component-is-one-subpath.md)).
  *
  * The agent-facing routes register on the Agent server the constructor is given; passing none is the
  * disable switch, so a route plugin is an internal of the part rather than a separate export.
@@ -42,3 +43,8 @@ export type {
   ScheduleSpec,
 } from "./schedules.ts";
 export { ScheduleSpecError } from "./schedules.ts";
+// The table, on this subpath and no other, a component being one door (ADR-0047). A star rather
+// than a list, because a table an Operator's `drizzle-kit` cannot see as a top-level name is a
+// table it silently creates nothing for (ADR-0046). A Schedule references nobody, so a barrel
+// carrying it alone generates cleanly.
+export * from "./schema.ts";

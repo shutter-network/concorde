@@ -6,29 +6,33 @@
  *
  * What it no longer proves is that migration folders ship and that the shipped SQL
  * applies to a real database from inside the installed package. There is no SQL: the
- * framework applies nothing and the Operator generates their own DDL from the `/schema`
- * subpaths below ([ADR-0046](../docs/adr/0046-the-operator-owns-migrations.md)). That is
+ * framework applies nothing and the Operator generates their own DDL from the tables the
+ * component subpaths below export
+ * ([ADR-0046](../docs/adr/0046-the-operator-owns-migrations.md)). That is
  * a recorded cost of that ADR and not an oversight — we no longer author the bytes
  * applied to anybody's production database, so no check here can vouch for them.
- *  - the root, `/signals`, `/pi`, `/users`, `/http-messenger`, `/signatures`, `/decisions` and
- *    `/scheduler` subpaths resolve there, both to the type checker and to Node at runtime.
- *    `/signals` is the Signal Worker's own, carrying its constructor, its options and the
- *    vocabulary a Signal Handler is written in, none of which is at the root any more
- *    ([ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md)). The root import below is
- *    what proves the move: it names every value the root still has, so a symbol that stayed
- *    behind on both specifiers would go unnoticed, but one still *only* at the root fails on
- *    the `/signals` import instead.
- *  - each part's `/schema` subpath resolves there the same two ways, and the tables
- *    arrive as **top-level named exports**. That shape is the whole contract
+ *  - **all eight** entry points resolve there, both to the type checker and to Node at
+ *    runtime, and eight is the whole map: the root, `/signals`, `/pi`, `/users`,
+ *    `/http-messenger`, `/signatures`, `/decisions` and `/scheduler`. A component is one
+ *    subpath, carrying its constructor, its types **and its tables**
+ *    ([ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md)), so there is no `/schema`
+ *    specifier to resolve any more and no reserved `/messenger` either. The root import below
+ *    is what proves the Signal Worker moved: it names every value the root still has, so a
+ *    symbol that stayed behind on both specifiers would go unnoticed, but one still *only* at
+ *    the root fails on the `/signals` import instead.
+ *  - a component's tables arrive on that same specifier as **top-level named exports**.
+ *    That shape is the whole contract
  *    ([ADR-0046](../docs/adr/0046-the-operator-owns-migrations.md)): `drizzle-kit`'s
  *    exporter takes `Object.values` of a module and keeps what passes `is(x, PgTable)`,
  *    never descending into a plain object, so a table reachable only through a wrapper
  *    is dropped in silence and generates an **empty** migration. The runtime step below
  *    reproduces that collection against a barrel the consumer wrote with `export *`,
  *    which is what an Operator's `drizzle.config.ts` points at.
- *  - `/messenger` is reserved: it is declared and deliberately unresolvable,
- *    rather than absent by omission — and now says that *the* Messenger is not what
- *    shipped, since `/http-messenger` is.
+ *  - **that barrel yields one distinct schema object per component**, which is the assertion
+ *    ADR-0047's prefixed names exist for. `export *` drops a name that resolves to more than
+ *    one binding, so a component whose schema object were renamed to a bare `schema` would be
+ *    missing from the barrel, an Operator's derived `schemaFilter` would be short or empty, and
+ *    `push` would create nothing and exit 0. Nothing else in the repository notices that.
  *
  * Run with `npm run check:package`. Deliberately not part of `npm run check`: it
  * installs from the registry, so it is far slower than the inner loop should be,
@@ -54,31 +58,27 @@ import { fileURLToPath } from "node:url";
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 /**
- * The consumer's imports, spelled once: the type checker and Node see the same thirteen.
+ * The consumer's imports, spelled once: the type checker and Node see the same eight.
  *
- * The five `/schema` specifiers are the migration-generation door (ADR-0046), separate
- * from each part's own subpath on purpose. Every table is named individually rather than
- * pulled in as a namespace, because naming them is what proves the module flat-exports
- * them: a table that had retreated into `usersTables` would fail to import here, where a
- * `import * as` would resolve and say nothing.
+ * **Eight lines, one per entry point, and a component's tables ride on the same line as its
+ * constructor** — which is the whole of ADR-0047. Every table is named individually rather
+ * than pulled in as a namespace, because naming them is what proves the module flat-exports
+ * them: a table that had retreated into `usersTables` would fail to import here, where an
+ * `import * as` would resolve and say nothing (ADR-0046). Every schema object is named with its
+ * component prefix, because a bare `schema` on each component is a barrel that exports none.
  *
- * `createSignalWorker` comes off `/signals` and not the root, which is the whole of what
- * ADR-0047 moved: the Worker owns tables, so it is a component with a subpath of its own.
+ * `createSignalWorker` comes off `/signals` and not the root, which is what ADR-0047 moved
+ * first: the Worker owns tables, so it is a component with a subpath of its own.
  */
 const consumerImports = [
   'import { createAgentContainerRuntime, createBareGateway, createGateway, defaultLogger, mountArguments, openDb, serverComponent, templateHandler } from "shared-agent-framework";',
-  'import { createSignalWorker } from "shared-agent-framework/signals";',
-  'import { runs as runsTable, signals as signalsTable, workerSchema } from "shared-agent-framework/signals/schema";',
+  'import { createSignalWorker, runs as runsTable, signals as signalsTable, workerSchema } from "shared-agent-framework/signals";',
   'import { createPiRuntime, interpretPiOutput, piRun } from "shared-agent-framework/pi";',
-  'import { createUsers } from "shared-agent-framework/users";',
-  'import { tokens as tokensTable, users as usersTable, usersSchema } from "shared-agent-framework/users/schema";',
-  'import { createHttpMessenger, messageReceivedKind } from "shared-agent-framework/http-messenger";',
-  'import { httpMessagesSchema, messages as messagesTable } from "shared-agent-framework/http-messenger/schema";',
+  'import { createUsers, tokens as tokensTable, users as usersTable, usersSchema } from "shared-agent-framework/users";',
+  'import { createHttpMessenger, httpMessagesSchema, messageReceivedKind, messages as messagesTable } from "shared-agent-framework/http-messenger";',
   'import { createSignatures } from "shared-agent-framework/signatures";',
-  'import { createDecisions } from "shared-agent-framework/decisions";',
-  'import { decisions as decisionsTable, decisionsSchema } from "shared-agent-framework/decisions/schema";',
-  'import { createScheduler, scheduleFiredKind } from "shared-agent-framework/scheduler";',
-  'import { schedulerSchema, schedules as schedulesTable } from "shared-agent-framework/scheduler/schema";',
+  'import { createDecisions, decisions as decisionsTable, decisionsSchema } from "shared-agent-framework/decisions";',
+  'import { createScheduler, scheduleFiredKind, schedulerSchema, schedules as schedulesTable } from "shared-agent-framework/scheduler";',
 ];
 
 function run(command: string, args: string[], cwd: string): string {
@@ -184,9 +184,9 @@ try {
     "dist/signals/index.js",
     "dist/signals/index.d.ts",
     "dist/signals/worker.js",
-    // Every part's schema module, `.d.ts` beside `.js`, because each is now a public
-    // subpath of its own and an Operator both imports and type-checks against it
-    // (ADR-0046).
+    // Every component's schema module, `.d.ts` beside `.js`. It has no subpath of its own any
+    // more — the component's `index.js` re-exports it (ADR-0047) — so it ships because that
+    // re-export has to resolve, for Node and for an Operator's type checker both (ADR-0046).
     "dist/signals/schema.js",
     "dist/signals/schema.d.ts",
     // The Signal Worker's Agent server routes: a Fastify plugin, and the only shipped
@@ -220,8 +220,8 @@ try {
     "dist/http-messenger/schema.js",
     "dist/http-messenger/schema.d.ts",
     // Signatures, under its own subpath and with **no schema module**: it is the one part of
-    // the framework that stores nothing, so there is no `schema.js` beside these and no
-    // `/schema` subpath for an Operator to barrel (ADR-0042). It is also the only module that
+    // the framework that stores nothing, so there is no `schema.js` beside these and nothing
+    // on its subpath for an Operator to barrel (ADR-0042). It is also the only module that
     // imports `jose`, which the runtime step below is what proves is declared rather than
     // merely present in our own tree.
     "dist/signatures/index.js",
@@ -230,8 +230,8 @@ try {
     "dist/signatures/signatures.d.ts",
     "dist/signatures/routes.js",
     "dist/signatures/routes.d.ts",
-    // Decisions, under its own subpath, with its table on a `/schema` subpath of its own
-    // (ADR-0043).
+    // Decisions, under its own subpath, with its table exported from that same subpath
+    // (ADR-0043, ADR-0047).
     "dist/decisions/index.js",
     "dist/decisions/index.d.ts",
     "dist/decisions/decisions.js",
@@ -413,21 +413,22 @@ try {
     )}\n`,
   );
   // The Operator's migration barrel, which is the whole of what ADR-0046 asks them to
-  // write: `export *` of the parts they run, with a `drizzle.config.ts` pointing at it.
-  // It is a file of its own rather than lines in `main.ts` because that is the shape —
-  // and because `export *` carries names without unwrapping objects, which is the second
-  // half of why the `/schema` modules flat-export their tables. The User Manager is here
+  // write: `export *` of the components they run, with a `drizzle.config.ts` pointing at it.
+  // Five **component** specifiers now, not five `/schema` ones, because a component is one
+  // subpath (ADR-0047). It is a file of its own rather than lines in `main.ts` because that is
+  // the shape — and because `export *` carries names without unwrapping objects, which is the
+  // second half of why the schema modules flat-export their tables. The User Manager is here
   // beside the HTTP Messenger deliberately: `messages.user_id` references
   // `saf_users.users.id`, so a barrel with one and not the other generates a foreign key
   // onto a table it never creates.
   writeFileSync(
     path.join(consumer, "schema.ts"),
     [
-      'export * from "shared-agent-framework/signals/schema";',
-      'export * from "shared-agent-framework/users/schema";',
-      'export * from "shared-agent-framework/http-messenger/schema";',
-      'export * from "shared-agent-framework/decisions/schema";',
-      'export * from "shared-agent-framework/scheduler/schema";',
+      'export * from "shared-agent-framework/signals";',
+      'export * from "shared-agent-framework/users";',
+      'export * from "shared-agent-framework/http-messenger";',
+      'export * from "shared-agent-framework/decisions";',
+      'export * from "shared-agent-framework/scheduler";',
       "",
     ].join("\n"),
   );
@@ -540,7 +541,7 @@ try {
       '} from "shared-agent-framework/scheduler";',
       'import { createPrivateKey, generateKeyPairSync, type KeyObject } from "node:crypto";',
       'import { pgSchema, text } from "drizzle-orm/pg-core";',
-      // The two types the `/schema` subpaths are annotated against below. They come from
+      // The two types the tables and schemas are annotated against below. They come from
       // `drizzle-orm`, which is a *peer* dependency this project never asked npm for — so
       // resolving them at all is the same proof the peer arrangement gets everywhere else.
       'import type { PgSchema, PgTable } from "drizzle-orm/pg-core";',
@@ -567,14 +568,14 @@ try {
       'const own = pgSchema("consumer");',
       'const notes = own.table("notes", { body: text("body").notNull() });',
       "",
-      "// And the framework's own, off the five `/schema` subpaths — the door ADR-0046 opens",
-      "// so that an Operator can generate DDL for the parts they run. Each table is imported",
-      "// by name at the top of this file rather than as a namespace, which is what states the",
-      "// shape: `drizzle-kit` reads `Object.values` of a module and keeps what passes",
-      "// `is(x, PgTable)`, so a table that had retreated into a wrapper object would be dropped",
-      "// in silence and generate an empty migration. Annotated as the two Drizzle types the",
-      "// exporter actually filters on, so a schema module that stopped exporting a table fails",
-      "// here rather than at an Operator's first `generate`.",
+      "// And the framework's own, off the five component subpaths — the door ADR-0046 opens and",
+      "// ADR-0047 moves onto the component itself, so that an Operator can generate DDL for the",
+      "// components they run. Each table is imported by name at the top of this file rather than",
+      "// as a namespace, which is what states the shape: `drizzle-kit` reads `Object.values` of a",
+      "// module and keeps what passes `is(x, PgTable)`, so a table that had retreated into a",
+      "// wrapper object would be dropped in silence and generate an empty migration. Annotated as",
+      "// the two Drizzle types the exporter actually filters on, so a component that stopped",
+      "// exporting a table fails here rather than at an Operator's first `generate`.",
       "export const partTables: readonly PgTable[] = [",
       "  signalsTable, runsTable, usersTable, tokensTable, messagesTable, decisionsTable, schedulesTable,",
       "];",
@@ -1434,6 +1435,22 @@ try {
         // module an Operator's `drizzle.config.ts` names (ADR-0046).
         "const barrelled = Object.values(barrel).filter((value) => is(value, PgTable)).map((table) => getTableConfig(table).schema + '.' + getTableConfig(table).name).sort();",
         "const barrelledSchemas = Object.values(barrel).filter((value) => is(value, PgSchema)).map((schema) => schema.schemaName).sort();",
+        // And the assertion the prefixed names exist for, which nothing else in this repository
+        // makes: **one distinct schema object per component, surviving `export *`** (ADR-0047).
+        // `export *` drops a name that resolves to more than one binding, so if the five names
+        // below were shortened to a bare `schema`, this barrel would carry none of them: the
+        // collected set would be empty, `schemaFilter` would be empty, and `drizzle-kit push`
+        // would compare nothing against nothing, print `No changes detected`, create not one
+        // table and exit 0. Asked two ways, because the two halves fail on different mistakes.
+        // The identity half is what catches a shortened name: shorten one component's and its
+        // prefixed name is `undefined` on the barrel, while the bare `schema` it became is still
+        // collected, so the counts stay `5 of 5` and only `every one collected` turns false.
+        // Shorten all five and they become ambiguous, so `export *` drops every one and both
+        // halves fail. The counting half catches the other mistake — two components sharing one
+        // schema object, which is five names over four distinct values, so both counts read `4`.
+        "const collectedSchemas = new Set(Object.values(barrel).filter((value) => is(value, PgSchema)));",
+        "const namedSchemas = [barrel.workerSchema, barrel.usersSchema, barrel.httpMessagesSchema, barrel.decisionsSchema, barrel.schedulerSchema];",
+        "const distinctSchemas = new Set(namedSchemas).size + ' of ' + collectedSchemas.size + ' distinct, every one collected ' + namedSchemas.every((value) => collectedSchemas.has(value));",
         // And the failure the flat shape exists to avoid, demonstrated rather than argued:
         // the `*Tables` wrappers `db.handle` takes ride along in every one of these modules
         // and the exporter sees **none** of them. A schema module that exported only its
@@ -1443,7 +1460,7 @@ try {
         // because the module that used to hold one is gone from the package, and the
         // composed command line names no file for the agent to read either — the
         // Operator's `AGENTS.md` above is a mount and `pi` discovers it (ADR-0025).
-        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), mountArgs[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersSchema.schemaName, String(Object.keys(directory).sort()), httpMessagesSchema.schemaName, String(Object.keys(messenger).sort()), messageReceivedKind, decisionsSchema.schemaName, String(Object.keys(signatures).sort()), String(Object.keys(decisions).sort()), jws.split('.').length + ' segments, ' + Buffer.from(jwsSignature, 'base64url').length + ' signature bytes, verified ' + checked + ', private member ' + Object.hasOwn(keySet.keys[0], 'd'), String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(','), 'cron ' + cronNext + ' zone ' + zoneKnown, 'scheduler ' + String(Object.keys(scheduler).sort()) + ' fires ' + scheduleFiredKind + ' in ' + schedulerSchema.schemaName, 'barrel ' + barrelled.join(' ') + ' in ' + barrelledSchemas.join(' ') + ', wrappers seen ' + wrappersSeen];",
+        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), mountArgs[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersSchema.schemaName, String(Object.keys(directory).sort()), httpMessagesSchema.schemaName, String(Object.keys(messenger).sort()), messageReceivedKind, decisionsSchema.schemaName, String(Object.keys(signatures).sort()), String(Object.keys(decisions).sort()), jws.split('.').length + ' segments, ' + Buffer.from(jwsSignature, 'base64url').length + ' signature bytes, verified ' + checked + ', private member ' + Object.hasOwn(keySet.keys[0], 'd'), String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(','), 'cron ' + cronNext + ' zone ' + zoneKnown, 'scheduler ' + String(Object.keys(scheduler).sort()) + ' fires ' + scheduleFiredKind + ' in ' + schedulerSchema.schemaName, 'barrel ' + barrelled.join(' ') + ' in ' + barrelledSchemas.join(' ') + ', wrappers seen ' + wrappersSeen, 'schemas ' + distinctSchemas];",
         "process.stdout.write(built.join(':'));",
       ].join("\n"),
     ],
@@ -1451,8 +1468,8 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword,start,stop:saf_http_messages:history,send,start,stop:message.received:saf_decisions:sign,start,stop:history,publish,start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,signatures,decisions,messenger,ownLoop,worker:Shared Agent Gateway: Agent server describes 10 paths:by hand /healthz:cron 2030-06-02T09:00:00.000Z zone true:scheduler cancel,list,schedule,start,stop,tick fires saf_schedule_fired in saf_scheduler:barrel saf_decisions.decisions saf_http_messages.messages saf_scheduler.schedules saf_signals.runs saf_signals.signals saf_users.tokens saf_users.users in saf_decisions saf_http_messages saf_scheduler saf_signals saf_users, wrappers seen 0",
-    "all thirteen subpaths should resolve at runtime, the Signal Worker's constructor arriving off `/signals` and not the root, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Manager should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself, and both of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the four parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone, and the Scheduler itself should construct from the installed `/scheduler` subpath and carry its management surface and its Component lifecycle, filing its table under a schema of its own, and an Operator's barrel — `export *` of all five `/schema` subpaths, which is the whole of what ADR-0046 asks them to write — should hand `drizzle-kit`'s own collection rule every one of the seven tables and all five schemas, and none of the `*Tables` wrappers, because a table reachable only through a wrapper object is dropped in silence and generates an empty migration",
+    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword,start,stop:saf_http_messages:history,send,start,stop:message.received:saf_decisions:sign,start,stop:history,publish,start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,signatures,decisions,messenger,ownLoop,worker:Shared Agent Gateway: Agent server describes 10 paths:by hand /healthz:cron 2030-06-02T09:00:00.000Z zone true:scheduler cancel,list,schedule,start,stop,tick fires saf_schedule_fired in saf_scheduler:barrel saf_decisions.decisions saf_http_messages.messages saf_scheduler.schedules saf_signals.runs saf_signals.signals saf_users.tokens saf_users.users in saf_decisions saf_http_messages saf_scheduler saf_signals saf_users, wrappers seen 0:schemas 5 of 5 distinct, every one collected true",
+    "all eight subpaths should resolve at runtime, the Signal Worker's constructor arriving off `/signals` and not the root, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Manager should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself, and both of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the four parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone, and the Scheduler itself should construct from the installed `/scheduler` subpath and carry its management surface and its Component lifecycle, filing its table under a schema of its own, and an Operator's barrel — `export *` of all five **component** subpaths, which is the whole of what ADR-0046 asks them to write and where ADR-0047 puts the tables — should hand `drizzle-kit`'s own collection rule every one of the seven tables and all five schemas, and none of the `*Tables` wrappers, because a table reachable only through a wrapper object is dropped in silence and generates an empty migration, and those five schema objects should be five distinct values that the barrel carries under five distinct prefixed names, because a bare `schema` on each component is a name `export *` drops for ambiguity and an Operator whose `schemaFilter` comes back empty gets a push that creates nothing and exits 0",
   );
 
   // The other half of ADR-0047's first move, which nothing above can see: `main.ts` imports the
@@ -1471,14 +1488,10 @@ try {
     "the Signal Worker belongs to `/signals` alone; a component with two specifiers is the split ADR-0047 closed",
   );
 
-  step("checking /messenger is reserved rather than resolvable");
-  const messengerResolved = exitsZero(
-    process.execPath,
-    ["--input-type=module", "-e", 'await import("shared-agent-framework/messenger");'],
-    consumer,
-  );
-  assert.equal(messengerResolved, false, "/messenger is reserved and must not resolve yet");
-
+  // The reserved `/messenger` specifier is gone from the manifest and there is no check where
+  // one used to be: `"./messenger": null` retired with the `/schema` subpaths (ADR-0047), and an
+  // undeclared specifier does not resolve for the same reason a misspelt one does not. Asserting
+  // that would be asserting Node's own behaviour.
   step("package check passed");
 } finally {
   rmSync(workDir, { recursive: true, force: true });

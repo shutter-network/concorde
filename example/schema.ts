@@ -24,10 +24,20 @@
  * this module and keeps whatever passes `is(x, PgTable)` or `is(x, PgSchema)` without
  * ever looking inside a plain object. A barrel that gathered the tables into one exported
  * record would push nothing at all, in silence.
+ *
+ * **Five component specifiers and no aliases**, because a component is one subpath: the tables
+ * arrive from the same specifier `main.ts` takes the constructor from
+ * ([ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md)). Each one carries its
+ * constructor and its routes along with its tables, which costs this one-shot container a few
+ * milliseconds and buys one specifier per component instead of two. No alias is needed because
+ * every schema object keeps its component prefix — `usersSchema` beside `httpMessagesSchema` and
+ * three more — and `export *` **drops a name that resolves to two bindings**, so five bare
+ * `schema` exports would leave this barrel with none, the `schemaFilter` in `drizzle.config.ts`
+ * empty, and a push that creates nothing and exits 0.
  */
 
-export * from "shared-agent-framework/decisions/schema";
-export * from "shared-agent-framework/http-messenger/schema";
-export * from "shared-agent-framework/scheduler/schema";
-export * from "shared-agent-framework/signals/schema";
-export * from "shared-agent-framework/users/schema";
+export * from "shared-agent-framework/decisions";
+export * from "shared-agent-framework/http-messenger";
+export * from "shared-agent-framework/scheduler";
+export * from "shared-agent-framework/signals";
+export * from "shared-agent-framework/users";

@@ -92,7 +92,11 @@ interleaved by one cursor. A deployment that wants one history keeps one Produce
   the HTTP Messenger, and a future peer names itself.
 - **The part ships on its own subpath, `./http-messenger`.** The reserved and deliberately
   unresolvable `./messenger` stays reserved, and now says something it did not say before:
-  that *the* Messenger is not what shipped.
+  that *the* Messenger is not what shipped. (**The reservation is superseded by
+  [ADR-0047](./0047-a-component-is-one-subpath.md)**: `"./messenger": null` is gone from the
+  manifest, the export map being eight entry points each of which is a thing that exists. The
+  name is still free for a second messaging Producer, and this ADR's argument — that the
+  up-front price is the name — is untouched.)
 - **A `kind` with no Handler registered is a 201 followed by a permanently failed Signal**
   ([ADR-0017](./0017-failed-runs-are-not-retried.md)). The Message is stored, the agent
   never sees it, and the failure is visible only on the Signal row. This is documented and

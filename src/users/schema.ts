@@ -2,15 +2,15 @@
  * The User Manager's tables, in the part's own PostgreSQL schema
  * ([`data-model.md`](../../docs/data-model.md)).
  *
- * **Public API, on `shared-agent-framework/users/schema` and nowhere else.** An Operator
- * barrels this module into their own `schema.ts` and generates from it, which is what the
- * subpath is for
- * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)); it reverses
- * ADR-0021/0022's "deliberately absent from the `/users` subpath", and the separate door is
- * the point — `/users` is still the part's API and these objects are still not on it. The
- * discipline the old privacy enforced stands as a discipline: no part reads another's
- * tables, and an Operator who wants tables of their own gets them through
- * `db.handle(theirOwnSchema)`, the same call the framework's parts use.
+ * **Public API, re-exported from `shared-agent-framework/users`.** An Operator barrels that
+ * subpath into their own `schema.ts` and generates from it
+ * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)); this file has no subpath
+ * of its own, a component being one door
+ * ([ADR-0047](../../docs/adr/0047-a-component-is-one-subpath.md)). Both reverse ADR-0021/0022's
+ * "deliberately absent from the `/users` subpath": `usersSchema`, `users` and `tokens` are now
+ * on it, beside `createUsers`. The discipline the old privacy enforced stands as a discipline:
+ * no part reads another's tables, and an Operator who wants tables of their own gets them
+ * through `db.handle(theirOwnSchema)`, the same call the framework's parts use.
  *
  * An Operator's `drizzle-kit` reads this file, through their barrel and their own
  * `drizzle.config.ts`, so keep it to the tables and the values they are

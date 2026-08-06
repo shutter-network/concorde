@@ -2,9 +2,9 @@
  * Signatures, from `shared-agent-framework/signatures`.
  *
  * A subpath of its own, like the User Manager's and the HTTP Messenger's, so that what a
- * deployment depends on is legible from its import statements. Unlike theirs it has **no
- * `/schema` subpath**, because this part stores nothing: no schema, no tables, and therefore
- * nothing for an Operator to barrel or generate
+ * deployment depends on is legible from its import statements. Unlike theirs it carries **no
+ * tables**, because this part stores nothing: no schema, no tables, and therefore nothing for
+ * an Operator to barrel or generate
  * ([ADR-0042](../../docs/adr/0042-a-signature-is-a-compact-jws.md),
  * [ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)).
  *

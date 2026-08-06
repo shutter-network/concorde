@@ -107,8 +107,9 @@
  * wrong default is worse than no default: a Public server on loopback serves nobody, and an
  * Agent server anywhere else is an unauthenticated API on a reachable port. And **migrations**,
  * whole: nothing here applies DDL and `start` verifies nothing, because the Operator generates
- * and applies their own from the parts' `/schema` subpaths
- * ([ADR-0046](../docs/adr/0046-the-operator-owns-migrations.md)).
+ * and applies their own from the tables each component subpath exports
+ * ([ADR-0046](../docs/adr/0046-the-operator-owns-migrations.md),
+ * [ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md)).
  *
  * ## It reads no environment
  *

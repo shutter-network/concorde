@@ -1275,20 +1275,22 @@ Your whole side of it is two files. The barrel:
 
 ```ts
 // schema.ts
-export * from "shared-agent-framework/decisions/schema";
-export * from "shared-agent-framework/http-messenger/schema";
-export * from "shared-agent-framework/scheduler/schema";
-export * from "shared-agent-framework/signals/schema";
-export * from "shared-agent-framework/users/schema";
+export * from "shared-agent-framework/decisions";
+export * from "shared-agent-framework/http-messenger";
+export * from "shared-agent-framework/scheduler";
+export * from "shared-agent-framework/signals";
+export * from "shared-agent-framework/users";
 ```
 
-and a `drizzle.config.ts` pointing `schema` at it. Every part with tables of its own has a
-`/schema` subpath like those, exporting its tables as top-level names because that is the
+and a `drizzle.config.ts` pointing `schema` at it. Those are the same five specifiers
+`main.ts` takes the constructors from, because a component is one subpath and its tables
+arrive on it beside `createUsers` and the rest
+([ADR-0047](./adr/0047-a-component-is-one-subpath.md)). Each exports its tables as top-level
+names because that is the
 only shape `drizzle-kit` reads: it takes `Object.values` of the module and keeps whatever
 passes `is(x, PgTable)`, never looking inside a plain object, so a barrel that gathered the
-tables into one exported record would push nothing at all and say so nowhere. Signatures has
-no such subpath, because it stores nothing: it is the only part of the framework with no
-schema at all.
+tables into one exported record would push nothing at all and say so nowhere. Signatures is
+absent because it stores nothing: it is the only part of the framework with no schema at all.
 
 **Set `schemaFilter` in that config, and derive it rather than typing it.** `drizzle-kit`
 defaults it to `["public"]` and applies it to *both* sides of the diff, so with every table

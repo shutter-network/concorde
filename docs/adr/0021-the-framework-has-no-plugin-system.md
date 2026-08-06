@@ -54,9 +54,12 @@
 > [ADR-0046](./0046-the-operator-owns-migrations.md), and two of them to the paragraph
 > immediately above rather than to this ADR's body.
 >
-> 1. **"the Store's schema is still not public API" no longer holds.** Each part's tables
->    are public API on a `shared-agent-framework/<part>/schema` subpath, because that is
->    what an Operator's own `drizzle-kit` reads to generate their DDL. Obtaining a handle
+> 1. **"the Store's schema is still not public API" no longer holds.** Each component's
+>    tables are public API on the component's own subpath,
+>    `shared-agent-framework/<component>`, because that is what an Operator's own
+>    `drizzle-kit` reads to generate their DDL. (ADR-0046 put them on a `/schema` subpath
+>    beside it; [ADR-0047](./0047-a-component-is-one-subpath.md) moved them onto the
+>    component itself and retired that one. Public either way, which is this item's point.) Obtaining a handle
 >    still is too, and "no part reads another's tables" survives as a discipline rather
 >    than as something the objects being private enforced.
 > 2. **Item 5 is withdrawn, and this ADR's original sentence is true again.**

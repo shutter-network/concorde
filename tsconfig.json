@@ -35,25 +35,21 @@
     // checker at the sources instead. Nothing in `src` imports the package by name,
     // so nothing else is affected.
     //
-    // The `/schema` entries are here for the same reason and one more: they are the
-    // subpaths an Operator's migration barrel is assembled from
-    // ([ADR-0046](./docs/adr/0046-the-operator-owns-migrations.md)), and `example/` is
-    // the reference Operator, so its barrel has to type-check against `src` exactly as
-    // its entry point does.
+    // The eight below are the whole export map, and they are eight because a component
+    // is one subpath: its constructor, its types and its tables arrive together
+    // ([ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md)). That is why there are
+    // no `/schema` entries any more — `example/` is the reference Operator and its
+    // migration barrel is assembled from the component subpaths, so the barrel
+    // type-checks against `src` through exactly the same mappings its entry point does.
     "paths": {
       "shared-agent-framework": ["./src/index.ts"],
       "shared-agent-framework/signals": ["./src/signals/index.ts"],
-      "shared-agent-framework/signals/schema": ["./src/signals/schema.ts"],
       "shared-agent-framework/pi": ["./src/pi/index.ts"],
       "shared-agent-framework/users": ["./src/users/index.ts"],
-      "shared-agent-framework/users/schema": ["./src/users/schema.ts"],
       "shared-agent-framework/http-messenger": ["./src/http-messenger/index.ts"],
-      "shared-agent-framework/http-messenger/schema": ["./src/http-messenger/schema.ts"],
       "shared-agent-framework/signatures": ["./src/signatures/index.ts"],
       "shared-agent-framework/decisions": ["./src/decisions/index.ts"],
-      "shared-agent-framework/decisions/schema": ["./src/decisions/schema.ts"],
-      "shared-agent-framework/scheduler": ["./src/scheduler/index.ts"],
-      "shared-agent-framework/scheduler/schema": ["./src/scheduler/schema.ts"]
+      "shared-agent-framework/scheduler": ["./src/scheduler/index.ts"]
     }
   },
   // There are no `drizzle.*.config.ts` files here any more: the framework generates

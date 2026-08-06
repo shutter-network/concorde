@@ -13,10 +13,11 @@
  * whose `start` and `stop` do nothing, because the record holds every part and not only the
  * ones that run (ADR-0037).
  *
- * It registers **no migration** and applies no DDL: the tables it needs come from
- * `shared-agent-framework/users/schema`, which an Operator barrels into their own
- * `drizzle.config.ts` and applies with their own `drizzle-kit`
- * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)). The two route plugins
+ * It registers **no migration** and applies no DDL: the tables it needs are exported from
+ * here, beside `createUsers`, and an Operator barrels this subpath into their own
+ * `drizzle.config.ts` and applies it with their own `drizzle-kit`
+ * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md),
+ * [ADR-0047](../../docs/adr/0047-a-component-is-one-subpath.md)). The two route plugins
  * stay exported because a server option is a default rather than a policy: register either
  * yourself, under your own prefix or inside your own encapsulated plugin, and omit the
  * server it would have gone on.
@@ -34,6 +35,13 @@
  */
 
 export type { IssuedToken, UserRecord } from "./routes.ts";
+// The tables, on this subpath and no other, a component being one door (ADR-0047). A star
+// rather than a list, because a table an Operator's `drizzle-kit` cannot see as a top-level
+// name is a table it silently creates nothing for (ADR-0046). `usersSchema` keeps its
+// prefix, and every component's does, because `export *` drops a name that resolves to more
+// than one binding: five components exporting a bare `schema` produce a barrel exporting
+// none, and a push that creates nothing and exits 0. ADR-0047 records the trade.
+export * from "./schema.ts";
 export type { ScryptParameters } from "./secrets.ts";
 export type { Users, UsersOptions } from "./users.ts";
 export { createUsers } from "./users.ts";

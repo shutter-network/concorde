@@ -19,10 +19,6 @@
       "types": "./dist/signals/index.d.ts",
       "default": "./dist/signals/index.js"
     },
-    "./signals/schema": {
-      "types": "./dist/signals/schema.d.ts",
-      "default": "./dist/signals/schema.js"
-    },
     "./pi": {
       "types": "./dist/pi/index.d.ts",
       "default": "./dist/pi/index.js"
@@ -31,17 +27,9 @@
       "types": "./dist/users/index.d.ts",
       "default": "./dist/users/index.js"
     },
-    "./users/schema": {
-      "types": "./dist/users/schema.d.ts",
-      "default": "./dist/users/schema.js"
-    },
     "./http-messenger": {
       "types": "./dist/http-messenger/index.d.ts",
       "default": "./dist/http-messenger/index.js"
-    },
-    "./http-messenger/schema": {
-      "types": "./dist/http-messenger/schema.d.ts",
-      "default": "./dist/http-messenger/schema.js"
     },
     "./signatures": {
       "types": "./dist/signatures/index.d.ts",
@@ -51,19 +39,10 @@
       "types": "./dist/decisions/index.d.ts",
       "default": "./dist/decisions/index.js"
     },
-    "./decisions/schema": {
-      "types": "./dist/decisions/schema.d.ts",
-      "default": "./dist/decisions/schema.js"
-    },
     "./scheduler": {
       "types": "./dist/scheduler/index.d.ts",
       "default": "./dist/scheduler/index.js"
-    },
-    "./scheduler/schema": {
-      "types": "./dist/scheduler/schema.d.ts",
-      "default": "./dist/scheduler/schema.js"
-    },
-    "./messenger": null
+    }
   },
   "files": [
     "dist"

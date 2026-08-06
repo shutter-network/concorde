@@ -66,15 +66,19 @@ share a database, and a test whose subject is what a fresh database ends up
 containing takes one of its own. See `src/test-support/database.ts`.
 
 `npm run check:package` is separate: it builds, packs, installs the tarball into a
-throwaway project, and checks that every subpath resolves there — to the type checker
-and to Node both, each part's `/schema` included, and `/signals` among them. That last
-one is the Signal Worker's own: its constructor, its options and the vocabulary a Signal
+throwaway project, and checks that **all eight** subpaths resolve there — to the type checker
+and to Node both. Eight, because a component is one subpath and its tables arrive on it
+beside its constructor ([ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md)):
+the root, `/signals`, `/pi`, `/users`, `/http-messenger`, `/signatures`, `/decisions` and
+`/scheduler`, with no `/schema` specifier and no reserved `/messenger` among them. `/signals`
+is the Signal Worker's own: its constructor, its options and the vocabulary a Signal
 Handler is written in come off `shared-agent-framework/signals` and **not** the package
-root, because a component that owns tables has a specifier
-([ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md)). The check imports the
+root. The check imports the
 Worker from there and then proves the root refuses the same name, which is the only thing
 that would notice a root re-export creeping back and making one component reachable two
-ways. It needs the network, so it stays out
+ways. It also assembles an Operator's barrel out of those component specifiers and proves
+it yields **one distinct schema object per component**, which is the assertion the prefixed
+schema names exist for — see the flat-exports convention below. It needs the network, so it stays out
 of the inner loop; it needs no database at all, because nothing in the package applies
 DDL any more ([ADR-0046](./docs/adr/0046-the-operator-owns-migrations.md)). CI runs it
 as its own step.
@@ -97,9 +101,11 @@ rather than warning.
 all** ([ADR-0046](./docs/adr/0046-the-operator-owns-migrations.md)). There is no
 `migrations:generate` script, no shipped migration folder, no descriptor, no
 `db.migrate`, no root `drizzle.*.config.ts` — and therefore neither of the two hand-edits
-that a regeneration used to demand. What a part ships is its `schema.ts`, on a public
-subpath of its own, `shared-agent-framework/<part>/schema`. A deployment `export *`s the
-parts it runs into one barrel, points its own `drizzle.config.ts` at that barrel, and
+that a regeneration used to demand. What a component ships is its `schema.ts`, re-exported
+from its own subpath, `shared-agent-framework/<component>`, beside its constructor
+(ADR-0047): there is no `/schema` specifier any more, and the tables of a component are
+reached the same way everything else about it is. A deployment `export *`s the
+components it runs into one barrel, points its own `drizzle.config.ts` at that barrel, and
 applies it with its own `drizzle-kit`: `push` to prototype, `generate` + `migrate` in
 production. `example/schema.ts`, `example/drizzle.config.ts` and
 `example/migrate/Dockerfile` are the worked version, run as a one-shot container the
@@ -114,7 +120,8 @@ lost to a wrapper export, a schema-name collision between two parts, or a new pa
 schema nobody added to the set.
 
 Signatures has none of any of this, and is the only part of which that is true: it stores
-nothing, so it has no schema, no tables and no `/schema` subpath
+nothing, so it has no schema and no tables, and its subpath carries a constructor and
+nothing beside it
 ([ADR-0042](./docs/adr/0042-a-signature-is-a-compact-jws.md)).
 
 Conventions the build depends on:
@@ -146,15 +153,27 @@ Conventions the build depends on:
 - **Tests and their fixtures live beside the code they exercise and never ship.**
   `src/**/*.test.ts` and `src/test-support/` are excluded from
   `tsconfig.build.json`, which the tarball check asserts.
-- **A part's tables are a public subpath, and they must stay flat.**
-  `shared-agent-framework/<part>/schema` is the door an Operator's `drizzle-kit`
-  reads through (ADR-0046), and that tool takes `Object.values` of the module and
+- **A component's tables are on the component's own subpath, and they must stay flat.**
+  `shared-agent-framework/<component>` is the door an Operator's `drizzle-kit`
+  reads through (ADR-0046, ADR-0047), and that tool takes `Object.values` of the module and
   keeps whatever passes `is(x, PgTable)` / `is(x, PgSchema)` — it never looks
   inside a plain object. So gathering the tables up as
   `export const usersTables = { users }` generates an **empty** migration and says
   nothing about it. `scripts/check-package.ts` imports every table **by name** out
   of the installed tarball for exactly that reason: a namespace import would
   resolve and prove nothing.
+- **Every schema object and every `*Tables` wrapper keeps its component's prefix.**
+  `usersSchema` and not `schema`, `usersTables` and not `tables`. The tables themselves are
+  named for the tables — `users`, `tokens`, `messages` — and are distinct across components
+  already, because each is `saf_<component>.<its own name>`. The prefix on the other two
+  reads worse at an import site and it is load-bearing (ADR-0047): an Operator's barrel is
+  wildcard re-exports of component subpaths, and **`export *` drops a name that resolves to
+  more than one binding**, so five components exporting a bare `schema` produce a barrel
+  exporting none, an empty derived `schemaFilter`, and a `push` that compares nothing against
+  nothing, creates not one table and exits 0. Nothing warns, and the Gateway starts on the
+  strength of that success. The prefix keeps the names distinct by construction; the
+  packaging check's "one distinct schema object per component" assertion is what notices if
+  anyone shortens them anyway.
 - **`src/http-messenger/schema.ts` imports `src/users/schema.ts`.** That import is
   how `messages.user_id` references `saf_users.users.id`
   ([ADR-0036](./docs/adr/0036-the-http-messengers-user-id-is-a-foreign-key.md),
@@ -210,9 +229,9 @@ Conventions the build depends on:
   see it, because a uniformly stripped field is stripped on both sides. That is what the
   round-trip assertions in `src/gateway.test.ts` are for: each record type is
   produced through its part's own method, read back over HTTP, and the whole body compared
-  against a literal the type checker holds to the record type. Same rule as the flat
-  `/schema` exports above: a silent failure gets something that scans for it rather than a
-  comment.
+  against a literal the type checker holds to the record type. Same rule as the flat table
+  exports and the prefixed schema objects above: a silent failure gets something that scans
+  for it rather than a comment.
 - **Nothing in `src/container/` knows about an Agent Implementation.** That
   directory is the Agent Container, the Mount Table and the process handling —
   what `docker run` takes and what to do with it — and it is exported from the

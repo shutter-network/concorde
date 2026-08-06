@@ -2,13 +2,13 @@
  * The Scheduler's one table, in the part's own PostgreSQL schema
  * ([`data-model.md`](../../docs/data-model.md)).
  *
- * **Public API, on `shared-agent-framework/scheduler/schema` and nowhere else**, for the
- * reason the other parts' schemas are: an Operator barrels this module into their own
- * `schema.ts` and generates from it
- * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)). That reverses
- * ADR-0021/0022's "deliberately absent from the `/scheduler` subpath" — `/scheduler` is
- * still the part's API and these objects are still not on it. No part reading another's
- * tables remains a discipline rather than something the objects being private enforces.
+ * **Public API, re-exported from `shared-agent-framework/scheduler`**, for the reason the other
+ * components' schemas are: an Operator barrels that subpath into their own `schema.ts` and
+ * generates from it ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md),
+ * [ADR-0047](../../docs/adr/0047-a-component-is-one-subpath.md)). That reverses ADR-0021/0022's
+ * "deliberately absent from the `/scheduler` subpath": `schedulerSchema` and `schedules` are on
+ * it now, beside `createScheduler`. No part reading another's tables remains a discipline rather
+ * than something the objects being private enforces.
  *
  * An Operator's `drizzle-kit` reads this file, through their barrel, so keep it to the table and
  * the values it is defined in terms of. Unlike the HTTP Messenger's it imports no other part's

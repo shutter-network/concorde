@@ -38,6 +38,13 @@
  * The last test is about this file rather than about the schemas: a part added later
  * whose schema nobody lists here is a part nothing above covers, and it would be
  * uncovered in silence, so the list is held against the source tree.
+ *
+ * **Every part is reached by file path here, and that is why this file did not change when
+ * the tables moved onto the component subpaths**
+ * ([ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md)). `src/<part>/schema.ts` is
+ * where a table is declared and it stayed there; only the specifier an Operator imports it
+ * through moved. The last test scans for those same files, so it keeps covering every part
+ * without knowing anything about the export map.
  */
 
 import assert from "node:assert/strict";
