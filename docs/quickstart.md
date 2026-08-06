@@ -77,19 +77,33 @@ answer back, which is [the next section](#a-conversation-in-four-requests).
 
 ### What that command did
 
-Four things: **built the Gateway image** from
+Five things: **built the Gateway image** from
 [`../example/gateway/Dockerfile`](../example/gateway/Dockerfile), which compiles this
 framework from source; built the agent image from
 [`../example/agent/Dockerfile`](../example/agent/Dockerfile) and ran it once so you can see
-that `pi` is really in it; started PostgreSQL; and created two networks.
+that `pi` is really in it; started PostgreSQL; **applied this deployment's schema** with a
+one-shot `migrate` container, which the Gateway waited for before it started; and created
+two networks.
 
 ```sh
-docker compose ps -a             # gateway and postgres up; agent-image Exited (0)
+docker compose ps -a             # gateway and postgres up; agent-image and migrate Exited (0)
 docker compose logs agent-image  # 0.83.0
+docker compose logs migrate      # Changes applied
 ```
 
-That `Exited (0)` container is meant to be there. Real agent containers are started by
-the Gateway, one per Run, and are never services in this file.
+Those two `Exited (0)` containers are meant to be there. Real agent containers are started
+by the Gateway, one per Run, and are never services in this file; the `migrate` container
+has one job and is finished before the Gateway opens a connection.
+
+**The framework applied none of that schema.** This deployment owns its database, so this
+deployment owns its migrations: `example/schema.ts` is the barrel of the parts it runs,
+`example/drizzle.config.ts` points at it, and `example/migrate/Dockerfile` runs
+`drizzle-kit push` against it
+([ADR-0046](./adr/0046-the-operator-owns-migrations.md)). `push` because this database is a
+volume you throw away; a production deployment runs `generate` at build time and `migrate`
+at deploy time against a folder it reviewed and committed, with the same compose wiring.
+Nothing in the Gateway checks that any of it happened — a missing table is a PostgreSQL
+error on the first query that needs it, and confirming the schema applied is yours.
 
 **Only one port is published: 8080, on loopback.** PostgreSQL publishes nothing, and
 neither does the Agent server. That is not tidiness, it is the network boundary the
@@ -753,8 +767,7 @@ const gateway = createGateway({
   publicListen: { port: publicPort, host: publicHost },
   agentListen: { port: agentPort, host: agentHost },
   extend: ({ db, agentServer, publicServer, worker }) => {
-    // The User Manager before the HTTP Messenger, because the Messenger's `user_id` is a
-    // foreign key onto the User Manager's schema and migrations apply in construction order.
+    // The User Manager before the HTTP Messenger, which takes it as an argument.
     const users = createUsers({ db, tokenTtl, agentServer, publicServer });
     const signatures = createSignatures({ signingKey, agentServer, publicServer, users });
     const decisions = createDecisions({ db, signatures, users, agentServer, publicServer });
@@ -765,7 +778,8 @@ const gateway = createGateway({
 });
 ```
 
-Those three calls are **construct, migrate, start**, in that order and no other.
+Those calls are **construct** and **start**, in that order and no other, with **your**
+migration step somewhere before the second one.
 
 1. **Construct.** `createGateway({ … })` builds the Db, two `Fastify()`
    instances and the Signal Worker, and calls your `extend`, where the reference deployment
@@ -779,14 +793,16 @@ Those three calls are **construct, migrate, start**, in that order and no other.
    with one `start` and one `stop` over the whole of it. Nothing here touches the network.
    The **Runtime** a few lines above is the one construction that can refuse you, and only
    [three things about it can](#four-things-nothing-checks).
-2. **Migrate.** `await gateway.components.db.migrate()`, which takes no arguments and
-   applies whatever registered — so it comes *after* the constructing, because constructing
-   is what registers. Never a side effect of opening the Db and never one of starting it,
-   which is what lets it also be [a deploy step of its
-   own](#migrations-as-a-separate-step) — and with more than one replica it has to be.
-3. **Start.** `await gateway.start()`. One call opens the pool, refuses to serve if any
-   registered schema is behind the migration folder shipped beside it, starts the worker
-   and binds the two ports. A part that throws stops everything that had already started,
+2. **Migrate — not here.** The entry point makes no migration call at all. The framework
+   ships schema definitions and applies nothing, so the tables exist because *you* applied
+   them, from a barrel of the parts you run
+   ([ADR-0046](./adr/0046-the-operator-owns-migrations.md)). The reference deployment does it
+   in the one-shot `migrate` container the Gateway waits on, which is [a deploy step of its
+   own](#migrations-as-a-separate-step) and with more than one replica has to be.
+3. **Start.** `await gateway.start()`. One call opens the pool, starts the worker
+   and binds the two ports. It checks nothing about the database's schema, which is the
+   other half of step 2 belonging to you: a table you never created is a PostgreSQL error
+   on the first query that needs it. A part that throws stops everything that had already started,
    in reverse, and rethrows that part's own error unwrapped, so a Gateway that could not
    boot holds no pool open. Both bind addresses are options on the call in step 1, with no
    framework default behind either — see
@@ -824,9 +840,10 @@ position is decided by where `extend`'s parts are keyed**: it is a Component who
 `stop` do nothing, keyed after the servers and ahead of the worker so that it outlives the
 drain, which is when a Handler's `post` phase reaches it (ADR-0037, ADR-0045). And **the
 order it must be constructed in cannot be written wrongly**, because the User Manager is an
-argument to this call, so you build `users` before you can name it here;
-[the migration step](#migrations-as-a-separate-step) is where that matters and where the
-wrong order is still expressible.
+argument to this call, so you build `users` before you can name it here. What *is* still
+expressible wrongly is [your migration barrel](#migrations-as-a-separate-step): this part's
+`messages.user_id` is a foreign key onto `saf_users.users.id`, so a barrel carrying the
+Messenger without the User Manager generates a constraint onto a table it never creates.
 
 That call registers its own migration descriptor with the Db and its two route groups at
 `/messages`, the Public pair behind the Manager's `requireUser` and the Agent pair behind
@@ -1241,12 +1258,17 @@ of wrong passwords is also a load problem, not only a security one.
 
 ## Migrations as a separate step
 
-`main.ts` migrates at boot, and **one process on one machine can get away with that. More
-than one cannot.** Drizzle's migrator takes no advisory lock, so two replicas booting
-together apply the same DDL and all but one die of a duplicate relation. That is a rolling
-deploy. For more than one replica the `db.migrate()` line comes out of your entry point and
-becomes a step that runs before anything serves the new code. Nothing in this repository is
-that step any more, so here is the whole of it:
+**It is already a separate step here, and that is not a convenience.** `main.ts` makes no
+migration call, because the framework applies nothing: `example/schema.ts` barrels the parts
+this deployment runs, `example/drizzle.config.ts` points at that barrel, and
+`example/migrate/Dockerfile` pushes it in a one-shot container the Gateway waits on with
+`condition: service_completed_successfully`
+([ADR-0046](./adr/0046-the-operator-owns-migrations.md)). Migrating at boot instead is
+something **one process on one machine can get away with. More than one cannot** — Drizzle's
+migrator takes no advisory lock, so two replicas booting together apply the same DDL and all
+but one die of a duplicate relation, which is a rolling deploy. The framework's own migrator
+is still in the package and still does the job the other way, against the `.sql` folders it
+ships — ADR-0046 retires it, and until then it looks like this:
 
 ```ts
 import { openDb, signalsMigrations } from "shared-agent-framework";
@@ -1278,14 +1300,14 @@ is a broken migration job
 applied in registration order and the HTTP Messenger's first migration adds a foreign key
 onto `saf_users.users`, so the User Manager's comes before it or the migration fails with
 `schema "saf_users" does not exist`. Nothing ships to spare you the decision — no array of
-the three, no helper — because getting it wrong fails loudly and leaving one out is caught
-by the next `db.start()`, which refuses to serve any registered schema the database is
-behind, naming it ([ADR-0038](./adr/0038-the-default-assembly-is-a-constructor.md)).
+the three, no helper — because getting it wrong fails loudly. Its counterpart in the barrel
+is the same fact one layer up: `export *` the Messenger's schema without the User Manager's
+and the push dies on the same message, before it has touched anything.
 
-**Forgetting the step is a startup error you can read**, then, rather than a `relation does
-not exist` from the first request that happens to touch it. A database that is *ahead* of
-the code starts normally, because that is what a rollback looks like. And you never run a
-schema generation tool either way: the SQL ships inside the package.
+**Leaving the step out altogether is nobody's error but yours**, either way. `db.start()`
+checks nothing about the database, so a missing table is a `relation does not exist` from
+the first request that happens to touch it, and not a startup refusal — that verification
+went with the ownership (ADR-0046).
 
 ## Making it yours
 
@@ -1461,10 +1483,10 @@ returns, because a spread would overwrite one in place, keep its position, and s
 **Your own tables.** `db.handle(yourSchema)` gives you a typed Drizzle handle through
 the same call the framework's own parts use, and `db.tx(cb)` a transaction you can pass
 into `worker.emit`. No privileged access and no special case. Give your part its own
-PostgreSQL schema and its own migration tracking table, and register the descriptor with
-`db.registerMigrations(yourMigrations)` — after the constructor and before
-`db.migrate()` — after which `migrate` applies yours with ours and `db.start()` refuses to
-serve if your schema is behind, on exactly the same terms.
+PostgreSQL schema, `export *` its tables from your barrel beside the framework's, and it is
+applied by the same push in the same graph as ours, on exactly the same terms. No privileged
+position there either: your tables and ours are one generation, so a foreign key from yours
+onto ours is a foreign key you can simply declare.
 
 **Your own mount.** One more thing for the agent to see is one more entry in
 `mounts.entries`, and that is the whole of it — no framework change, no new field, and no
@@ -1726,8 +1748,8 @@ than no path at all, because the wrong one is not refused.
 ## What the Gateway's own image needs
 
 [`../example/gateway/Dockerfile`](../example/gateway/Dockerfile) is two stages: one that
-runs `npm ci && npm run build`, and one that runs the result. Five things in it are
-requirements rather than choices, and four of them are easy to leave out and hard to
+runs `npm ci && npm run build`, and one that runs the result. Four things in it are
+requirements rather than choices, and three of them are easy to leave out and hard to
 diagnose:
 
 1. **The Docker CLI.** The framework runs `docker` as a **process**, not through an API
@@ -1737,19 +1759,20 @@ diagnose:
    dependencies of this package and pinned devDependencies of this repository, which is how
    it builds and tests against them. `npm ci --omit=dev` produces an image whose Gateway
    dies on its first import. Copying the whole tree keeps every version stated once.
-3. **`migrations/` beside `dist/`.** Each part resolves its own migration folder relative to
-   its own module: `dist/users/migrations.js` looks for `../../migrations/users`. Leave the
-   folder out and `db.migrate()` fails on a directory that is not there.
-4. **`package.json`.** `main.ts` imports the framework **by name**, which Node resolves by
+3. **`package.json`.** `main.ts` imports the framework **by name**, which Node resolves by
    self-reference through the `exports` map, so the manifest is what makes
    `shared-agent-framework` resolvable from inside the package with no `node_modules` entry
    of its own.
-5. **The entry point as PID 1.** `CMD ["node", "example/main.ts"]` puts Node at PID 1, so
+4. **The entry point as PID 1.** `CMD ["node", "example/main.ts"]` puts Node at PID 1, so
    the SIGTERM from `docker compose down` reaches the handler at the bottom of the file
    directly, with no shell in between to swallow it.
 
 What is deliberately **not** copied in is `AGENTS.md` and `settings.json`, for the reason in
 ["Two files are not in the Gateway's image"](#two-files-are-not-in-the-gateways-image).
+Nor is any SQL, since this image applies none:
+[`../example/migrate/Dockerfile`](../example/migrate/Dockerfile) is the one that carries
+`drizzle-kit`, the barrel and the config, and it is a separate image so that a tool for
+changing the database is not sitting in the service that serves from it.
 
 The build context is the **repository root** rather than `example/`, since the image
 compiles the framework rather than installing it, and `.dockerignore` at the root is what

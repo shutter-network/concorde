@@ -18,7 +18,6 @@ WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
-COPY migrations ./migrations
 COPY example/main.ts ./example/main.ts
 COPY example/prompts ./example/prompts
 

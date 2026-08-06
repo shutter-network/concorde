@@ -3,7 +3,11 @@
 [`docs/quickstart.md`](./docs/quickstart.md) takes a reader from a clone to a completed
 agent Run, and [`example/`](./example/) is the reference deployment it describes:
 `main.ts` is the worked entry point, `compose.yml` the whole stack, `gateway/Dockerfile`
-the Gateway image, `agent/Dockerfile` the agent image. It is a **consumer** of
+the Gateway image, `agent/Dockerfile` the agent image, and `schema.ts` +
+`drizzle.config.ts` + `migrate/Dockerfile` the migration step it owns itself
+([ADR-0046](./docs/adr/0046-the-operator-owns-migrations.md)): `main.ts` calls no
+`db.migrate()`, and a one-shot `migrate` service pushes the barrel before the Gateway
+starts. It is a **consumer** of
 `createGateway`, which builds the irreducible infrastructure and hands it to the Operator's
 `extend`
 ([ADR-0045](./docs/adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md)), so

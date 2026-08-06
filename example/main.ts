@@ -139,11 +139,12 @@ const gateway = createGateway({
   // opinion can see them. A deployment that publishes no Decision builds neither Signatures nor
   // Decisions and reads no signing key at all.
   extend: ({ db, agentServer, publicServer, worker }) => {
-    // The User Manager **before** the HTTP Messenger, because `messages.user_id` is a foreign key
-    // onto `saf_users.users.id` and `db.migrate()` applies descriptors in registration order,
-    // which is construction order: built the other way round, the first migration of a new
-    // deployment fails with PostgreSQL's `schema "saf_users" does not exist` (ADR-0036). This is
-    // the one construction ordering the Operator now owns, and it fails loudly.
+    // The User Manager **before** the HTTP Messenger, which needs it as a value: the Messenger
+    // resolves a Message's User through it. The tables' order is no longer this line's business —
+    // `messages.user_id` is still a foreign key onto `saf_users.users.id`, but it is declared in
+    // `http-messenger`'s schema and ordered by the single generation the migrate service pushes
+    // from `schema.ts` (ADR-0036, ADR-0046). What that barrel does require is that the User
+    // Manager be *in* it, and it is.
     const users = createUsers({ db, tokenTtl, agentServer, publicServer });
     const signatures = createSignatures({ signingKey, agentServer, publicServer, users });
     const decisions = createDecisions({ db, signatures, users, agentServer, publicServer });
@@ -176,7 +177,11 @@ const gateway = createGateway({
   }),
 });
 
-await gateway.components.db.migrate();
+// No migration step here, deliberately: this deployment applies its own schema, from `schema.ts`
+// through the one-shot `migrate` service `compose.yml` makes the Gateway wait on (ADR-0046). By
+// the time this line runs the tables exist, and if they do not, the first query says so — the
+// framework verifies nothing at start, because applying migrations and confirming they applied is
+// the Operator's job whole rather than half.
 await gateway.start();
 
 // A standing Operator Schedule, declared in code once the Gateway is up and re-declared on every

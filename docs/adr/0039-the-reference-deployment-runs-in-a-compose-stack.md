@@ -8,8 +8,14 @@ toolchain.
 ```
 gateway      this framework + docker-cli   saf_db, saf_agent   8080 published to loopback
 postgres     postgres:17                   saf_db              nothing published
+migrate      this framework + drizzle-kit  saf_db              exits 0
 agent-image  builds saf-agent:0.83.0       saf_agent           exits 0
 ```
+
+The `migrate` row arrived with
+[ADR-0046](./0046-the-operator-owns-migrations.md), which moved migration ownership to the
+Operator: it pushes `example/schema.ts` and the Gateway waits for it to complete. Nothing
+else in this decision changes, the one-command promise least of all.
 
 This reverses `compose.yml`'s own former header, which argued that the Gateway belonged on
 the host. That argument is restated and answered below rather than deleted, because it was

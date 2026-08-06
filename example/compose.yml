@@ -1,5 +1,10 @@
 name: saf-example
 
+# One database, named once: the migrate service applies the schema to it and the Gateway
+# queries it, and two copies of this string that drifted would be a Gateway reading a
+# database nobody pushed to — which nothing checks and nothing would report (ADR-0046).
+x-database-url: &database-url postgres://saf:saf@postgres:5432/saf
+
 services:
   gateway:
     build:
@@ -7,7 +12,7 @@ services:
       dockerfile: example/gateway/Dockerfile
     environment:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set it in your shell; the agent's model needs it}
-      DATABASE_URL: postgres://saf:saf@postgres:5432/saf
+      DATABASE_URL: *database-url
       # The shared tree, named on both sides: BASE_DIR_GATEWAY is where this container sees it
       # (the binds below mount into it), BASE_DIR_HOST is where it is on the host, and main.ts
       # feeds the pair to hostRoot so the daemon resolves the agent's mounts on the host.
@@ -40,9 +45,32 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # Completed, not started: the Gateway's first query must not race the push. The
+      # framework applies no migrations and verifies nothing at start (ADR-0046), so
+      # this edge is the whole of what keeps it off an empty database.
+      migrate:
+        condition: service_completed_successfully
       agent-image:
         condition: service_completed_successfully
     stop_grace_period: 300s
+
+  # This deployment owns its database, so this deployment applies its schema: the barrel
+  # schema.ts, this stack's own drizzle-kit, one shot, and gone (ADR-0046). `push` because
+  # this database is a volume you throw away; a production deployment runs `migrate`
+  # against a folder it committed and changes nothing else here. It carries no
+  # ANTHROPIC_API_KEY and joins no agent network, because a migration job that needs a
+  # model credential is a broken migration job.
+  migrate:
+    build:
+      context: ..
+      dockerfile: example/migrate/Dockerfile
+    environment:
+      DATABASE_URL: *database-url
+    restart: "no"
+    networks: [db]
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   postgres:
     image: postgres:17
