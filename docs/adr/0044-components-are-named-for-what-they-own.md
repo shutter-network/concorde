@@ -23,6 +23,10 @@ Producer — and `Signer` sits among them without explanation. Three arguments a
   `usersMigrations`, the `saf_users` schema and the `shared-agent-framework/users` subpath are
   untouched."* Every identifier a consumer touches has said `Users` all along; only the prose
   says User Manager. The rename makes the prose match the code and deletes the apology above.
+  (Quoted as it stood. `usersMigrations` has since been deleted with the whole migration
+  subsystem, the tables reached at `shared-agent-framework/users/schema` instead
+  ([ADR-0046](./0046-the-operator-owns-migrations.md)); the argument is unaffected, since
+  that name said `users` too.)
 - **A plural subject is not the department name the apology was about.** "User Manager" *is* the
   department; `Users` is the subject matter the Component owns. Different failure, and this one
   is the fix.

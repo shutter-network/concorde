@@ -5,9 +5,9 @@ agent Run, and [`example/`](./example/) is the reference deployment it describes
 `main.ts` is the worked entry point, `compose.yml` the whole stack, `gateway/Dockerfile`
 the Gateway image, `agent/Dockerfile` the agent image, and `schema.ts` +
 `drizzle.config.ts` + `migrate/Dockerfile` the migration step it owns itself
-([ADR-0046](./docs/adr/0046-the-operator-owns-migrations.md)): `main.ts` calls no
-`db.migrate()`, and a one-shot `migrate` service pushes the barrel before the Gateway
-starts. It is a **consumer** of
+([ADR-0046](./docs/adr/0046-the-operator-owns-migrations.md)): the framework applies no
+DDL and there is nothing in `main.ts` asking it to, so a one-shot `migrate` service
+pushes the barrel before the Gateway starts. It is a **consumer** of
 `createGateway`, which builds the irreducible infrastructure and hands it to the Operator's
 `extend`
 ([ADR-0045](./docs/adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md)), so
@@ -65,11 +65,12 @@ only ever connected to in order to create and drop others: no two test files
 share a database, and a test whose subject is what a fresh database ends up
 containing takes one of its own. See `src/test-support/database.ts`.
 
-`npm run check:package` is separate: it builds, packs, installs the tarball into
-a throwaway project, checks that the subpaths resolve, and applies a shipped
-migration folder to a real database from inside the installed package. It needs
-the network and the same PostgreSQL server, so it stays out of the inner loop. CI
-runs it as its own step.
+`npm run check:package` is separate: it builds, packs, installs the tarball into a
+throwaway project, and checks that every subpath resolves there — to the type checker
+and to Node both, each part's `/schema` included. It needs the network, so it stays out
+of the inner loop; it needs no database at all, because nothing in the package applies
+DDL any more ([ADR-0046](./docs/adr/0046-the-operator-owns-migrations.md)). CI runs it
+as its own step.
 
 `npm run test:container` is the other separate one: the single end-to-end test
 that starts a **real container** running a real `pi` against the real Agent
@@ -85,51 +86,41 @@ everything else about the Run is real.
 `npm run format` applies Biome's fixes; `npm run check` fails on unformatted code
 rather than warning.
 
-`npm run migrations:generate` regenerates a part's migration folder from its
-schema with `drizzle-kit`, and its output is committed — Operators never run a
-schema generation tool. Each part has a config file of its own and passes it with
-`--config`, because `out` is one folder and each part owns its own:
+**The Operator generates and applies the DDL, and this repository holds no `.sql` at
+all** ([ADR-0046](./docs/adr/0046-the-operator-owns-migrations.md)). There is no
+`migrations:generate` script, no shipped migration folder, no descriptor, no
+`db.migrate`, no root `drizzle.*.config.ts` — and therefore neither of the two hand-edits
+that a regeneration used to demand. What a part ships is its `schema.ts`, on a public
+subpath of its own, `shared-agent-framework/<part>/schema`. A deployment `export *`s the
+parts it runs into one barrel, points its own `drizzle.config.ts` at that barrel, and
+applies it with its own `drizzle-kit`: `push` to prototype, `generate` + `migrate` in
+production. `example/schema.ts`, `example/drizzle.config.ts` and
+`example/migrate/Dockerfile` are the worked version, run as a one-shot container the
+Gateway waits on with `condition: service_completed_successfully`.
 
-```sh
-npm run migrations:generate                                              # the Signal Worker
-npm run migrations:generate -- --config drizzle.users.config.ts          # the User Manager
-npm run migrations:generate -- --config drizzle.http-messages.config.ts  # the HTTP Messenger
-npm run migrations:generate -- --config drizzle.decisions.config.ts      # Decisions
-```
-
-Read the config before running any of them, because what ships is never quite what was
-generated. Every part needs one line **removed**: a generated first migration begins
-`CREATE SCHEMA`, and `db.migrate` has already created the descriptor's schema before it
-applies the folder. The HTTP Messenger needs a second edit, in the other direction: the
-foreign key on `messages.user_id` onto `saf_users.users.id`
-([ADR-0036](./docs/adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)) **added
-back**, in the migration and in its snapshot both, since `drizzle-kit` reads one schema
-file and a reference into another part's is a thing it cannot generate. Every later
-regeneration then proposes a `DROP CONSTRAINT` for it, which is deleted from what it
-wrote; `drizzle.http-messages.config.ts` has the mechanics.
-
-Those two hand-edits guard different failures, and the addition is the dangerous one. A
-forgotten removal is loud: `src/signals/migrations.test.ts` scans every shipped folder
-and fails on a stray `CREATE SCHEMA`. A forgotten addition is **silent**: every test
-passes against a database that simply does not enforce the constraint, and what it stops
-enforcing is the agent's 404 for a Message addressed to nobody. That is why
-`src/http-messenger/migrations.test.ts` scans the shipped folder for the constraint
-itself.
+The tests set their tables up the same way, through `src/test-support/apply-schema.ts`,
+which hands the same schema objects to `drizzle-kit`'s `pushSchema`. Nothing in the suite
+reaches for a folder, because there is none, and `src/schemas.test.ts` is the one test
+that pushes **every** part's schema into a single fresh database, and then compares the
+columns that arrived against the columns the parts declare. That is what catches a table
+lost to a wrapper export, a schema-name collision between two parts, or a new part whose
+schema nobody added to the set.
 
 Signatures has none of any of this, and is the only part of which that is true: it stores
-nothing, so it has no schema, no tables, no folder, no descriptor and no config
+nothing, so it has no schema, no tables and no `/schema` subpath
 ([ADR-0042](./docs/adr/0042-a-signature-is-a-compact-jws.md)).
 
 Conventions the build depends on:
 
 - **Relative imports carry `.ts` extensions.** Node runs the sources directly by
   stripping types, and `tsc` rewrites the extension to `.js` when it emits.
-- **`dist/` mirrors `src/` exactly**, so a path built from `import.meta.url` is
-  the same relative path in both. That is what lets shipped migration folders
-  resolve from `src/db/…` and `dist/db/…` alike. `build` empties `dist`
+- **`dist/` mirrors `src/` exactly**, so `src/db/db.ts` is `dist/db/db.js` and a
+  subpath in `exports` names one file in both trees. `build` empties `dist`
   first, because `tsc` never prunes its own output and a deleted module would
   otherwise keep shipping; `npm run check:package` fails on a shipped file whose
-  source is gone.
+  source is gone. Nothing shipped resolves a path out of `import.meta.url` any
+  more — that trick existed only to reach a shipped migration folder, and there is
+  none (ADR-0046).
 - **No syntax that needs a code transform**: no enums, namespaces, or parameter
   properties. `erasableSyntaxOnly` rejects them, because Node strips types
   rather than compiling them.
@@ -148,25 +139,25 @@ Conventions the build depends on:
 - **Tests and their fixtures live beside the code they exercise and never ship.**
   `src/**/*.test.ts` and `src/test-support/` are excluded from
   `tsconfig.build.json`, which the tarball check asserts.
-- **A shipped migration folder contains no `CREATE SCHEMA`.** `db.migrate`
-  creates the descriptor's schema, and the tracking table lives in it, so a
-  generated `CREATE SCHEMA` line must be removed after `drizzle-kit` writes it.
-  `src/signals/migrations.test.ts` scans every shipped folder and fails on one
-  left in.
-- **`migrations/http-messages` carries a foreign key `drizzle-kit` cannot
-  generate.** `messages.user_id` references `saf_users.users.id`, and
-  `src/http-messenger/schema.ts` may not say so: a schema file importing another
-  part's makes the generator emit that part's `CREATE TABLE` into this folder
-  ([ADR-0036](./docs/adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)).
-  So the constraint is added by hand to the generated migration, and the snapshot
-  hand-edited to match, on **every** regeneration — which also means the next
-  generation proposes dropping it, and that statement is deleted by hand too. This
-  hand-edit is the more dangerous of the two: a forgotten `CREATE SCHEMA` removal
-  fails loudly on the first migration of a new deployment, while a forgotten
-  foreign key is silent — every test passes against a database that simply does
-  not enforce it. `src/http-messenger/migrations.test.ts` scans the shipped folder
-  for it, and also pins that applying this part before the User Manager fails
-  legibly, since registration order is construction order.
+- **A part's tables are a public subpath, and they must stay flat.**
+  `shared-agent-framework/<part>/schema` is the door an Operator's `drizzle-kit`
+  reads through (ADR-0046), and that tool takes `Object.values` of the module and
+  keeps whatever passes `is(x, PgTable)` / `is(x, PgSchema)` — it never looks
+  inside a plain object. So gathering the tables up as
+  `export const usersTables = { users }` generates an **empty** migration and says
+  nothing about it. `scripts/check-package.ts` imports every table **by name** out
+  of the installed tarball for exactly that reason: a namespace import would
+  resolve and prove nothing.
+- **`src/http-messenger/schema.ts` imports `src/users/schema.ts`.** That import is
+  how `messages.user_id` references `saf_users.users.id`
+  ([ADR-0036](./docs/adr/0036-the-http-messengers-user-id-is-a-foreign-key.md),
+  ADR-0046). It was forbidden while each part generated a folder of its own,
+  because the generator would emit the User Manager's `CREATE TABLE` into the
+  Messenger's folder; with one generation graph it is the whole mechanism, and the
+  constraint is free. What it costs a deployment is that a barrel carrying the
+  Messenger without the User Manager generates a foreign key onto a table it never
+  creates. `src/schemas.test.ts` pushes all five parts' schemas together, which is
+  what keeps the assembled set honest.
 - **Nothing outside `src/db/` imports `pg`.** Enforced by a Biome override:
   parts obtain a handle with `db.handle(schema)`, and the one thing that needs a
   connection of its own — a `LISTEN` registration — with `db.listen(channel,
@@ -195,8 +186,9 @@ Conventions the build depends on:
   [ADR-0045](./docs/adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md)).
   Move that
   registration below `extend` and the document is empty, which is why construction order in
-  `src/gateway.ts` is load-bearing for a third reason, alongside the migration
-  registration order and the worker-before-Messenger cycle. So a route arrives with
+  `src/gateway.ts` is load-bearing for a second reason, alongside the
+  worker-before-Messenger cycle — migration registration order used to be a third and went
+  with the subsystem (ADR-0046). So a route arrives with
   `tags`, a `summary`, a `description` and a `response` schema per status it can answer,
   or it arrives half-described: those sentences *are* the API documentation now, and
   `example/AGENTS.md` holds a URL and no route table. An Operator's own route is described
@@ -211,8 +203,8 @@ Conventions the build depends on:
   see it, because a uniformly stripped field is stripped on both sides. That is what the
   round-trip assertions in `src/gateway.test.ts` are for: each record type is
   produced through its part's own method, read back over HTTP, and the whole body compared
-  against a literal the type checker holds to the record type. Same rule as the two
-  migration hand-edits: a silent failure gets something that scans for it rather than a
+  against a literal the type checker holds to the record type. Same rule as the flat
+  `/schema` exports above: a silent failure gets something that scans for it rather than a
   comment.
 - **Nothing in `src/container/` knows about an Agent Implementation.** That
   directory is the Agent Container, the Mount Table and the process handling —

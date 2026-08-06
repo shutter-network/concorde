@@ -1,5 +1,26 @@
 # The HTTP Messenger's `user_id` is a foreign key
 
+> **The foreign key stands; two of the four costs of having it are retired by
+> [ADR-0046](./0046-the-operator-owns-migrations.md).** The constraint, the `23503` caught,
+> the 404 with no lookup in front of it, and the one-directional coupling that makes the
+> exception affordable are all exactly as decided below.
+>
+> What changed is that the framework no longer generates or applies any migration, so
+> there is one schema graph rather than one per part. **Cost 1 is gone whole**: the import
+> of `../users/schema.ts` that this ADR had to forbid is now precisely the mechanism —
+> `src/http-messenger/schema.ts` declares the reference in code, `drizzle-kit` generates
+> the constraint, and there is no hand-edit, no snapshot to match by hand, and no folder
+> for a test to scan. **Cost 2 is gone as stated**: there are no descriptors and no
+> registration order, and `drizzle-kit` orders the statements within the single
+> generation, so construction order is no longer load-bearing at `migrate`. It survives
+> one layer up and with a different failure — an Operator's barrel carrying this part
+> without the User Manager generates a reference to a table it never creates, and dies on
+> the same `schema "saf_users" does not exist`. **Cost 3 is untouched**, only relocated:
+> a replacement User Manager must still own `saf_users.users` with the same primary key,
+> and the dependency now surfaces at generation rather than at `migrate`. **Cost 4 is
+> untouched**, and the ratio it states improves, since the price is now three costs rather
+> than four.
+
 `messages.user_id` references `saf_users.users.id`, across schemas and across parts. This is
 the one exception to [ADR-0022](./0022-the-store-is-postgresql-through-drizzle.md)'s flat
 rule that no table references another part's, which `data-model.md` recorded as settled:

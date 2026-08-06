@@ -21,6 +21,31 @@
 >    the worked example. `docs/quickstart.md`'s "Migrations as a separate step" is now the
 >    only place the script is written out (ADR-0038).
 
+> **The migration half is superseded by
+> [ADR-0046](./0046-the-operator-owns-migrations.md), and the other half stands.** This
+> overrides three clauses of the banner above, which is older: `db.migrate()` does **not**
+> still apply whatever registered, `start` does **not** still verify, and the pre-deploy
+> script the quickstart used to write out is deleted rather than relocated.
+> Construction is still what wires: a part handed a server still registers its own routes
+> on it, still by convention about constructor options rather than by a contract, and that
+> is the decision this ADR is titled for. What a part no longer registers is a **migration
+> descriptor**, because there are none. The framework ships schema definitions and applies
+> nothing; the Operator barrels the parts they run and applies the result with their own
+> `drizzle-kit`. So the whole of "Migrations register, and the Db verifies rather than
+> applies" below is retired — `db.registerMigrations`, `db.migrate`, the idempotence rule,
+> the verify-at-start and its reading of `meta/_journal.json` from disk are all deleted
+> code, and `db.start()` opens the pool and asserts nothing about the database. Two things
+> in that section survive the deletion. **"A migration job that needs an
+> `ANTHROPIC_API_KEY` is a broken migration job"** was the argument for keeping migration
+> *reachable without constructing anything*, and it is better served now than it was: a
+> `drizzle-kit` run against a barrel imports no framework code at all. And the objection
+> to migrating at start — the migrator takes no advisory lock, so two replicas racing is a
+> rolling deploy — is why ADR-0046's example applies through a one-shot init container.
+> **The hole this ADR closed is reopened on purpose**: constructing a part against an
+> unmigrated schema is representable again, and surfaces as a PostgreSQL
+> `relation does not exist` on the first request that touches it. That is ADR-0046's cost
+> 1, considered and accepted rather than overlooked.
+
 A Component is given the parts it needs and wires itself to them. `createUsers({ db,
 tokenTtl, agentServer, publicServer })` registers its own routes on each server it is
 given and its own migration descriptor with the Db; `createSignalWorker({ db, runtime,

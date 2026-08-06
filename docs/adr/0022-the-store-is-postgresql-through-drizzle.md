@@ -1,5 +1,5 @@
 ---
-status: partially superseded by ADR-0031, ADR-0032 and ADR-0036
+status: partially superseded by ADR-0031, ADR-0032, ADR-0036 and ADR-0046
 ---
 
 # The Store is PostgreSQL, accessed through Drizzle
@@ -28,6 +28,24 @@ status: partially superseded by ADR-0031, ADR-0032 and ADR-0036
 > among them a hand-edit on every `drizzle-kit` regeneration, because the generator cannot
 > express a cross-schema reference without emitting the foreign part's DDL, and a
 > construction order that becomes load-bearing at `migrate`.
+>
+> **The migration mechanism is superseded whole by
+> [ADR-0046](./0046-the-operator-owns-migrations.md).** The framework ships schema
+> definitions and applies nothing: `db.migrate`, `db.registerMigrations` and the
+> descriptors are deleted, and the Operator assembles the parts they run into one barrel
+> and applies it with their own `drizzle-kit`. Two consequences below go with it: "each
+> component owns … its own migration tracker", which was mandatory only because the
+> *framework* applied many folders in one process and is moot with one, and "migrations
+> ship inside the package", which is why the `import.meta.url` resolution existed and
+> there is now no `.sql` to resolve. So do the two banners above wherever they say those
+> two stand. The `pgSchema` half of the first is untouched: a component still
+> owns a real PostgreSQL schema. So is the drift note — nothing detects drift, and now
+> nobody claims to. The **decision itself is entirely intact**: PostgreSQL only, the SQLite
+> and PGlite arguments, a schema per part, transactional DDL, `drizzle-orm` pinned, `pg`
+> out of the public API. What ADR-0046 changes is only who generates and applies the DDL —
+> and, in passing, the "Operators may keep their own tables" consequence, which now reads
+> better than it did: they `export *` their schema into the barrel beside ours, one graph,
+> so a foreign key from their tables onto ours is theirs to simply declare.
 
 The Store is PostgreSQL and nothing else. Schemas and queries are written with `drizzle-orm`'s `pg-core`, the whole surface is asynchronous, and there is no storage abstraction, no repository layer, and no second dialect.
 

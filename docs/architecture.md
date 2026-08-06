@@ -60,7 +60,7 @@ Every part a deployment is assembled from is a **Component**, and the eight that
 
 | Component | Key | Supplied by | Routes it contributes | Notes |
 | --- | --- | --- | --- | --- |
-| Db | `db` | framework | — | Signals, Runs, and whatever Producers keep. Owns the pool, the `LISTEN` connections and the migrations. Starts first and stops last, because everything queries it and the drain queries it on the way down |
+| Db | `db` | framework | — | Signals, Runs, and whatever Producers keep. Owns the pool and the `LISTEN` connections, and no longer the migrations — the Operator applies those (ADR-0046). Starts first and stops last, because everything queries it and the drain queries it on the way down |
 | Agent server | `agentServer` | framework, address from the Operator | — | reachable only by the Agent Implementation; a bare `Fastify()` wrapped in a `serverComponent` that holds its bind address until `start`, bound loopback in the reference deployment |
 | Public server | `publicServer` | framework, address from the Operator | — | the one surface exposed outside; the second `Fastify()`, same wrapper. Grouped with the Agent server rather than stopped ahead of it, so both outlive the drain (ADR-0038) |
 | User Manager | `users` | Operator, in `extend` | public: log in, log out, change password, read self — agent: create and read Users | Users, their Attributes, and their Tokens. Not a Producer (ADR-0029). Nothing to start and nothing to release, so both methods do nothing |

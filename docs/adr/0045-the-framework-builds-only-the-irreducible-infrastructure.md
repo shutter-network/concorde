@@ -101,7 +101,12 @@ reached only when the infrastructure and not merely the parts is what differs.
   round, the first migration of a new deployment fails with `schema "saf_users" does not
   exist`, which is loud. This is the cost ADR-0038 removed and this ADR re-accepts on purpose:
   it is one ordering, it fails legibly, and it is the Operator's to get right in exchange for
-  the parts being theirs to choose.
+  the parts being theirs to choose. **The migration half of that reason has since gone**:
+  under [ADR-0046](./0046-the-operator-owns-migrations.md) the framework applies nothing, so
+  there is no registration order to get wrong. What survives is the same ordering for a
+  narrower reason — `createHttpMessenger` takes the User Manager as an argument, so it cannot
+  be written backwards — and the mistake that is still expressible moved one layer up, to
+  which schemas the Operator puts in their barrel, where it fails with the same message.
 - **A deployment that publishes no Decision holds no key.** With Signatures and Decisions the
   Operator's to construct, a Gateway that signs nothing constructs neither and passes no
   `signingKey`. Under ADR-0038 there was no such arrangement, because one fixed shape with a

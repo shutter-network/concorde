@@ -49,6 +49,25 @@
 > rather than a type, and the framework still ships no POSIX signal handling. What this
 > ADR calls the Store and the Core are now the Db and the Signal Worker; see
 > [`CONTEXT.md`](../../CONTEXT.md).
+>
+> Three later corrections, all from
+> [ADR-0046](./0046-the-operator-owns-migrations.md), and two of them to the paragraph
+> immediately above rather than to this ADR's body.
+>
+> 1. **"the Store's schema is still not public API" no longer holds.** Each part's tables
+>    are public API on a `shared-agent-framework/<part>/schema` subpath, because that is
+>    what an Operator's own `drizzle-kit` reads to generate their DDL. Obtaining a handle
+>    still is too, and "no part reads another's tables" survives as a discipline rather
+>    than as something the objects being private enforced.
+> 2. **Item 5 is withdrawn, and this ADR's original sentence is true again.**
+>    Constructing a part against an unmigrated schema is representable, and surfaces as a
+>    PostgreSQL `relation does not exist` on the first request that touches it. The
+>    verify-at-start that ADR-0032 added is deleted; ADR-0046 records the reopened hole as
+>    a cost it accepts rather than one it missed.
+> 3. **Item 4 goes further than ADR-0032 took it.** There are no migration descriptors at
+>    all, so nothing registers one at construction and nothing stays exported for a
+>    pre-deploy job. That job still constructs nothing, and now for a simpler reason: it
+>    is a `drizzle-kit` run against the Operator's own barrel.
 
 The framework exposes ordinary constructed objects and named interfaces. It defines no plugin contract, no registry, and no lifecycle protocol that parts of the Gateway implement in common. An Operator customises each part on that part's own terms.
 

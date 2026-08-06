@@ -73,7 +73,9 @@ argument was about ceremony: a part with no work at either end has no position, 
 it in the list implies its placement matters when it does not. That argument is now simply
 wrong, because membership is the point. The reason they stay required is structural typing,
 and with `name` gone it is decisive: a `Component` whose methods were both optional would
-be the empty type, satisfied by every value in the program. A `MigrationDescriptor`, an
+be the empty type, satisfied by every value in the program. A `MigrationDescriptor` — a
+type deleted since, with [ADR-0046](./0046-the-operator-owns-migrations.md), which changes
+nothing about the argument, because any type in the program serves as the example — an
 options bag, a string. The record is order-bearing and a wrong entry in it is silent by
 construction, so the type has to be tight enough that an accident cannot happen.
 

@@ -7,6 +7,20 @@
 > required to hold a `signingKey` any more. The reasoning about wiring, order and the two
 > callbacks in this ADR still holds for what the constructor kept; what reversed is the claim
 > that every deployment wants all eight parts. The record below is preserved as written.
+>
+> **Its migration claims are superseded by
+> [ADR-0046](./0046-the-operator-owns-migrations.md)**, which moved migration ownership to
+> the Operator: there is no `gateway.components.db.migrate()` to call between construction
+> and `start`, no descriptor to export or to omit, and the Db carries neither `migrate`
+> nor a verify-at-start beside `start` and `stop`. The "Migrations" section's *conclusion*
+> is unchanged and now unconditional — `start` does not apply them and cannot — and its
+> objection about `drizzle-orm`'s migrator taking no advisory lock is why the reference
+> deployment applies through a one-shot init container. What is void is the reasoning that
+> rested on `db.start()` refusing a database that is behind: that check is deleted, so the
+> class of failure the "example/migrate.ts is deleted" consequence says it catches
+> — omitting a descriptor — is now silent, as ADR-0046's cost 2 records. The rest of that
+> consequence lands where it aimed: the example demonstrates migrating as a step of its
+> own again.
 
 `createGatewayWithDefaults` builds the Db, both Fastify servers, the User Manager, the
 HTTP Messenger and the Signal Worker, wires them to each other, puts them in an order, and

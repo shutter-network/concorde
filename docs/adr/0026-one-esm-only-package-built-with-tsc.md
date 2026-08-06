@@ -1,5 +1,18 @@
 # One ESM-only package, built with tsc
 
+> **The decision stands; the reason given for the ESM half is gone**, with
+> [ADR-0046](./0046-the-operator-owns-migrations.md). The framework ships no `.sql`, so
+> there are no migration folders to resolve against `import.meta.url`, no `.sql` for a
+> bundler to break, and nothing for `files` to include beyond `dist`. Take the sentence
+> below at its word — "ESM-only is a consequence of a decision elsewhere" — and the
+> decision elsewhere reversed. What holds it up now is the second half of the same
+> paragraph, which never depended on migrations: a dual build costs a whole CJS half, and
+> a consumer writing a fresh entry point has no reason to be on CJS. "No bundler" survives
+> the same way: not because bundling would break a migrator any more, but because `tsc`
+> emitting ESM plus declarations is sufficient and adds no build dependency. The rest of
+> this ADR is untouched — one package rather than a monorepo, `node:test`, `drizzle-orm`
+> and `fastify` as peers, Node `>=24`.
+
 The framework ships as a **single npm package** with subpath exports — the root for the Core and the Store, `/messenger` for the Messenger, `/pi` for the `pi` adapter. It is **ESM-only**, built with plain `tsc`, and tested with `node:test`.
 
 We considered a monorepo of separate packages so a deployment would install only what it uses. The reason evaporated when the `pi` adapter stopped depending on `pi`: `pi` is a container image ([ADR-0025](./0025-the-pi-adapter-spawns-one-confined-process-per-run.md)), so the adapter is a few hundred lines with no dependencies of its own. Everything else — `fastify`, `drizzle-orm`, `pg`, `handlebars` — is needed by parts every deployment uses. Splitting would buy a dependency-graph benefit that does not exist, and charge cross-package version coordination on every release.

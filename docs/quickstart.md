@@ -785,10 +785,11 @@ migration step somewhere before the second one.
    instances and the Signal Worker, and calls your `extend`, where the reference deployment
    builds the User Manager, Signatures, Decisions and the HTTP Messenger by hand and returns
    them. It hands each part what it needs and keys them in an order. Construction is also the whole of the
-   wiring: a part handed a server registers its routes on that server, and a part with
-   tables of its own registers its migration descriptor with the Db, so there is no third
+   wiring: a part handed a server registers its routes on that server, so there is no second
    item on a checklist for you to forget
-   ([ADR-0032](./adr/0032-components-wire-themselves-at-construction.md)). What comes back
+   ([ADR-0032](./adr/0032-components-wire-themselves-at-construction.md)). Its *tables* are
+   the one thing construction does not wire, and never touches
+   ([ADR-0046](./adr/0046-the-operator-owns-migrations.md)) — that is step 2. What comes back
    is a **Gateway** — that record, reachable by key at `gateway.components.db` and the rest,
    with one `start` and one `stop` over the whole of it. Nothing here touches the network.
    The **Runtime** a few lines above is the one construction that can refuse you, and only
@@ -845,7 +846,7 @@ expressible wrongly is [your migration barrel](#migrations-as-a-separate-step): 
 `messages.user_id` is a foreign key onto `saf_users.users.id`, so a barrel carrying the
 Messenger without the User Manager generates a constraint onto a table it never creates.
 
-That call registers its own migration descriptor with the Db and its two route groups at
+That call registers its two route groups at
 `/messages`, the Public pair behind the Manager's `requireUser` and the Agent pair behind
 no credential at all, which is the whole of the wiring. Nothing here is a capability to leave
 out, unlike the User Manager's servers: a Messenger with no Public server cannot be reached
@@ -1266,43 +1267,54 @@ this deployment runs, `example/drizzle.config.ts` points at that barrel, and
 ([ADR-0046](./adr/0046-the-operator-owns-migrations.md)). Migrating at boot instead is
 something **one process on one machine can get away with. More than one cannot** — Drizzle's
 migrator takes no advisory lock, so two replicas booting together apply the same DDL and all
-but one die of a duplicate relation, which is a rolling deploy. The framework's own migrator
-is still in the package and still does the job the other way, against the `.sql` folders it
-ships — ADR-0046 retires it, and until then it looks like this:
+but one die of a duplicate relation, which is a rolling deploy. Nothing in the package would
+let you do it at boot anyway: there is no `migrate` method, no migration descriptor and no
+shipped `.sql`.
+
+Your whole side of it is two files. The barrel:
 
 ```ts
-import { openDb, signalsMigrations } from "shared-agent-framework";
-import { decisionsMigrations } from "shared-agent-framework/decisions";
-import { httpMessagesMigrations } from "shared-agent-framework/http-messenger";
-import { usersMigrations } from "shared-agent-framework/users";
-
-const db = openDb(process.env.DATABASE_URL ?? "postgres://saf:saf@postgres:5432/saf");
-db.registerMigrations(
-  signalsMigrations,
-  usersMigrations,
-  httpMessagesMigrations,
-  decisionsMigrations,
-);
-await db.migrate();
-await db.stop();
+// schema.ts
+export * from "shared-agent-framework/decisions/schema";
+export * from "shared-agent-framework/http-messenger/schema";
+export * from "shared-agent-framework/scheduler/schema";
+export * from "shared-agent-framework/signals/schema";
+export * from "shared-agent-framework/users/schema";
 ```
 
-Each part with tables of its own exports one of those *migration descriptors* — inert data
-naming a folder, a schema and a tracking table — and constructing the part registers it,
-which is why `db.migrate()` takes no arguments anywhere. Signatures exports none, because it
-stores nothing: it is the only part of the framework with no schema at all. This job constructs nothing, so it
-registers them by hand. No Gateway, no Runtime, and — the point of the shape — **no model
-credential and no agent image**, because a migration job that needs an `ANTHROPIC_API_KEY`
-is a broken migration job
+and a `drizzle.config.ts` pointing `schema` at it. Every part with tables of its own has a
+`/schema` subpath like those, exporting its tables as top-level names because that is the
+only shape `drizzle-kit` reads: it takes `Object.values` of the module and keeps whatever
+passes `is(x, PgTable)`, never looking inside a plain object, so a barrel that gathered the
+tables into one exported record would push nothing at all and say so nowhere. Signatures has
+no such subpath, because it stores nothing: it is the only part of the framework with no
+schema at all.
+
+**Set `schemaFilter` in that config, and derive it rather than typing it.** `drizzle-kit`
+defaults it to `["public"]` and applies it to *both* sides of the diff, so with every table
+of ours behind a `saf_*` schema the two sides come out empty and match: it prints
+`No changes detected`, creates not one table, and exits 0 — after which the Gateway starts
+on the strength of that success and dies on its first query.
+[`../example/drizzle.config.ts`](../example/drizzle.config.ts) takes the list off the barrel
+itself, so it cannot fall behind it.
+
+Then `drizzle-kit push` for a prototype, or `generate` at build time and `migrate` at deploy
+time for production: one word's difference, with the same compose wiring either way. And
+either way it is a job that **constructs nothing** — no Gateway, no Runtime, and, the point
+of the shape, **no model credential and no agent image**, because a migration job that needs
+an `ANTHROPIC_API_KEY` is a broken migration job
 ([ADR-0032](./adr/0032-components-wire-themselves-at-construction.md)).
 
-**The order of that list is the one thing here that nothing checks.** Descriptors are
-applied in registration order and the HTTP Messenger's first migration adds a foreign key
-onto `saf_users.users`, so the User Manager's comes before it or the migration fails with
-`schema "saf_users" does not exist`. Nothing ships to spare you the decision — no array of
-the three, no helper — because getting it wrong fails loudly. Its counterpart in the barrel
-is the same fact one layer up: `export *` the Messenger's schema without the User Manager's
-and the push dies on the same message, before it has touched anything.
+**What goes in the barrel is the one thing here that nothing checks**, and the two ways to
+get it wrong fail very differently. Leave the User Manager out while the HTTP Messenger is
+in, and generation dies loudly with `schema "saf_users" does not exist`, before it has
+touched anything: `messages.user_id` is a foreign key onto `saf_users.users.id` and there is
+no table for it to point at
+([ADR-0036](./adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)). Leave out a part
+you nonetheless construct in `main.ts`, and **nothing** says anything — its tables are
+simply absent, and you learn that on the first query needing one. Your `extend` and your
+barrel are two lists of the same parts, and keeping them in agreement is yours (ADR-0046,
+cost 2).
 
 **Leaving the step out altogether is nobody's error but yours**, either way. `db.start()`
 checks nothing about the database, so a missing table is a `relation does not exist` from
@@ -1460,7 +1472,7 @@ const gateway = createGateway({
 
 Both methods are required, and the reason is structural typing rather than ceremony. With no
 `name` on the interface, a Component whose methods were both optional would be the *empty*
-type — satisfied by an options bag, a migration descriptor, a string — and a wrong entry in
+type — satisfied by an options bag, a Mount Table, a string — and a wrong entry in
 an order-bearing record is silent by construction. So a part with nothing to run says so
 with two methods that do nothing, which is exactly what the User Manager and the HTTP
 Messenger do ([ADR-0037](./adr/0037-the-gateway-is-a-record-of-components.md)).
