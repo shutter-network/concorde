@@ -1,9 +1,6 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtractTablesWithRelations } from "drizzle-orm";
 import { sql } from "drizzle-orm";
-import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate as applyFolder } from "drizzle-orm/node-postgres/migrator";
 import type { PgDatabase, PgQueryResultHKT, PgTransaction } from "drizzle-orm/pg-core";
@@ -118,22 +115,16 @@ export type Listening = {
  */
 export type Db = Component & {
   /**
-   * Opens the pool, and then refuses to start if any registered schema is behind
-   * the migration folder shipped beside it.
+   * Opens the pool, and nothing else.
    *
    * The pool is opened eagerly so that a URL nothing answers on is a startup
-   * failure naming the Db rather than a surprise at the first query. The verify
-   * is the other half of that: for each registered descriptor it compares the
-   * largest `when` in the folder's `meta/_journal.json` against the newest row of
-   * the descriptor's tracking table, and refuses if the table is absent or the
-   * database is older, naming the schema. A database that is *ahead* starts, since
-   * that is what a rollback looks like.
-   *
-   * **Migrations are never applied here.** `drizzle-orm`'s PostgreSQL migrator
-   * takes no advisory lock — it reads the newest tracker row, then opens a
-   * transaction and applies everything newer — so two replicas booting together
-   * would both apply the same DDL and one of them would die of it. `migrate` is a
-   * call an Operator makes once (ADR-0032).
+   * failure naming the Db rather than a surprise at the first query. Nothing about
+   * the *schema* is checked, and nothing is applied: applying migrations and
+   * confirming they applied is the Operator's, whole, so a database that is behind
+   * the code surfaces as a raw PostgreSQL error at the first query that needs the
+   * missing column rather than as a refusal to boot. That cost is recorded and
+   * deliberately unmitigated
+   * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)).
    */
   start(): Promise<void>;
 
@@ -173,8 +164,8 @@ export type Db = Component & {
   listen(channel: string, listener: ChannelListener): Listening;
 
   /**
-   * Takes these descriptors as ones `migrate` should apply and `start` should
-   * verify. Nothing is applied here; this is bookkeeping a constructor can do.
+   * Takes these descriptors as ones `migrate` should apply. Nothing is applied
+   * here; this is bookkeeping a constructor can do.
    *
    * The identical descriptor twice is one registration, because two registrations
    * of it are the normal case: a part registers the descriptor it exports at
@@ -259,8 +250,6 @@ export function openDb(url: string): Db {
       // there is nothing to hold, and a URL nothing answers on fails here.
       const client = await pool.connect();
       client.release();
-
-      for (const descriptor of registered) await assertUpToDate(bare, descriptor);
     },
 
     async stop() {
@@ -404,90 +393,4 @@ function register(registered: MigrationDescriptor[], descriptor: MigrationDescri
   throw new Error(
     `two migration descriptors would share the tracking table ${tracker}. Drizzle compares folder timestamps against only the newest row of a tracker, so a shared one skips the older folder's migrations and still resolves successfully. Give each part its own schema and tracking table.`,
   );
-}
-
-/** One line of a migration folder's `meta/_journal.json`. */
-type JournalEntry = {
-  /** When `drizzle-kit` generated it, in milliseconds. */
-  readonly when: number;
-  /** The `.sql` file's name without its extension, which is what to name in an error. */
-  readonly tag: string;
-};
-
-/**
- * What a registered schema must have applied before the Gateway may serve
- * requests against it.
- *
- * The comparison is between the folder's journal and the tracking table because
- * those two hold the same number: Drizzle writes each entry's `when` into
- * `created_at` as it applies it. Nothing here reads the `.sql` files, and nothing
- * here writes anything — a database that is *ahead* is a rollback and starts.
- */
-async function assertUpToDate(
-  bare: NodePgDatabase,
-  descriptor: MigrationDescriptor,
-): Promise<void> {
-  const newest = await newestInFolder(descriptor.folder);
-  // A folder shipping nothing asks nothing of the database.
-  if (newest === undefined) return;
-
-  const tracker = `${descriptor.schema}.${descriptor.table}`;
-  const applied = await newestApplied(bare, descriptor);
-  if (applied === undefined) {
-    throw new Error(
-      `nothing has been applied to schema ${descriptor.schema}: its migration tracking table ${tracker} is absent or empty, and its folder ships ${newest.tag} from ${asTime(newest.when)}. Run migrations before starting; starting never applies them.`,
-    );
-  }
-  if (applied < newest.when) {
-    throw new Error(
-      `the database is behind schema ${descriptor.schema}: the newest migration applied there is from ${asTime(applied)}, and its folder ships ${newest.tag} from ${asTime(newest.when)}. Run migrations before starting; starting never applies them.`,
-    );
-  }
-}
-
-/** The newest migration a folder ships, or nothing if it ships none. */
-async function newestInFolder(folder: URL): Promise<JournalEntry | undefined> {
-  // The same file Drizzle reads, and by the same plain path concatenation: the
-  // folder URL has no trailing slash, so resolving a relative URL against it
-  // would climb out of the folder.
-  const file = path.join(fileURLToPath(folder), "meta", "_journal.json");
-  const journal = JSON.parse(await readFile(file, "utf8")) as {
-    readonly entries?: readonly JournalEntry[];
-  };
-
-  let newest: JournalEntry | undefined;
-  for (const entry of journal.entries ?? []) {
-    if (newest === undefined || entry.when > newest.when) newest = entry;
-  }
-  return newest;
-}
-
-/**
- * When the newest migration recorded in a descriptor's tracking table was
- * generated, or nothing when the table holds no row — including because there is
- * no such table, which is what a schema nobody ever migrated looks like.
- */
-async function newestApplied(
-  bare: NodePgDatabase,
-  descriptor: MigrationDescriptor,
-): Promise<number | undefined> {
-  // Asked for first, because selecting from a table that is not there is an error
-  // and not an answer. `quote_ident` rather than interpolation, so a schema whose
-  // name needs quoting is looked up as itself.
-  const found = await bare.execute<{ relation: string | null }>(
-    sql`select to_regclass(quote_ident(${descriptor.schema}) || '.' || quote_ident(${descriptor.table})) as relation`,
-  );
-  if (found.rows[0]?.relation == null) return undefined;
-
-  const applied = await bare.execute<{ newest: string | null }>(
-    sql`select max(created_at) as newest from ${sql.identifier(descriptor.schema)}.${sql.identifier(descriptor.table)}`,
-  );
-  // `created_at` is a bigint, which arrives as a string.
-  const newest = applied.rows[0]?.newest;
-  return newest == null ? undefined : Number(newest);
-}
-
-/** Milliseconds are what is compared; a date is what an Operator can act on. */
-function asTime(when: number): string {
-  return new Date(when).toISOString();
 }

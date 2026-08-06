@@ -43,10 +43,12 @@ import Fastify, { type FastifyInstance, type FastifyPluginAsync } from "fastify"
 import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
 import type { Logger } from "../logging.ts";
-import { createSignalWorker, type SignalWorker, signalsMigrations } from "../signals/index.ts";
+import { createSignalWorker, type SignalWorker } from "../signals/index.ts";
+import * as signalsSchema from "../signals/schema.ts";
+import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
-import { usersMigrations } from "./migrations.ts";
 import type { IssuedToken, UserRecord } from "./routes.ts";
+import * as usersSchema from "./schema.ts";
 import type { ScryptParameters } from "./secrets.ts";
 import { createUsers, type Users } from "./users.ts";
 
@@ -105,11 +107,10 @@ const operatorRoutes: FastifyPluginAsync = async (fastify) => {
 before(async () => {
   database = await createTestDatabase("users_trusted");
   db = database.db;
-  // Both descriptors registered, because one test here spans both parts. The
-  // Manager needs no other part migrated to work, which `users.test.ts` is what
+  // Both schemas pushed in one call, because one test here spans both parts. The
+  // Manager needs no other part's tables to work, which `users.test.ts` is what
   // proves.
-  db.registerMigrations(signalsMigrations, usersMigrations);
-  await db.migrate();
+  await applySchema(db, signalsSchema, usersSchema);
 
   agentServer = serverComponent(Fastify(), { port: 0, host: "127.0.0.1" });
   publicServer = serverComponent(Fastify(), { port: 0, host: "127.0.0.1" });

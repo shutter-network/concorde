@@ -78,6 +78,7 @@ import type { FastifyInstance } from "fastify";
 import type { Component, Gateway } from "./components.ts";
 import type { Db } from "./db/index.ts";
 import { createDecisions, type DecisionRecord, type Decisions } from "./decisions/index.ts";
+import * as decisionsSchema from "./decisions/schema.ts";
 import { createGateway, describedVersion, type InfraComponents } from "./gateway.ts";
 import {
   createHttpMessenger,
@@ -85,6 +86,7 @@ import {
   type MessageRecord,
   messageReceivedKind,
 } from "./http-messenger/index.ts";
+import * as httpMessagesSchema from "./http-messenger/schema.ts";
 import type { Logger } from "./logging.ts";
 import {
   createScheduler,
@@ -93,12 +95,16 @@ import {
   type Scheduler,
   scheduleFiredKind,
 } from "./scheduler/index.ts";
+import * as schedulerSchema from "./scheduler/schema.ts";
 import type { RunRecord, SignalHandler, SignalRecord } from "./signals/index.ts";
+import * as signalsSchema from "./signals/schema.ts";
 import { createSignatures, type Signatures } from "./signatures/index.ts";
+import { applySchema } from "./test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "./test-support/database.ts";
 import { fakeRuntime } from "./test-support/fake-runtime.ts";
 import { waitUntil } from "./test-support/wait.ts";
 import { createUsers, type IssuedToken, type UserRecord, type Users } from "./users/index.ts";
+import * as usersSchema from "./users/schema.ts";
 
 const hour = 60 * 60 * 1000;
 
@@ -196,11 +202,12 @@ type Stack = {
 /**
  * The four parts, built by hand from the infrastructure `createGateway` hands `extend`, exactly
  * as `example/main.ts` does it — which is what makes this fixture a mirror of the reference
- * deployment (ADR-0045). The User Manager is constructed **before** the HTTP Messenger, because
- * `messages.user_id` is a foreign key onto `saf_users.users.id` and `db.migrate()` applies
- * descriptors in registration order (ADR-0036); Signatures before Decisions, which holds it and
- * signs through it in process (ADR-0043). The order the framework used to hide is on display
- * here, which is the whole point of the parts being the Operator's now.
+ * deployment (ADR-0045). The User Manager is constructed **before** the HTTP Messenger, which
+ * takes it; Signatures before Decisions, which holds it and signs through it in process
+ * (ADR-0043). Neither order is a migration order any more: `messages.user_id`'s foreign key
+ * onto `saf_users.users.id` is generated from one push that sees both schemas, and the
+ * statements inside it are ordered by `drizzle-kit` (ADR-0046). The order the framework used
+ * to hide is on display here, which is the whole point of the parts being the Operator's now.
  */
 function fullStack({ db, agentServer, publicServer, worker }: InfraComponents): Stack {
   const users = createUsers({ db, tokenTtl: hour, agentServer, publicServer });
@@ -216,7 +223,7 @@ function fullStack({ db, agentServer, publicServer, worker }: InfraComponents): 
   // The Scheduler, given the Agent server so its routes register and are discovered by the
   // description plugin the constructor put on ahead of `extend` — the seam this file's document
   // suite reads them out of (ADR-0040, ADR-0045). It imposes no construction-order constraint of
-  // its own: a Schedule references nobody, so its migration folder applies wherever it lands.
+  // its own: a Schedule references nobody.
   const scheduler = createScheduler({ db, worker, agentServer, logger: silent });
   return { users, signatures, decisions, messenger, scheduler };
 }
@@ -389,12 +396,19 @@ before(async () => {
   });
   components = gateway.components;
 
-  // After construction and before `start`, which is where an Operator puts it: `start`
-  // refuses a schema the database is behind and never applies one (ADR-0032). That it
-  // succeeds at all is the ADR-0036 construction order holding — the User Manager is
-  // constructed before the Messenger inside that one call, so `saf_users.users` exists by
-  // the time `messages.user_id` references it.
-  await components.db.migrate();
+  // Every schema this deployment runs, pushed as one graph — which is exactly the barrel an
+  // Operator writes and points their own `drizzle-kit` at (ADR-0046). The framework applies
+  // nothing itself, so this is the whole of how the tables get here, and `messages.user_id`
+  // is a live foreign key onto `saf_users.users.id` because both schemas are in the same
+  // push rather than because two folders were ordered.
+  await applySchema(
+    components.db,
+    signalsSchema,
+    usersSchema,
+    decisionsSchema,
+    httpMessagesSchema,
+    schedulerSchema,
+  );
 
   await gateway.start();
   agentUrl = components.agentServer.fastify.listeningOrigin;
@@ -509,13 +523,16 @@ describe("a whole deployment from one call", () => {
     assert.equal((await postJson(`${publicUrl}/verify`, {}, client.token)).status, 400);
   });
 
-  it("migrated the Messenger's tables after the User Manager's, so the foreign key is live", async () => {
-    // `db.migrate()` in `before` proved half of it: registration order is construction
-    // order, and the other order fails on the Messenger's first migration with `schema
-    // "saf_users" does not exist` (ADR-0036). This is the other half — that the constraint
-    // is there and enforced, so a Message addressed to nobody is refused rather than stored.
-    // `UnknownUserError` is PostgreSQL's `23503` named: the constraint refusing, surfaced as
-    // a throw for trusted code and as the agent's 404 on the route (ADR-0036).
+  it("has the Messenger's foreign key onto the User Manager's table, and it is enforced", async () => {
+    // The constraint is declared in `http-messenger/schema.ts` and generated by the push in
+    // `before` (ADR-0046), so nothing hand-wrote it and nothing scanned a folder for it.
+    // What is asserted is that it is *there and enforced*: a Message addressed to a
+    // well-formed uuid naming no User is refused rather than stored. `UnknownUserError` is
+    // PostgreSQL's `23503` named — the constraint refusing, surfaced as a throw for trusted
+    // code and as the agent's 404 on the route (ADR-0036).
+    //
+    // Without the foreign key this row inserts happily and the call resolves, so the
+    // rejection is the constraint and could be nothing else.
     await assert.rejects(
       () => components.db.tx((tx) => components.messenger.send(tx, nobody, "nobody reads this")),
       { name: "UnknownUserError" },

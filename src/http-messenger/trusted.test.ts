@@ -42,14 +42,18 @@ import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
 import type { Logger } from "../logging.ts";
 import type { SignalRecord } from "../signals/routes.ts";
+import * as signalsSchema from "../signals/schema.ts";
 import { createSignalWorker, type SignalWorker } from "../signals/worker.ts";
+import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import type { UserRecord } from "../users/routes.ts";
+import * as usersSchema from "../users/schema.ts";
 import type { ScryptParameters } from "../users/secrets.ts";
 import { createUsers } from "../users/users.ts";
 import { createHttpMessenger, type HttpMessenger } from "./http-messenger.ts";
 import type { MessageRecord } from "./messages.ts";
+import * as httpMessagesSchema from "./schema.ts";
 
 let database: TestDatabase;
 let db: Db;
@@ -105,13 +109,15 @@ before(async () => {
     logger: silent,
   });
   // Both servers, so that `POST /users` and the login under `/auth` exist: a Token here is
-  // bought with a password at the Manager's own route. Constructed before the Messenger,
-  // and that order is load-bearing rather than narrative (ADR-0036).
+  // bought with a password at the Manager's own route. The Messenger takes it, so it is
+  // constructed first; the foreign key's ordering is the push's to arrange (ADR-0046).
   const users = createUsers({ db, tokenTtl: hour, scrypt: cheap, agentServer, publicServer });
   // And held, which this file is the first to have a reason to do.
   messenger = createHttpMessenger({ db, users, worker, publicServer, agentServer });
 
-  await db.migrate();
+  // The Manager's schema alongside the Messenger's, because `messages.user_id` references
+  // `saf_users.users.id` and one push has to see both (ADR-0036, ADR-0046).
+  await applySchema(db, signalsSchema, usersSchema, httpMessagesSchema);
 });
 
 after(async () => {

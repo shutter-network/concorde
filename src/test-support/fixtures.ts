@@ -26,7 +26,14 @@ export const betaMigrations: MigrationDescriptor = {
   table: "__migrations",
 };
 
-const alpha = pgSchema(alphaMigrations.schema);
+/**
+ * `alpha` is exported for the same reason every part's `schema.ts` exports its
+ * `pgSchema`: a push reads top-level values and creates a schema only if it is handed
+ * one, so `applySchema(db, { widgets })` gets `schema "test_alpha" does not exist`
+ * (ADR-0046). `beta` stays private because only the folder-applying tests use `gadgets`,
+ * and those still go through `db.migrate`.
+ */
+export const alpha = pgSchema(alphaMigrations.schema);
 const beta = pgSchema(betaMigrations.schema);
 
 /** Created by `alpha`'s first migration; the `note` column by its second. */

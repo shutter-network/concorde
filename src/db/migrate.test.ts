@@ -6,11 +6,10 @@
  * applied, skip it, and resolve successfully — the silent loss that per-part
  * trackers exist to prevent (ADR-0022).
  *
- * That same reversal is what the `db.start` tests below pair a folder with the
- * *other* part's schema and tracking table for. A tracker holding `beta`'s
- * 1600000000000 under a folder whose journal maxes at 1800000060000 is a database
- * one migration behind the code, and the pairing inverted is a database ahead of
- * it. No rows are written by hand anywhere here.
+ * `db.start` is not among the subjects here. It opens the pool and verifies nothing
+ * about the schema: applying migrations and confirming they applied is the
+ * Operator's, whole, and the framework does not half-own it with a check
+ * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)).
  *
  * Migrating is destructive and these tests assert on what a fresh database ends
  * up containing, so each takes a database of its own.
@@ -21,7 +20,6 @@ import { describe, it, type TestContext } from "node:test";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { alphaMigrations, betaMigrations, gadgets, widgets } from "../test-support/fixtures.ts";
 import type { Db } from "./index.ts";
-import { openDb } from "./index.ts";
 
 async function freshDatabase(t: TestContext, label: string): Promise<TestDatabase> {
   const database = await createTestDatabase(`db_migrate_${label}`);
@@ -31,27 +29,6 @@ async function freshDatabase(t: TestContext, label: string): Promise<TestDatabas
 
 async function freshDb(t: TestContext, label: string): Promise<Db> {
   return (await freshDatabase(t, label)).db;
-}
-
-/**
- * A second Db on the same database, which is what drift is: the entry point that
- * migrates and the one that starts are two processes with two registrations, and
- * `start` verifies only its own. One Db could not hold both registrations below
- * anyway, since they name one tracking table on purpose.
- *
- * Stopped here rather than in an `after` hook, because the database is dropped in
- * one and a pool still holding a connection would make that fail.
- */
-async function withSecondDb(
-  database: TestDatabase,
-  body: (db: Db) => Promise<void>,
-): Promise<void> {
-  const db = openDb(database.url);
-  try {
-    await body(db);
-  } finally {
-    await db.stop();
-  }
 }
 
 /**
@@ -135,56 +112,3 @@ describe("db.registerMigrations", () => {
     );
   });
 });
-
-describe("db.start", () => {
-  it("refuses a registered schema that was never migrated, naming it", async (t) => {
-    const db = await freshDb(t, "start_unmigrated");
-    db.registerMigrations(alphaMigrations);
-    await assert.rejects(() => db.start(), /nothing has been applied to schema test_alpha/);
-  });
-
-  it("refuses a registered schema whose newest applied migration is older", async (t) => {
-    const database = await freshDatabase(t, "start_behind");
-    database.db.registerMigrations(betaMigrations);
-    await database.db.migrate();
-
-    // `beta`'s schema and tracker, holding 1600000000000, under `alpha`'s folder,
-    // whose journal maxes at 1800000060000: code that moved on from what was
-    // applied.
-    await withSecondDb(database, async (db) => {
-      db.registerMigrations({ ...alphaMigrations, ...trackerOf(betaMigrations) });
-      await assert.rejects(() => db.start(), /the database is behind schema test_beta/);
-    });
-  });
-
-  it("starts against a database that is ahead of the folder", async (t) => {
-    const database = await freshDatabase(t, "start_ahead");
-    database.db.registerMigrations(alphaMigrations);
-    await database.db.migrate();
-
-    // The pairing above inverted, which is what a rolled-back release looks like:
-    // the tracker holds 1800000060000 and this folder's journal maxes at
-    // 1600000000000.
-    await withSecondDb(database, async (db) => {
-      db.registerMigrations({ ...betaMigrations, ...trackerOf(alphaMigrations) });
-      await db.start();
-    });
-  });
-
-  it("starts when every registered schema is up to date", async (t) => {
-    const db = await freshDb(t, "start_current");
-    db.registerMigrations(alphaMigrations, betaMigrations);
-    await db.migrate();
-    await db.start();
-    // Started, so the pool is open and the schemas are the ones start verified.
-    await assertBothPartsFullyApplied(db);
-  });
-});
-
-/** Where a descriptor's applied migrations are recorded, without its folder. */
-function trackerOf({ schema, table }: { schema: string; table: string }): {
-  schema: string;
-  table: string;
-} {
-  return { schema, table };
-}

@@ -37,9 +37,10 @@ import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
 import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
+import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
-import { usersMigrations } from "./migrations.ts";
 import type { UserRecord } from "./routes.ts";
+import * as usersSchema from "./schema.ts";
 import type { ScryptParameters } from "./secrets.ts";
 import { createUsers, type Users } from "./users.ts";
 
@@ -80,8 +81,7 @@ let publicServer: Component & { readonly fastify: FastifyInstance };
 before(async () => {
   database = await createTestDatabase("users_credentials");
   db = database.db;
-  db.registerMigrations(usersMigrations);
-  await db.migrate();
+  await applySchema(db, usersSchema);
 
   agentServer = serverComponent(Fastify(), { port: 0, host: "127.0.0.1" });
   publicServer = serverComponent(Fastify(), { port: 0, host: "127.0.0.1" });

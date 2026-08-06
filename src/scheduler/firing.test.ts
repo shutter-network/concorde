@@ -20,15 +20,16 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
 import type { Logger } from "../logging.ts";
-import { signalsMigrations } from "../signals/migrations.ts";
 import type { SignalRecord } from "../signals/routes.ts";
+import * as signalsSchema from "../signals/schema.ts";
 import { createSignalWorker, type SignalWorker } from "../signals/worker.ts";
+import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
-import { schedulerMigrations } from "./migrations.ts";
 import { createScheduler, type Scheduler, scheduleFiredKind } from "./scheduler.ts";
 import { type ScheduleFiredRecord, ScheduleSpecError } from "./schedules.ts";
+import * as schedulerSchema from "./schema.ts";
 import { schedules } from "./schema.ts";
 
 let database: TestDatabase;
@@ -59,10 +60,9 @@ const silent: Logger = { debug: () => {}, info: () => {}, warn: () => {}, error:
 before(async () => {
   database = await createTestDatabase("scheduler_firing");
   db = database.db;
-  // The two descriptors a deployment with a Scheduler registers, applied once up front the way a
-  // pre-deploy entry point applies them. Order is free — the Scheduler references nobody.
-  db.registerMigrations(signalsMigrations, schedulerMigrations);
-  await db.migrate();
+  // The two schemas a deployment with a Scheduler barrels, pushed once up front the way an
+  // Operator's own `drizzle-kit` applies them (ADR-0046).
+  await applySchema(db, signalsSchema, schedulerSchema);
 
   agentServer = serverComponent(Fastify(), nowhere);
   // Constructed and never started, with its own Agent routes on the Agent server: this file reads

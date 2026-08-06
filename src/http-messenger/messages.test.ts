@@ -23,13 +23,17 @@ import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
 import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
+import * as signalsSchema from "../signals/schema.ts";
 import { createSignalWorker } from "../signals/worker.ts";
+import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import type { UserRecord } from "../users/routes.ts";
+import * as usersSchema from "../users/schema.ts";
 import { createUsers } from "../users/users.ts";
 import { createHttpMessenger } from "./http-messenger.ts";
 import type { MessageRecord } from "./messages.ts";
+import * as httpMessagesSchema from "./schema.ts";
 
 let database: TestDatabase;
 let db: Db;
@@ -59,15 +63,15 @@ before(async () => {
   // Required of the construction and never started, because nothing in this ticket's
   // surface emits: the agent's send is not an arrival and wakes nobody.
   const worker = createSignalWorker({ db, runtime: fakeRuntime(), handlers: {} });
-  // Before the Messenger, and that order is load-bearing rather than narrative: the
-  // Messenger's first migration references this part's table (ADR-0036).
+  // Before the Messenger, which takes it: `messages.user_id` references this part's table
+  // (ADR-0036), and the push below has to see both schemas for the constraint to generate.
   const users = createUsers({ db, tokenTtl: 60 * 60 * 1000, agentServer });
   // Nothing is held: every capability this part has so far is a route, and it registered
-  // both plugins and its descriptor itself (ADR-0032).
+  // both plugins itself (ADR-0032).
   createHttpMessenger({ db, users, worker, publicServer, agentServer });
 
-  // Three descriptors, applied in construction order.
-  await db.migrate();
+  // Three schemas, pushed as one graph the way an Operator's barrel is (ADR-0046).
+  await applySchema(db, signalsSchema, usersSchema, httpMessagesSchema);
 });
 
 after(async () => {

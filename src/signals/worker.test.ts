@@ -17,13 +17,14 @@ import { after, before, describe, it } from "node:test";
 import { asc, eq, sql } from "drizzle-orm";
 import type { Db, Listening } from "../db/index.ts";
 import type { LogFields, Logger } from "../logging.ts";
+import { applySchema } from "../test-support/apply-schema.ts";
 import { cutListeningBackends } from "../test-support/backends.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
 import type { SignalHandler, SignalHandlers } from "./handlers.ts";
-import { signalsMigrations } from "./migrations.ts";
 import type { Runtime } from "./runtime.ts";
+import * as signalsSchema from "./schema.ts";
 import { runs, signals } from "./schema.ts";
 import { createSignalWorker, type SignalWorker, signalChannel } from "./worker.ts";
 
@@ -33,8 +34,7 @@ let db: Db;
 before(async () => {
   database = await createTestDatabase("worker");
   db = database.db;
-  db.registerMigrations(signalsMigrations);
-  await db.migrate();
+  await applySchema(db, signalsSchema);
 });
 
 after(() => database.drop());

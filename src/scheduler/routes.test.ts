@@ -15,11 +15,14 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
 import type { Logger } from "../logging.ts";
+import * as signalsSchema from "../signals/schema.ts";
 import { createSignalWorker, type SignalWorker } from "../signals/worker.ts";
+import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import { createScheduler } from "./scheduler.ts";
 import type { ScheduleRecord } from "./schedules.ts";
+import * as schedulerSchema from "./schema.ts";
 import { schedules } from "./schema.ts";
 
 let database: TestDatabase;
@@ -49,8 +52,8 @@ before(async () => {
 
   agentServer = serverComponent(Fastify(), nowhere);
 
-  // A real Worker, unstarted: the Scheduler requires one to emit into, and constructing it registers
-  // the signals migrations this file also applies. It is given no Agent server, so the only routes on
+  // A real Worker, unstarted: the Scheduler requires one to emit into, and its tables are the
+  // other half of what is pushed below. It is given no Agent server, so the only routes on
   // `agentServer` are the Scheduler's.
   worker = createSignalWorker({ db, runtime: fakeRuntime(), handlers: {}, logger: silent });
 
@@ -58,7 +61,7 @@ before(async () => {
   // injects against. The programmatic handle is not needed here — the wire is the subject.
   createScheduler({ db, worker, agentServer, now: () => clockNow, logger: silent });
 
-  await db.migrate();
+  await applySchema(db, signalsSchema, schedulerSchema);
 });
 
 after(async () => {

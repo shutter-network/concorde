@@ -29,14 +29,18 @@ import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
 import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
+import * as signalsSchema from "../signals/schema.ts";
 import { createSignalWorker } from "../signals/worker.ts";
+import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import type { UserRecord } from "../users/routes.ts";
+import * as usersSchema from "../users/schema.ts";
 import type { ScryptParameters } from "../users/secrets.ts";
 import { createUsers } from "../users/users.ts";
 import { createHttpMessenger } from "./http-messenger.ts";
 import type { MessageRecord } from "./messages.ts";
+import * as httpMessagesSchema from "./schema.ts";
 
 let database: TestDatabase;
 let db: Db;
@@ -82,14 +86,16 @@ before(async () => {
   // test wants, since the row is what it reads and the Run is not its subject.
   const worker = createSignalWorker({ db, runtime: fakeRuntime(), handlers: {} });
   // Both servers, so that `POST /users` and the login under `/auth` exist: a Token here is
-  // bought with a password at the Manager's own route. Constructed before the Messenger,
-  // and that order is load-bearing rather than narrative (ADR-0036).
+  // bought with a password at the Manager's own route. The Messenger takes it, so it is
+  // constructed first; the foreign key's ordering is the push's to arrange (ADR-0046).
   const users = createUsers({ db, tokenTtl: hour, scrypt: cheap, agentServer, publicServer });
   // Nothing is held: the read under test is a route, and the constructor registered it
   // itself, behind the Manager's own hook (ADR-0032).
   createHttpMessenger({ db, users, worker, publicServer, agentServer });
 
-  await db.migrate();
+  // The Manager's schema alongside the Messenger's, because `messages.user_id` references
+  // `saf_users.users.id` and one push has to see both (ADR-0036, ADR-0046).
+  await applySchema(db, signalsSchema, usersSchema, httpMessagesSchema);
 });
 
 after(async () => {

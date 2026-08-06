@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { sql } from "drizzle-orm";
+import { applySchema } from "../test-support/apply-schema.ts";
 import { cutListeningBackends, listeningBackends } from "../test-support/backends.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
-import { alphaMigrations, widgets } from "../test-support/fixtures.ts";
+import { alpha, widgets } from "../test-support/fixtures.ts";
 import { waitUntil } from "../test-support/wait.ts";
 import type { ChannelListener, Db, Handle } from "./index.ts";
 import { openDb } from "./index.ts";
@@ -14,8 +15,10 @@ let db: Db;
 before(async () => {
   database = await createTestDatabase("db");
   db = database.db;
-  db.registerMigrations(alphaMigrations);
-  await db.migrate();
+  // One table is the whole of what the pool, the handle, the transactions and the
+  // listeners need to be observable. Nothing here is about migrations: `migrate.test.ts`
+  // is where the fixture's folders are the subject.
+  await applySchema(db, { alpha, widgets });
 });
 
 after(() => database.drop());

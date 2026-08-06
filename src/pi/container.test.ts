@@ -69,8 +69,10 @@ import type { Mount } from "../container/index.ts";
 import { openDb } from "../db/index.ts";
 import type { SignalHandler } from "../signals/handlers.ts";
 import type { Runtime } from "../signals/runtime.ts";
+import * as signalsSchema from "../signals/schema.ts";
 import { runs } from "../signals/schema.ts";
 import { createSignalWorker } from "../signals/worker.ts";
+import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import {
   addHostToGateway,
@@ -378,13 +380,13 @@ async function withGateway(
 
   const runtime = runtimeOn(paths, [instructionsEntry(paths), settingsEntry(paths)]);
 
-  // The Gateway's own Db, on the same database. Handing it to the Worker is what
-  // registers the Worker's migration descriptor, so `migrate` comes after construction
-  // and takes no arguments; handing the Worker the server is what registers its routes,
-  // so nothing here calls `register`.
+  // The Gateway's own Db, on the same database. The Worker's tables are pushed here rather
+  // than by constructing it, because the framework applies no DDL of its own (ADR-0046);
+  // handing the Worker the server is what registers its routes, so nothing here calls
+  // `register`. One push per database, and this function runs once.
   const db = openDb(database.url);
   const worker = createSignalWorker({ db, runtime, handlers: { ask: asking }, agentServer });
-  await db.migrate();
+  await applySchema(db, signalsSchema);
 
   const handle = db.handle({ runs });
   const rig: Rig = {

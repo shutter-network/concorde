@@ -31,19 +31,20 @@ import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
 import type { Logger } from "../logging.ts";
 import type { Signal, SignalHandlers } from "../signals/handlers.ts";
-import { signalsMigrations } from "../signals/migrations.ts";
 import type { SignalRecord } from "../signals/routes.ts";
+import * as signalsSchema from "../signals/schema.ts";
 import { createSignalWorker } from "../signals/worker.ts";
+import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { type FakeRuntime, fakeRuntime } from "../test-support/fake-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
-import { usersMigrations } from "../users/migrations.ts";
 import type { UserRecord } from "../users/routes.ts";
+import * as usersSchema from "../users/schema.ts";
 import type { ScryptParameters } from "../users/secrets.ts";
 import { createUsers } from "../users/users.ts";
 import { createHttpMessenger, messageReceivedKind } from "./http-messenger.ts";
 import type { MessageRecord } from "./messages.ts";
-import { httpMessagesMigrations } from "./migrations.ts";
+import * as httpMessagesSchema from "./schema.ts";
 
 let database: TestDatabase;
 let db: Db;
@@ -92,11 +93,11 @@ type Gateway = {
 before(async () => {
   database = await createTestDatabase("http_messages_posted");
   db = database.db;
-  // Registered here rather than by a construction, because the parts below are constructed
-  // once per test and the schema is migrated once: this is the pre-deploy entry point's own
-  // call, and the order is the one the foreign key requires (ADR-0032, ADR-0036).
-  db.registerMigrations(signalsMigrations, usersMigrations, httpMessagesMigrations);
-  await db.migrate();
+  // Pushed here rather than beside a construction, because the parts below are constructed
+  // once per test and the tables are created once: this is the Operator's own apply, and
+  // one call is the whole of it — a second push into this database would fail on `CREATE
+  // SCHEMA` (ADR-0046).
+  await applySchema(db, signalsSchema, usersSchema, httpMessagesSchema);
 });
 
 after(() => database.drop());

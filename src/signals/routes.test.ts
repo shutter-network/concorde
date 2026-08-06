@@ -18,12 +18,13 @@ import { inArray } from "drizzle-orm";
 import Fastify, { type FastifyInstance } from "fastify";
 import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
+import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
 import type { Prompt, SignalHandler } from "./handlers.ts";
-import { signalsMigrations } from "./migrations.ts";
 import type { RunRecord, SignalRecord } from "./routes.ts";
+import * as signalsSchema from "./schema.ts";
 import { signals } from "./schema.ts";
 import { createSignalWorker, type SignalWorker } from "./worker.ts";
 
@@ -71,8 +72,7 @@ const scripted: SignalHandler<{ readonly prompts: readonly Prompt[] }> = {
 before(async () => {
   database = await createTestDatabase("core_routes");
   db = database.db;
-  db.registerMigrations(signalsMigrations);
-  await db.migrate();
+  await applySchema(db, signalsSchema);
 
   // The framework constructs no server: this is a bare Fastify instance, the same call
   // an Operator's entry point makes. `serverComponent` adds only where it listens, and

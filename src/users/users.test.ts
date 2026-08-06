@@ -14,9 +14,8 @@
  * an injected prompt reaches this surface with nothing in its way.
  *
  * The Signal Worker is deliberately absent from this file. The User Manager takes no
- * reference to it, emits no Signals, and its migration descriptor is applied alone
- * here — so a deployment with identity and no Signals at all is what these tests
- * actually run.
+ * reference to it, emits no Signals, and its schema is the only one pushed here — so a
+ * deployment with identity and no Signals at all is what these tests actually run.
  */
 
 import assert from "node:assert/strict";
@@ -24,9 +23,10 @@ import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
 import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
+import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
-import { usersMigrations } from "./migrations.ts";
 import type { UserRecord } from "./routes.ts";
+import * as usersSchema from "./schema.ts";
 import { createUsers, type Users } from "./users.ts";
 
 let database: TestDatabase;
@@ -58,10 +58,9 @@ const fixture: UserRecord[] = [];
 before(async () => {
   database = await createTestDatabase("users");
   db = database.db;
-  // The part's own descriptor, alone: it owns a schema and a tracking table of its
-  // own and needs no other part migrated to work.
-  db.registerMigrations(usersMigrations);
-  await db.migrate();
+  // The part's own schema, alone: it owns a PostgreSQL schema of its own and references
+  // no other part's tables, so nothing else has to be pushed for it to work.
+  await applySchema(db, usersSchema);
 
   // The framework constructs no server: this is a bare Fastify instance, the same call
   // an Operator's entry point makes. `serverComponent` adds only where it listens, and

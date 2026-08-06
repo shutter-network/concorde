@@ -33,9 +33,10 @@ import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance, type FastifyPluginAsync } from "fastify";
 import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
+import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
-import { usersMigrations } from "./migrations.ts";
 import type { UserRecord } from "./routes.ts";
+import * as usersSchema from "./schema.ts";
 import type { ScryptParameters } from "./secrets.ts";
 import { createUsers, type Users } from "./users.ts";
 
@@ -114,8 +115,7 @@ const operatorRoutes: FastifyPluginAsync = async (fastify) => {
 before(async () => {
   database = await createTestDatabase("users_authentication");
   db = database.db;
-  db.registerMigrations(usersMigrations);
-  await db.migrate();
+  await applySchema(db, usersSchema);
 
   agentServer = serverComponent(Fastify(), nowhere);
   publicServer = serverComponent(Fastify(), nowhere);

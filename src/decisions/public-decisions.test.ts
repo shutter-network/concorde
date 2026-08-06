@@ -26,11 +26,14 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
 import { createSignatures } from "../signatures/index.ts";
+import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import type { UserRecord } from "../users/routes.ts";
+import * as usersSchema from "../users/schema.ts";
 import type { ScryptParameters } from "../users/secrets.ts";
 import { createUsers } from "../users/users.ts";
 import { createDecisions, type DecisionRecord } from "./decisions.ts";
+import * as decisionsSchema from "./schema.ts";
 
 let database: TestDatabase;
 let db: Db;
@@ -87,7 +90,7 @@ before(async () => {
   });
   createDecisions({ db, signatures, users, agentServer, publicServer });
 
-  await db.migrate();
+  await applySchema(db, usersSchema, decisionsSchema);
 
   const created = await agentServer.fastify.inject({
     method: "POST",

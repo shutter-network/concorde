@@ -23,10 +23,11 @@ import { eq } from "drizzle-orm";
 import Handlebars from "handlebars";
 import type { Db } from "./db/index.ts";
 import type { Prompt, Signal, SignalHandler, SignalHandlers } from "./signals/handlers.ts";
-import { signalsMigrations } from "./signals/migrations.ts";
+import * as signalsSchema from "./signals/schema.ts";
 import { signals } from "./signals/schema.ts";
 import { createSignalWorker, type SignalWorker } from "./signals/worker.ts";
 import { templateHandler } from "./template-handler.ts";
+import { applySchema } from "./test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "./test-support/database.ts";
 import { type FakeRuntime, fakeRuntime } from "./test-support/fake-runtime.ts";
 import { waitUntil } from "./test-support/wait.ts";
@@ -408,8 +409,7 @@ describe("the template Handler under the worker", () => {
   before(async () => {
     database = await createTestDatabase("template_handler");
     db = database.db;
-    db.registerMigrations(signalsMigrations);
-    await db.migrate();
+    await applySchema(db, signalsSchema);
   });
 
   after(() => database.drop());
