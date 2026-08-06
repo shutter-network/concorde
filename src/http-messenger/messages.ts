@@ -1,12 +1,9 @@
 /**
- * The two statements the whole part is made of: the insert every send reaches, and the
- * read every surface answers from.
+ * The two statements this component is made of: one insert, and one read.
  *
- * One insert and one read, deliberately. The agent's send and a Signal Handler's `send`
- * are the same statement with a different handle; the agent's read, a User's own read and
- * a Handler's `history` are the same query with the User id from a different place — a
- * query parameter, a Token, or an argument. Duplicating either would be two chances to
- * get the numbering or the cursor wrong.
+ * The agent's send and a Signal Handler's `send` are the same statement with a different handle.
+ * The agent's read, a User's own read and a Handler's `history` are one query. The User id comes
+ * from a different place each time: a query parameter, a Token, or an argument.
  */
 
 import { and, asc, desc, eq, gt, lt, sql } from "drizzle-orm";
@@ -14,21 +11,17 @@ import type { Handle } from "../db/index.ts";
 import type { CursorWindow } from "../route-conventions.ts";
 import { type httpMessagesTables, type MessageDirection, messages } from "./schema.ts";
 
-/** A handle typed to this part's own tables, and to no other part's (ADR-0022). */
+/** A handle typed to this component's own tables, and to no other's. */
 type MessagesHandle = Handle<typeof httpMessagesTables>;
 
 /**
- * A Message as every surface answers with it: the POST response, both reads, the
- * trusted-code methods and the Signal payload.
+ * A Message, as every surface answers with it.
  *
- * One shape and not a projection per surface. `direction` is redundant in the Signal
- * payload, where it is always `inbound`, and `seq` is redundant for most Handlers; both
- * are paid so that this part has one shape rather than two kept parallel by hand
- * (ADR-0034). `createdAt` is an ISO 8601 string, because JSON has no date.
+ * The POST response, both reads, the trusted-code methods and the Signal payload are one shape
+ * rather than a projection each. So `direction` is on a Signal payload, where it is always
+ * `inbound`. `createdAt` is an ISO 8601 string, because JSON has no date.
  *
- * It lives here rather than in `routes.ts`, where the User Manager keeps `UserRecord`,
- * because it is not only the wire shape: it is what the insert answers with and what a
- * Handler is written against, and the routes are one consumer of it among three.
+ * A Handler for a submitted Message is written `SignalHandler<MessageRecord>`.
  */
 export type MessageRecord = {
   readonly id: string;
@@ -40,18 +33,10 @@ export type MessageRecord = {
 };
 
 /**
- * Which stretch of a User's log a read asks for: the shared cursor window under this
- * part's own name.
+ * Which stretch of a User's log a read asks for: the shared cursor window, under this name.
  *
- * An alias and not a second declaration. The shape was always generic, carrying no User id
- * and nothing else about Messages, and what the cursor means now lives beside the schema
- * and the refusal that enforce it, in `route-conventions.ts` (ADR-0035).
- *
- * The name stays all the same. It is not exported, and it reaches a consumer only
- * structurally, as `Partial<MessageWindow>` on the `HttpMessenger` type's `history`, so what
- * it buys is inside: a reader of this part meets a window over one User's Messages
- * rather than a window in general, and the two route groups, the read below and the trusted
- * method all say the one word for it.
+ * An alias and not a second declaration. What a cursor means lives beside the schema that
+ * validates it, in `route-conventions.ts`. The name is what this component's own modules say.
  */
 export type MessageWindow = CursorWindow;
 
@@ -63,17 +48,13 @@ export type OutgoingMessage = {
 };
 
 /**
- * No User has that id: PostgreSQL's `23503`, which is the foreign key doing the one thing
- * it exists to catch — an agent copying an id wrong (ADR-0036).
+ * No User has that id: PostgreSQL's `23503`, which is the foreign key catching a wrong id.
  *
- * An error class rather than a status, because the insert is reached from a route, which
- * has a 404 to answer with, and from trusted code, which has nothing to write a status
- * to. There is deliberately no lookup in front of the write: a check in front of a
- * constraint is two mechanisms for one rule, and it would make the 404 come from a read
- * rather than from the write that actually failed.
+ * An error class rather than a status. The insert is reached from a route, which has a 404 to
+ * answer with. It is also reached from trusted code, which has no reply at all. There is no lookup
+ * in front of the write, so this comes from the write that failed.
  *
- * The id is in the message and on no field of its own: every caller already holds the id it
- * passed, so a field would be a second copy for nobody to read.
+ * The id is in the message and on no field of its own. Every caller already holds the id it passed.
  */
 export class UnknownUserError extends Error {
   constructor(userId: string) {
@@ -85,8 +66,8 @@ export class UnknownUserError extends Error {
 /**
  * Five attempts at a `seq` all lost the race, which the routes answer with a 503.
  *
- * Not a correctness failure and not a caller's mistake: the numbering is intact, and what
- * has happened is that this User's own concurrent writers outran a bounded retry.
+ * Not a correctness failure and not a caller's mistake. The numbering is intact, and this User's
+ * own concurrent writers outran a bounded retry.
  */
 export class SeqContentionError extends Error {
   constructor(userId: string, attempts: number) {
@@ -98,16 +79,13 @@ export class SeqContentionError extends Error {
 }
 
 /**
- * How many times an insert will try for a number before giving up.
+ * How many times an insert tries for a number before it gives up.
  *
- * **Five is arbitrary.** It is not a correctness number — the unique constraint is what
- * makes the numbering correct, and one more attempt would always eventually get one — it
- * is the point at which further attempts are answering the wrong question: this many
- * losses means something is wrong that a sixth attempt will not fix. The bound exists
- * because the alternative amplifies one pathological client into O(n²) inserts on a route
- * nothing rate limits, and the shape of the cost is worth knowing: with n writers at once
- * on one User, the last of them needs up to n attempts, since each failure means somebody
- * else committed the number it had computed.
+ * Five is arbitrary. The unique constraint is what makes the numbering correct. This bound keeps
+ * one pathological client from becoming O(n²) inserts.
+ *
+ * The cost is worth knowing. With n writers at once on one User, the last needs up to n attempts.
+ * Each failure means somebody else committed the number it had computed.
  */
 const maxAttempts = 5;
 
@@ -118,19 +96,15 @@ const uniqueViolation = "23505";
 const foreignKeyViolation = "23503";
 
 /**
- * Writes one Message with the next number for its User, over whichever handle the caller
- * reached it by.
+ * Writes one Message with the next number for its User, over whichever handle it is given.
  *
- * The query-builder form and a widened schema parameter, so it works on a transaction
- * carrying any part's schema (ADR-0023): the inbound path's transaction is the one that
- * also emits the Signal, and a Handler's is its own.
+ * The query-builder form and a widened schema parameter, so it works on a transaction carrying any
+ * component's schema. The inbound path's transaction is the one that also emits the Signal.
  *
- * Each attempt runs in a **savepoint**, and that is required whether or not the retry
- * exists: a constraint violation aborts the enclosing transaction, so without one a lost
- * race would take the caller's transaction down with it — including the emit it was
- * keeping the insert company with. Drizzle's nested `transaction` is a savepoint on a
- * handle that is already in one and an ordinary transaction on a handle that is not, which
- * is what makes both callers the same code.
+ * Each attempt runs in a savepoint, which is required whether or not the retry exists. A constraint
+ * violation aborts the enclosing transaction, so a lost race would otherwise take the caller's
+ * transaction down with it. Drizzle's nested `transaction` is a savepoint inside one and an
+ * ordinary transaction outside one.
  */
 export async function insertMessage<TSchema extends Record<string, unknown>>(
   handle: Handle<TSchema>,
@@ -141,8 +115,8 @@ export async function insertMessage<TSchema extends Record<string, unknown>>(
       return await handle.transaction((savepoint) => insertOnce(savepoint, message));
     } catch (error) {
       const code = sqlState(error);
-      // Not retried, and not a race: the foreign key refused the User outright, and a
-      // sixth attempt would be refused identically (ADR-0036).
+      // Not retried, and not a race. The foreign key refused the User outright, and a sixth
+      // attempt would be refused identically.
       if (code === foreignKeyViolation) throw new UnknownUserError(message.userId);
       if (code !== uniqueViolation) throw error;
       if (attempt === maxAttempts) throw new SeqContentionError(message.userId, maxAttempts);
@@ -153,10 +127,9 @@ export async function insertMessage<TSchema extends Record<string, unknown>>(
 /**
  * One attempt: the number and the row in one statement.
  *
- * `coalesce(max(seq), 0) + 1` is a scalar subquery in the statement that uses it rather
- * than a read followed by a write, so the window in which another writer can take the
- * number is as narrow as PostgreSQL can make it — and `unique (user_id, seq)` is what
- * makes the remaining window visible instead of silently renumbering somebody.
+ * `coalesce(max(seq), 0) + 1` is a scalar subquery inside the insert rather than a read followed by
+ * a write. So the window in which another writer can take the number is as narrow as PostgreSQL can
+ * make it. `unique (user_id, seq)` makes the remaining window visible.
  */
 async function insertOnce<TSchema extends Record<string, unknown>>(
   handle: Handle<TSchema>,
@@ -180,14 +153,12 @@ async function insertOnce<TSchema extends Record<string, unknown>>(
 /**
  * One User's Messages, both directions, ascending by `seq`.
  *
- * `before` and no cursor at all select **descending** and reverse in memory, because the
- * newest page is what a client opening a conversation wants and PostgreSQL cannot answer
- * "the last fifty in ascending order" without one or the other. The reversal is the whole
- * of that asymmetry, and it is invisible from outside: every page arrives ascending, so a
- * client concatenates them without reversing anything (ADR-0035).
+ * `before`, and no cursor at all, select descending and reverse in memory. The newest page is what
+ * a client opening a conversation wants. PostgreSQL cannot answer "the last fifty in ascending
+ * order" any other way. The reversal is invisible from outside: every page arrives ascending.
  *
- * On the part's own handle rather than a widened one: a read takes no transaction
- * (ADR-0023), and this part reads nothing but its own table.
+ * On the component's own handle rather than a widened one. A read takes no transaction, and this
+ * component reads nothing but its own table.
  */
 export async function selectMessages(
   handle: MessagesHandle,
@@ -226,10 +197,9 @@ function asMessageRecord(row: typeof messages.$inferSelect): MessageRecord {
 /**
  * The SQLSTATE PostgreSQL refused a statement with, wherever it ended up.
  *
- * Drizzle wraps a driver error in one of its own and puts the original on `cause`, so the
- * code is one or two levels down rather than on the error a caller catches. The chain is
- * walked rather than the shape asserted, because which level carries it is Drizzle's
- * business and has changed between versions.
+ * Drizzle wraps a driver error in one of its own and puts the original on `cause`. So the code is
+ * one or two levels down. The chain is walked rather than the shape asserted, because which level
+ * carries it has changed between versions.
  */
 function sqlState(error: unknown): string | undefined {
   let unwrapped: unknown = error;

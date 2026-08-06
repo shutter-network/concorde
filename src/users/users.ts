@@ -1,42 +1,14 @@
 /**
- * The User Manager: the part of the Gateway that owns Users.
+ * The User Manager: the component of a Gateway that owns Users.
  *
- * Constructed like every other part — one call, an ordinary object back, and nothing
- * to register it with. It wires itself the way every part does, registering its routes
- * on whichever servers it is handed (ADR-0032).
+ * One call builds it, and it registers its routes on whichever servers it is handed. Its `start`
+ * and `stop` do nothing. It emits no Signals and holds no reference to the Signal Worker. Writes
+ * take the caller's transaction as their first parameter, and reads do not.
  *
- * It is a **Component whose `start` and `stop` do nothing**. There are no timers and no
- * connection of its own, so there is nothing to begin and nothing to release; what a
- * place in the Gateway's record buys is membership, and a part that cannot be in the
- * record cannot be reached through the Gateway at all (ADR-0037). It also has a position
- * before it needs one, so the day it grows something to run — a sweeper for expired
- * Tokens is the likely occasion — the only thing that changes is what `start` does.
- *
- * It is **not a Producer** either: it takes no reference to the Signal Worker and emits
- * no Signals, because the worker is serial globally and a Signal per User event would
- * put a Run behind one (ADR-0029). A deployment that wants that Signal emits it itself,
- * atomically, because `create` takes the caller's transaction.
- *
- * Two things about the surface are decisions rather than omissions:
- *
- *  - **Writes take the transaction as their first parameter; reads do not**
- *    (ADR-0023). So `create` is transactional on the caller's behalf, and `get` and
- *    `list` go through the part's own handle.
- *  - **Nothing removes a User.** No delete, no deactivation, no `deactivated_at`
- *    (ADR-0029).
- *
- * The third thing is the asymmetry the whole part is arranged around. Setting
- * Attributes, replacing a password and issuing a Token are **methods and not routes**:
- * Signal Handlers and an Operator's entry point are trusted code (ADR-0009, ADR-0020)
- * and hold this object, while the Agent server is the one surface an injected prompt
- * reaches and it has no authentication at all (ADR-0003, ADR-0010). So the agent may
- * create a User and read Users, and the three capabilities that could turn that into an
- * escalation are not on its surface to reach — by absence, not by a guard.
- *
- * The consequence of the first is worth stating where it will be met: a caller
- * **cannot read its own uncommitted write**. A Handler that creates a User inside a
- * transaction and then calls `get` gets nothing, because the read is on a different
- * connection. `create` returns the User, so the read-back has no reason to exist.
+ * Setting Attributes, replacing a password and issuing a Token are methods rather than routes.
+ * Trusted code holds this object, and the Agent server is the surface an injected prompt reaches.
+ * So the agent can create and read Users, and the three capabilities that escalate are not there
+ * to reach.
  */
 
 import { and, desc, eq, gt, sql } from "drizzle-orm";
@@ -64,36 +36,31 @@ import {
   verifyPassword,
 } from "./secrets.ts";
 
-/** A handle typed to this part's own tables, and to no other part's (ADR-0022). */
+/** A handle typed to this component's own tables, and to no other's. */
 type UsersHandle = Handle<typeof usersTables>;
 
+/** Everything `createUsers` needs: the Db, a Token lifetime, and the servers its routes go on. */
 export type UsersOptions = {
+  /** The Db this component queries through. It takes a handle to its own two tables. */
   readonly db: Db;
   /**
    * How long an issued Token lives, in milliseconds.
    *
-   * No default, because the trade it settles is the deployment's: a long lifetime is
-   * fewer re-authentications and a longer window for a stolen Token, and nothing in
-   * this framework can tell which side of that a Gateway is on. It is not
-   * per-Token either: a Token that never expires is unrepresentable, and one that
-   * expires on a schedule of the caller's would be a second policy to keep straight
-   * (ADR-0030).
+   * No default. A long lifetime means fewer logins and a longer window for a stolen Token. Only
+   * the deployment knows which side of that trade it is on.
+   *
+   * The lifetime is not per-Token. A Token that never expires is unrepresentable.
    */
   readonly tokenTtl: number;
   /**
    * The Agent server, if the agent is to create and read Users.
    *
-   * Given one, the constructor registers `agentRoutes` on the Fastify instance it
-   * carries under **`/users`** — `POST /users`, `GET /users`, `GET /users/:id`, the
-   * layout every document about this part already writes (ADR-0032). Omitted, nothing
-   * is registered anywhere, and that omission is how the agent's ability to create a
-   * User is denied wholesale (ADR-0010): there is no flag, and no route to guard.
+   * Given one, the constructor registers `agentRoutes` on it under `/users`: `POST /users`,
+   * `GET /users` and `GET /users/:id`. Omit it and nothing is registered anywhere, which is how
+   * the agent's ability to create a User is denied. There is no flag and no route to guard.
    *
-   * Structural, and asks for nothing but the Fastify instance: what satisfies it is
-   * what `serverComponent` returns, and the `start` and `stop` beside it are the
-   * Operator's record's business rather than ours. A server built with
-   * `withTypeProvider` or with a logger of its own satisfies it too; one built on
-   * http2 does not, and takes `agentRoutes` below instead.
+   * Structural, and asks for nothing but the Fastify instance. What `serverComponent` returns
+   * satisfies it. A server built on http2 does not, and takes `agentRoutes` below instead.
    */
   readonly agentServer?: {
     readonly fastify: FastifyInstance;
@@ -101,14 +68,12 @@ export type UsersOptions = {
   /**
    * The Public server, if Users are to trade a password for a Token.
    *
-   * Given one, the constructor registers `publicRoutes` on the Fastify instance it
-   * carries under **`/auth`**, which is where `POST /auth/tokens` comes from.
+   * Given one, the constructor registers `publicRoutes` on it under `/auth`, which is where
+   * `POST /auth/tokens` comes from.
    *
-   * Omitting it is the load-bearing omission of this part: it is how a deployment
-   * replaces our password login with its own scheme — OIDC, a wallet signature, a
-   * corporate header — while keeping our Tokens, since `issueToken` is a method and
-   * there is no Authenticator interface to implement (ADR-0030). Nothing else about
-   * the User Manager changes when it is left out.
+   * Omit it to replace this password login with a scheme of your own. That scheme can be OIDC, a
+   * wallet signature, or a corporate header. `issueToken` is a method, so your own route still
+   * mints our Tokens. Nothing else about the User Manager changes.
    */
   readonly publicServer?: {
     readonly fastify: FastifyInstance;
@@ -116,120 +81,71 @@ export type UsersOptions = {
   /**
    * What a password derivation costs. Defaults to OWASP's 32 MiB row.
    *
-   * A construction-time option that old digests **do not** follow: each digest
-   * carries the parameters it was written under and is verified at those, so raising
-   * this leaves every existing password working, and there is deliberately no
-   * rehash-on-login (ADR-0030). Lowering it does the same, which is the only reason a
-   * test can run at a cost a person would not accept.
+   * Old digests do not follow it. Each digest carries the parameters it was written under, and
+   * verifies at those. So raising this leaves every stored password working, and there is no
+   * rehash on login.
    */
   readonly scrypt?: ScryptParameters;
 };
 
+/** The User Manager as a Component: two route plugins, one hook, and the methods no route has. */
 export type Users = Component & {
   /**
-   * The Agent server routes — create a User, read Users — as a Fastify plugin, for an
-   * Operator who wants them somewhere other than where the `agentServer` option puts
-   * them.
+   * The Agent server routes as a Fastify plugin: create a User, read Users.
    *
-   * The plugin carries no prefix of its own. `/users` is the default because the
-   * constructor supplies it, not because these routes know their own URL, so the
-   * layout stays the Operator's **via this plugin** (ADR-0032): hold it and you can
-   * register the routes under a prefix of your own, inside your own encapsulated
-   * plugin, or behind a hook you share with your own routes — which is Fastify's
-   * plugin system being the extension mechanism, and the reason ADR-0021 chose Fastify
-   * rather than inventing one. Passing no server and never registering this is still
-   * how the capability is switched off wholesale (ADR-0010).
+   * For an Operator who wants them somewhere other than where `agentServer` puts them. The plugin
+   * carries no prefix of its own. Register it under a prefix of yours, inside your own encapsulated
+   * plugin, or behind your own hook.
+   *
+   * Passing no server and never registering this is how the capability is switched off.
    */
   readonly agentRoutes: FastifyPluginAsync;
 
   /**
-   * The Public server routes, the login, as a Fastify plugin, for an Operator who
-   * wants them somewhere other than where the `publicServer` option puts them.
+   * The Public server routes as a Fastify plugin: the login, and the four routes around it.
    *
-   * The same prefix story `agentRoutes` carries: `/auth` is the constructor's default
-   * and `POST /auth/tokens` is where it puts the login, while this plugin is what
-   * registers the same routes anywhere else.
+   * The same prefix story `agentRoutes` carries. `/auth` is the constructor's default, and
+   * `POST /auth/tokens` is where the login goes.
    *
-   * Registering it either way is the whole of "the Gateway authenticates with
-   * passwords", and doing **neither** is how a deployment replaces that with its own
-   * scheme while keeping our Tokens: there is no Authenticator interface, because the
-   * useful extension point is issuance rather than verification (ADR-0030).
+   * Registering neither this plugin nor a Public server is how a deployment replaces this login.
+   * Its own scheme mints our Tokens through `issueToken`, and there is no interface to implement.
    */
   readonly publicRoutes: FastifyPluginAsync;
 
   /**
-   * The preHandler that requires a Token, as one option on any route:
-   * `publicServer.post("/ask", { preHandler: users.requireUser }, handler)`.
+   * The preHandler that requires a Token, as one option on any route.
    *
-   * It reads the `Authorization: Bearer …` header, and either assigns the User it
-   * names to `request.safUser` or answers the single 401 — the same status and the
-   * same body a wrong password gets, for a missing header, a header in another
-   * scheme, an unknown Token and an expired one alike (ADR-0030).
+   * `publicServer.post("/ask", { preHandler: users.requireUser }, handler)`. It reads the
+   * `Authorization: Bearer …` header. It then assigns the User to `request.safUser`, or answers
+   * the single 401 that every authentication failure gets.
    *
-   * This is the whole integration surface, and it is deliberately a hook rather than
-   * a plugin: it works on either server, inside any plugin of the Operator's, at any
-   * depth, with nothing of ours to register first. The HTTP Messenger uses exactly
-   * this and authenticates nobody itself.
-   *
-   * A route that does not take it reads `request.safUser` as `undefined` despite the
-   * type, because the augmentation cannot express "set only after this ran". Nothing
-   * anywhere is protected by default.
+   * A hook rather than a plugin, so it works on either server, inside any plugin, at any depth.
+   * A route that does not take it reads `request.safUser` as `undefined`, despite the type.
+   * Nothing is protected by default.
    */
   readonly requireUser: preHandlerAsyncHookHandler;
 
   /**
-   * Creates a User with no Attributes and no password, and returns it.
+   * Creates a User with no Attributes and no password, and answers with the record.
    *
-   * Takes the caller's transaction rather than finding one (ADR-0023), so admitting
-   * a User and recording whatever the Operator's own tables record about them cannot
-   * come apart: a rollback loses both. Ambient enlistment is not available — a
-   * transaction started on one handle takes its own connection from the pool, so a
-   * second handle's writes survive its rollback with nothing reported.
+   * Takes the caller's transaction, so admitting a User and writing the Operator's own rows
+   * cannot come apart. A rollback loses both. The caller cannot read this write back through
+   * `get`, which is why the record comes back here.
    *
-   * The schema parameter is widened rather than named, because the transaction
-   * carries the schema of the handle it was started on and that handle belongs to
-   * the caller.
-   *
-   * It deliberately accepts **no id**. A User has no natural key, so "create this
-   * User if absent" is not expressible and boot-time seeding is not a thing to make
-   * idempotent; an explicit id would only invite a hardcoded uuid into every copy of
-   * a deployment's source (ADR-0029). Seeding is the Operator's, out of band, once.
+   * It accepts no id. A User has no natural key, so seeding is the Operator's own job, out of
+   * band and once.
    */
   create<TSchema extends Record<string, unknown>>(tx: Handle<TSchema>): Promise<UserRecord>;
 
   /**
-   * Replaces a User's Attributes, **wholesale**.
+   * Replaces a User's Attributes, wholesale.
    *
-   * This is where authorization lives, since there is no Party (ADR-0008, ADR-0014),
-   * and it is the one capability the agent is denied by the **absence of a parameter**
-   * rather than by a check: `POST /users` has nowhere for an attribute to arrive
-   * through, so an injected prompt cannot mint a privileged User (ADR-0029). Which
-   * makes this method the other half of that boundary, and the reason it takes trusted
-   * code to reach it.
+   * This is where authorization lives, and the agent cannot reach it. `POST /users` has no
+   * parameter for an attribute, so an injected prompt cannot mint a privileged User.
    *
-   * **Wholesale and not a merge**, and the choice is written here because an
-   * undocumented one becomes a deployment's bug the first time somebody sets one key
-   * and finds another still set. Three reasons, and the first is the load-bearing one:
-   *
-   *  - A merge cannot express **removal**. Taking `role` away from somebody would need
-   *    a sentinel value invented for it, and a framework that stores Attributes without
-   *    interpreting them has no business interpreting one. Replacement is total, and a
-   *    merge is written from it in one line — read, spread, set — while removal cannot
-   *    be written from a merge at all.
-   *  - Attributes are **arbitrary JSON** and need not be an object. There is no merge
-   *    of an array with an object, so a merging method would have a shape it silently
-   *    behaved differently for.
-   *  - `jsonb ||` merges only the **top level**, so a nested object would be replaced
-   *    wholesale while its siblings were merged — the one behaviour nobody predicts.
-   *
-   * A write, so it takes the caller's transaction first (ADR-0023): granting somebody a
-   * group and recording in the Operator's own tables who granted it commit together or
-   * not at all.
-   *
-   * Unlike `revoke`, it **throws** when no User has that id rather than doing nothing.
-   * Silence is right for a revocation because the postcondition holds either way — the
-   * Token is gone whether or not this call removed it — and wrong here, because a
-   * mistyped id would otherwise be an authorization grant that quietly did not happen.
+   * Wholesale rather than a merge, because a merge cannot express removal. A merge is one line on
+   * top of this: read, spread, set. A write, so it takes the caller's transaction first, and it
+   * throws when no User has that id.
    */
   setAttributes<TSchema extends Record<string, unknown>>(
     tx: Handle<TSchema>,
@@ -238,32 +154,15 @@ export type Users = Component & {
   ): Promise<void>;
 
   /**
-   * Replaces a User's password, proving nothing.
+   * Replaces a User's password, proving nothing: the whole of account recovery here.
    *
-   * The whole of "account recovery" in this framework: an Operator sets a new one, from
-   * their own code, having established out of band that they should. There is no route
-   * for this on either server — `PUT /password` requires the current password, which is
-   * what makes it self-service rather than recovery, and a User whose `password_hash` is
-   * null has nothing to prove there at all (ADR-0014, ADR-0030).
+   * An Operator sets a new password from their own code, having established out of band that it is
+   * right. It also gives a password to a User who had none. `PUT /auth/password` is the
+   * self-service route, and it wants the current password.
    *
-   * It also gives a password to a User who had none, which is the OIDC path run
-   * backwards: somebody admitted through a deployment's own login route can be handed
-   * one later without being created again.
-   *
-   * It **revokes nothing**, deliberately, and the same way `PUT /password` does not: an
-   * Operator locking somebody out replaces the password *and* calls `revoke`, and one
-   * that bundled the two would take that choice away from a routine rotation. The
-   * ordering that matters is `revoke` last, since a Token issued between the two calls
-   * would outlive both.
-   *
-   * A write, so it takes the caller's transaction first (ADR-0023), and it throws when
-   * no User has that id for the reason `setAttributes` does.
-   *
-   * There is **no bound on the password's length** here, where the route has one: the
-   * bound exists because scrypt reads its whole input on a route nothing rate limits,
-   * and trusted code calling this is not that. Nor is the empty string refused — it
-   * derives and stores like any other, and the login route's schema will not accept one,
-   * so setting it leaves a User who cannot log in. Recorded rather than guarded against.
+   * It revokes nothing. To lock somebody out, replace the password and then call `revoke`, in that
+   * order. There is no bound on the length here. The empty string stores like any other, and leaves
+   * a User who cannot log in.
    */
   setPassword<TSchema extends Record<string, unknown>>(
     tx: Handle<TSchema>,
@@ -272,30 +171,15 @@ export type Users = Component & {
   ): Promise<void>;
 
   /**
-   * Issues a Token to a User who presented nothing, and answers exactly what a login
-   * answers.
+   * Issues a Token to a User who presented nothing, and answers what a login answers.
    *
-   * **This is the extension point that replaced the Authenticator** (ADR-0030). A
-   * deployment wanting OIDC — or a wallet signature, or a corporate header — writes its
-   * own login route on the Public server, establishes identity however it likes, and
-   * calls this. What comes back is an ordinary Token, and nothing downstream, including
-   * `requireUser`, the Operator's own routes and the HTTP Messenger, can tell how it was
-   * obtained. That is why there is no `verify(request)` interface to
-   * implement: an implementation of one would still have had to answer "and where does
-   * the credential live?", and would have reimplemented this storage to satisfy it.
+   * This is how a deployment adds a login of its own. Write a route on the Public server,
+   * establish identity however you like, and call this. What comes back is an ordinary Token, and
+   * nothing downstream can tell how it was obtained.
    *
-   * The User needs **no password**, and `password_hash` is nullable exactly so that such
-   * a User need never have one. Their Token is not a lesser Token: it expires from the
-   * same construction-time lifetime, is revoked by the same two routes, and is
-   * indistinguishable from one a password bought.
-   *
-   * A write, so it takes the caller's transaction first (ADR-0023) — which also means
-   * the User it names may be one the same transaction just created, since this reads on
-   * the caller's connection. So an OIDC callback that admits somebody on first sight and
-   * hands them a Token is one transaction, and a rollback leaves neither.
-   *
-   * It throws when no User has that id, for the reason `setAttributes` does and because
-   * there is no Token it could answer with.
+   * The User needs no password, and their Token is not a lesser Token. It takes the caller's
+   * transaction, so one transaction can create a User and hand them a Token. It throws when no
+   * User has that id.
    */
   issueToken<TSchema extends Record<string, unknown>>(
     tx: Handle<TSchema>,
@@ -305,76 +189,91 @@ export type Users = Component & {
   /**
    * Revokes every Token of one User, so that none of them works again.
    *
-   * The same thing `DELETE /tokens` does, reachable without HTTP: an Operator who
-   * learns from their own systems that somebody's credential has leaked revokes it
-   * from the code that learned, rather than logging in as them to do it. Since nothing
-   * removes a User (ADR-0029), this is also the closest thing to shutting one out that
-   * exists — they keep their password, and it will mint a new Token the moment they
-   * use it, so an Operator locking somebody out revokes *and* replaces the password.
+   * What `DELETE /auth/tokens` does, reachable without HTTP. Nothing removes a User, so this is
+   * the closest thing to shutting one out. They keep their password, which mints a new Token, so
+   * replace that too.
    *
-   * A write, so it takes the caller's transaction first (ADR-0023): revoking and
-   * recording why in the Operator's own tables commit together or not at all. It is
-   * idempotent and answers nothing, including a count — a Token is gone afterwards
-   * whether or not this call is what removed it, and a User with none is not an error.
-   *
-   * The rows are **deleted rather than marked**, which is the only compaction anything
-   * has over that table: nothing reaps expired Tokens either (ADR-0030).
+   * It takes the caller's transaction. It is idempotent and answers nothing, not even a count. The
+   * rows are deleted rather than marked, which is the only compaction that table gets.
    */
   revoke<TSchema extends Record<string, unknown>>(tx: Handle<TSchema>, user: string): Promise<void>;
 
   /**
    * One User by id, or `undefined`.
    *
-   * A read, so it takes no transaction and **cannot see the caller's own uncommitted
-   * write** — `create` returns the User for exactly that reason.
+   * A read, so it takes no transaction and cannot see the caller's own uncommitted write.
+   * `create` answers with the User for that reason.
    */
   get(id: string): Promise<UserRecord | undefined>;
 
   /**
    * Users, newest first, limited.
    *
-   * A read, with the same consequence `get` carries. `limit` defaults to the number
-   * the route defaults to and is **not** capped here: the cap on the route bounds a
-   * response body the agent reads, which is not the case trusted code asking for a
-   * thousand Users is in.
+   * A read, with the same consequence `get` carries. `limit` defaults to the route's default and
+   * is not capped here. The cap on a route bounds a response body the agent reads, and this is
+   * not that.
    */
   list(options?: { readonly limit?: number }): Promise<UserRecord[]>;
 
   /**
-   * **Does nothing.** Written out here so that it is read rather than discovered.
+   * Does nothing. There is nothing here to start.
    *
-   * This part is in the Gateway's record for its membership and not for its lifecycle
-   * (ADR-0037): the pool it queries on is the Db's, the routes it registered belong to
-   * the servers they went on, and there is no third thing. Everything it needs was done
-   * at construction (ADR-0032).
+   * The pool belongs to the Db, and the routes belong to the servers they went on. This component
+   * is in the Gateway's record for its membership. Everything it needs was done at construction.
    */
   start(): Promise<void>;
 
   /**
-   * **Does nothing**, for the reason `start` does not: there is nothing here to release.
+   * Does nothing, for the reason `start` does not.
    *
-   * A Token outlives a shutdown, since what makes it valid is a row and the database's
-   * own clock, and nothing reaps the expired ones (ADR-0030).
+   * A Token outlives a shutdown. What makes it valid is a row and the database's own clock, and
+   * nothing reaps the expired rows.
    */
   stop(): Promise<void>;
 };
 
+/**
+ * Builds the User Manager and registers its routes on the servers it is given.
+ *
+ * Nothing here connects, listens or applies DDL. Put the result in the Gateway's record under a
+ * key of your own.
+ *
+ * @throws If `tokenTtl` is not a positive number of milliseconds.
+ * @throws If a `scrypt` parameter is outside its bounds.
+ *
+ * @example
+ * No Agent server, so the agent can neither create nor read Users.
+ * ```ts
+ * import Fastify from "fastify";
+ * import { openDb, serverComponent } from "shared-agent-framework";
+ * import { createUsers } from "shared-agent-framework/users";
+ *
+ * const db = openDb(process.env.DATABASE_URL ?? "");
+ * const publicServer = serverComponent(Fastify(), { host: "0.0.0.0", port: 8080 });
+ * const users = createUsers({ db, tokenTtl: 3_600_000, publicServer });
+ *
+ * await db.start();
+ *
+ * // Trusted code can still admit somebody and hand them a Token.
+ * const issued = await db.tx(async (tx) => {
+ *   const user = await users.create(tx);
+ *   return users.issueToken(tx, user.id);
+ * });
+ * ```
+ */
 export function createUsers(options: UsersOptions): Users {
-  // The part's own handle, typed to its own tables. `pg` never leaves the Db
-  // (ADR-0022).
+  // The component's own handle, typed to its own tables. `pg` never leaves the Db.
   const handle = options.db.handle(usersTables);
   const tokenTtl = checkedTokenTtl(options.tokenTtl);
   const parameters = checkedScryptParameters(options.scrypt ?? defaultScryptParameters);
   const dummy = dummyDigest(parameters);
-  // One hook, built once and shared by `GET /me` and by every route of the
-  // Operator's: the surface the quickstart documents and the surface the Public
-  // plugin's own route uses are the same object, not two implementations that could
-  // drift.
+  // One hook, built once and shared by `GET /me` and by every route of the Operator's. The
+  // documented surface and the Public plugin's own route are the same object.
   const presentedUser = requireUser({ authenticate: (token) => userForToken(handle, token) });
 
   const agentRoutes = agentUserRoutes({
-    // The route's create runs on the part's own handle: one insert is atomic by
-    // itself, and a request that creates a User has nothing else to keep it with.
+    // The route's create runs on the component's own handle. One insert is atomic by itself, and
+    // a request that creates a User has nothing else to keep it with.
     create: ({ password }) => insertUser(handle, password, parameters),
     get: (id) => selectUser(handle, id),
     list: ({ limit }) => selectUsers(handle, limit),
@@ -383,10 +282,9 @@ export function createUsers(options: UsersOptions): Users {
   const publicRoutes = publicUserRoutes(
     {
       logIn: (credentials) => logIn(handle, credentials, { dummy, tokenTtl }),
-      // The route's revocations run on the part's own handle, for the reason its
-      // create does: one statement is atomic by itself, and a request that revokes
-      // has nothing else to keep it with. The method below is where a caller with
-      // something to keep it with reaches the same statement.
+      // The route's revocations run on the component's own handle, for the reason its create
+      // does. The method below is where a caller with something to keep it with reaches the
+      // same statement.
       revokeToken: (token) => deleteToken(handle, token),
       revokeTokens: (user) => deleteTokens(handle, user),
       changePassword: (change) => changePassword(handle, change, parameters),
@@ -394,12 +292,10 @@ export function createUsers(options: UsersOptions): Users {
     presentedUser,
   );
 
-  // The two acts of wiring, both of them here so that an Operator's entry point does
-  // neither (ADR-0032).
-  // Under the prefixes every document about this part already writes, and not awaited:
-  // Fastify defers a plugin until the server is ready, so this is a registration made
-  // at construction and loaded at `listen` — which is also why a server that is already
-  // listening refuses one. A server not passed is a route group that does not exist.
+  // The two acts of wiring, both of them here so that an Operator's entry point does neither.
+  // Not awaited: Fastify defers a plugin until the server is ready. So this registration is made
+  // at construction and loaded at `listen`. A server already listening refuses one. A server not
+  // passed is a route group that does not exist.
   options.agentServer?.fastify.register(agentRoutes, { prefix: "/users" });
   options.publicServer?.fastify.register(publicRoutes, { prefix: "/auth" });
 
@@ -419,8 +315,8 @@ export function createUsers(options: UsersOptions): Users {
     get: (id) => selectUser(handle, id),
     list: (asked) => selectUsers(handle, asked?.limit ?? limitSchema.default),
 
-    // The two no-ops, whose reason is on the type above: membership in the Gateway's
-    // record, and nothing else (ADR-0037).
+    // The two no-ops, whose reason is on the type above: membership in the Gateway's record,
+    // and nothing else.
     start: async () => {},
     stop: async () => {},
   };
@@ -429,15 +325,12 @@ export function createUsers(options: UsersOptions): Users {
 /**
  * The insert, over whichever handle the caller reached it by.
  *
- * It takes one value and could take no other: every remaining column of a new User is
- * the database's default, so there is no parameter anywhere on this path for an
- * attribute to arrive through. The query-builder form, not the relational one, so it
- * works on a transaction carrying any part's schema (ADR-0023).
+ * It takes one value and could take no other. Every remaining column of a new User is the
+ * database's default, so nothing on this path can carry an attribute. The query-builder form, so
+ * it works on a transaction carrying any component's schema.
  *
- * The derivation happens before the insert and therefore inside the caller's
- * transaction, which holds it open for as long as scrypt takes. That is accepted: the
- * alternative is deriving first and inserting after, which is the same wall clock with
- * a wider window between the two statements the caller wanted kept together.
+ * The derivation runs before the insert, inside the caller's transaction, which holds it open for
+ * as long as scrypt takes.
  */
 async function insertUser<TSchema extends Record<string, unknown>>(
   handle: Handle<TSchema>,
@@ -453,19 +346,15 @@ async function insertUser<TSchema extends Record<string, unknown>>(
 }
 
 /**
- * The one update statement behind both of the things trusted code may change about a
- * User, over whichever handle the caller reached it by.
+ * The one update statement behind both things trusted code may change about a User.
  *
- * One function and not two, because the two differ only in which column they name and
- * everything else about them is the same decision: the query-builder form so it works
- * on a transaction carrying any part's schema (ADR-0023), and a `returning` so that
- * "there is no such User" is distinguishable from "there was nothing to change".
+ * One function and not two, because the two differ only in which column they name. The
+ * query-builder form, so it works on a transaction carrying any component's schema. A
+ * `returning`, so that "there is no such User" is distinct from "there was nothing to change".
  *
- * That distinction is why this throws where `deleteTokens` says nothing. A revocation's
- * postcondition holds whether or not it was this call that removed the row; an
- * authorization grant's does not, and an id with a typo in it would otherwise be a
- * permission quietly not given. The message names the id, because the caller is trusted
- * code reading a stack trace and not a stranger probing for who exists.
+ * That is why this throws where `deleteTokens` says nothing. An id with a typo in it would
+ * otherwise be a permission quietly not given. The message names the id, because the caller is
+ * trusted code reading a stack trace.
  */
 async function updateUser<TSchema extends Record<string, unknown>>(
   handle: Handle<TSchema>,
@@ -483,14 +372,11 @@ async function updateUser<TSchema extends Record<string, unknown>>(
 }
 
 /**
- * A Token issued to a User who presented nothing: the OIDC path, and the only path to a
- * Token that does not begin with a password.
+ * A Token issued to a User who presented nothing: the only path that skips a password.
  *
- * The read is on the **caller's** handle rather than the part's own, which is what lets
- * a transaction create a User and issue them a Token in one go — the read sees the
- * caller's own uncommitted write precisely because it is not on another connection. It
- * is also what makes the row this answers with the row as the caller's transaction will
- * commit it, Attributes and all.
+ * The read is on the caller's handle rather than the component's own. So one transaction can
+ * create a User and issue them a Token, because the read sees its own uncommitted write. The row
+ * this answers with is the row that transaction will commit, Attributes and all.
  */
 async function grantToken<TSchema extends Record<string, unknown>>(
   handle: Handle<TSchema>,
@@ -507,10 +393,8 @@ async function grantToken<TSchema extends Record<string, unknown>>(
 /**
  * The row a Token is, and the one place it is written.
  *
- * Shared by the login route and by `issueToken`, which is the claim rather than a
- * saving: a Token minted for an OIDC callback and a Token bought with a password are
- * the same row written by the same statement, so nothing downstream could tell them
- * apart even if it wanted to.
+ * Shared by the login route and by `issueToken`. A Token minted for an OIDC callback and one
+ * bought with a password are the same row. One statement writes both.
  */
 async function insertToken<TSchema extends Record<string, unknown>>(
   handle: Handle<TSchema>,
@@ -523,10 +407,9 @@ async function insertToken<TSchema extends Record<string, unknown>>(
     .values({
       userId: user.id,
       tokenHash: minted.hash,
-      // The database's clock and not this process's, because the comparison that
-      // will refuse this Token is made against the database's too. `make_interval`
-      // takes seconds as a float, so a lifetime of a millisecond is expressible and
-      // a test needs no clock to be moved.
+      // The database's clock and not this process's, because the comparison that refuses this
+      // Token reads the database's too. `make_interval` takes seconds as a float, so a lifetime of
+      // one millisecond is expressible. A test needs no clock moved.
       expiresAt: sql`clock_timestamp() + make_interval(secs => ${tokenTtl / 1000})`,
     })
     .returning({ expiresAt: tokens.expiresAt });
@@ -541,15 +424,11 @@ async function insertToken<TSchema extends Record<string, unknown>>(
 }
 
 /**
- * A password traded for a Token, or `undefined`, and the same `undefined` for every
- * way it can fail.
+ * A password traded for a Token, or `undefined` for every way it can fail.
  *
- * The shape of this function is the decision, not an accident of style. The
- * derivation is **unconditional**: a User that does not exist and a User whose
- * password hash is null are both verified against a fixed dummy digest written at the
- * same cost, so the response time answers nothing the body refused to (ADR-0030).
- * Reordering the lines below into an early return for a missing row would restore
- * exactly the enumeration this closes, which is why they are not written that way.
+ * The derivation is unconditional. A missing User and a User whose password hash is null are both
+ * verified against a fixed dummy digest. The cost is the same either way, so the response time
+ * answers nothing the body refused to. Do not reorder the lines below into an early return.
  */
 async function logIn(
   handle: UsersHandle,
@@ -561,22 +440,19 @@ async function logIn(
   const matched = await verifyPassword(stored, credentials.password);
   if (row === undefined || row.passwordHash === null || !matched) return undefined;
 
-  // The same statement `issueToken` reaches, so a Token bought with a password and a
-  // Token minted by an OIDC callback are one row written one way (ADR-0030).
+  // The same statement `issueToken` reaches. A Token bought with a password and one minted by an
+  // OIDC callback are one row.
   return insertToken(handle, row, directory.tokenTtl);
 }
 
 /**
  * Drops one Token: the one whose plaintext this is, and no other.
  *
- * By the hash and not by the User, so logging out of one device leaves every other
- * session working — the unique index finds the row, exactly as verification does, and
- * a Token nobody holds matches nothing and deletes nothing.
+ * By the hash and not by the User, so logging out of one device leaves every other session
+ * working. A Token nobody holds matches nothing and deletes nothing.
  *
- * The row is **removed**, not flagged. There is no revoked column to add and no read
- * that would have to start consulting one: a Token that is not in the table is
- * refused by the same lookup that refuses one that never existed, which is why a
- * revoked Token and an unknown one answer identically without either being made to.
+ * The row is removed rather than flagged. One lookup refuses a revoked Token and a Token that
+ * never existed, so the two answer identically.
  */
 async function deleteToken(handle: UsersHandle, token: string): Promise<void> {
   await handle.delete(tokens).where(eq(tokens.tokenHash, hashToken(token)));
@@ -585,13 +461,11 @@ async function deleteToken(handle: UsersHandle, token: string): Promise<void> {
 /**
  * Drops every Token of one User, over whichever handle the caller reached it by.
  *
- * The `tokens_user_idx` index exists for this statement, which is the reason it is not
- * redundant with the two PostgreSQL makes for us: it indexes the primary key and the
- * unique `token_hash`, and neither of them is the referencing side this reads.
+ * The `tokens_user_idx` index exists for this statement. PostgreSQL indexes the primary key and
+ * the unique `token_hash`, and neither is the referencing side this reads.
  *
- * The query-builder form, not the relational one, so it works on a transaction
- * carrying any part's schema (ADR-0023) — that is what lets the public `revoke` and
- * the route share one statement rather than have one each.
+ * The query-builder form, so it works on a transaction carrying any component's schema. That is
+ * what lets the public `revoke` and the route share one statement.
  */
 async function deleteTokens<TSchema extends Record<string, unknown>>(
   handle: Handle<TSchema>,
@@ -603,19 +477,12 @@ async function deleteTokens<TSchema extends Record<string, unknown>>(
 /**
  * A password replaced by somebody who proved they know the current one, or `false`.
  *
- * The proof is the whole point: it is what makes this self-service rather than account
- * recovery, which is the thing this framework declined to build (ADR-0014, ADR-0030).
- * A User whose `password_hash` is null therefore cannot change it here — there is
- * nothing for them to prove — and the OIDC path this leaves them on is deliberate.
+ * The proof is what makes this self-service rather than account recovery. A User whose
+ * `password_hash` is null cannot change it here, because there is nothing for them to prove.
  *
- * Unlike `logIn`, this derives **nothing** when there is nothing to verify against.
- * There is no enumeration to close: the caller already presented a Token naming this
- * User, so a timing signal here would tell them only what they proved on the way in.
- *
- * It revokes nothing, and that is a decision rather than an omission (ADR-0030): a
- * User who changed their password because they feared a leak is served by revoking,
- * which is a request of its own, and taking every other session down with a routine
- * rotation is a surprise nobody asked for.
+ * Unlike `logIn`, this derives nothing when there is nothing to verify against. The caller
+ * already presented a Token naming this User, so there is no enumeration to close. It revokes
+ * nothing: `DELETE /auth/tokens` is a request of its own.
  */
 async function changePassword(
   handle: UsersHandle,
@@ -633,21 +500,15 @@ async function changePassword(
 }
 
 /**
- * The User a presented Token names, or `undefined` — for an unknown Token and an
- * expired one alike.
+ * The User a presented Token names, or `undefined` for an unknown Token and an expired one.
  *
- * One statement, and every part of it is a decision. The lookup is **by the hash**, so
- * the unique index does the comparison: there is no scan, no per-row loop and no
- * constant-time compare, because a Token carries full entropy and a hash of it is not
- * a guessable thing (ADR-0030). The join is what makes this one round trip rather than
- * two, and it is within this part's own schema, which is the only place ADR-0022
- * allows one.
+ * The lookup is by the hash, so the unique index does the comparison. A Token carries full
+ * entropy, so a hash of it is not a guessable thing. The join makes this one round trip, and it
+ * stays inside this component's own schema.
  *
- * The expiry is compared against **the database's clock**, which is the clock the
- * `expires_at` was written from. Reading it into this process and comparing it here
- * would make a Token's lifetime depend on the drift between two machines, and would
- * make the refusal something this code decides rather than something the row says.
- * Nothing reaps the expired rows; they simply stop matching (ADR-0030).
+ * The expiry is compared against the database's clock, which is the clock `expires_at` was written
+ * from. So a Token's lifetime does not depend on the drift between two machines. Nothing reaps the
+ * expired rows: they stop matching.
  */
 async function userForToken(handle: UsersHandle, token: string): Promise<UserRecord | undefined> {
   const [row] = await handle
@@ -663,11 +524,8 @@ async function userForToken(handle: UsersHandle, token: string): Promise<UserRec
 /**
  * The digest a login with nothing to verify against is verified against instead.
  *
- * Derived once, lazily, and at the Manager's own cost, so that a miss costs what a
- * hit costs however the Operator constructed it: a dummy fixed in code would make
- * misses cheaper than hits for any deployment that raised the parameters, which is
- * the timing signal it exists to remove. The password it is written from is 32 random
- * bytes of this process's, so nothing verifies against it and nobody can present it.
+ * Derived once, lazily, and at the Manager's own cost, so a miss costs what a hit costs. The
+ * password it is written from is 32 random bytes of this process's, so nobody can present it.
  */
 function dummyDigest(parameters: ScryptParameters): () => Promise<string> {
   let derived: Promise<string> | undefined;
@@ -691,9 +549,8 @@ async function selectUsers(handle: UsersHandle, limit: number): Promise<UserReco
   const rows = await handle
     .select()
     .from(users)
-    // Newest first, because "who has been admitted" is the question this answers.
-    // `id` breaks the tie, so a limit never drops one of two Users created in the
-    // same instant and includes the other.
+    // Newest first, because "who has been admitted" is the question this answers. `id` breaks
+    // the tie, so a limit cannot drop one of two Users created in the same instant.
     .orderBy(desc(users.createdAt), desc(users.id))
     .limit(limit);
   return rows.map(asUserRecord);

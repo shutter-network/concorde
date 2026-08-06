@@ -1,69 +1,17 @@
 /**
- * The HTTP Messenger: the part of the Gateway that owns Messages.
+ * The HTTP Messenger: the component of a Gateway that owns Messages.
  *
- * Constructed like every other part — one call, an ordinary object back, and nothing to
- * register it with. It wires itself the way every part does, registering its two plugins on
- * the two servers it is handed (ADR-0032).
+ * One call builds it, and it registers its two route groups at `/messages` on both servers. Its
+ * `start` and `stop` do nothing. Delivery is polling, so `?after=<seq>` is the whole of the resume
+ * mechanism.
  *
- * It is a **Component whose `start` and `stop` do nothing**. No timers and no connection of
- * its own, so there is nothing to begin and nothing to release; it is in the Gateway's
- * record because that record is the Gateway's directory of its own parts, and membership is
- * what puts this part in a **position** before it needs one (ADR-0037). The day push
- * delivery arrives it grows a `LISTEN` registration and a `stop` that closes open responses
- * (ADR-0035), and the position it will want then — after the Signal Worker's drain, since
- * that is when a Signal Handler's post phase sends its failure notice — is the position it
- * already has ([ADR-0038](../../docs/adr/0038-the-default-assembly-is-a-constructor.md)).
- * Until then `?after=<seq>` is the whole of the resume mechanism and delivery is polling.
+ * It is the HTTP Messenger rather than the Messenger because it declines four freedoms. Both
+ * servers are required. No route plugin is exported and no prefix is configurable. A Message is a
+ * `text` string. The Signal `kind` is the constant `messageReceivedKind` below.
  *
- * It is the *HTTP* Messenger rather than *the* Messenger because it declines four freedoms
- * the framework offers, and all four are visible right here (ADR-0034):
- *
- *  - **Both servers are required.** Neither half is a capability. Omitting a server on the
- *    User Manager switches one off and leaves a coherent object that does less; a
- *    Messenger with no Public server cannot be reached by the people it exists for, and one
- *    with no Agent server cannot be answered by the agent. Each is not a smaller Messenger
- *    but a broken one, and making them unconstructable is cheaper than documenting them.
- *  - **No route plugin is exported and no prefix is configurable**, which is the departure
- *    from ADR-0032's door-out pattern. The User Manager's plugin is useful in isolation —
- *    routes over its own tables, working under any prefix. These routes are half of a
- *    contract whose other half is the Signal `kind`, the record shape and a client written
- *    against both, so an Operator who needs them elsewhere or behind a hook of their own
- *    wants a different messaging Producer, which ADR-0021 already says how to write.
- *  - **A Message is a `text` string**, with no `jsonb` and no payload convention.
- *  - **The Signal `kind` is the constant `messageReceivedKind`**, below, and not a
- *    construction option. Two HTTP Messengers in one Gateway are unconstructable anyway —
- *    duplicate routes, one shared schema — so the only use for a configurable kind would be
- *    dodging a collision with the Operator's own Producer, and they are the party who can
- *    rename: their Handler map is a literal in their own entry point.
- *
- * Five things about the surface are consequences worth meeting here:
- *
- *  - **Writes take the caller's transaction and reads do not** (ADR-0023), which is the split
- *    the User Manager established and this part follows: `send` is transactional on the
- *    caller's behalf, and `history` goes through the part's own handle. The consequence is
- *    worth stating where it will be met: a caller **cannot read its own uncommitted write**,
- *    so `send` returns the record and a read-back has no reason to exist.
- *  - **Construction order against the User Manager is no longer load-bearing.** The
- *    framework applies no DDL, so there is no registration order to get wrong: the foreign
- *    key onto `saf_users.users.id` is declared in `schema.ts` and ordered by the single
- *    generation the Operator runs (ADR-0046). What remains is a requirement on their
- *    barrel — export this part's schema without the User Manager's and generation
- *    references a table it never creates.
- *  - **`users` and `worker` are named nominally.** A structural type on `users` would
- *    advertise a substitutability the foreign key has made false: this part needs *our*
- *    User Manager at the schema level, and the constructor is where that should be
- *    visible rather than at the Operator's first `generate`.
- *  - **A submitted Message and its Signal are one transaction**, and nothing else is in it.
- *    PostgreSQL's `NOTIFY` is transactional, so the row and the wakeup become visible
- *    together: a Signal from a transaction that rolled back wakes nobody, and a Message that
- *    committed always has its Signal. That is the shape `src/signals/worker.ts` documents
- *    `emit` as existing for (ADR-0023), and it is why the insert had to be savepoint-safe.
- *  - **A `kind` with no Handler registered is a 201 followed by a permanently failed
- *    Signal.** The Message is stored and readable, the agent never sees it, and the failure
- *    is visible only on the Signal row (ADR-0017). Not guarded: for the Messenger to check
- *    the Handler map it would have to reach into the Worker for something ADR-0024 removed,
- *    and a Message being durable regardless of what happens downstream is the property worth
- *    keeping.
+ * A submitted Message and its Signal are one transaction, so a Message that was stored always has
+ * its Signal. Writes take the caller's transaction and reads do not. A `kind` with no Handler
+ * registered is a 201 followed by a permanently failed Signal.
  */
 
 import type { FastifyInstance } from "fastify";
@@ -84,64 +32,57 @@ import { httpMessagesTables } from "./schema.ts";
 /**
  * Where both route groups land, on their respective servers.
  *
- * A constant and not an option: there is no prefix to configure and no plugin to register
- * elsewhere, so a client written for one deployment's HTTP Messenger works against every
- * other deployment's (ADR-0034).
+ * A constant and not an option. There is no prefix to configure and no plugin to register
+ * elsewhere. So a client written for one deployment's HTTP Messenger works against every other's.
  */
 const messagesPrefix = "/messages";
 
 /**
- * The `kind` of the Signal a submitted Message emits, and half of this part's Signal
- * contract; the other half is that the payload **is** the `MessageRecord`, flat.
+ * The `kind` of the Signal a submitted Message emits.
  *
- * Exported, so that a Handler map is not a string literal that can drift, and a constant
- * rather than a construction option for the reason in this file's header (ADR-0034). A
- * Handler is therefore written `SignalHandler<MessageRecord>` — or
- * `templateHandler<MessageRecord>` — and its template's data function type-checks against
- * the same record every other surface of this part answers with.
+ * Half of this component's Signal contract. The other half is that the payload is the
+ * `MessageRecord`, flat. So a Handler is written `SignalHandler<MessageRecord>`, or
+ * `templateHandler<MessageRecord>`, and its data function type-checks against that record.
  *
- * A `kind` with no Handler registered fails the Signal permanently and stores the Message
- * anyway, which is the consequence this part's header states and its tests pin (ADR-0017).
+ * A `kind` with no Handler registered fails the Signal permanently and stores the Message anyway.
  */
 export const messageReceivedKind = "message.received";
 
+/** Everything `createHttpMessenger` needs: the Db, two Components, and both servers. */
 export type HttpMessengerOptions = {
+  /** The Db this component queries through. It takes a handle to its own one table. */
   readonly db: Db;
   /**
-   * The User Manager whose Users these Messages belong to.
+   * The User Manager whose Users these Messages belong to. Build it before this.
    *
-   * Named nominally, and required, because `messages.user_id` is a **foreign key** onto
-   * `saf_users.users.id` (ADR-0036): this part needs our Manager at the schema level
-   * rather than the type level, and a structural type would advertise a substitutability
-   * that has stopped being true. Construct it before this.
+   * Named nominally, and required, because `messages.user_id` is a foreign key onto
+   * `saf_users.users.id`. This component needs our Manager at the schema level.
    *
-   * It is also where the Public routes' authentication comes from: `requireUser` is taken
-   * off this object and put on the route as one option, so this part holds no Token and no
-   * header of its own and every refusal is the Manager's single 401 (ADR-0030).
+   * It is also where the Public routes' authentication comes from. `requireUser` is taken off this
+   * object and put on the route as one option. Every refusal is therefore the Manager's single 401.
    */
   readonly users: Users;
   /**
    * The Signal Worker a submitted Message wakes.
    *
-   * Named nominally for the reason `users` is, and required because a Message that woke
-   * nobody would be a Producer that produces nothing.
+   * Named nominally for the reason `users` is. Required, because a Message that woke nobody would
+   * be a Producer that produces nothing.
    */
   readonly worker: SignalWorker;
   /**
-   * The Public server, where Users reach their own Messages, at **`/messages`**.
+   * The Public server, where Users reach their own Messages, at `/messages`.
    *
-   * Required, unlike the User Manager's: a Messenger nobody can reach is broken rather
-   * than smaller. Structural, and asks for nothing but the Fastify instance, for the purely
-   * technical reason the Manager's option is — `FastifyInstance` has five generic
-   * parameters — so what satisfies it is what `serverComponent` returns.
+   * Required, unlike the User Manager's servers. A Messenger nobody can reach is broken rather
+   * than smaller. Structural, so what `serverComponent` returns satisfies it.
    */
   readonly publicServer: {
     readonly fastify: FastifyInstance;
   };
   /**
-   * The Agent server, where the agent sends a Message and reads a User's log, at
-   * **`/messages`**. Required for the reason the Public server is: an HTTP Messenger the
-   * agent cannot answer through is broken rather than smaller.
+   * The Agent server, where the agent sends a Message and reads a User's log, at `/messages`.
+   *
+   * Required for the reason the Public server is. An HTTP Messenger the agent cannot answer
+   * through is broken rather than smaller.
    */
   readonly agentServer: {
     readonly fastify: FastifyInstance;
@@ -149,48 +90,26 @@ export type HttpMessengerOptions = {
 };
 
 /**
- * What the constructor answers with: the two things trusted code needs and no request can
- * express.
+ * The HTTP Messenger as a Component: the two things trusted code needs and no request can express.
  *
- * Every other capability this part has is a route it registered itself, and no route plugin
- * is exported (ADR-0034), so what is on this object is what a Signal Handler and an
- * Operator's entry point, both of them trusted code (ADR-0009, ADR-0020), cannot reach over
- * HTTP: a send that joins a transaction of their own, and a read of any User's whole log that
- * needs neither a Token nor a route.
+ * A send that joins a transaction of the caller's own, and a read of any User's whole log. Every
+ * other capability is a route this component registered itself, and no route plugin is exported.
  *
- * The two together are what make the **post phase** useful for messaging: a Handler told
- * that a Run failed can tell the person who asked (ADR-0017), which is otherwise something
- * nothing in the framework can do, since a failed Run emits nothing and the person is left
- * waiting.
- *
- * Neither has a route, and there is deliberately **no method that writes an inbound
- * Message**. `direction` is decided by which server a request arrived on, and trusted code
- * does not get a path that puts words in a User's mouth (ADR-0034). A Handler migrating a
- * history in, or a fixture that needs one, uses the Operator's own SQL.
+ * The two together are what make the post phase useful for messaging. A Handler told that a Run
+ * failed can tell the person who asked. There is no method that writes an inbound Message, because
+ * `direction` is decided by the server a request arrived on.
  */
 export type HttpMessenger = Component & {
   /**
-   * Sends a Message to one User from inside the caller's transaction, and answers with the
-   * record.
+   * Sends a Message to one User from inside the caller's transaction, and answers with the record.
    *
-   * Takes the caller's transaction rather than finding one (ADR-0023), so that answering
-   * somebody and recording in the Operator's own tables why cannot come apart: a rollback
-   * loses both. Ambient enlistment is not available: a transaction started on one handle
-   * takes its own connection from the pool, so a second handle's writes would survive its
-   * rollback with nothing reported.
+   * Takes the caller's transaction, so answering somebody and recording why in the Operator's own
+   * tables cannot come apart. A rollback loses both. The caller cannot read this write back
+   * through `history`, which is why the record comes back here.
    *
-   * The schema parameter is widened rather than named, because the transaction carries the
-   * schema of the handle it was started on and that handle belongs to the caller.
-   *
-   * Always **outbound**, with no parameter for the direction, because there is no direction
-   * to choose: this is the same insert the agent's own route reaches, and the inbound half of
-   * this part has no method at all.
-   *
-   * Which is also where an unknown User comes from: the foreign key refusing (ADR-0036),
-   * surfaced here as a **thrown** error rather than as the route's 404, since there is no
-   * reply to write it into. A consequence of the savepoint that insert needs anyway: the
-   * refusal does not abort the caller's transaction, so a caller that catches may carry on
-   * and commit what else it was doing.
+   * Always outbound, and there is no parameter for the direction. An unknown User is a thrown
+   * `UnknownUserError` rather than a 404, because there is no reply to write one into. The insert
+   * runs in a savepoint, so that refusal does not abort the caller's transaction.
    */
   send<TSchema extends Record<string, unknown>>(
     tx: Handle<TSchema>,
@@ -199,69 +118,87 @@ export type HttpMessenger = Component & {
   ): Promise<MessageRecord>;
 
   /**
-   * One User's Messages, both directions, ascending by `seq`, so that a Handler can build a
-   * Prompt from more than the one Message that woke it.
+   * One User's Messages, both directions, ascending by `seq`.
    *
-   * Any User's, and not only the one a Run is serving: the whole log is readable from trusted
-   * code for the reason the agent's own read is unscoped (ADR-0011).
+   * So a Handler can build a Prompt from more than the one Message that woke it. Any User's log is
+   * readable here, and not only the log a Run is serving. A read, so it takes no transaction and
+   * cannot see the caller's own uncommitted write.
    *
-   * A read, so it takes no transaction and therefore **cannot see the caller's own
-   * uncommitted write**. `send` returns the record for exactly that reason, the way `create`
-   * does in the User Manager.
-   *
-   * It answers from the same query both reads answer from, with the same cursor options: no
-   * cursor is the newest `limit`, `before` the newest `limit` strictly below it, `after`
-   * everything above it, and every one of them ascending (ADR-0035). The routes refuse both
-   * cursors at once as the client bug it is there, and nothing refuses it here: what comes
-   * back is the stretch between them, newest end first if it does not fit. Recorded rather
-   * than guarded, and not a spelling to reach for.
-   *
-   * `limit` defaults to the number the routes default to and is **not** capped here: the cap
-   * on a route bounds a response body a stranger or the agent reads, which is not the case
-   * trusted code asking for a thousand Messages is in.
-   *
-   * The options are the shared window with every field made optional, and not a shape of this
-   * method's own: one list of cursor names in this part, not two that could drift.
+   * The same query both routes answer from, with the same cursor options. No cursor is the newest
+   * `limit`, `before` the newest `limit` below it, and `after` everything above it. Both cursors
+   * together answer the stretch between them here, where a route refuses them. `limit` defaults to
+   * the routes' default and is not capped.
    */
   history(userId: string, options?: Partial<MessageWindow>): Promise<MessageRecord[]>;
 
   /**
-   * **Does nothing.** Written out here so that it is read rather than discovered.
+   * Does nothing. There is nothing here to start.
    *
-   * Delivery is polling, so there is no connection to open and no ticker to set going: a
-   * client resumes with `?after=<seq>` and the part holds nothing between requests
-   * (ADR-0035). Everything it needed was done at construction (ADR-0032).
+   * Delivery is polling, so there is no connection to open and no ticker to set going. A client
+   * resumes with `?after=<seq>`, and this component holds nothing between requests.
    */
   start(): Promise<void>;
 
   /**
-   * **Does nothing**, and is the one of the two that will stop being a no-op first: push
-   * delivery is what gives it open responses to close (ADR-0035).
+   * Does nothing, and is the first of the two that will stop being a no-op.
    *
-   * A Message submitted while the Gateway is shutting down is stored and its Signal
-   * commits with it and stays `pending`, which is the trade this part's position in the
-   * default order takes deliberately (ADR-0038).
+   * Push delivery is what would give it open responses to close. A Message submitted during a
+   * shutdown is stored, and its Signal commits with it and stays `pending`.
    */
   stop(): Promise<void>;
 };
 
+/**
+ * Builds the HTTP Messenger and registers its routes at `/messages` on both servers.
+ *
+ * Nothing here connects, listens or applies DDL. Key the result before the Signal Worker, so that
+ * it stops after the drain. That is when a Signal Handler's post phase reaches it.
+ *
+ * @example
+ * Built in `extend`, and then used from the Operator's own trusted code.
+ * ```ts
+ * import { createGateway } from "shared-agent-framework";
+ * import { createHttpMessenger } from "shared-agent-framework/http-messenger";
+ * import { createPiRuntime } from "shared-agent-framework/pi";
+ * import { createUsers } from "shared-agent-framework/users";
+ *
+ * const gateway = createGateway({
+ *   databaseUrl: process.env.DATABASE_URL ?? "",
+ *   runtime: createPiRuntime({ image: "my-agent:1" }),
+ *   agentListen: { host: "127.0.0.1", port: 8081 },
+ *   publicListen: { host: "0.0.0.0", port: 8080 },
+ *   extend: ({ db, agentServer, publicServer, worker }) => {
+ *     const users = createUsers({ db, tokenTtl: 86_400_000, agentServer, publicServer });
+ *     return {
+ *       users,
+ *       messages: createHttpMessenger({ db, users, worker, agentServer, publicServer }),
+ *     };
+ *   },
+ *   handlers: () => ({}),
+ * });
+ *
+ * await gateway.start();
+ *
+ * // A send that commits with whatever else the Operator's transaction writes.
+ * const { db, messages } = gateway.components;
+ * async function tell(userId: string, text: string): Promise<void> {
+ *   await db.tx((tx) => messages.send(tx, userId, text));
+ * }
+ * ```
+ */
 export function createHttpMessenger(options: HttpMessengerOptions): HttpMessenger {
-  // The part's own handle, typed to its own tables. `pg` never leaves the Db (ADR-0022).
+  // The component's own handle, typed to its own tables. `pg` never leaves the Db.
   const handle = options.db.handle(httpMessagesTables);
 
-  // One read, named once and given to both plugins and to the method below. A User's own
-  // read, the agent's and a Handler's are the same query asked about a User named by a Token,
-  // a query parameter or an argument, and the three sharing this one function is what keeps
-  // them from becoming a parallel set that can disagree about what `before` means (ADR-0035).
+  // One read, named once and given to both plugins and to the method below. A User's own read, the
+  // agent's and a Handler's are one query. The User is named by a Token, a query parameter or an
+  // argument. Sharing one function is what keeps them from disagreeing about `before`.
   const readHistory = (userId: string, window: MessageWindow) =>
     selectMessages(handle, userId, window);
 
-  // And one outbound write, likewise named once: this part writes that direction here and
-  // nowhere else. Widened over the handle it is given, so the agent's route reaches it with
-  // the part's own, which is all a request needs (one insert is atomic by itself, and a
-  // request that sends a Message has nothing else to keep it with), while a Handler reaches
-  // the same statement with a transaction of its own (ADR-0023). The savepoint inside the
-  // insert is what makes both of them safe.
+  // And one outbound write, likewise named once. Widened over the handle it is given. The agent's
+  // route reaches it with the component's own handle, and a Handler with a transaction of its own.
+  // The savepoint inside the insert makes both of them safe.
   const sendOutbound = <TSchema extends Record<string, unknown>>(
     on: Handle<TSchema>,
     userId: string,
@@ -275,11 +212,9 @@ export function createHttpMessenger(options: HttpMessengerOptions): HttpMessenge
   const publicRoutes = publicMessageRoutes(
     {
       history: readHistory,
-      // One transaction with two statements in it and nothing else: the Message, then the
-      // Signal that wakes the worker for it. The wakeup is `NOTIFY` inside this
-      // transaction, so it and the row commit together or neither happens — a Producer
-      // that nudged the worker after commit would have to remember to (ADR-0023). Inbound,
-      // because this is the Public server, and by the User the Token named.
+      // One transaction with two statements in it: the Message, then the Signal that wakes the
+      // worker for it. The wakeup is a `NOTIFY` inside this transaction, so it and the row commit
+      // together or neither happens. Inbound, because this is the Public server.
       submit: (userId, text) =>
         options.db.tx(async (tx) => {
           const message = await insertMessage(tx, { userId, direction: "inbound", text });
@@ -287,31 +222,27 @@ export function createHttpMessenger(options: HttpMessengerOptions): HttpMessenge
           return message;
         }),
     },
-    // The Manager's own hook, passed through and not wrapped: this part authenticates
-    // nobody, which is what `src/users/users.ts` promised it would do (ADR-0030).
+    // The Manager's own hook, passed through and not wrapped. This component authenticates nobody.
     options.users.requireUser,
   );
 
-  // The two acts of wiring, both of them here so that an Operator's entry point does neither
-  // (ADR-0032).
-  // Not awaited: Fastify defers a plugin until the server is ready, so this is a
-  // registration made at construction and loaded at `listen` — which is also why a server
-  // that is already listening refuses one.
+  // The two acts of wiring, both of them here so that an Operator's entry point does neither.
+  // Not awaited: Fastify defers a plugin until the server is ready. So this registration is made
+  // at construction and loaded at `listen`. A server already listening refuses one.
   options.agentServer.fastify.register(agentRoutes, { prefix: messagesPrefix });
   options.publicServer.fastify.register(publicRoutes, { prefix: messagesPrefix });
 
   return {
-    // The one outbound write above, on the **caller's** handle rather than the part's own,
-    // which is the whole of what taking the transaction first means (ADR-0023).
+    // The one outbound write above, on the caller's handle rather than the component's own. That
+    // is the whole of what taking the transaction first means.
     send: sendOutbound,
-    // The one read above, reached with arguments instead of a query string: the routes' own
-    // default `limit` and none of their cap, since a cap bounds a response body and there is
-    // no response here.
+    // The one read above, reached with arguments instead of a query string. The routes' own
+    // default `limit`, and none of their cap. A cap bounds a response body, and there is none here.
     history: (userId, asked) =>
       readHistory(userId, { ...asked, limit: asked?.limit ?? limitSchema.default }),
 
-    // The two no-ops, whose reason is on the type above: membership in the Gateway's
-    // record, and the position that comes with it (ADR-0037).
+    // The two no-ops, whose reason is on the type above. This component is in the record for its
+    // membership and its position.
     start: async () => {},
     stop: async () => {},
   };
