@@ -94,6 +94,32 @@ fast test and the inner loop should stay one. CI runs it as its own step, so
 credentials: the model is a scripted OpenAI-compatible server on localhost, and
 everything else about the Run is real.
 
+`npm run docs:dev` and `npm run docs:build` are the API reference: TypeDoc reads the doc
+comments out of `src`, writes one markdown page per entry point, and VitePress serves or builds
+them. The pages are the eight subpaths of the export map
+([ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md)), titled with the specifier a
+Developer imports from, and `example/` is not among them.
+
+**`site/` is an npm package of its own, with its own lockfile and its own `node_modules`**, and
+it buys exactly one thing: a second TypeScript, because TypeDoc peers a compiler up to `6.0.x`
+and this package pins 7. `site/README.md` argues that and states the **exit condition** — when
+TypeDoc supports the compiler the root pins, the sub-package collapses into the root. Both root
+scripts `npm ci` that tree themselves, so a fresh clone needs no separate step.
+
+**The one command must stay ignorant of the second compiler.** `npm run check` installs none of
+`site/` and **must keep passing on a checkout where `site/node_modules` was never created** —
+that is the test, and it is run by moving that directory aside, not by reading the
+configuration. `tsconfig.json` does not include `site`, the test glob is `src/**`, and Biome
+ignores markdown entirely, so nothing TypeDoc writes can fail `npm run lint` — the generated
+`site/reference` is gitignored besides. What `npm run check` *does* cover is the four authored
+files in `site/`, because `biome check .` lints the whole tree; that is wanted, and it costs no
+documentation toolchain.
+
+Nothing in `npm run check` or in CI runs TypeDoc yet, so the guard in
+`site/specifier-titles.mjs` — it compares `typedoc.jsonc`'s entry points against `package.json`
+`exports` both ways and fails the generation if they disagree — fires only when someone
+generates. Making that unattended is the drift check's job, and the drift check is not written.
+
 `npm run format` applies Biome's fixes; `npm run check` fails on unformatted code
 rather than warning.
 

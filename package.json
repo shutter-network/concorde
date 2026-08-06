@@ -55,7 +55,9 @@
     "test": "node --test \"src/**/*.test.ts\"",
     "test:container": "SAF_CONTAINER_TESTS=1 node --test \"src/pi/container.test.ts\"",
     "check": "npm run typecheck && npm run build && npm run lint && npm test",
-    "check:package": "node scripts/check-package.ts"
+    "check:package": "node scripts/check-package.ts",
+    "docs:dev": "npm --prefix site ci --no-audit --no-fund && npm --prefix site run dev",
+    "docs:build": "npm --prefix site ci --no-audit --no-fund && npm --prefix site run build"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.6",

@@ -8,3 +8,12 @@
 # wrote itself, so this must not be committed. `example/settings.json` beside it is the
 # Operator's own file and is committed.
 /example/state
+
+# The documentation site's own dependency tree, which carries a second TypeScript and is
+# installed by `npm run docs:*` alone (`site/README.md`), and everything the site generates:
+# `site/reference` is written from the doc comments on every run and TypeDoc wipes it first.
+# It stays out of the tree until the public API and the doc comments have stopped moving.
+/site/node_modules
+/site/reference
+/site/.vitepress/cache
+/site/.vitepress/dist

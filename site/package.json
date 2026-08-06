@@ -1,0 +1,20 @@
+{
+  "name": "shared-agent-framework-site",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The API reference site. A package of its own because TypeDoc peers a TypeScript up to 6.0.x while the root pins 7; README.md states the exit condition for that.",
+  "scripts": {
+    "generate": "typedoc",
+    "dev": "npm run generate && concurrently --kill-others --names typedoc,vitepress \"typedoc --watch --preserveWatchOutput\" \"vitepress dev\"",
+    "build": "npm run generate && vitepress build"
+  },
+  "devDependencies": {
+    "concurrently": "9.2.1",
+    "typedoc": "0.28.20",
+    "typedoc-plugin-markdown": "4.12.0",
+    "typedoc-vitepress-theme": "1.1.3",
+    "typescript": "6.0.3",
+    "vitepress": "1.6.4"
+  }
+}

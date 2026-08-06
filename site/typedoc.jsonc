@@ -1,0 +1,64 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+
+  "name": "shared-agent-framework",
+
+  // `specifier-titles.mjs` is local and it is what makes a page name the specifier it is
+  // reached through; see the file for why TypeDoc's own module names will not do.
+  "plugin": ["typedoc-plugin-markdown", "typedoc-vitepress-theme", "./specifier-titles.mjs"],
+
+  // The eight entry points of the export map, in the order `package.json` lists them
+  // ([ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md)). `example/` is not among
+  // them: it is the reference deployment, not public API, so it is absent from the reference.
+  // `specifier-titles.mjs` compares this list against `exports` both ways and fails the
+  // generation if they disagree, so an entry point added to one and not the other is loud.
+  "entryPoints": [
+    "../src/index.ts",
+    "../src/signals/index.ts",
+    "../src/pi/index.ts",
+    "../src/users/index.ts",
+    "../src/http-messenger/index.ts",
+    "../src/signatures/index.ts",
+    "../src/decisions/index.ts",
+    "../src/scheduler/index.ts"
+  ],
+  "entryPointStrategy": "resolve",
+
+  // The build's own program, so the reference documents exactly what ships: `rootDir` is
+  // `src` and tests and test support are excluded. The compiler that reads it is this
+  // package's TypeScript 6, not the root's 7 — that is the whole reason `site/` exists.
+  "tsconfig": "../tsconfig.build.json",
+
+  // `reference/` is generated in full and wiped on every run, which is why it holds no
+  // authored file: `.vitepress/` sits beside it, not inside it.
+  "out": "./reference",
+  "docsRoot": "./reference",
+
+  // One file per entry point rather than one per exported symbol, so the whole public
+  // surface is eight files and a diff of it is readable. `flattenOutputFiles` is what keeps
+  // the seven subpath modules from nesting inside a directory named after the root module.
+  "outputFileStrategy": "modules",
+  "flattenOutputFiles": true,
+
+  // No `Defined in` line under every symbol. TypeDoc writes those with a file path, a line
+  // number and a commit hash, and the plan is to commit the rendered reference so that a
+  // change to the public API arrives as a readable diff. Line numbers and a hash would churn
+  // that diff on edits which changed no public API, which is the one thing committing it is
+  // for. The repository is private, so the links resolve for nobody anyway.
+  "disableSources": true,
+
+  // Nothing but the reference. No README page, and no page for a symbol this package did not
+  // declare.
+  "readme": "none",
+  "excludeExternals": true,
+  "excludePrivate": true,
+  "excludeInternal": true,
+
+  // TypeDoc's default grouping by kind is kept and no custom group is declared: a component's
+  // tables land under Variables and its constructor under Functions, which separates them
+  // without hiding either. The page header and breadcrumb are dropped because the title is
+  // already the specifier and there are only eight pages to be lost among.
+  "hidePageHeader": true,
+  "hideBreadcrumbs": true,
+  "useCodeBlocks": true
+}
