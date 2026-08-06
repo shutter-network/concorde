@@ -1826,7 +1826,7 @@ describe("the description both servers serve", () => {
     // offline path named first, and what a signature does not prove said outright, because a
     // reader who over-reads it has been misled by us (ADR-0041).
     const takingItAway = String(documents.public.paths[log]?.get?.description);
-    assert.match(takingItAway, /verifiable by any off-the-shelf JOSE library/);
+    assert.match(takingItAway, /off-the-shelf JOSE library/);
     assert.match(takingItAway, /nothing whatever about how the agent behaved/);
   });
 
@@ -1988,7 +1988,7 @@ describe("the description both servers serve", () => {
     // `PUT` carries a 201 and a 200 and **no 404**: it creates when the name is absent, so the
     // create-versus-update is the whole of what its status says (ADR-0018).
     const upsert = documents.agent.paths[byName]?.put;
-    assert.match(String(upsert?.description), /an upsert/);
+    assert.match(String(upsert?.description), /\bupsert\b/);
     assert.equal(Object.hasOwn(upsert?.responses ?? {}, "404"), false);
 
     // The read model, one shape every read answers with: exactly five fields, named rather than

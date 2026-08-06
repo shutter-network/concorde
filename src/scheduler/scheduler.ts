@@ -1,46 +1,22 @@
 /**
- * The Scheduler: the part of the Gateway that owns Schedules and emits a Signal when one matures.
+ * The Scheduler: the Component that owns Schedules and emits a Signal when one matures.
  *
- * A **Producer** and a **Component**, constructed like every other part — one call, an ordinary
- * object back — and wiring itself the way every part does, registering its agent-facing routes on
- * the server it is handed (ADR-0032). It is the second Producer, the peer ADR-0018 anticipated
- * alongside the HTTP Messenger, and reading that part is the closest prior art for this one.
- *
- * The storage, the Signal contract, and the firing core are the awaitable `tick` due-check plus
- * `schedule` (an upsert by name), `list`, and `cancel`. Over that core, `start` arms a single
- * **capped, self-correcting timer** that calls the same `tick` on its own, and `stop` cancels it,
- * the autonomous firing over the core. The agent-facing HTTP routes register on an Agent server when
- * one is passed, and omitting it is the disable switch.
+ * A Producer and a Component. One call builds it, and it registers its Agent routes on the server
+ * it is handed. The firing core is the awaitable `tick` due-check, plus `schedule`, an upsert by
+ * name, and `list` and `cancel`. Over that core, `start` arms one self-correcting timer that calls
+ * the same `tick`, and `stop` cancels it. Passing no Agent server switches the HTTP surface off.
  *
  * The timer is one `setTimeout`, armed to the earliest Schedule's next fire but never for longer
- * than `maxSleepMs` (~a minute, Operator-configurable), and re-derived against the wall clock on
- * every wake rather than trusting the elapsed delay. Two failures ride on the cap. A raw
- * `setTimeout` above ~24.85 days overflows a signed 32-bit delay and fires almost immediately; and
- * any multi-hour arm drifts across an NTP correction, a suspend, or a DST jump. Capping the sleep
- * and re-checking due-ness against `now` on each wake corrects all three — there is no correctness
- * in the cap's exact value, only in that it is bounded. The one accepted residual is a live process
- * frozen straight through a fire time, which fires once, late; there is no staleness threshold
- * (ADR-0018).
+ * than `maxSleepMs`. Every wake re-derives due-ness against the wall clock rather than trusting the
+ * elapsed delay. The cap corrects two failures. A delay above about 24.85 days overflows a signed
+ * 32-bit `setTimeout` and fires at once. And any multi-hour arm drifts across an NTP correction, a
+ * suspend or a DST jump.
  *
- * Three things about it are decisions rather than omissions (ADR-0018):
- *
- *  - **The Signal `kind` is fixed.** Every matured Schedule emits `scheduleFiredKind`, never a
- *    caller-chosen one. A Producer is trusted (ADR-0020) — whatever it writes in a payload the
- *    worker takes as fact — so a caller-chosen `kind` would let the agent emit any Signal on a
- *    delay, message-received included. The fixed `kind` caps the agent's whole scheduling power at
- *    "wake the deployment's one schedule Handler with context I chose."
- *  - **Firing is exactly-once via one transaction.** Maturing is two writes — emit the Signal and
- *    retire the spent one-shot — and per ADR-0023 `worker.emit(tx, signal)` takes the caller's
- *    transaction, so the Scheduler does both inside one and they commit together. A crash between
- *    them is impossible: either both happened or neither.
- *  - **Missed fires are skipped by deriving forward from now.** The persisted `at` is display-only
- *    and never trusted as a trigger across a restart: `start` re-derives every row's next fire
- *    strictly forward from `now` before arming, so an occurrence that fell during an outage is
- *    dropped (a spent `once`) or jumped (a `cron`), never replayed — a daily digest after a week down
- *    fires next, not seven times, and the restart is clean however many occurrences were missed. The
- *    one accepted residual is a *continuously-live* process frozen straight through a fire time,
- *    which fires once late because no boot ran to re-derive it; `matureOf` and `deriveForward`
- *    document the split.
+ * Three things about it are decisions rather than omissions. The Signal `kind` is fixed. So the
+ * agent's whole scheduling power is one sentence: wake the deployment's schedule Handler with
+ * context I chose. Firing is exactly-once, because the emit and the retirement share one
+ * transaction. And a missed fire is skipped, because `start` re-derives every row forward from
+ * `now`. A daily digest after a week down fires next rather than seven times.
  */
 
 import type { FastifyInstance } from "fastify";
@@ -72,65 +48,65 @@ import {
 import { schedulerTables, type schedules } from "./schema.ts";
 
 /**
- * The `kind` of the Signal every matured Schedule emits, and half of this part's Signal contract;
- * the other half is that the payload **is** the `ScheduleFiredRecord`, flat.
+ * The `kind` of the Signal every matured Schedule emits, and half of the Signal contract.
  *
- * Exported, so that an Operator's Handler map is not a string literal that can drift, and a
- * constant rather than a construction option: the creator never chooses the `kind`, which is the
- * cap on the agent's power this part turns on (ADR-0018). A Handler is therefore written
- * `SignalHandler<ScheduleFiredRecord>`, mirroring the HTTP Messenger's `messageReceivedKind`.
+ * The other half is that the payload is the `ScheduleFiredRecord`, flat. So a Handler is written
+ * `SignalHandler<ScheduleFiredRecord>` and an Operator's map needs no string literal.
  *
- * A `kind` with no Handler registered is a stored Schedule that fires into nothing — a permanently
- * failed Signal, exactly as an unhandled Message (ADR-0017).
+ * A constant rather than a construction option. The creator never chooses the `kind`, which is the
+ * cap this Component puts on the agent's power. A `kind` with no Handler registered leaves a stored
+ * Schedule firing into a permanently failed Signal.
  */
 export const scheduleFiredKind = "saf_schedule_fired";
 
 /**
- * How long the firing timer sleeps at most before it wakes to re-derive due-ness, when the Operator
- * names no `maxSleepMs`. Roughly a minute: comfortably under the ~24.85-day signed-32-bit
- * `setTimeout` ceiling and short enough that drift across a clock change is bounded to about that,
- * with no correctness resting on the exact number (ADR-0018).
+ * How long the firing timer sleeps at most when the Operator names no `maxSleepMs`.
+ *
+ * Roughly a minute. That is comfortably under the 24.85-day `setTimeout` ceiling, and short enough
+ * to bound drift across a clock change. No correctness rests on the exact number.
  */
 const defaultMaxSleepMs = 60_000;
 
+/** Everything `createScheduler` needs: the Db, the Signal Worker, and four defaults. */
 export type SchedulerOptions = {
   readonly db: Db;
   /**
    * The Signal Worker a matured Schedule emits into.
    *
-   * Named nominally and required: a Scheduler that woke nobody would be a Producer that produces
-   * nothing. The emit shares the fire's transaction, which is what makes retiring a spent one-shot
-   * and announcing it one atomic act (ADR-0023).
+   * Required: a Scheduler that woke nobody would be a Producer that produces nothing. The emit
+   * shares the fire's transaction, which is what makes retiring a spent one-shot and announcing it
+   * one atomic act.
    */
   readonly worker: SignalWorker;
   /**
-   * The clock the due-check reads, injected so timing is deterministic in tests: set `now`, await
-   * `tick`, assert what fired, with no sleeping. Defaults to real time.
+   * The clock the due-check reads. Defaults to real time.
+   *
+   * Injected so timing is deterministic in tests: set `now`, await `tick`, assert what fired, with
+   * no sleeping.
    */
   readonly now?: () => Date;
   /**
-   * The longest the firing timer may sleep before it wakes and re-derives due-ness, in
-   * milliseconds. Defaults to roughly a minute.
+   * The longest the firing timer sleeps before it wakes and re-derives due-ness, in milliseconds.
+   * Defaults to roughly a minute.
    *
-   * A cap for correctness rather than tuning: it keeps the armed delay under the ~24.85-day
-   * signed-32-bit `setTimeout` ceiling, and bounds the drift a long arm accrues across an NTP step,
-   * a suspend, or a DST jump — because each wake re-checks the wall clock rather than trusting the
-   * delay. There is no correctness in the exact value; lower it and the timer polls more often,
-   * raise it past the ceiling and a far Schedule overflows into an immediate wake. The tests set it
-   * small so the real timer proves itself in milliseconds.
+   * A cap for correctness rather than tuning. It keeps the armed delay under the 24.85-day
+   * `setTimeout` ceiling. It also bounds the drift a long arm accrues across an NTP step, a suspend
+   * or a DST jump.
+   *
+   * There is no correctness in the exact value. Lower it and the timer polls more often. Raise it
+   * past the ceiling and a far Schedule overflows into an immediate wake.
    */
   readonly maxSleepMs?: number;
   /**
-   * The Agent server, if the agent is to create, list, read, and cancel Schedules over HTTP.
+   * The Agent server, if the agent is to create, list, read and cancel Schedules over HTTP.
    *
-   * Given one, the constructor registers the Scheduler's routes on the Fastify instance it carries
-   * at no prefix — `PUT`, `GET`, and `DELETE` on `/schedules` and `/schedules/:name` (ADR-0032).
-   * **Omitted, nothing is registered anywhere, and that omission is the disable switch** the spec
-   * turns on for a deployment that does not want the agent waking itself or touching Operator
-   * Schedules — the programmatic interface below stays available regardless (ADR-0018, ADR-0010).
+   * Given one, the constructor registers `PUT`, `GET` and `DELETE` on `/schedules` and
+   * `/schedules/:name` at no prefix. Omit it and nothing is registered anywhere. That is the
+   * disable switch. It stops the agent waking itself and touching the Operator's own Schedules. The
+   * programmatic interface below stays available regardless.
    *
    * Structural, and asks for nothing but the Fastify instance, so what satisfies it is what
-   * `serverComponent` returns — the same shape the Signal Worker's `agentServer` takes.
+   * `serverComponent` returns.
    */
   readonly agentServer?: {
     readonly fastify: FastifyInstance;
@@ -140,69 +116,112 @@ export type SchedulerOptions = {
 };
 
 /**
- * What the constructor answers with: the programmatic interface the Operator always has, whether
- * or not the agent-facing routes are switched on.
+ * What the constructor answers with: the interface the Operator always has.
  *
- * `schedule`, `list` and `cancel` are the management surface; `tick` is the due-check the internal
- * timer also calls, exposed as the testing seam (ADR-0018). `start` arms that timer and `stop`
- * cancels it — the Component's lifecycle around the firing core.
+ * `schedule`, `list` and `cancel` are the management surface, and they work whether or not the
+ * Agent routes are switched on. `tick` is the due-check the internal timer also calls, exposed as
+ * the testing seam. `start` arms that timer and `stop` cancels it.
  */
 export type Scheduler = Component & {
   /**
-   * Creates a Schedule, or updates the one already under this name — an upsert, so a retry or a
-   * revised plan converges to one Schedule rather than accumulating duplicates (ADR-0018).
+   * Creates a Schedule, or updates the one already under this name.
    *
-   * Answers whether it created or updated, and with the resulting record. A `once` whose instant
-   * is already in the past has no future fire: it is not armed, any existing row under the name is
-   * removed, and the record comes back with a `null` `nextFireAt`.
+   * An upsert, so a retry or a revised plan converges to one Schedule rather than accumulating
+   * duplicates. It answers whether it created or updated, and with the resulting record.
+   *
+   * A `once` whose instant is already past has no future fire. It is not armed, and any existing
+   * row under the name is removed. The record comes back with a `null` `nextFireAt`.
+   *
+   * @throws `ScheduleSpecError` if a cron `expr` is invalid, a `tz` unknown, or an `until`
+   *   malformed. Nothing is written first.
    */
   schedule(input: ScheduleInput): Promise<ScheduleOutcome>;
 
-  /** Every Schedule, ascending by next fire then name, so an Operator can see what is arranged. */
+  /** Every Schedule, ascending by next fire then name, so an Operator sees what is arranged. */
   list(): Promise<ScheduleRecord[]>;
 
   /**
-   * Cancels a Schedule by name, answering whether one was there — so a caller learns that a name
-   * was already gone rather than being told it stopped something that did not exist (ADR-0018).
+   * Cancels a Schedule by name, and answers whether one was there.
+   *
+   * So a caller learns that a name was already gone. It is not told that it stopped something which
+   * did not exist.
    */
   cancel(name: string): Promise<boolean>;
 
   /**
-   * The due-check: fires every Schedule matured at the current `now`, emitting one Signal and
-   * retiring the spent one-shot in one transaction each, and resolves when none is left.
+   * Fires every Schedule matured at the current `now`, and resolves when none is left.
    *
-   * The awaitable seam the timer calls and the tests drive directly. Driven serially — a caller
-   * awaits one `tick` before the next — which is how the autonomous timer will call it too.
+   * Each fire emits one Signal and retires the spent one-shot in one transaction. This is the
+   * awaitable seam the timer calls and the tests drive directly. Drive it serially: await one
+   * `tick` before the next, which is how the timer calls it too.
    */
   tick(): Promise<void>;
 
   /**
-   * Re-derives every Schedule's next fire forward from `now`, then arms the autonomous firing timer
-   * so the Scheduler fires on its own with nobody calling `tick`.
+   * Re-derives every Schedule's next fire forward from `now`, then arms the firing timer.
    *
-   * The re-derivation is what makes a restart clean: the persisted `at` is display-only and not
-   * trusted as a trigger across a boot, so an occurrence that fell during an outage is recomputed
-   * forward — dropped for a spent `once`, jumped for a `cron` — rather than replayed (ADR-0018). Only
-   * a continuously-live process frozen through a fire time fires once late, because no boot ran.
+   * The re-derivation is what makes a restart clean. The persisted `at` is display-only and is not
+   * trusted as a trigger across a boot. So an occurrence that fell during an outage is dropped for
+   * a spent `once` and jumped for a `cron`. Only a continuously-live process frozen through a fire
+   * time fires once late, because no boot ran.
    *
-   * The timer itself is a single capped `setTimeout`, armed to the earliest Schedule's next fire and
-   * re-armed after every fire and on every `schedule` and `cancel`. Idempotent-enough for a
-   * Component's contract: a second `start` is a no-op rather than a second timer.
+   * The timer is a single capped `setTimeout`, re-armed after every fire and on every `schedule`
+   * and `cancel`. A second `start` is a no-op rather than a second timer.
    */
   start(): Promise<void>;
 
   /**
-   * Cancels the firing timer, so no fire is started during or after the worker's drain.
+   * Cancels the firing timer, so no fire begins during or after the worker's drain.
    *
-   * A fire already committed is a pending Signal the next start's worker drains; what `stop`
-   * guarantees is that no *new* fire begins once it returns. Idempotent: a second `stop`, or a
-   * `stop` before any `start`, finds no timer and does nothing.
+   * A fire already committed is a pending Signal the next start's worker drains. What `stop`
+   * guarantees is that no new fire begins once it returns. A second `stop`, or a `stop` before any
+   * `start`, finds no timer and does nothing.
    */
   stop(): Promise<void>;
 };
 
+/**
+ * Builds the Scheduler and registers its Agent routes when an Agent server is given.
+ *
+ * Nothing here connects, listens or applies DDL. Put the result in the Gateway's record under a key
+ * of your own, ahead of the Signal Worker.
+ *
+ * @example
+ * Built in `extend`, and then given the Operator's own boot-time Schedule.
+ * ```ts
+ * import { createGateway, templateHandler } from "shared-agent-framework";
+ * import { createPiRuntime } from "shared-agent-framework/pi";
+ * import type { ScheduleFiredRecord } from "shared-agent-framework/scheduler";
+ * import { createScheduler, scheduleFiredKind } from "shared-agent-framework/scheduler";
+ *
+ * const gateway = createGateway({
+ *   databaseUrl: process.env.DATABASE_URL ?? "",
+ *   runtime: createPiRuntime({ image: "my-agent:1" }),
+ *   agentListen: { host: "127.0.0.1", port: 8081 },
+ *   publicListen: { host: "0.0.0.0", port: 8080 },
+ *   // No `agentServer` here, so the agent cannot reach the Schedules at all.
+ *   extend: ({ db, worker }) => ({ scheduler: createScheduler({ db, worker }) }),
+ *   handlers: () => ({
+ *     [scheduleFiredKind]: templateHandler<ScheduleFiredRecord>({
+ *       template: new URL("./prompts/digest.hbs", import.meta.url),
+ *       session: (signal) => signal.payload.scheduleName,
+ *       data: (signal) => signal.payload,
+ *     }),
+ *   }),
+ * });
+ *
+ * await gateway.start();
+ *
+ * const { scheduler } = gateway.components;
+ * const { created, schedule } = await scheduler.schedule({
+ *   name: "morning-digest",
+ *   spec: { kind: "cron", expr: "0 7 * * *", tz: "Europe/Berlin" },
+ * });
+ * console.log(created, schedule.nextFireAt);
+ * ```
+ */
 export function createScheduler(options: SchedulerOptions): Scheduler {
-  // The part's own handle, typed to its own tables. `pg` never leaves the Db (ADR-0022).
+  // The Component's own handle, typed to its own tables. `pg` never leaves the Db.
   const handle = options.db.handle(schedulerTables);
   const now = options.now ?? (() => new Date());
   const maxSleepMs = options.maxSleepMs ?? defaultMaxSleepMs;
@@ -222,8 +241,8 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
   }
 
   /**
-   * The due-check: fires every Schedule matured at the current `now`, one transaction each, and
-   * resolves when none is left. The awaitable seam the timer calls and the tests drive directly.
+   * Fires every Schedule matured at the current `now`, one transaction each, and resolves when none
+   * is left. The awaitable seam the timer calls and the tests drive directly.
    */
   async function tick(): Promise<void> {
     const due = await selectDue(handle, now());
@@ -231,18 +250,17 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
   }
 
   /**
-   * Re-derives every Schedule's next fire strictly forward from `now`, run once by `start` before
-   * the timer is armed. This is what makes a restart clean: the persisted `at` is display-only and is
-   * **not trusted as a trigger** across a boot (ADR-0018). An outage leaves `at` in the past, and
-   * firing it would replay an occurrence that fell while the process was down, so boot recomputes it
-   * forward — a `cron` to its next strictly-future occurrence (retired if that passes `until`), a
-   * `once` dropped if its instant has already passed, the same rule `schedule` applies at creation.
-   * Nothing in the past is ever enumerated, so however many occurrences were missed, none fires.
+   * Re-derives every Schedule's next fire strictly forward from `now`, once, before the timer arms.
    *
-   * Each row is re-derived on the part's own handle rather than in one transaction — unlike `fire`,
-   * whose emit and advance must commit together. There is nothing here to keep atomic: every step is
-   * an idempotent forward derivation, so a boot that dies half-way simply re-derives the rest on the
-   * next start, and a single instance means no concurrent boot to race (ADR-0018).
+   * This is what makes a restart clean. The persisted `at` is not trusted as a trigger across a
+   * boot. An outage leaves it in the past. Firing it would replay an occurrence that fell while the
+   * process was down. A `cron` moves to its next strictly future occurrence, and is retired if that
+   * passes `until`. A `once` is dropped if its instant has passed. Nothing in the past is ever
+   * enumerated, so however many occurrences were missed, none fires.
+   *
+   * Each row is re-derived on the Component's own handle rather than in one transaction. There is
+   * nothing here to keep atomic. Every step is an idempotent forward derivation, so a boot that
+   * dies half-way re-derives the rest on the next start.
    */
   async function deriveForward(): Promise<void> {
     const at = now();
@@ -257,14 +275,14 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
   }
 
   /**
-   * Arms the single timer to the earliest Schedule's next fire, capped at `maxSleepMs`, or leaves
-   * it disarmed when nothing is scheduled — a later `schedule` re-arms it.
+   * Arms the single timer to the earliest Schedule's next fire, capped at `maxSleepMs`.
    *
-   * The cap is the whole of the overflow and drift guard: the armed delay never exceeds `maxSleepMs`,
-   * so a far-future fire cannot overflow the signed-32-bit `setTimeout` delay into an immediate wake,
-   * and each wake re-derives against `now` rather than trusting how long it slept (ADR-0018). The
-   * `clearTimer` after the await is deliberate: two arms racing on the pool each clear the other's
-   * handle before assigning, so one live timer survives rather than two.
+   * With nothing scheduled it stays disarmed, and a later `schedule` re-arms it. The cap is the
+   * whole overflow and drift guard. The armed delay never exceeds `maxSleepMs`, and each wake
+   * re-derives against `now` rather than trusting how long it slept.
+   *
+   * The `clearTimer` after the await is deliberate. Two arms racing on the pool each clear the
+   * other's handle before assigning. So one live timer survives rather than two.
    */
   async function arm(): Promise<void> {
     if (!started) {
@@ -284,9 +302,9 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
   /**
    * One wake: fire everything the wall clock now says is due, then re-arm for the next earliest.
    *
-   * A Db error here is logged and swallowed rather than allowed to kill the process — a fire's own
-   * emit is transactional (ADR-0023), so the only thing that reaches here is a failed read, retried
-   * on the next wake, which the cap bounds the wait for.
+   * A Db error here is logged and swallowed rather than allowed to kill the process. A fire's own
+   * emit is transactional, so the only thing that reaches here is a failed read. The next wake
+   * retries it.
    */
   async function onWake(): Promise<void> {
     timer = undefined; // The one-shot handle has fired and is spent.
@@ -300,15 +318,16 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
   }
 
   /**
-   * Matures one due Schedule: announce its Signal and advance it — to its next fire, or to
-   * retirement — in one transaction so a crash between the two is impossible (ADR-0023). `matureOf`
-   * decides both, deriving the next fire forward from `now`: a `once` announces its instant and
-   * retires, and a `cron` announces its stored occurrence and advances to the next one strictly after
-   * `now` (retiring if that passes `until`). A stored occurrence is only ever announced late here
-   * when the process was *continuously live* and frozen through the fire time; a restart re-derives
-   * every row forward before firing, so a booted Scheduler never reaches this with a stale `at`.
-   * `firedAt` is the Scheduler's own `now`, deterministic and comparable to `scheduledFor` so a
-   * Handler can judge lateness.
+   * Matures one due Schedule: announce its Signal, and advance or retire it, in one transaction.
+   *
+   * So a crash between the two is impossible. `matureOf` decides both. A `once` announces its
+   * instant and retires. A `cron` announces its stored occurrence and advances to the next one
+   * strictly after `now`, retiring if that passes `until`.
+   *
+   * A stored occurrence is announced late here only when the process was continuously live and
+   * frozen through the fire time. A restart re-derives every row forward first, so a booted
+   * Scheduler never reaches this with a stale `at`. `firedAt` is the Scheduler's own `now`, so a
+   * Handler can compare it to `scheduledFor` and judge lateness.
    */
   async function fire(row: typeof schedules.$inferSelect): Promise<void> {
     const firedAt = now();
@@ -335,18 +354,20 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
   }
 
   /**
-   * Creates a Schedule or updates the one already under the name — the upsert the programmatic
-   * interface and the agent's `PUT` both go through. Deliberately lenient about a spent create: a
-   * `once` already in the past resolves to no future fire, so any row under the name is removed and
-   * the answer carries a `null` `nextFireAt` rather than throwing. The agent-facing route refuses that
-   * same case loudly with `assertCreatable` first (ADR-0018); an Operator re-running a boot-time
-   * declaration converges here instead of crashing.
+   * Creates a Schedule or updates the one already under the name.
+   *
+   * The upsert the programmatic interface and the agent's `PUT` both go through. Deliberately
+   * lenient about a spent create. A `once` already in the past resolves to no future fire. So any
+   * row under the name is removed, and the answer carries a `null` `nextFireAt`.
+   *
+   * The Agent route refuses that same case loudly with `assertCreatable` first. An Operator
+   * re-running a boot-time declaration converges here instead of crashing.
    */
   async function doSchedule(input: ScheduleInput): Promise<ScheduleOutcome> {
     const at = now();
-    // A malformed `until`, a bad cron `expr`, or an unknown `tz` throws `ScheduleSpecError` here,
-    // before anything is written — the refusal the agent route surfaces as a 400. `until` is a
-    // cron bound only; a `once` bounds itself by firing once, so its `until` is ignored.
+    // A malformed `until`, a bad cron `expr` or an unknown `tz` throws `ScheduleSpecError` here,
+    // before anything is written. `until` is a cron bound only: a `once` bounds itself by firing
+    // once, so its `until` is ignored.
     const until =
       input.spec.kind === "cron" && input.until !== undefined ? parseUntil(input.until) : undefined;
     const next = nextFireOf(input.spec, at, until);
@@ -387,10 +408,10 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
     return removed;
   }
 
-  // The agent-facing routes, registered on the Agent server only when one is given — the disable
-  // switch (ADR-0010, ADR-0018). Not awaited: Fastify defers a plugin until the server is ready, so
-  // this is a registration made at construction and loaded at `listen`, the same as every other
-  // part's. The routes reach the part through these operations and the part's own clock.
+  // The Agent routes, registered only when a server is given: that is the disable switch. Not
+  // awaited: Fastify defers a plugin until the server is ready, so this is a registration made at
+  // construction and loaded at `listen`. The routes reach this Component through these operations
+  // and its own clock.
   options.agentServer?.fastify.register(
     scheduleRoutes({
       now,
@@ -412,11 +433,11 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
 
     async start() {
       // A second `start` re-arming would be harmless, but the Component contract is one lifecycle:
-      // arm once, and let `schedule`, `cancel`, and each wake re-derive from there.
+      // arm once, and let `schedule`, `cancel` and each wake re-derive from there.
       if (started) return;
       started = true;
       // Boot: re-derive every row's next fire forward from now before arming, so a stale `at` left
-      // by an outage is recomputed rather than fired — the restart case is clean (ADR-0018).
+      // by an outage is recomputed rather than fired.
       await deriveForward();
       await arm();
     },

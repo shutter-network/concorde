@@ -12,14 +12,6 @@ export default defineConfig({
   description: "The API reference, generated from the doc comments.",
   srcDir: "reference",
 
-  // Decision records are contributor material and are not pages here. A doc comment that
-  // still cites one makes TypeDoc copy the record into `reference/_media/`, so those copies
-  // are excluded from the build and the links into them are not counted against it. Both
-  // lines go when the citations do (tickets 05 to 07): with no citation left there is no
-  // `_media/` to exclude, and every other dead link still fails the build.
-  srcExclude: ["_media/**"],
-  ignoreDeadLinks: [/\/_media\//],
-
   // Not published anywhere ([the site runs locally](../README.md)), so no base path and no
   // sitemap.
   themeConfig: {

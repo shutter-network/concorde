@@ -1,36 +1,57 @@
 /**
  * The Scheduler, from `shared-agent-framework/scheduler`.
  *
- * A subpath of its own, like the other opt-in parts, so that what a deployment depends on is
- * legible from its import statements: a deployment with no time-based behaviour imports nothing
- * from here, and one that does is opting the Scheduler in and wiring it like the HTTP Messenger
- * (ADR-0018).
+ * `createScheduler` is the whole of it for an Operator. Hand it the Db and the Signal Worker, and
+ * it registers its Agent routes on the server it is given. Then key it in the Gateway's record like
+ * every other Component: `start` arms its firing timer and `stop` cancels it.
  *
- * `createScheduler` is the whole of it for an Operator: hand it the Db and the Signal Worker, and
- * it registers its agent-facing routes on the server it was given (ADR-0032). Then put it in the
- * Gateway's record like every other part: it is a Component, and the day its autonomous timer
- * lands its `start` arms one and its `stop` cancels it. It imposes **no** construction-order
- * dependency: a Schedule references nobody.
+ * It answers with the programmatic interface an Operator always has. That is `schedule`, an upsert
+ * by name, plus `list`, `cancel` and the awaitable `tick`. A `schedule` call the Scheduler will not
+ * accept throws `ScheduleSpecError` before anything is persisted. The Agent route catches exactly
+ * that and answers 400.
  *
- * What it answers with is the programmatic interface an Operator always has: `schedule` (an upsert
- * by name), `list`, `cancel`, and the awaitable `tick` due-check. A `schedule` call whose `spec` is
- * a cron with an invalid `expr` or an unknown `tz`, or whose `until` is malformed, throws
- * `ScheduleSpecError` before anything is persisted — the refusal the agent-facing routes a later
- * ticket surface as a 400, exported here so that layer can catch exactly it.
+ * `scheduleFiredKind` and `ScheduleFiredRecord` are the two halves of the Signal contract, so a
+ * Handler for a matured Schedule is `SignalHandler<ScheduleFiredRecord>`. Registering no Handler
+ * for that `kind` leaves a stored Schedule firing into a permanently failed Signal. This subpath
+ * also carries the one table. A Schedule references nobody, so a barrel carrying it alone generates
+ * cleanly.
  *
- * `scheduleFiredKind` and `ScheduleFiredRecord` are the two halves of this part's Signal contract,
- * exported so that an Operator's Handler map is neither a string literal that can drift nor a
- * payload shape re-declared by hand: a Handler for a matured Schedule is
- * `SignalHandler<ScheduleFiredRecord>`. Registering no Handler for that `kind` is a stored
- * Schedule that fires into a permanently failed Signal (ADR-0017).
+ * @example
+ * A Gateway that wakes itself every morning, and the Handler the fire reaches.
+ * ```ts
+ * import { createGateway, templateHandler } from "shared-agent-framework";
+ * import { createPiRuntime } from "shared-agent-framework/pi";
+ * import type { ScheduleFiredRecord } from "shared-agent-framework/scheduler";
+ * import { createScheduler, scheduleFiredKind } from "shared-agent-framework/scheduler";
  *
- * It registers **no migration**. The table is exported from here beside `createScheduler`, and an
- * Operator barrels this subpath and applies it with their own `drizzle-kit`
- * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md),
- * [ADR-0047](../../docs/adr/0047-a-component-is-one-subpath.md)).
+ * const gateway = createGateway({
+ *   databaseUrl: process.env.DATABASE_URL ?? "",
+ *   runtime: createPiRuntime({ image: "my-agent:1" }),
+ *   agentListen: { host: "127.0.0.1", port: 8081 },
+ *   publicListen: { host: "0.0.0.0", port: 8080 },
+ *   extend: ({ db, worker, agentServer }) => ({
+ *     scheduler: createScheduler({ db, worker, agentServer }),
+ *   }),
+ *   handlers: () => ({
+ *     [scheduleFiredKind]: templateHandler<ScheduleFiredRecord>({
+ *       template: new URL("./prompts/digest.hbs", import.meta.url),
+ *       session: (signal) => signal.payload.scheduleName,
+ *       data: (signal) => signal.payload,
+ *     }),
+ *   }),
+ * });
  *
- * The agent-facing routes register on the Agent server the constructor is given; passing none is the
- * disable switch, so a route plugin is an internal of the part rather than a separate export.
+ * await gateway.start();
+ *
+ * // The Operator's own Schedule, declared at boot. Re-running this converges to one row.
+ * await gateway.components.scheduler.schedule({
+ *   name: "morning-digest",
+ *   spec: { kind: "cron", expr: "0 7 * * *", tz: "Europe/Berlin" },
+ *   data: { audience: "everybody" },
+ * });
+ * ```
+ *
+ * @module
  */
 
 export type { Scheduler, SchedulerOptions } from "./scheduler.ts";
@@ -43,8 +64,7 @@ export type {
   ScheduleSpec,
 } from "./schedules.ts";
 export { ScheduleSpecError } from "./schedules.ts";
-// The table, on this subpath and no other, a component being one door (ADR-0047). A star rather
-// than a list, because a table an Operator's `drizzle-kit` cannot see as a top-level name is a
-// table it silently creates nothing for (ADR-0046). A Schedule references nobody, so a barrel
-// carrying it alone generates cleanly.
+// A star and not a list, so every table stays a top-level name an Operator's `drizzle-kit` can
+// see. It never looks inside a wrapper object. `schedulerSchema` keeps its prefix, because
+// `export *` drops a name that resolves to two bindings.
 export * from "./schema.ts";

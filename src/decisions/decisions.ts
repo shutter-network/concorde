@@ -1,43 +1,16 @@
 /**
- * Decisions: the part of the Gateway that owns the one global log of Decisions.
+ * Decisions: the Component that owns the one global log of Decisions.
  *
- * Constructed like every other part — one call, an ordinary object back, and nothing to
- * register it with. It wires itself the way every part does, registering its two plugins on
- * the two servers it is handed (ADR-0032).
+ * One call builds it, and it registers its two plugins on the two servers it is handed. Its `start`
+ * and `stop` do nothing. It is in the Gateway's record for its membership, and for the position
+ * that comes with it. That position is ahead of the Signal Worker, so it outlives the drain. A
+ * Signal Handler's post phase may still publish then.
  *
- * It is a **Component whose `start` and `stop` do nothing**, for the reason the User Manager's
- * and the HTTP Messenger's are: no timers and no connection of its own, and membership in the
- * Gateway's record is what puts this part in a **position** before it needs one (ADR-0037).
- * The position it has is ahead of the Signal Worker, so that it outlives the drain: a Signal
- * Handler's post phase runs after the Runs arising from a Signal have finished, which during
- * shutdown is inside the drain, and a Decision reached by a failing Run should still be
- * recorded ([ADR-0038](../../docs/adr/0038-the-default-assembly-is-a-constructor.md)).
- *
- * Four things about it are decisions rather than omissions, and each is a place a reader
- * arriving from the HTTP Messenger will look for machinery that is deliberately absent
- * ([ADR-0043](../../docs/adr/0043-decisions-are-one-global-log.md)):
- *
- *  - **The log is global and there is no `user_id` anywhere.** Not on the table, not on a
- *    route, not on a method. A Decision addressed to one User would be a Message with extra
- *    steps, and worse: a verifier holding one could never tell whether the same Shared Agent
- *    had signed a contradictory one for somebody else. A commitment that is not public is not
- *    a commitment. So the agent's read and a User's read are the same query with **no scoping
- *    at all**, and the two route groups differ only in whether an auth hook runs.
- *  - **No route can 404 for a missing User**, because there is no foreign key: ADR-0036's "the
- *    agent's 404 is PostgreSQL's `23503` caught" has no analogue here, and this part imposes no
- *    construction-order dependency on the User Manager. It takes one all the same, for the
- *    hook that refuses an unauthenticated read.
- *  - **There is no race, no retry and no lock.** `messages.seq` is computed per User as
- *    `max()+1` and needs a bounded retry behind a unique constraint; this number comes from a
- *    PostgreSQL sequence, which is atomic. Reinforced by every writer already being serial: the
- *    publish route is on the Agent server only, so the agent can only publish during a Run, and
- *    trusted code publishes from inside the same serial worker.
- *  - **It is not a Producer.** Publishing writes a row and emits no Signal, and this module
- *    holds no reference to the Signal Worker. A Decision is published *by the agent, during a
- *    Run*, so emitting one would have the agent's own action queue work for the agent on a
- *    serial worker — the Signal queues behind the Run still in flight, and the Handler it wakes
- *    can publish again. That is a loop with nothing guarding it. Consequence: nothing is
- *    notified when a Decision is published, and Users discover Decisions by polling.
+ * Four things a reader arriving from the HTTP Messenger will look for are absent on purpose. There
+ * is no `user_id` anywhere, because a Decision is addressed to nobody. No route can 404 for a
+ * missing User, because there is no foreign key. There is no race, no retry and no lock, because
+ * the number comes from a PostgreSQL sequence. And it is not a Producer: publishing emits no
+ * Signal, so nothing is notified and Users discover Decisions by polling.
  */
 
 import { and, asc, desc, getTableName, gt, lt, sql } from "drizzle-orm";
@@ -50,45 +23,38 @@ import type { Users } from "../users/users.ts";
 import { agentDecisionRoutes, publicDecisionRoutes } from "./routes.ts";
 import { decisions, decisionsSchema, decisionsTables } from "./schema.ts";
 
-/** A handle typed to this part's own tables, and to no other part's (ADR-0022). */
+/** A handle typed to this Component's own tables, and to no other's. */
 type DecisionsHandle = Handle<typeof decisionsTables>;
 
 /**
  * Where both route groups land, on their respective servers.
  *
- * A constant and not an option: there is no prefix to configure and no plugin to register
- * elsewhere, so a client written for one deployment's Decisions works against every other
- * deployment's (ADR-0034, ADR-0042).
+ * A constant and not an option. There is no prefix to configure and no plugin to register
+ * elsewhere. So a client written for one deployment's Decisions works against every other one.
  */
 const decisionsPrefix = "/decisions";
 
 /**
- * The `typ` this part asks for on every artifact it publishes.
+ * The `typ` this Component asks for on every artifact it publishes.
  *
- * **Not reserved**, and that is deliberate: the agent may ask `POST /sign` for this same label,
- * and that is the authority it already holds exercised without a log row rather than a forgery
- * (ADR-0042). What the label buys a verifier is domain separation — an artifact typed as a
- * Decision cannot be replayed as anything else this identity signs, because the `typ` is in the
- * protected header and is therefore covered by the signature.
+ * Not reserved. The agent can ask `POST /sign` for this same label. That is an authority it already
+ * holds rather than a forgery. What the label buys a verifier is domain separation. The `typ` is in
+ * the protected header, so the signature covers it.
  *
- * The consequence, stated where it will be met: `typ` is the agent's signed claim about its
- * artifact and not a framework guarantee. Only an artifact **fetched from this log** is
- * guaranteed to be shaped like one of these.
+ * So `typ` is the agent's signed claim about its artifact and not a framework guarantee. Only an
+ * artifact fetched from this log is guaranteed to be shaped like one of these.
  */
 const decisionTyp = "saf-decision+jws";
 
 /**
  * A Decision as every surface answers with it: the POST response and both reads.
  *
- * One shape and not a projection per surface, and it is the whole row: four columns, all four
- * answered. `createdAt` is an ISO 8601 string, because JSON has no date, and it is the same
- * string the payload of the artifact carries, since one value reached both.
+ * One shape and not a projection per surface. It is the whole row, four columns. `createdAt` is an
+ * ISO 8601 string, because JSON has no date, and it is the string the artifact's payload carries.
  *
- * **The JWS is the Decision**, and the other three fields are the log's convenience: a verifier
- * holding a valid artifact cannot conclude that a row exists and does not need to, because the
- * signature is the authority (ADR-0042). Everything in this record but `jws` can be read back
- * out of `jws` by anybody holding the public key, which is what makes handing one onward
- * out of band the point of the whole part.
+ * The JWS is the Decision, and the other three fields are the log's convenience. Anybody holding
+ * the public key can read all three back out of `jws`. That is what makes handing one artifact
+ * onward the point of the whole Component.
  */
 export type DecisionRecord = {
   readonly seq: number;
@@ -98,57 +64,52 @@ export type DecisionRecord = {
 };
 
 /**
- * Which stretch of the log a read asks for: the shared cursor window under this part's own
- * name.
+ * Which stretch of the log a read asks for: the shared cursor window under this Component's name.
  *
  * An alias and not a second declaration. What a cursor means lives beside the schema and the
- * refusal that enforce it, in `route-conventions.ts`, so that the two parts that page cannot
- * come to disagree about what `before` means (ADR-0035).
+ * refusal that enforce it. So the two Components that page cannot disagree about `before`.
  *
- * The window carries no User id, and here that is not a matter of where the id comes from: this
- * log has no owner, so a window over it is the whole of what a read asks.
+ * The window carries no User id. This log has no owner, so a window over it is the whole of what a
+ * read asks.
  */
 export type DecisionWindow = CursorWindow;
 
+/** Everything `createDecisions` needs: the Db, two Components, and both servers. */
 export type DecisionsOptions = {
   readonly db: Db;
   /**
-   * The part that holds the signing identity, and the reason this one has no key.
+   * The Component that holds the signing identity, and the reason this one has no key.
    *
-   * Required, and construct it **before** this: a Decision that was not signed is not a
-   * Decision, so there is no degraded mode in which this part writes rows without artifacts.
-   * Signing happens through this object in process and never as an HTTP request to the
-   * Signatures routes.
+   * Required, and construct it before this one. A Decision that was not signed is not a Decision.
+   * So there is no degraded mode in which rows arrive without artifacts. Signing happens through
+   * this object in process, never as an HTTP request.
    */
   readonly signatures: Signatures;
   /**
    * The User Manager whose Users may read the log.
    *
-   * Required, and it is where the Public read's authentication comes from: `requireUser` is
-   * taken off this object and put on the route as one option, so this part holds no Token and
-   * no header of its own and its one refusal is the Manager's single 401 (ADR-0030).
+   * Required, and it is where the Public read's authentication comes from. `requireUser` is taken
+   * off this object and put on the route as one option. So this Component holds no Token, and it
+   * answers the Manager's single 401.
    *
-   * **Unlike the HTTP Messenger's, this is not a schema-level dependency.** There is no foreign
-   * key onto `saf_users.users` and nothing here references a User at all, so a barrel may carry
-   * this part's schema without the User Manager's (ADR-0043).
+   * Unlike the HTTP Messenger's, this is not a schema-level dependency. Nothing here references a
+   * User, so a barrel may carry this schema without the User Manager's.
    */
   readonly users: Users;
   /**
-   * The Agent server, where the agent publishes and reads, at **`/decisions`**.
+   * The Agent server, where the agent publishes and reads, at `/decisions`.
    *
-   * Required: Decisions the agent cannot publish into holds nothing, which is broken rather
-   * than smaller. Structural, and asks for nothing but the Fastify instance, for the purely
-   * technical reason every other part's server option is — `FastifyInstance` has five generic
-   * parameters — so what satisfies it is what `serverComponent` returns.
+   * Required: Decisions the agent cannot publish into holds nothing. Structural, and asks for
+   * nothing but the Fastify instance, so what satisfies it is what `serverComponent` returns.
    */
   readonly agentServer: {
     readonly fastify: FastifyInstance;
   };
   /**
-   * The Public server, where any authenticated User reads the log, at **`/decisions`**.
+   * The Public server, where any authenticated User reads the log, at `/decisions`.
    *
-   * Required for the reason the Agent server is, and a sharper one: a log no User can read is
-   * not public, and a commitment that is not public is not a commitment.
+   * Required, and for a sharper reason. A log no User can read is not public, and a commitment that
+   * is not public is not a commitment.
    */
   readonly publicServer: {
     readonly fastify: FastifyInstance;
@@ -156,50 +117,36 @@ export type DecisionsOptions = {
 };
 
 /**
- * What the constructor answers with: the two things trusted code needs and no request can
- * express.
+ * What the constructor answers with: the two things trusted code needs and no request can express.
  *
- * Every other capability this part has is a route it registered itself, and no route plugin is
- * exported (ADR-0034), so what is on this object is what a Signal Handler and an Operator's
- * entry point, both of them trusted code (ADR-0009, ADR-0020), cannot reach over HTTP: a
- * publish that joins a transaction of their own, and a read of the whole log that needs neither
- * a Token nor a route.
+ * Every other capability is a route this Component registered itself, and no route plugin is
+ * exported. So a Signal Handler and an Operator's entry point get two things. One is a publish that
+ * joins a transaction of their own. The other is a read of the whole log, needing neither a Token
+ * nor a route. A Handler can therefore commit to something and then build the next Prompt from what
+ * is already committed to.
  *
- * The pair is what makes a Handler able to commit to something on the record and build the next
- * Prompt from what has already been committed to, which is otherwise something only the agent
- * can do and only during a Run.
- *
- * **No method writes a Decision without signing it**, and neither takes a User id. There is no
- * parameter for the artifact anywhere, on the type or on the route: the signature is produced
- * by the write path from a number this part drew and a timestamp it generated, so no caller's
- * own bytes can reach the `jws` column (ADR-0042, ADR-0043). And there is no parameter naming a
- * User because the log has no owner: a Decision is addressed to nobody, so there is nothing for
- * either method to be scoped by.
+ * No method writes a Decision without signing it, and neither takes a User id. There is no
+ * parameter for the artifact anywhere, so no caller's bytes reach the `jws` column. And there is
+ * nothing to scope either method by, because the log has no owner.
  */
 export type Decisions = Component & {
   /**
    * Publishes a Decision from inside the caller's transaction, and answers with the record.
    *
-   * Takes the caller's transaction rather than finding one (ADR-0023), so that committing to
-   * something and recording in the Operator's own tables why cannot come apart: a rollback
-   * loses both. That is the whole point of the split, and the failure it exists to prevent is
-   * a Decision published about something that was never recorded. Ambient enlistment is not
-   * available: a transaction started on one handle takes its own connection from the pool, so a
-   * second handle's writes would survive its rollback with nothing reported.
+   * Takes the caller's transaction rather than finding one, so committing to something and
+   * recording why cannot come apart. A rollback loses both. Ambient enlistment is not available: a
+   * second handle takes its own connection and its writes survive the rollback.
    *
-   * The schema parameter is widened rather than named, because the transaction carries the
-   * schema of the handle it was started on and that handle belongs to the caller.
+   * The Statement is the only other argument. The number, the timestamp and the artifact are the
+   * write path's. They are produced in that order, because the signature binds the first two. A
+   * read cannot see the caller's own uncommitted write, so the record comes back here instead.
    *
-   * The Statement is the only other argument. The number, the timestamp and the artifact are
-   * the write path's, produced in that order because the signature binds the first two.
+   * A publish that rolls back burns its number, since the sequence is not transactional. That is
+   * expected and means nothing.
    *
-   * It answers with the record because a read cannot see the caller's own uncommitted write,
-   * which is the same reason the HTTP Messenger's `send` does. So the artifact is in hand
-   * before the transaction commits and there is no read-back to attempt.
-   *
-   * A publish that rolls back **burns its number**, since the sequence is not transactional.
-   * That is expected and meaningless: gaplessness would prove nothing anyway, the Operator
-   * owning the database (ADR-0043).
+   * @param tx The caller's transaction, carrying whatever schema it was started on.
+   * @param statement The string being committed to.
+   * @returns The Decision, including the number it drew and the artifact signed over it.
    */
   publish<TSchema extends Record<string, unknown>>(
     tx: Handle<TSchema>,
@@ -207,84 +154,111 @@ export type Decisions = Component & {
   ): Promise<DecisionRecord>;
 
   /**
-   * The Decision log, ascending by `seq`, so that a Handler can build a Prompt from everything
-   * already committed to rather than from the Signal alone.
+   * The Decision log, ascending by `seq`, so a Handler can read everything already committed to.
    *
-   * Nothing scopes it, because there is no slice of this log to ask for: it is global, and
-   * every reader sees the same sequence (ADR-0043). What bounds an answer is the window below
-   * and nothing else, so a Handler wanting everything asks with `after: 0` and a `limit` past
-   * the length of the log rather than by omitting an argument.
+   * Nothing scopes it: the log is global, and every reader sees the same sequence. The window is
+   * what bounds an answer. A Handler wanting everything asks with `after: 0` and a large `limit`,
+   * rather than by omitting an argument.
    *
-   * A read, so it takes no transaction and therefore **cannot see the caller's own uncommitted
-   * write**. `publish` returns the record for exactly that reason.
+   * A read, so it takes no transaction and cannot see the caller's own uncommitted write. It
+   * answers from the same query both routes answer from, with the same cursor options. `limit`
+   * defaults to the routes' default and is not capped here, because a cap bounds a response body.
    *
-   * It answers from the same query both routes answer from, with the same cursor options: no
-   * cursor is the newest `limit`, `before` the newest `limit` strictly below it, `after`
-   * everything above it, and every one of them ascending (ADR-0035). The routes refuse both
-   * cursors at once as the client bug it is there, and nothing refuses it here: what comes back
-   * is the stretch between them, newest end first if it does not fit. Recorded rather than
-   * guarded, and not a spelling to reach for.
-   *
-   * `limit` defaults to the number the routes default to and is **not** capped here: the cap on
-   * a route bounds a response body a stranger or the agent reads, which is not the case trusted
-   * code asking for a thousand Decisions is in.
-   *
-   * The options are the shared window with every field made optional, and not a shape of this
-   * method's own: one list of cursor names in this part, not two that could drift.
+   * @param options The shared window, every field optional.
    */
   history(options?: Partial<DecisionWindow>): Promise<DecisionRecord[]>;
 
   /**
-   * **Does nothing.** Written out here so that it is read rather than discovered.
+   * Does nothing. There is nothing here to start.
    *
-   * Nothing is notified when a Decision is published, so there is no connection to open and no
-   * ticker to set going: Users poll the log, and the largest `seq` they hold is the whole of
-   * the resume mechanism (ADR-0043). Everything this part needed was done at construction
-   * (ADR-0032).
+   * Nothing is notified when a Decision is published. There is no connection to open and no ticker
+   * to set going. Users poll the log, and the largest `seq` they hold is the whole resume
+   * mechanism.
    */
   start(): Promise<void>;
 
   /**
-   * **Does nothing**, and there is nothing here that a shutdown could lose.
+   * Does nothing, and there is nothing here a shutdown could lose.
    *
-   * A Decision is a committed row and an artifact somebody may already be holding; both outlive
-   * this process, and the artifact outlives the deployment.
+   * A Decision is a committed row and an artifact somebody may already hold. Both outlive this
+   * process, and the artifact outlives the deployment.
    */
   stop(): Promise<void>;
 };
 
+/**
+ * Builds Decisions and registers its two route groups at `/decisions` on both servers.
+ *
+ * Nothing here connects, listens or applies DDL. Put the result in the Gateway's record under a key
+ * of your own, ahead of the Signal Worker.
+ *
+ * @example
+ * Built in `extend`, and then used from the Operator's own trusted code.
+ * ```ts
+ * import { createPrivateKey } from "node:crypto";
+ * import { readFileSync } from "node:fs";
+ * import { createGateway } from "shared-agent-framework";
+ * import { createDecisions } from "shared-agent-framework/decisions";
+ * import { createPiRuntime } from "shared-agent-framework/pi";
+ * import { createSignatures } from "shared-agent-framework/signatures";
+ * import { createUsers } from "shared-agent-framework/users";
+ *
+ * const signingKey = createPrivateKey(readFileSync("./signing-key.pem"));
+ *
+ * const gateway = createGateway({
+ *   databaseUrl: process.env.DATABASE_URL ?? "",
+ *   runtime: createPiRuntime({ image: "my-agent:1" }),
+ *   agentListen: { host: "127.0.0.1", port: 8081 },
+ *   publicListen: { host: "0.0.0.0", port: 8080 },
+ *   extend: ({ db, agentServer, publicServer }) => {
+ *     const users = createUsers({ db, tokenTtl: 86_400_000, agentServer, publicServer });
+ *     const signatures = createSignatures({ signingKey, agentServer, publicServer, users });
+ *     return {
+ *       users,
+ *       signatures,
+ *       decisions: createDecisions({ db, signatures, users, agentServer, publicServer }),
+ *     };
+ *   },
+ *   handlers: () => ({}),
+ * });
+ *
+ * await gateway.start();
+ *
+ * // One transaction holds the Decision and the Operator's own record of why.
+ * const { db, decisions } = gateway.components;
+ * const published = await db.tx((tx) => decisions.publish(tx, "shipping on Friday"));
+ *
+ * // And the whole log, for the next Prompt.
+ * const log = await decisions.history({ after: 0, limit: 100 });
+ * console.log(published.seq, log.length);
+ * ```
+ */
 export function createDecisions(options: DecisionsOptions): Decisions {
-  // The part's own handle, typed to its own tables. `pg` never leaves the Db (ADR-0022).
+  // The Component's own handle, typed to its own tables. `pg` never leaves the Db.
   const handle = options.db.handle(decisionsTables);
 
   // One read, named once and given to both plugins. The agent's read and a User's read are the
-  // same query with nothing to scope it by, and the two sharing this one function is what keeps
-  // them from becoming a parallel set that can disagree about what `before` means (ADR-0035).
+  // same query with nothing to scope it by, and sharing one function is what keeps them from
+  // disagreeing about what `before` means.
   const readHistory = (window: DecisionWindow) => selectDecisions(handle, window);
 
-  // And citing one by number is **that same read**, asked with the cursor just below the number
-  // cited, rather than a query of its own against the same row: two readings of one table are two
-  // chances to answer differently, and the whole of this part is organised so that there is one
-  // (ADR-0043).
+  // Citing a number is that same read, asked with the cursor just below the number. Two readings
+  // of one table are two chances to answer differently.
   //
-  // What comes back is the first Decision at or *after* the number, which is that Decision when
-  // it exists and its successor when the number was burned by a rolled-back publish. So the row
-  // is the citation only when it is numbered what was asked for, and a burned number is nothing
-  // rather than the Decision that came after it.
+  // What comes back is the first Decision at or after the number. So the row is the citation only
+  // when it is numbered what was asked for, and a burned number is nothing rather than its
+  // successor.
   //
-  // Citing the first Decision asks with `after: 0`, which is the cursor nothing is numbered and
-  // means "from the beginning" rather than "no cursor": a read that took it for an absence would
-  // answer the *newest* Decision when asked for the first one (ADR-0035).
+  // Citing the first Decision asks with `after: 0`. That cursor means "from the beginning" and is
+  // not an absence: a read that took it for one would answer the newest Decision.
   const readNumbered = async (seq: number) => {
     const [atOrAfter] = await readHistory({ after: seq - 1, limit: 1 });
     return atOrAfter?.seq === seq ? atOrAfter : undefined;
   };
 
-  // And one write, likewise named once: this part signs and stores here and nowhere else.
-  // Widened over the handle it is given, so the agent's route reaches it inside a transaction
-  // this part opens (a request that publishes has nothing else to keep the insert company
-  // with), while a Handler reaches the same statements with a transaction of its own, which is
-  // what makes the Decision and the Operator's record of why commit as one (ADR-0023).
+  // And one write, likewise named once: this Component signs and stores here and nowhere else.
+  // Widened over the handle it is given, so the agent's route reaches it inside a transaction this
+  // Component opens, while a Handler reaches the same statements inside one of its own.
   const publishSigned = <TSchema extends Record<string, unknown>>(
     on: Handle<TSchema>,
     statement: string,
@@ -293,37 +267,30 @@ export function createDecisions(options: DecisionsOptions): Decisions {
   const agentRoutes = agentDecisionRoutes({
     history: readHistory,
     numbered: readNumbered,
-    // One transaction, with the whole of the write path inside it. On the part's own Db rather
-    // than on a handle a caller brought, because a request that publishes has nothing else to
-    // keep the insert company with; the method below is the surface that does.
+    // One transaction, with the whole write path inside it. On the Component's own Db, because a
+    // request that publishes has nothing else to keep the insert company with.
     publish: (statement) => options.db.tx((tx) => publishSigned(tx, statement)),
   });
   const publicRoutes = publicDecisionRoutes(
     { history: readHistory, numbered: readNumbered },
-    // The Manager's own hook, passed through and not wrapped: this part authenticates nobody,
-    // which is what `src/users/users.ts` promised it would do (ADR-0030).
+    // The Manager's own hook, passed through and not wrapped. This Component authenticates nobody.
     options.users.requireUser,
   );
 
-  // The two acts of wiring, both of them here so that an Operator's entry point does neither
-  // (ADR-0032).
-  // Not awaited: Fastify defers a plugin until the server is ready, so this is a registration
-  // made at construction and loaded at `listen` — which is also why a server that is already
-  // listening refuses one.
+  // The two acts of wiring, both here so that an Operator's entry point does neither. Not awaited:
+  // Fastify defers a plugin until the server is ready, so this is a registration made at
+  // construction and loaded at `listen`.
   options.agentServer.fastify.register(agentRoutes, { prefix: decisionsPrefix });
   options.publicServer.fastify.register(publicRoutes, { prefix: decisionsPrefix });
 
   return {
-    // The one write above, on the **caller's** handle rather than the part's own, which is the
-    // whole of what taking the transaction first means (ADR-0023).
+    // The one write above, on the caller's handle rather than the Component's own.
     publish: publishSigned,
     // The one read above, reached with arguments instead of a query string: the routes' own
-    // default `limit` and none of their cap, since a cap bounds a response body and there is
-    // no response here.
+    // default `limit` and none of their cap.
     history: (asked) => readHistory({ ...asked, limit: asked?.limit ?? limitSchema.default }),
 
-    // The two no-ops, whose reason is on the type above: membership in the Gateway's record,
-    // and the position that comes with it (ADR-0037).
+    // The two no-ops, whose reason is on the type above.
     start: async () => {},
     stop: async () => {},
   };
@@ -333,37 +300,29 @@ export function createDecisions(options: DecisionsOptions): Decisions {
  * The write path: one number, one timestamp, one signature and one row, in the caller's
  * transaction.
  *
- * **Three parts of this order are load-bearing**, and each has its comment below. The short
- * version is that the JWS binds `seq` and `createdAt`, so both have to exist before the
- * signature does, and the signed values have to be the values that get stored.
+ * The order is load-bearing. The JWS binds `seq` and `createdAt`, so both exist before the
+ * signature does. The signed values are the values that get stored.
  *
- * The query-builder form and a **widened** schema parameter, so it works on a transaction
- * carrying any part's schema (ADR-0023): the route's is one this part opened over its own
- * tables, and a Signal Handler's is its own, holding whatever the Operator was recording
- * alongside. Two statements and no savepoint, unlike the HTTP Messenger's insert: nothing here
- * has a constraint it expects to lose a race against, so there is no violation to keep from
- * aborting the caller's transaction.
+ * The schema parameter is widened, so this works on a transaction carrying any Component's schema.
+ * Two statements and no savepoint. Nothing here expects to lose a race, so no constraint violation
+ * can abort the caller's transaction.
  */
 async function publishDecision<TSchema extends Record<string, unknown>>(
   tx: Handle<TSchema>,
   signatures: Signatures,
   statement: string,
 ): Promise<DecisionRecord> {
-  // **The number comes before the signature**, because the JWS binds it. That is what keeps
-  // `jws` NOT NULL and keeps "no column is ever updated" literally true; insert-then-sign-then-
-  // update is correct inside one transaction and was rejected for making the column nullable
-  // forever to model a state no reader can observe (ADR-0043).
+  // The number comes before the signature, because the JWS binds it. That is what keeps `jws`
+  // NOT NULL and keeps "no column is ever updated" literally true.
   const seq = await drawSeq(tx);
 
-  // **Generated here and not by the database.** The signed timestamp and the stored timestamp
-  // must be the same value, and one value reaching both is the only way to guarantee it. Do not
-  // "fix" this to `clock_timestamp()` to match `messages.created_at`: that column has no
-  // signature over it.
+  // Generated here and not by the database. The signed timestamp and the stored timestamp must be
+  // the same value, and one value reaching both is the only guarantee. Do not "fix" this to
+  // `clock_timestamp()` to match `messages.created_at`: that column has no signature over it.
   const createdAt = new Date();
 
-  // **In process, never an HTTP request to the Signatures routes.** The claims are built in the
-  // order the payload carries them, because a compact JWS is signed as exactly the bytes
-  // emitted and nothing re-serializes them (ADR-0042).
+  // In process, never an HTTP request to the Signatures routes. The claims are built in the order
+  // the payload carries them, because a compact JWS is signed as exactly the bytes emitted.
   const jws = await signatures.sign(decisionTyp, {
     seq,
     createdAt: createdAt.toISOString(),
@@ -383,21 +342,13 @@ async function publishDecision<TSchema extends Record<string, unknown>>(
 /**
  * The next number, drawn straight from the sequence behind the identity column.
  *
- * `nextval` is atomic, so there is no race to lose, nothing to retry and no lock to take — the
- * whole of the machinery `messages.seq` needs, absent because the number is global rather than
- * per User (ADR-0043).
+ * `nextval` is atomic, so there is no race to lose, nothing to retry and no lock to take. It is
+ * also outside the transaction's rollback, so a rolled-back publish burns a number and leaves a
+ * gap. Nothing checks, compacts or reports one.
  *
- * It is also **outside the transaction's rollback**, which is why a rolled-back publish burns a
- * number and leaves a gap. That is expected and meaningless: gaplessness would prove nothing
- * anyway, since the Operator is trusted and owns the database, and detecting a withheld
- * Decision needs the hash chain ADR-0001 rejected. Nothing checks, compacts or reports a gap.
- *
- * The sequence is asked for by `pg_get_serial_sequence` rather than by the name `drizzle-kit`
- * happened to generate, and the table and column are read off the schema objects, so nothing
- * here is a second spelling of a name the migration owns. The `::int` is what makes
- * PostgreSQL's `bigint` arrive as a JavaScript number rather than as the string `pg` renders
- * one as; the column itself is an `integer`, so the cast narrows nothing that was not already
- * narrow.
+ * The sequence is asked for by `pg_get_serial_sequence`, and the table and column are read off the
+ * schema objects. So nothing here is a second spelling of a name the DDL owns. The `::int` is what
+ * makes PostgreSQL's `bigint` arrive as a JavaScript number.
  */
 async function drawSeq<TSchema extends Record<string, unknown>>(
   tx: Handle<TSchema>,
@@ -408,8 +359,7 @@ async function drawSeq<TSchema extends Record<string, unknown>>(
       seq: sql<number>`nextval(pg_get_serial_sequence(${table}, ${decisions.seq.name}))::int`,
     })
     // A one-row source to select from, because Drizzle's builder requires a `from` where
-    // PostgreSQL does not. Reading `nextval` off `decisions` itself would draw one number per
-    // row in the table, which is the wrong number of numbers on the second publish.
+    // PostgreSQL does not. Reading `nextval` off `decisions` itself would draw one number per row.
     .from(sql`(select 1) as drawing`);
   if (drawn === undefined) {
     throw new Error("the sequence behind decisions.seq answered no row");
@@ -420,14 +370,12 @@ async function drawSeq<TSchema extends Record<string, unknown>>(
 /**
  * The log, ascending by `seq`, and the one query every surface answers from.
  *
- * `before` and no cursor at all select **descending** and reverse in memory, because the newest
- * page is what a client opening the log wants and PostgreSQL cannot answer "the last fifty in
- * ascending order" without one or the other. The reversal is the whole of that asymmetry and it
- * is invisible from outside: every page arrives ascending, so a client concatenates them
- * without reversing anything (ADR-0035).
+ * `before` and no cursor at all select descending and reverse in memory. The newest page is what a
+ * client opening the log wants. PostgreSQL cannot answer "the last fifty ascending" without one or
+ * the other. The reversal is invisible from outside: every page arrives ascending.
  *
- * On the part's own handle rather than a widened one: a read takes no transaction (ADR-0023),
- * and this part reads nothing but its own table.
+ * On the Component's own handle rather than a widened one. A read takes no transaction, and this
+ * Component reads nothing but its own table.
  */
 async function selectDecisions(
   handle: DecisionsHandle,

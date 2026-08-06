@@ -338,6 +338,13 @@ try {
   // narrowed to an exact list: a `FastifyListenOptions` written without `import type` still
   // emits one of these, and nothing else would notice, because the consumer below installs
   // Fastify and it would resolve.
+  //
+  // Comment lines are skipped, because `tsc` emits doc comments and an `@example` that shows an
+  // Operator building their own server has to say `import Fastify from "fastify"` to be copyable.
+  // That is documentation and not an import, so a scan of the raw text fails on
+  // `dist/components.js` and `dist/users/users.js` and says nothing true. Skipped per line rather
+  // than by stripping `/** */` blocks, so a string literal holding those four characters cannot
+  // swallow the code after it and turn a real import invisible.
   step("checking only the infrastructure constructor imports a value from fastify");
   const manifest: unknown = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
   assert.ok(
@@ -352,7 +359,10 @@ try {
   })) {
     if (!emitted.isFile() || !emitted.name.endsWith(".js")) continue;
     const file = path.join(emitted.parentPath, emitted.name);
-    if (/from ["']fastify["']/.test(readFileSync(file, "utf8"))) {
+    const code = readFileSync(file, "utf8")
+      .split("\n")
+      .filter((line) => !/^\s*(?:\*|\/\/|\/\*)/.test(line));
+    if (code.some((line) => /from ["']fastify["']/.test(line))) {
       importsFastify.push(path.relative(repoRoot, file).replaceAll(path.sep, "/"));
     }
   }
