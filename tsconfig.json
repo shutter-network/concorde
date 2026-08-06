@@ -42,6 +42,7 @@
     // its entry point does.
     "paths": {
       "shared-agent-framework": ["./src/index.ts"],
+      "shared-agent-framework/signals": ["./src/signals/index.ts"],
       "shared-agent-framework/signals/schema": ["./src/signals/schema.ts"],
       "shared-agent-framework/pi": ["./src/pi/index.ts"],
       "shared-agent-framework/users": ["./src/users/index.ts"],

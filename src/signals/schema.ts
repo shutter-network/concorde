@@ -4,12 +4,12 @@
  *
  * **Public API, on `shared-agent-framework/signals/schema` and nowhere else.** An Operator
  * barrels this module into their own `schema.ts` and generates from it
- * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)). The subpath is the
- * part's only public surface that is not the package root: the Signal Worker itself is
- * exported from `.`, and these objects deliberately are not, so the softening sits behind
- * one labelled door. That reverses ADR-0021/0022's "deliberately absent from the package's
- * root export"; no part reading another's tables remains a discipline, and an Operator who
- * wants tables of their own still gets them through `db.handle(theirOwnSchema)`.
+ * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)). The part itself is on
+ * `shared-agent-framework/signals` now, a component that owns tables having a specifier of
+ * its own ([ADR-0047](../../docs/adr/0047-a-component-is-one-subpath.md)), and these objects
+ * are behind the labelled door beside it. That reverses ADR-0021/0022's "deliberately absent
+ * from the package's root export"; no part reading another's tables remains a discipline, and
+ * an Operator who wants tables of their own still gets them through `db.handle(theirOwnSchema)`.
  *
  * An Operator's `drizzle-kit` reads this file, through their barrel, so keep it to the
  * tables and the values they are defined in terms of.

@@ -29,18 +29,19 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
-// From the package root, which is where an Operator meets all of these: nothing in any
-// of them knows about an Agent Implementation (ADR-0026, ADR-0033).
+// From the package root, which is where an Operator meets the container half: nothing in
+// any of it knows about an Agent Implementation (ADR-0026, ADR-0033).
 import {
   type AgentContainer,
   type ComposedCommand,
   createAgentContainerRuntime,
   type Mount,
-  type RunOutcome,
   type RunPlan,
-  type RunPrompt,
 } from "../index.ts";
 import type { LogFields, Logger } from "../logging.ts";
+// The two ends of a Run are the Signal Worker's vocabulary and come off its own subpath,
+// which is what a `RunPlan` is written against (ADR-0047).
+import type { RunOutcome, RunPrompt } from "../signals/index.ts";
 import {
   type FakeContainerScript,
   fakeContainerCommand,

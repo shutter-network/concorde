@@ -22,23 +22,12 @@ export type { GatewayExtension, GatewayOptions, InfraComponents } from "./gatewa
 export { createGateway } from "./gateway.ts";
 export type { LogFields, Logger } from "./logging.ts";
 export { defaultLogger } from "./logging.ts";
-export type {
-  EmittedSignal,
-  PostOutcome,
-  Prompt,
-  RunOutcome,
-  RunPrompt,
-  RunRecord,
-  RunState,
-  Runtime,
-  Signal,
-  SignalHandler,
-  SignalHandlers,
-  SignalRecord,
-  SignalState,
-  SignalWorker,
-  SignalWorkerOptions,
-} from "./signals/index.ts";
-export { createSignalWorker } from "./signals/index.ts";
+// The Signal Worker is not re-exported here. It owns tables, and a component that owns tables
+// has a subpath of its own: `shared-agent-framework/signals` carries its constructor, its
+// options and the whole vocabulary a Signal Handler is written in
+// ([ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md)). What is left at the root is
+// what belongs to no component: the Gateway constructors, the `Component` contract, the Db,
+// the Agent Container and the template Handler. `createGateway` above and `templateHandler`
+// below both name the Worker's types across that line, which is ordinary.
 export type { TemplateHandlerOptions } from "./template-handler.ts";
 export { templateHandler } from "./template-handler.ts";

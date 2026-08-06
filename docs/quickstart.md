@@ -1598,11 +1598,8 @@ Implementation** adds is one function — given a Prompt, what to put after the 
 what to write on stdin, and how to read what comes back:
 
 ```ts
-import {
-  createAgentContainerRuntime,
-  type RunPlan,
-  type RunPrompt,
-} from "shared-agent-framework";
+import { createAgentContainerRuntime, type RunPlan } from "shared-agent-framework";
+import type { RunPrompt } from "shared-agent-framework/signals";
 
 function clawRun(prompt: RunPrompt): RunPlan {
   return {

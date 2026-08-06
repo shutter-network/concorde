@@ -15,6 +15,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./signals": {
+      "types": "./dist/signals/index.d.ts",
+      "default": "./dist/signals/index.js"
+    },
     "./signals/schema": {
       "types": "./dist/signals/schema.d.ts",
       "default": "./dist/signals/schema.js"

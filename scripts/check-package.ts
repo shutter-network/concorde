@@ -10,8 +10,14 @@
  * subpaths below ([ADR-0046](../docs/adr/0046-the-operator-owns-migrations.md)). That is
  * a recorded cost of that ADR and not an oversight — we no longer author the bytes
  * applied to anybody's production database, so no check here can vouch for them.
- *  - the root, `/pi`, `/users`, `/http-messenger`, `/signatures`, `/decisions` and
+ *  - the root, `/signals`, `/pi`, `/users`, `/http-messenger`, `/signatures`, `/decisions` and
  *    `/scheduler` subpaths resolve there, both to the type checker and to Node at runtime.
+ *    `/signals` is the Signal Worker's own, carrying its constructor, its options and the
+ *    vocabulary a Signal Handler is written in, none of which is at the root any more
+ *    ([ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md)). The root import below is
+ *    what proves the move: it names every value the root still has, so a symbol that stayed
+ *    behind on both specifiers would go unnoticed, but one still *only* at the root fails on
+ *    the `/signals` import instead.
  *  - each part's `/schema` subpath resolves there the same two ways, and the tables
  *    arrive as **top-level named exports**. That shape is the whole contract
  *    ([ADR-0046](../docs/adr/0046-the-operator-owns-migrations.md)): `drizzle-kit`'s
@@ -48,16 +54,20 @@ import { fileURLToPath } from "node:url";
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 /**
- * The consumer's imports, spelled once: the type checker and Node see the same twelve.
+ * The consumer's imports, spelled once: the type checker and Node see the same thirteen.
  *
  * The five `/schema` specifiers are the migration-generation door (ADR-0046), separate
  * from each part's own subpath on purpose. Every table is named individually rather than
  * pulled in as a namespace, because naming them is what proves the module flat-exports
  * them: a table that had retreated into `usersTables` would fail to import here, where a
  * `import * as` would resolve and say nothing.
+ *
+ * `createSignalWorker` comes off `/signals` and not the root, which is the whole of what
+ * ADR-0047 moved: the Worker owns tables, so it is a component with a subpath of its own.
  */
 const consumerImports = [
-  'import { createAgentContainerRuntime, createBareGateway, createGateway, createSignalWorker, defaultLogger, mountArguments, openDb, serverComponent, templateHandler } from "shared-agent-framework";',
+  'import { createAgentContainerRuntime, createBareGateway, createGateway, defaultLogger, mountArguments, openDb, serverComponent, templateHandler } from "shared-agent-framework";',
+  'import { createSignalWorker } from "shared-agent-framework/signals";',
   'import { runs as runsTable, signals as signalsTable, workerSchema } from "shared-agent-framework/signals/schema";',
   'import { createPiRuntime, interpretPiOutput, piRun } from "shared-agent-framework/pi";',
   'import { createUsers } from "shared-agent-framework/users";',
@@ -168,11 +178,15 @@ try {
     // shipped migration folder, and there is none (ADR-0046).
     "dist/db/db.js",
     "dist/db/db.d.ts",
+    // The Signal Worker, under its own subpath: it owns tables, and a component that owns
+    // tables has a specifier (ADR-0047). It is no longer the odd one out with a constructor at
+    // the root and nothing but tables of its own.
+    "dist/signals/index.js",
+    "dist/signals/index.d.ts",
     "dist/signals/worker.js",
     // Every part's schema module, `.d.ts` beside `.js`, because each is now a public
     // subpath of its own and an Operator both imports and type-checks against it
-    // (ADR-0046). The Signal Worker's is the odd one: the part itself is exported from
-    // the package root and only its tables have a subpath.
+    // (ADR-0046).
     "dist/signals/schema.js",
     "dist/signals/schema.d.ts",
     // The Signal Worker's Agent server routes: a Fastify plugin, and the only shipped
@@ -433,7 +447,6 @@ try {
       "  Component,",
       "  ComposedCommand,",
       "  Db,",
-      "  EmittedSignal,",
       "  Gateway,",
       "  GatewayExtension,",
       "  GatewayOptions,",
@@ -445,10 +458,21 @@ try {
       "  Logger,",
       "  Mount,",
       "  MountTable,",
+      "  RunPlan,",
+      "  TemplateHandlerOptions,",
+      "  Transaction,",
+      '} from "shared-agent-framework";',
+      // The Signal Worker's own types, from its own subpath: the Worker and its options, the
+      // two record shapes the Agent server answers with and their states, the Prompt the
+      // Handler returns and the Run prompt the Runtime is given, the Runtime seam itself, and
+      // the Signal a Producer emits (ADR-0047). Every one of them was at the root until that
+      // decision, and the root import above no longer names any of them, so a symbol that
+      // failed to move fails on this block rather than passing on both.
+      "import type {",
+      "  EmittedSignal,",
       "  PostOutcome,",
       "  Prompt,",
       "  RunOutcome,",
-      "  RunPlan,",
       "  RunPrompt,",
       "  RunRecord,",
       "  RunState,",
@@ -460,9 +484,7 @@ try {
       "  SignalState,",
       "  SignalWorker,",
       "  SignalWorkerOptions,",
-      "  TemplateHandlerOptions,",
-      "  Transaction,",
-      '} from "shared-agent-framework";',
+      '} from "shared-agent-framework/signals";',
       // The `pi` subpath exports **no type at all**, which is the shape ADR-0033 leaves
       // it in: there is no configuration to name, and everything the Runtime it returns
       // is made of — the Agent Container, the Run plan, the composed command line — comes
@@ -1430,7 +1452,23 @@ try {
   assert.equal(
     imported,
     "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword,start,stop:saf_http_messages:history,send,start,stop:message.received:saf_decisions:sign,start,stop:history,publish,start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,signatures,decisions,messenger,ownLoop,worker:Shared Agent Gateway: Agent server describes 10 paths:by hand /healthz:cron 2030-06-02T09:00:00.000Z zone true:scheduler cancel,list,schedule,start,stop,tick fires saf_schedule_fired in saf_scheduler:barrel saf_decisions.decisions saf_http_messages.messages saf_scheduler.schedules saf_signals.runs saf_signals.signals saf_users.tokens saf_users.users in saf_decisions saf_http_messages saf_scheduler saf_signals saf_users, wrappers seen 0",
-    "all twelve subpaths should resolve at runtime, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Manager should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself, and both of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the four parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone, and the Scheduler itself should construct from the installed `/scheduler` subpath and carry its management surface and its Component lifecycle, filing its table under a schema of its own, and an Operator's barrel — `export *` of all five `/schema` subpaths, which is the whole of what ADR-0046 asks them to write — should hand `drizzle-kit`'s own collection rule every one of the seven tables and all five schemas, and none of the `*Tables` wrappers, because a table reachable only through a wrapper object is dropped in silence and generates an empty migration",
+    "all thirteen subpaths should resolve at runtime, the Signal Worker's constructor arriving off `/signals` and not the root, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Manager should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself, and both of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the four parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone, and the Scheduler itself should construct from the installed `/scheduler` subpath and carry its management surface and its Component lifecycle, filing its table under a schema of its own, and an Operator's barrel — `export *` of all five `/schema` subpaths, which is the whole of what ADR-0046 asks them to write — should hand `drizzle-kit`'s own collection rule every one of the seven tables and all five schemas, and none of the `*Tables` wrappers, because a table reachable only through a wrapper object is dropped in silence and generates an empty migration",
+  );
+
+  // The other half of ADR-0047's first move, which nothing above can see: `main.ts` imports the
+  // Worker off `/signals` and would type-check just as happily if the root still exported it too.
+  // A named import of an absent export is a link-time error in ESM, so this is the one thing that
+  // notices a root re-export creeping back and leaving two doors onto one component.
+  step("checking the Signal Worker is no longer reachable from the root");
+  const workerAtRoot = exitsZero(
+    process.execPath,
+    ["--input-type=module", "-e", 'import { createSignalWorker } from "shared-agent-framework";'],
+    consumer,
+  );
+  assert.equal(
+    workerAtRoot,
+    false,
+    "the Signal Worker belongs to `/signals` alone; a component with two specifiers is the split ADR-0047 closed",
   );
 
   step("checking /messenger is reserved rather than resolvable");

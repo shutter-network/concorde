@@ -67,7 +67,14 @@ containing takes one of its own. See `src/test-support/database.ts`.
 
 `npm run check:package` is separate: it builds, packs, installs the tarball into a
 throwaway project, and checks that every subpath resolves there — to the type checker
-and to Node both, each part's `/schema` included. It needs the network, so it stays out
+and to Node both, each part's `/schema` included, and `/signals` among them. That last
+one is the Signal Worker's own: its constructor, its options and the vocabulary a Signal
+Handler is written in come off `shared-agent-framework/signals` and **not** the package
+root, because a component that owns tables has a specifier
+([ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md)). The check imports the
+Worker from there and then proves the root refuses the same name, which is the only thing
+that would notice a root re-export creeping back and making one component reachable two
+ways. It needs the network, so it stays out
 of the inner loop; it needs no database at all, because nothing in the package applies
 DDL any more ([ADR-0046](./docs/adr/0046-the-operator-owns-migrations.md)). CI runs it
 as its own step.

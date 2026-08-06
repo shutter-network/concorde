@@ -2,9 +2,9 @@
  * The `pi` Agent Implementation, from `shared-agent-framework/pi`.
  *
  * A subpath of its own so that what a deployment depends on is legible from its import
- * statements: the Signal Worker and the Db come from the package root and know nothing
- * about `pi`, and swapping the Agent Implementation is a change to one import and one
- * function name (ADR-0016, ADR-0026).
+ * statements: the Signal Worker comes from `shared-agent-framework/signals` and the Db from
+ * the package root, neither knows anything about `pi`, and swapping the Agent Implementation
+ * is a change to one import and one function name (ADR-0016, ADR-0026).
  *
  * There are three things here, and two of them are pure functions:
  *

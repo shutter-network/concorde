@@ -2,9 +2,9 @@
  * The User Manager, from `shared-agent-framework/users`.
  *
  * A subpath of its own, like the `pi` adapter's, so that what a deployment depends
- * on is legible from its import statements: the Signal Worker and the Db come from the
- * package root and know nothing about Users, and a deployment with no identity in it
- * imports nothing from here (ADR-0029).
+ * on is legible from its import statements: the Signal Worker comes from
+ * `shared-agent-framework/signals` and the Db from the package root, neither knows anything
+ * about Users, and a deployment with no identity in it imports nothing from here (ADR-0029).
  *
  * `createUsers` is the whole of it for an Operator: hand it the Db, a Token lifetime
  * and the servers its two route groups belong on, and it registers `agentRoutes` under
