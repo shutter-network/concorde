@@ -39,6 +39,15 @@
  *    from the generated migration and copy the constraint's entry into the new snapshot's
  *    `foreignKeys` — the `tokens_user_id_users_id_fk` entry in `migrations/users` is the
  *    same shape, plus a `schemaTo` naming the other part's schema.
+ *
+ * **Do not run this config.** The third item above is now false, and running it would
+ * write `CREATE TABLE saf_users.users` into this folder: `src/http-messenger/schema.ts`
+ * declares the foreign key in code and openly imports `../users/schema.ts`, which
+ * [ADR-0046](./docs/adr/0046-the-operator-owns-migrations.md) permits because a deployment
+ * generates one barrelled schema graph into one folder rather than a folder per part.
+ * `migrations/http-messages` already carries the identical constraint by hand, so it is
+ * correct as shipped and needs no regeneration; this file and the folder both go when the
+ * framework stops shipping migrations.
  */
 
 import { defineConfig } from "drizzle-kit";

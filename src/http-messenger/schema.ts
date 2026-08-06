@@ -7,21 +7,25 @@
  * exported for this part's own modules and are deliberately absent from the package's
  * `/http-messenger` subpath (ADR-0021, ADR-0022).
  *
- * `drizzle-kit` reads this file to generate `migrations/http-messages`, through a config
- * file of this part's own, so keep it to the table and the values it is defined in terms
- * of. Two consequences of that reading follow, and both are load-bearing:
+ * `drizzle-kit` reads this file to generate the DDL, so keep it to the table and the
+ * values it is defined in terms of. Two consequences of that reading follow:
  *
- *  - **`user_id` carries no `references`**, though it is a foreign key onto
- *    `saf_users.users.id` in the database (ADR-0036). Expressing it here would mean
- *    importing `../users/schema.ts`, and `drizzle-kit` follows imports: it would emit
- *    `CREATE TABLE saf_users.users` into *this* part's folder, which would have this part
- *    creating the User Manager's table. So the constraint is added to the generated
- *    migration by hand and the snapshot is hand-edited to match, on every regeneration,
- *    and `migrations.test.ts` scans the shipped folder for it — a forgotten addition is
- *    silent where the `CREATE SCHEMA` that must be *removed* fails loudly.
+ *  - **`user_id` carries its `references`**, and so this file imports
+ *    `../users/schema.ts`. ADR-0036 had to forbid that import: a per-part config points at
+ *    one schema file, `drizzle-kit` follows imports, and it would emit `CREATE TABLE
+ *    saf_users.users` into *this* part's folder — so the constraint was added to the
+ *    generated migration by hand instead, on every regeneration.
+ *    [ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md) removes that reason:
+ *    a deployment barrels the parts it runs into one schema graph and generates once, so
+ *    there is no other part's folder to bleed into, and the import that had to be
+ *    forbidden is exactly the import that makes the constraint free. What ADR-0036 decided
+ *    is untouched — the constraint is still the only enforcement, and the agent's 404 is
+ *    still PostgreSQL's `23503` caught. Only where it is declared moved. A deployment
+ *    running the HTTP Messenger must barrel the User Manager's schema too, or generation
+ *    references a table it does not create.
  *  - **The `check` helper below is a copy** of `src/signals/schema.ts`'s and not an
- *    import of it, for exactly the same reason: a schema file importing another part's
- *    schema file makes the generator emit that part's tables here too.
+ *    import of it. That, too, was for the reason above, and it is left a copy here only
+ *    because sharing it is a separate change from declaring the foreign key.
  *
  * A Message is **immutable** once written — no column is ever updated — and nothing
  * removes one: no delete, no TTL, no sweeper and nothing to configure, so the table grows
@@ -39,6 +43,7 @@ import {
   unique,
   uuid,
 } from "drizzle-orm/pg-core";
+import { users } from "../users/schema.ts";
 
 /**
  * The HTTP Messenger's schema, prefixed for the reason the other two are: the framework
@@ -88,13 +93,15 @@ export const messages = httpMessagesSchema.table(
      * Exactly one User — the sender when inbound, the recipient when outbound. No
      * groups and no broadcast (ADR-0008).
      *
-     * **A foreign key onto `saf_users.users.id` in the database**, added to the
-     * migration by hand for the reason in this file's header, and the only enforcement
-     * that this names a real User: the agent's 404 is PostgreSQL's `23503` caught, with
-     * no lookup in front of it (ADR-0036). It never fires a cascade, because nothing
-     * removes a User (ADR-0029).
+     * **A foreign key onto `saf_users.users.id`**, declared here rather than hand-added
+     * to a generated migration (ADR-0036, ADR-0046), and the only enforcement that this
+     * names a real User: the agent's 404 is PostgreSQL's `23503` caught, with no lookup
+     * in front of it. No `onDelete`: it never fires a cascade, because nothing removes a
+     * User (ADR-0029), so there is no behaviour worth choosing.
      */
-    userId: uuid("user_id").notNull(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
     direction: text("direction").$type<MessageDirection>().notNull(),
     /**
      * Per-User, monotonic from 1, and carried by **both** directions, which is what lets
