@@ -16,6 +16,10 @@ _Avoid_: owner, tenant, stakeholder, principal
 Whoever runs and configures a Shared Agent. Trusted by every Party: holds the agent's configuration, writes its Signal Handlers, and has the only direct access to the Agent Implementation. See [ADR-0001](./docs/adr/0001-the-gateway-is-trusted.md).
 _Avoid_: builder, host, admin, provider, owner, integrator, implementor
 
+**Developer**:
+The coding half of an Operator: whoever writes the entry point, the Signal Handlers and the Prompt templates against the framework's public API. Not a separate party or a separate trust level, and never a role in the data model. The word exists because the API reference is written for exactly this reader, where the rest of an Operator's job (holding the signing key, running the stack, owning the database) is not what an API reference speaks to. See [ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md).
+_Avoid_: user, consumer, integrator, client
+
 **Gateway**:
 The trusted application that mediates every interaction into and out of a Shared Agent. One deployable, and now a thing rather than only an assembly: a record of Components, started in the order of its keys and stopped in the reverse of it, and structurally a Component itself. It is still not a registry and not a plugin host, since it resolves nothing, injects nothing and cannot say what depends on what. The Operator's entry point still constructs and still holds. `createGateway` builds the irreducible infrastructure a deployment using our parts always needs (the Db, both self-describing servers and the Signal Worker) and hands it to the Operator's `extend`, where the opinionated parts (the User Manager, Signatures, Decisions, the HTTP Messenger) are constructed by hand, each a one-liner, and only the ones a deployment wants. `createBareGateway` takes a record of anything. See [ADR-0037](./docs/adr/0037-the-gateway-is-a-record-of-components.md), [ADR-0045](./docs/adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md) and [ADR-0020](./docs/adr/0020-producers-are-trusted-components-of-the-gateway.md).
 _Avoid_: proxy, broker, shield, warden, sidecar

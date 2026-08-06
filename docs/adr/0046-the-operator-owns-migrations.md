@@ -57,6 +57,12 @@ does not unwrap objects. This reverses ADR-0021/0022's "schemas are deliberately
 subpath": they are public API now, on a subpath named `/schema` so the encapsulation-softening
 sits behind one labelled door rather than blurring into each part's main API.
 
+> **The `/schema` subpath is superseded by
+> [ADR-0047](./0047-a-component-is-one-subpath.md).** The tables are public API, flat-exported,
+> and read by `Object.values` exactly as this section says. Only their location moved: they now
+> sit on the component's own subpath, so `shared-agent-framework/users` carries `usersSchema`
+> and `users` beside `createUsers`. Everything else below stands.
+
 **The deployment writes a barrel and a config.** A `schema.ts` that `export *`s the parts it
 runs, and a `drizzle.config.ts` pointing `schema` at that barrel. `drizzle-kit generate` then
 sees one schema graph and one `out` folder — which is what retires both hand-edits. The
