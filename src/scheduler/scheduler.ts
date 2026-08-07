@@ -29,6 +29,7 @@ import { scheduleRoutes } from "./routes.ts";
 import {
   advanceSchedule,
   asScheduleRecord,
+  assertScheduleName,
   deleteSchedule,
   earliestFireAt,
   matureOf,
@@ -145,12 +146,12 @@ export type Scheduler = Component & {
    * removed, and the record answers with a null `nextFireAt`. The Agent route refuses that same
    * case with a 400 instead, a caller in the moment being able to act on it.
    *
-   * The name is not pattern-checked here, and the Agent routes hold one to a url-safe key of at
-   * most 128 letters, digits, dots, dashes and underscores. So a name written from code outside
-   * that set is stored and listed, and cannot be read or cancelled over HTTP.
+   * Refuses a name that is not a url-safe key: at most 128 letters, digits, dots, dashes and
+   * underscores. The Agent routes' `/:name` path holds one to that same rule, so every Schedule
+   * this creates is one those routes can address.
    *
-   * @throws `ScheduleSpecError` for a cron `expr` that will not parse, a `tz` that is no IANA zone,
-   *   or a malformed `until`. Nothing is written first.
+   * @throws `ScheduleSpecError` for a name outside that set, a cron `expr` that will not parse, a
+   *   `tz` that is no IANA zone, or a malformed `until`. Nothing is written first.
    */
   schedule(input: ScheduleInput): Promise<ScheduleOutcome>;
 
@@ -329,6 +330,9 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
   // resolves to no future fire, so an Operator re-running a boot-time declaration converges instead
   // of crashing. The route runs `assertCreatable` in front of this to refuse that case loudly.
   async function doSchedule(input: ScheduleInput): Promise<ScheduleOutcome> {
+    // Before the spec: a name outside the pattern would be a Schedule the agent sees in a list and
+    // can never address.
+    assertScheduleName(input.name);
     const at = now();
     // A malformed `until`, a bad cron `expr` or an unknown `tz` throws `ScheduleSpecError` here,
     // before anything is written. `until` is a cron bound only: a `once` bounds itself by firing

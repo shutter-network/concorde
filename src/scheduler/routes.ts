@@ -33,7 +33,6 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import {
   cappedLimit,
   limitSchema,
-  nameParams,
   notFound,
   refused,
   unknownParameter,
@@ -46,7 +45,17 @@ import {
   type ScheduleRecord,
   type ScheduleSpec,
   ScheduleSpecError,
+  scheduleNamePattern,
 } from "./schedules.ts";
+
+// The params of the three routes whose path ends in a Schedule's name. The pattern is imported and
+// never copied; see `scheduleNamePattern`.
+const nameParams = {
+  type: "object",
+  properties: { name: { type: "string", pattern: scheduleNamePattern } },
+  required: ["name"],
+  additionalProperties: false,
+} as const;
 
 /**
  * What the routes need of the Scheduler, and no more.

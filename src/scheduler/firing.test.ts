@@ -343,6 +343,40 @@ describe("cancelling a Schedule", () => {
   });
 });
 
+/**
+ * The programmatic door, which is the only one a name outside the charset can reach: the params
+ * schema refuses the rest in front of a handler. `routes.test.ts` covers that half.
+ */
+describe("a Schedule's name", () => {
+  it("is refused at the call when it is not a url-safe key, so nothing unaddressable is stored", async () => {
+    clockNow = new Date(t0);
+    const instance = scheduler();
+
+    for (const name of ["morning digest!", "has space", "", "a".repeat(129), "sla/sh"]) {
+      await assert.rejects(
+        instance.schedule({ name, spec: { kind: "once", at: iso(t0 + hour) } }),
+        (error: unknown) => error instanceof ScheduleSpecError,
+        `${JSON.stringify(name)} should throw ScheduleSpecError`,
+      );
+    }
+
+    // A refusal persists nothing, so the agent's list never shows a row it cannot then address.
+    assert.deepEqual(await names(instance), []);
+  });
+
+  it("takes every name the Agent routes can address, to the length and charset they allow", async () => {
+    clockNow = new Date(t0);
+    const instance = scheduler();
+
+    const longest = "a".repeat(128);
+    for (const name of ["Digest.7", "with_under-score", longest]) {
+      await instance.schedule({ name, spec: { kind: "once", at: iso(t0 + hour) } });
+    }
+
+    assert.deepEqual((await names(instance)).sort(), ["Digest.7", longest, "with_under-score"]);
+  });
+});
+
 describe("a cron Schedule", () => {
   it("fires on each occurrence, advances, and keeps firing with the fixed kind and verbatim data", async () => {
     clockNow = new Date(t0);

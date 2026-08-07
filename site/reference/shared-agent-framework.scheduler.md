@@ -67,10 +67,10 @@ console.log(schedule.nextFireAt);
 
 ### ScheduleSpecError
 
-A cron `expr`, a `tz`, an `until` or a `once` instant the Scheduler will not accept.
+A name, a cron `expr`, a `tz`, an `until` or a `once` instant the Scheduler will not accept.
 
 Thrown by `schedule` before anything is written, so a caller learns of the mistake at creation
-rather than through a Schedule that silently never fires.
+rather than through a Schedule that silently never fires, or one the agent cannot address.
 
 The `message` is the refusal reason and is safe to show a caller: it names the value that was
 refused and nothing about the Scheduler itself. A named class rather than a bare `Error` so that
@@ -328,9 +328,9 @@ whose `until` sits at or before its next occurrence, arm nothing: any row under 
 removed, and the record answers with a null `nextFireAt`. The Agent route refuses that same
 case with a 400 instead, a caller in the moment being able to act on it.
 
-The name is not pattern-checked here, and the Agent routes hold one to a url-safe key of at
-most 128 letters, digits, dots, dashes and underscores. So a name written from code outside
-that set is stored and listed, and cannot be read or cancelled over HTTP.
+Refuses a name that is not a url-safe key: at most 128 letters, digits, dots, dashes and
+underscores. The Agent routes' `/:name` path holds one to that same rule, so every Schedule
+this creates is one those routes can address.
 
 ###### Parameters
 
@@ -344,8 +344,8 @@ that set is stored and listed, and cannot be read or cancelled over HTTP.
 
 ###### Throws
 
-`ScheduleSpecError` for a cron `expr` that will not parse, a `tz` that is no IANA zone,
-  or a malformed `until`. Nothing is written first.
+`ScheduleSpecError` for a name outside that set, a cron `expr` that will not parse, a
+  `tz` that is no IANA zone, or a malformed `until`. Nothing is written first.
 
 ##### start()
 

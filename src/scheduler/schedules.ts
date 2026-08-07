@@ -29,10 +29,10 @@ type SchedulerHandle = Handle<typeof schedulerTables>;
 const defaultZone = "UTC";
 
 /**
- * A cron `expr`, a `tz`, an `until` or a `once` instant the Scheduler will not accept.
+ * A name, a cron `expr`, a `tz`, an `until` or a `once` instant the Scheduler will not accept.
  *
  * Thrown by `schedule` before anything is written, so a caller learns of the mistake at creation
- * rather than through a Schedule that silently never fires.
+ * rather than through a Schedule that silently never fires, or one the agent cannot address.
  *
  * The `message` is the refusal reason and is safe to show a caller: it names the value that was
  * refused and nothing about the Scheduler itself. A named class rather than a bare `Error` so that
@@ -42,6 +42,27 @@ export class ScheduleSpecError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ScheduleSpecError";
+  }
+}
+
+/**
+ * What a Schedule's name may be: letters, digits, and three separators, at most 128 of them.
+ *
+ * One namespace, one rule, and this string is what both doors are built from — the refusal below,
+ * and the `/:name` params schema in `routes.ts`. Copy it into neither. PostgreSQL takes any text as
+ * a primary key without complaint, so nothing under this refuses an unbounded or
+ * control-character name, and the path segment is where such a name becomes unaddressable.
+ */
+export const scheduleNamePattern = "^[A-Za-z0-9._-]{1,128}$";
+
+const urlSafeKey = new RegExp(scheduleNamePattern);
+
+/** Refuses a name the Agent routes could not address, before anything is written. */
+export function assertScheduleName(name: string): void {
+  if (!urlSafeKey.test(name)) {
+    throw new ScheduleSpecError(
+      `the Schedule name ${JSON.stringify(name)} is not a url-safe key: letters, digits, dots, dashes and underscores, at most 128 of them`,
+    );
   }
 }
 

@@ -151,29 +151,6 @@ export const idParams = {
 } as const;
 
 /**
- * The shape of a **name** in a path, for a record addressed by a key its caller chose.
- *
- * PostgreSQL stores any text as a primary key without complaint, so an unbounded or
- * control-character name would be accepted rather than refused. The pattern bounds the length and
- * holds the name to a url-safe charset: letters, digits, and three separators.
- *
- * The Scheduler's Agent routes are the one family that addresses by name, a Schedule's identity
- * being a client-chosen key.
- */
-export const nameSchema = {
-  type: "string",
-  pattern: "^[A-Za-z0-9._-]{1,128}$",
-} as const;
-
-/** The params of a route whose path ends in one name, `/:name`. */
-export const nameParams = {
-  type: "object",
-  properties: { name: nameSchema },
-  required: ["name"],
-  additionalProperties: false,
-} as const;
-
-/**
  * Builds the hook that refuses a query parameter a route does not have.
  *
  * A hook and not the schema, because Fastify's ajv runs with `removeAdditional`.
