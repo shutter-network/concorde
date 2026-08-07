@@ -36,7 +36,7 @@ A sentence stays only if all three hold.
 | Where | Renders | Holds |
 | --- | --- | --- |
 | `docs/adr/` | no | the decision, its alternatives, and the argument |
-| `index.ts` `@module` | **yes** | the component: purpose, internals, construction, surface, lifecycle |
+| `index.ts` `@module` | **yes** | orientation: what the subpath is, what is in it, and the relationships nothing else can state |
 | implementation file header | no | what a maintainer must not undo, and why the code has this shape |
 | symbol doc comment | **yes** | that symbol, at its own altitude |
 | inline `//` | no | why this line, this index, this ordering |
@@ -61,39 +61,64 @@ Use the third person and omit the subject. Write `Signs the claims and answers w
 JWS.` Do not write `This method signs the claims.` and do not write the imperative `Sign the
 claims.`
 
-## A component's module comment
+## The module comment
 
-Seven slots, in this order. Skip a slot that is empty. Signatures stores nothing, so it has no
-slot 2.
+It orients, and it does not explain. The substance belongs on the exported symbols, which
+TypeDoc prints on the same page under their own headings. A module comment that describes them
+again is one fact maintained in two places.
 
-1. **Purpose.** What the component holds or does. Name it "the Users component". Define the
-   domain terms it owns, because there is no glossary and `CONTEXT.md` is not published.
-2. **Internals, where a caller can observe them.** What it stores, what it issues, what it
-   derives. The test is whether the fact changes what a reader expects, not whether it is
-   interesting. That a Token row carries an expiry the database clock reads is in. Which index
-   serves the lookup is not.
-3. **Construction.** `Use {@link createUsers} to make an instance, and add it to the Gateway.`
-   Nothing about the options. Add the ordering constraint only where getting it wrong costs
-   something real: `Other components take this instance as a constructor option, so make it
-   before them.`
-4. **What it adds, and what for.** Endpoints per server, tables, timers. Also what the import
-   itself adds to the Operator's program, which is where the exported tables for their
-   `drizzle-kit` barrel go, and where a type declaration like `request.safUser` goes. Every
-   clause carries its purpose. Not "registers `/auth`", but "adds endpoints to the Public
-   server, so that a User trades a password for a Token".
-5. **The API, and what each part is for.** What the instance carries that a caller reaches for.
-   Never the components that consume it: describe the surface, not somebody else's code.
-6. **Lifecycle.** What the constructor does, and what `start` and `stop` do.
-7. **What survives the lifecycle.** A Token outlives a shutdown. This gets its own paragraph
-   and is never a clause inside slot 6.
+Three jobs, and nothing else.
 
-One `@example` per subpath, at the end of the module comment. It is the only example on the
-page.
+1. **What this subpath is.** A sentence or two. Define any domain term it owns that no exported
+   type carries, because there is no glossary and `CONTEXT.md` is not published. Name a component
+   as "the Users component".
+2. **What is in here, and which one you start from.** The core type and the entry function, with
+   `{@link}`s. Not every export: the page lists those below. Neutral in tone, and not in emphasis.
+   Naming the export a reader starts from is a judgment, and it is the most useful thing on the
+   page. A comment that lists six exports evenly has made the reader rank them with less
+   information than the author had.
+3. **The relationships nothing else can state.** What this must be built before or after, and
+   what is deliberately absent and where it lives instead. No single symbol owns a relationship,
+   so this is the only content with no lower home. State a construction order only where getting
+   it wrong costs something real.
+
+Then one `@example`. It stays here rather than on the constructor because it is the fastest
+orientation on the page, and because it shows exports working together, which is job 3 written in
+code.
+
+```ts
+/**
+ * Users, the component that holds the identities a Gateway authenticates. A User is an opaque id,
+ * a set of Attributes that the Operator writes, and a set of Tokens.
+ *
+ * {@link createUsers} makes one. {@link Users} is what comes back, and it carries the methods and
+ * the `requireUser` hook that the rest of a deployment reaches for. Other components take that
+ * hook, so build this one before them.
+ *
+ * The subpath also exports the `users` and `tokens` tables, for the barrel an Operator's
+ * `drizzle-kit` reads, and importing it declares `request.safUser` on every `FastifyRequest` in
+ * the program.
+ *
+ * @example ...
+ * @module
+ */
+```
+
+The shape fits a subpath that is not a component without a special case. The root carries what
+belongs to no component, so job 2 is most of it, and a bulleted overview naming what each part is
+for is job 2 done well. `/pi` is one function an Operator calls, so job 3 carries the weight:
+what is deliberately absent, and where it lives instead.
 
 ## The other altitudes
 
 **The constructor.** One sentence on what it builds and registers. A `@throws` for each distinct
 refusal at construction. No example, and nothing about the options.
+
+**The type a constructor answers with.** `Users`, `Signatures`, `Db`. This is where the substance
+the module comment does not carry lands: what the component stores, what it issues, what it
+derives, and what survives a shutdown. Internals go in only where a caller can observe them. That
+a Token row carries an expiry the database clock reads is in. Which index serves the lookup is
+not.
 
 **An options property.** What the value means and what it changes about behavior. The values the
 type cannot express, such as a range, a unit, or a set of allowed strings. The default, and what
@@ -107,6 +132,22 @@ uncommitted write.
 
 **Anything else.** An exported type, a record shape, a plugin. Same three tests. Say what it
 represents, not that it is a type.
+
+## The implementation file header
+
+The block at the top of `users.ts`, which TypeDoc never renders. Every sentence the three tests
+reject goes here, so it carries real traffic and is not a leftover.
+
+It holds what a maintainer must not undo, and why the code has this shape: an alternative that
+was weighed and lost, a library that owns a behavior we deliberately do not reimplement, an
+ordering that is load-bearing. Where such a fact has an observable consequence, the consequence
+goes in the rendered comment and the reason stays here. `jose` checks key and algorithm
+compatibility asynchronously, so a wrong algorithm is refused at the first signing rather than at
+construction. The timing of that refusal is rendered. "Do not write a second compatibility check"
+is not.
+
+It is not a second module comment. Nothing that passes the three tests belongs here, and nothing
+here is repeated in `index.ts`.
 
 ## Tags
 
@@ -178,5 +219,7 @@ They disagree in five places, and this guide takes a side in each.
    compile them. TypeScript has no doctest here, so we take Google's shape instead: one example,
    at the top level, and none below it.
 5. **Whether a module comment lists its exports.** PEP 257 requires an enumeration. Go and Rust
-   ask for orientation and leave the index to the generator. We take Go's, because TypeDoc
-   already prints every export on the page.
+   ask for orientation and leave the index to the generator. We take Go's, which is not the same
+   as listing nothing. Go asks a package comment for "a brief overview of the most important
+   parts of the API", so a curated overview naming what each part is for is in, and a mechanical
+   inventory of every export is out. TypeDoc prints the inventory below it anyway.
