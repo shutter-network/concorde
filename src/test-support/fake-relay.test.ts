@@ -200,6 +200,33 @@ describe("the fake Relay", () => {
     });
   });
 
+  it("serves the NIP-11 document it was given, on the address the client was built with", async () => {
+    await withRelay(
+      { information: { limitation: { max_message_length: 4096 } } },
+      async (relay) => {
+        await withClient(relay, async (client) => {
+          // Asked through the client rather than with a `fetch` of our own, because the
+          // client is what derives the HTTP address from the WebSocket one — and a
+          // document served somewhere that derivation does not reach would be a fixture
+          // nothing could read.
+          const information = await client.getRelayInfo();
+          assert.equal(information?.limitation?.max_message_length, 4096);
+        });
+      },
+    );
+  });
+
+  it("advertises nothing when it was given no document, which is not an error", async () => {
+    await withRelay({}, async (relay) => {
+      await withClient(relay, async (client) => {
+        // A Relay that publishes no NIP-11 document is an ordinary Relay, so the answer
+        // is `undefined` and not a rejection — which is what lets a Channel treat it as
+        // "this Relay states no limits" rather than as a failure.
+        assert.equal(await client.getRelayInfo(), undefined);
+      });
+    });
+  });
+
   it("can be stopped and restarted, and the client re-sends the subscription it had", async () => {
     await withRelay({}, async (relay) => {
       relay.hold(note("held all along", 100));

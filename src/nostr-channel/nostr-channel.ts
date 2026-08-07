@@ -12,24 +12,45 @@
  *
  * **It is the first Component that opens a long-lived connection of its own**, so unlike the
  * other Channel its `start` and `stop` do real work: nothing connects at construction, `start`
- * builds the client and subscribes, and `stop` closes it. A stop followed by a start builds a
- * fresh client, because the library's `close` is terminal.
+ * builds the client, subscribes and listens for queued replies, and `stop` closes all three. A
+ * stop followed by a start builds a fresh client, because the library's `close` is terminal.
  *
  * **It admits nobody.** A message from a public key no `pubkeys` row names is dropped and nothing
  * whatever is stored for it, because the deployment is permissioned and an agent whose public
  * identity is known will be messaged by strangers. `recordPublicKey` is the only way in, it is
  * trusted code's alone, and it proves nothing.
+ *
+ * **Outbound is two halves and they must stay two.** `send` runs inside the caller's transaction
+ * and does everything that can be known there — the address, the wrap, its size, the row, the
+ * `NOTIFY` — and throws for anything wrong, which takes the Message with it. `drain` is the
+ * network act, and it happens after that transaction commits. Moving the publish up into `send`
+ * would either hold a transaction open across a round trip to the Relay or leave a recipient
+ * holding words the rollback erased; moving the wrap down into `drain` would turn the size bound
+ * into a queue row that fails once and stops, and would put the agent's secret key in the pump.
  */
 
 import { NRelay1 } from "@nostrify/nostrify";
 import type { NostrEvent } from "nostr-tools/core";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
-import type { Db, Handle } from "../db/index.ts";
+import type { Db, Handle, Listening } from "../db/index.ts";
 import { defaultLogger, type Logger } from "../logging.ts";
+import type { MessageRecord } from "../messenger/messages.ts";
 import type { Channel, Messenger } from "../messenger/messenger.ts";
 import type { Users } from "../users/users.ts";
-import { authenticationKind, giftWrapKind, openEnvelope } from "./envelope.ts";
-import { insertPublicKey, selectUserFor } from "./identities.ts";
+import { authenticationKind, giftWrapKind, openEnvelope, sealEnvelope } from "./envelope.ts";
+import { insertPublicKey, selectPublicKeyFor, selectUserFor } from "./identities.ts";
+import {
+  deletePublished,
+  describeRefusal,
+  MessageTooLargeError,
+  outboxChannel,
+  queueWrap,
+  recordRefusal,
+  selectUnpublished,
+  UnrecordedPublicKeyError,
+  wireSize,
+  wrapOf,
+} from "./outbound.ts";
 import { nostrChannelTables, received } from "./schema.ts";
 
 /**
@@ -39,6 +60,16 @@ import { nostrChannelTables, received } from "./schema.ts";
  * a Developer could set would only be a name they could get wrong.
  */
 const channelName = "nostr";
+
+/**
+ * How long the Relay is given to serve its own NIP-11 document before the answer is "no limit".
+ *
+ * Asked once per connection, but **awaited inside a caller's transaction**, so the bound matters:
+ * an unanswered HTTP request would otherwise hold that transaction open for as long as the
+ * operating system was willing to wait. Five seconds is far longer than a Relay that is answering
+ * needs and far shorter than a transaction should be held for.
+ */
+const relayInfoTimeoutMs = 5_000;
 
 /** Everything `createNostrChannel` needs: the Db, two Components, an identity and a Relay. */
 export type NostrChannelOptions = {
@@ -148,7 +179,54 @@ export type NostrChannel = Channel & {
   ): Promise<void>;
 
   /**
-   * Opens the connection to the Relay and subscribes to the agent's own gift wraps.
+   * Takes an outbound Message inside the transaction writing it, and **publishes nothing**.
+   *
+   * The Messenger calls this; trusted code reaches `messenger.send` instead, and gets this for
+   * free. What happens here is everything that can be known before a commit: the recipient's key
+   * is looked up on the caller's own transaction, the reply is sealed into one gift wrap, its size
+   * on the wire is compared against what the Relay advertises, and the finished wrap is queued. A
+   * failure at any of those steps is a throw that rolls the Message back with it, so a Message
+   * recorded as sent was always one that could go out.
+   *
+   * What it does **not** do is reach the Relay. The publish waits for the commit and happens in
+   * {@link NostrChannel.drain}, so a rollback after this returns leaves nobody holding words the
+   * log denies.
+   *
+   * @throws `UnrecordedPublicKeyError` if no Nostr public key is recorded for that User.
+   * @throws `MessageTooLargeError` if the wrap is larger than the Relay's advertised maximum
+   *   message length. The Relay is asked for that maximum once per connection, so a Channel that
+   *   has not started has not asked and bounds nothing: an over-long reply sent to a stopped
+   *   Channel is queued, and fails once at the next start rather than here.
+   */
+  send<TSchema extends Record<string, unknown>>(
+    tx: Handle<TSchema>,
+    message: MessageRecord,
+  ): Promise<void>;
+
+  /**
+   * Publishes every queued reply the Relay has not answered for yet, and resolves when none is
+   * left.
+   *
+   * The half of a send that happens after the commit, exposed rather than hidden so that a test
+   * can drive it without waiting on a database notification. `start` wires the notification to
+   * this same method, so nothing in a running deployment calls it.
+   *
+   * A reply the Relay accepts leaves no trace. A reply it refuses keeps its row, carrying the
+   * Relay's own reason, and is **never attempted again** — not by a later notification, and not by
+   * a later process. Nothing here throws for a refusal; a refusal is a row and a log line.
+   *
+   * A reply the Relay took but never answered for, because the process stopped or died between the
+   * two, still has its row and goes out again on the next start. Both the Relay and the
+   * recipient's client key on the event's own id, so what a User sees is still one message.
+   *
+   * It publishes nothing while the Channel is stopped. Whatever is queued then waits for the next
+   * `start`.
+   */
+  drain(): Promise<void>;
+
+  /**
+   * Opens the connection to the Relay, subscribes to the agent's own gift wraps, and publishes
+   * whatever a previous process left queued.
    *
    * Nothing connects before this. It does not wait for the connection: a Relay that is down is an
    * outage rather than a boot failure, and the client reconnects with a backoff of its own. A
@@ -157,11 +235,13 @@ export type NostrChannel = Channel & {
   start(): Promise<void>;
 
   /**
-   * Closes the connection and stops handling what arrives on it.
+   * Closes the connection and stops handling what arrives on it or what is queued for it.
    *
    * It returns once nothing is in flight, so a Message half-written when shutdown began is either
-   * committed or rolled back before the Db is closed under it. The client is discarded rather
-   * than reused, because the library's `close` is terminal; a later `start` builds a fresh one.
+   * committed or rolled back before the Db is closed under it. A publish interrupted here leaves
+   * its row untouched rather than marking it refused, so the next `start` attempts it. The client
+   * is discarded rather than reused, because the library's `close` is terminal; a later `start`
+   * builds a fresh one.
    */
   stop(): Promise<void>;
 };
@@ -228,10 +308,31 @@ export function createNostrChannel(options: NostrChannelOptions): NostrChannel {
 
   /** The live client, or `undefined` while stopped. Its presence is what `start` guards on. */
   let relay: NRelay1 | undefined;
-  /** How `stop` interrupts a read that is waiting on the Relay rather than on the Db. */
+  /** How `stop` interrupts a read or a publish that is waiting on the Relay rather than the Db. */
   let reading: AbortController | undefined;
   /** The subscription loop, so `stop` can wait for whatever it was in the middle of. */
   let subscribed: Promise<void> = Promise.resolve();
+  /** The `LISTEN` registration that turns a queued reply into a drain, held so `stop` closes it. */
+  let listening: Listening | undefined;
+  /**
+   * The drains that have been asked for, chained end to end.
+   *
+   * A queue and not a lock: two drains overlapping would each read the same unpublished rows and
+   * publish them twice, and a second caller merely awaiting the first would miss a row queued
+   * after that pass had already read. So each `drain` waits for the one before it and then makes
+   * its own pass, which is what lets a caller treat its own return as "everything I queued is
+   * dealt with".
+   */
+  let draining: Promise<void> = Promise.resolve();
+  /**
+   * What the Relay says it accepts, asked once per connection and awaited by every `send`.
+   *
+   * A promise rather than a number, because the NIP-11 document is an HTTP round trip the client
+   * makes lazily and a send must not race it. It never rejects — the client answers `undefined`
+   * for a Relay that serves no document, which is a Relay this imposes no size bound for. Reset by
+   * every `start`, since a Relay that was restarted may answer differently.
+   */
+  let advertisedLimit: Promise<number | undefined> = Promise.resolve(undefined);
 
   /**
    * The one filter this component ever asks for: gift wraps addressed to the agent.
@@ -366,20 +467,122 @@ export function createNostrChannel(options: NostrChannelOptions): NostrChannel {
     }
   }
 
+  /**
+   * The Relay's own advertised maximum message length, or `undefined` if it advertises none.
+   *
+   * The client fetches the NIP-11 document lazily and caches it, so this is one HTTP request per
+   * connection. It never rejects: every failure — no document, a malformed one, a Relay that is
+   * not answering — is `undefined`, which is honestly "this Relay states no bound" rather than a
+   * reason to refuse a send.
+   */
+  async function limitOf(client: NRelay1): Promise<number | undefined> {
+    const information = await client.getRelayInfo({
+      signal: AbortSignal.timeout(relayInfoTimeoutMs),
+    });
+    return information?.limitation?.max_message_length;
+  }
+
+  /**
+   * One queued wrap, published once: forgotten if the Relay took it, retired with a reason if not.
+   *
+   * There is no retry and no attempt cap, which is ADR-0017 applied to publishing: a row nobody
+   * cleared is a Message an Operator can see was not delivered, and a loop hiding it would make
+   * that invisible. The one thing that is *not* a refusal is a `stop`, which aborts the wait: that
+   * leaves the row exactly as it was, so the next start attempts it and nothing here is half done.
+   */
+  async function publish(
+    row: Awaited<ReturnType<typeof selectUnpublished>>[number],
+    client: NRelay1,
+    signal: AbortSignal,
+  ): Promise<void> {
+    try {
+      await client.event(wrapOf(row), { signal });
+    } catch (error) {
+      if (signal.aborted) return;
+      const reason = describeRefusal(error);
+      await recordRefusal(handle, row.eventId, reason);
+      log.error(
+        { event: row.eventId, userId: row.userId, message: row.messageId, reason },
+        "the Relay would not take a Nostr reply, and it is not being attempted again",
+      );
+      return;
+    }
+    await deletePublished(handle, row.eventId);
+    log.info({ event: row.eventId, userId: row.userId }, "a Message reached the Relay");
+  }
+
+  /** One pass over everything nothing has attempted, oldest first, one wrap at a time. */
+  async function drainOnce(): Promise<void> {
+    const client = relay;
+    const controller = reading;
+    // Stopped, so there is nowhere to publish to. Every row stays claimable for the next start,
+    // which is the same state a previous process leaves behind.
+    if (client === undefined || controller === undefined) return;
+    for (const row of await selectUnpublished(handle)) {
+      if (controller.signal.aborted) return;
+      await publish(row, client, controller.signal);
+    }
+  }
+
+  /** The public drain: this caller's own pass, behind every pass already asked for. */
+  function drain(): Promise<void> {
+    const mine = draining.then(
+      () => drainOnce(),
+      () => drainOnce(),
+    );
+    // Held without its rejection, so a pass that failed on the Db does not reject the next
+    // caller's, and so `stop` can await the tail of the chain without catching anything.
+    draining = mine.catch(() => {});
+    return mine;
+  }
+
+  /**
+   * A drain nobody is awaiting: the notification path, and the one at start.
+   *
+   * A Db failure here is logged and swallowed rather than allowed to take the process down. The
+   * rows are still there, and the next notification retries the pass — which is not a retry of a
+   * publish, since a wrap that reached the Relay has no row left to select.
+   */
+  function wakeDrain(why: string): void {
+    void drain().catch((error) => {
+      log.error(
+        { err: error, why },
+        "the Nostr Channel's outbound drain stopped short, and retries when next woken",
+      );
+    });
+  }
+
   const channel: NostrChannel = {
     name: channelName,
     publicKey,
 
     recordPublicKey: (tx, userId, offered) => insertPublicKey(tx, userId, offered),
 
-    // Outbound is issue 04's, and this refusal is what stands in for it until then. It throws
-    // rather than doing nothing, so the Messenger's row rolls back with it: a Message recorded as
-    // sent that nothing will deliver is a durable claim that somebody was told something.
-    send: async (_tx, message) => {
-      throw new Error(
-        `the Nostr Channel cannot yet carry a Message to User ${message.userId}: publishing to the Relay is not built, and nothing was recorded`,
-      );
+    // The first half of a send, and every line of it is something that can be known without
+    // touching the Relay. Each refusal throws inside the caller's transaction, which takes the
+    // Messenger's row with it: a Message recorded as sent that nothing will deliver is a durable
+    // claim that somebody was told something.
+    send: async (tx, message) => {
+      // On the caller's transaction and not this component's handle, so that an Operator who
+      // admits a User and answers them in one transaction is not refused by a read that cannot
+      // see their own uncommitted write.
+      const recipient = await selectPublicKeyFor(tx, message.userId);
+      if (recipient === undefined) throw new UnrecordedPublicKeyError(message.userId);
+
+      // Sealed here rather than in the drain, which is what turns the Relay's advertised maximum
+      // into a synchronous refusal instead of a queue row that fails once and stops — and what
+      // keeps the agent's secret key out of the half that runs after the commit.
+      const wrap = sealEnvelope(message.text, options.secretKey, recipient);
+      const bytes = wireSize(wrap);
+      const limit = await advertisedLimit;
+      if (limit !== undefined && bytes > limit) {
+        throw new MessageTooLargeError(message.userId, bytes, limit);
+      }
+
+      await queueWrap(tx, { userId: message.userId, messageId: message.id, wrap });
     },
+
+    drain,
 
     async start() {
       // A second `start` finds a client already built. Building another would leave two
@@ -393,9 +596,26 @@ export function createNostrChannel(options: NostrChannelOptions): NostrChannel {
       // both the "nothing connects at construction" rule and what that library needs.
       const client = new NRelay1(options.relayUrl, { auth: authenticate });
       relay = client;
-      // Not awaited: a Relay that is down is an outage and not a boot failure, and the client
-      // reconnects on its own. `stop` is what waits for this.
+      // Asked for now and awaited by the first `send` that needs it, so that the size bound costs
+      // a transaction nothing once the answer is in hand. Not awaited here: a Relay that is down
+      // is an outage and not a boot failure.
+      advertisedLimit = limitOf(client);
+      // Not awaited, for the same reason. `stop` is what waits for this.
       subscribed = subscribe(client, controller.signal);
+      // The outbound wakeup. A queued wrap's `NOTIFY` shares the transaction that wrote its row,
+      // so the drain is woken exactly when there is something to publish and never for a Message
+      // a rollback erased. `connected` covers the first registration and every reconnection
+      // alike: anything notified before a registration was in place was never delivered, and that
+      // includes every wrap a previous process left behind, which is what attempts them at start.
+      listening = options.db.listen(outboxChannel, {
+        notified: () => wakeDrain("notification"),
+        connected: () => wakeDrain("listening"),
+        lost: (error) =>
+          log.warn(
+            { err: error, channel: outboxChannel },
+            "the Nostr Channel's outbound notifications dropped; reconnecting, and a queued reply waits until they are back",
+          ),
+      });
     },
 
     async stop() {
@@ -403,11 +623,20 @@ export function createNostrChannel(options: NostrChannelOptions): NostrChannel {
       relay = undefined;
       reading?.abort();
       reading = undefined;
+      // Closed before either wait, so that nothing new is woken while what is in flight finishes.
+      if (listening !== undefined) {
+        await listening.close();
+        listening = undefined;
+      }
       if (client !== undefined) await closeRelay(client);
       // After the close, so that whatever was mid-transaction when the socket went finishes
-      // before the Db is stopped under it.
+      // before the Db is stopped under it. The drain is waited for too: its own abort makes an
+      // in-flight publish return without writing, and this is what makes that "returned".
       await subscribed;
       subscribed = Promise.resolve();
+      await draining;
+      draining = Promise.resolve();
+      advertisedLimit = Promise.resolve(undefined);
     },
   };
 

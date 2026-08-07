@@ -52,7 +52,9 @@ const confinements = [
   { library: "pg", specifier: "pg", owner: "db" },
   { library: "jose", specifier: "jose", owner: "signatures" },
   { library: "nostr-tools", specifier: "nostr-tools", owner: "nostr-channel" },
+  { library: "nostr-tools/core", specifier: "nostr-tools/core", owner: "nostr-channel" },
   { library: "nostr-tools/pure", specifier: "nostr-tools/pure", owner: "nostr-channel" },
+  { library: "nostr-tools/nip17", specifier: "nostr-tools/nip17", owner: "nostr-channel" },
   { library: "nostr-tools/nip44", specifier: "nostr-tools/nip44", owner: "nostr-channel" },
   { library: "@nostrify/nostrify", specifier: "@nostrify/nostrify", owner: "nostr-channel" },
 ] as const;

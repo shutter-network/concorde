@@ -15,15 +15,22 @@
  * and surfaces in a deployment. A bug traced to one should be fixed by making this
  * wrong in the same way a real Relay is, not by working around it in the Channel.
  *
- * What it does **not** do, because nothing needs it yet: no NIP-11 document over HTTP,
- * so a client asking for the Relay's own limits gets nothing; no replaceable-event
- * semantics, so a second kind 10050 is a second stored event rather than a replacement;
- * no `COUNT`, and no NIP-50 search.
+ * It serves a **NIP-11 document over HTTP** on the same address, when it is given one:
+ * a client that asks what this Relay accepts gets the answer, which is how the outbound
+ * size bound is exercised at all. Given none, it answers the way `ws` answers any
+ * ordinary request — `426 Upgrade Required` — which is a Relay that advertises nothing
+ * and is the other case worth testing.
+ *
+ * What it does **not** do, because nothing needs it yet: it enforces nothing it
+ * advertises, so an over-long message is refused by the Channel and never by this; no
+ * replaceable-event semantics, so a second kind 10050 is a second stored event rather
+ * than a replacement; no `COUNT`, and no NIP-50 search.
  *
  * `src/test-support` is excluded from the build, so none of this ships.
  */
 
 import { randomUUID } from "node:crypto";
+import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { type Filter, matchFilters, type Event as NostrEvent, verifyEvent } from "nostr-tools";
 import { type RawData, WebSocket, WebSocketServer } from "ws";
@@ -44,9 +51,32 @@ export type FakeRelayAuth =
    */
   | "on-demand";
 
+/**
+ * What a Relay says about itself in its NIP-11 document, narrowed to the one field
+ * anything here reads.
+ *
+ * `limitation.max_message_length` bounds the whole JSON message a client sends, not the
+ * event inside it, which is what makes it the number an outbound wrap is measured
+ * against.
+ */
+export type FakeRelayInformation = {
+  readonly limitation?: {
+    readonly max_message_length?: number;
+  };
+};
+
 export type FakeRelayOptions = {
   /** Defaults to `"none"`. */
   readonly auth?: FakeRelayAuth;
+  /**
+   * The NIP-11 document served over HTTP at the same address, or none.
+   *
+   * Omitted, an ordinary HTTP request gets `426 Upgrade Required`, which is what a Relay
+   * that publishes no document looks like to a client asking for one. Advertised limits
+   * are advertised only: nothing here enforces them, because what is under test is a
+   * client that refuses before it sends.
+   */
+  readonly information?: FakeRelayInformation;
   /**
    * The most stored events one subscription is served, however many match.
    *
@@ -61,6 +91,15 @@ export type FakeRelayOptions = {
    * authentication and signature verification.
    */
   readonly refuse?: (event: NostrEvent) => string | undefined;
+  /**
+   * Answers `true` for a publish this Relay takes and then says **nothing** about.
+   *
+   * A real Relay under load does exactly this, and it is the only way to hold a client
+   * inside its own publish long enough for a test to do something to it. The frame is
+   * recorded, so `received` shows the attempt; nothing is stored and no `OK` is sent, so
+   * the client waits. Called after the same authentication and verification `refuse` is.
+   */
+  readonly stall?: (event: NostrEvent) => boolean;
 };
 
 /** One message a client sent, as the Relay saw it. */
@@ -127,6 +166,9 @@ export async function startFakeRelay(options: FakeRelayOptions = {}): Promise<Fa
   const connections = new Set<Connection>();
 
   let server: WebSocketServer | undefined;
+  // Held beside the WebSocket server rather than left to it, because the NIP-11 document
+  // is an ordinary HTTP response on the same port and `ws` only handles the upgrade.
+  let http: Server | undefined;
   let opened = 0;
   // Zero until the first listen, and the assigned port from then on, which is what
   // makes `url` outlive a stop.
@@ -222,6 +264,8 @@ export async function startFakeRelay(options: FakeRelayOptions = {}): Promise<Fa
       send(connection, ["OK", event.id, false, "invalid: the signature does not check out"]);
       return;
     }
+    // Taken and never spoken of again, which leaves the client waiting inside `event`.
+    if (options.stall?.(event) === true) return;
     const reason = options.refuse?.(event);
     if (reason !== undefined) {
       send(connection, ["OK", event.id, false, reason]);
@@ -325,32 +369,55 @@ export async function startFakeRelay(options: FakeRelayOptions = {}): Promise<Fa
 
   async function start(): Promise<void> {
     if (server !== undefined) return;
-    const next = new WebSocketServer({ host: "127.0.0.1", port });
+    // The HTTP server is ours, so that a plain request can be answered with the NIP-11
+    // document while `ws` keeps the upgrade. Built with `{ server }`, `WebSocketServer`
+    // listens for `upgrade` on it and leaves every other request to this handler.
+    const site = createServer((_request, response) => {
+      if (options.information === undefined) {
+        // What `ws` answers by default when it owns the port, so "no document" here is
+        // the same thing a WebSocket-only Relay is.
+        response.writeHead(426, { "content-type": "text/plain" });
+        response.end("Upgrade Required");
+        return;
+      }
+      response.writeHead(200, { "content-type": "application/nostr+json" });
+      response.end(JSON.stringify(options.information));
+    });
+    const next = new WebSocketServer({ server: site });
     next.on("connection", onConnection);
     await new Promise<void>((listening, failed) => {
       const settle = (error?: Error): void => {
-        next.off("listening", ready);
-        next.off("error", broke);
+        site.off("listening", ready);
+        site.off("error", broke);
         error === undefined ? listening() : failed(error);
       };
       const ready = (): void => settle();
       const broke = (error: Error): void => settle(error);
-      next.once("listening", ready);
-      next.once("error", broke);
+      site.once("listening", ready);
+      site.once("error", broke);
+      site.listen(port, "127.0.0.1");
     });
-    port = (next.address() as AddressInfo).port;
+    port = (site.address() as AddressInfo).port;
     server = next;
+    http = site;
   }
 
   async function stop(): Promise<void> {
     const current = server;
-    if (current === undefined) return;
+    const site = http;
+    if (current === undefined || site === undefined) return;
     server = undefined;
+    http = undefined;
     // Terminate rather than close: an Operator's Relay going away is abrupt, and a
     // close handshake would leave the test waiting on the client to answer it.
     for (const socket of current.clients) socket.terminate();
     connections.clear();
     await new Promise<void>((closed) => current.close(() => closed()));
+    // `closeAllConnections` as well as `close`, because a kept-alive HTTP connection
+    // from a NIP-11 fetch would otherwise hold the port until it timed out — and the
+    // port is what a restart rebinds.
+    site.closeAllConnections();
+    await new Promise<void>((closed) => site.close(() => closed()));
   }
 
   await start();

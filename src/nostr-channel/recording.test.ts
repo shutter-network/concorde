@@ -202,8 +202,11 @@ describe("what the Nostr Channel exposes, and what it deliberately does not", ()
   it("carries no method but the one that records a key, and no route plugin", async () => {
     // The whole public surface of the object an Operator holds. `recordPublicKey` is the only
     // trusted-code method; everything else this component does, it does for the Relay or for the
-    // Messenger. A route plugin among these would be a door onto admission.
+    // Messenger. `drain` is the exception that proves it: a testing seam onto the half of a send
+    // that happens after the commit, which a running deployment reaches by notification and never
+    // by hand. A route plugin among these would be a door onto admission.
     assert.deepEqual(Object.keys(channel).sort(), [
+      "drain",
       "name",
       "publicKey",
       "recordPublicKey",

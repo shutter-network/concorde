@@ -7,16 +7,22 @@
  * own `nip59.wrapEvent` builds only the honest one — `createRumor` overwrites the author with the
  * sender's own key — so the layers are assembled here instead, out of the same primitives.
  *
- * Nothing here is a production interface and nothing in `src/nostr-channel` imports it. It is a
- * **sender**, which is the other side of the wire from the component under test: everything it
- * builds is an ordinary event a real client could have published, and it reaches the Channel
- * through the fake Relay rather than through any seam.
+ * Nothing here is a production interface and nothing in `src/nostr-channel` imports it. It is the
+ * **other end of the wire** from the component under test — a User's own Nostr client, in both
+ * directions: everything it builds is an ordinary event a real client could have published, and
+ * everything it reads it reads the way a real client reads a reply, over the same two layers.
+ * Nothing reaches the Channel except through the fake Relay.
+ *
+ * `readDirectMessage` is written out here rather than taken from `nostr-tools`' `unwrapEvent` for
+ * the reason the Channel writes its own: that function discards the seal, and the seal's author is
+ * the whole of what says the agent wrote a reply. A test that could not see it could not tell an
+ * answer from the agent apart from an answer from anybody.
  *
  * `src/test-support` is excluded from the build, so none of this ships.
  */
 
 import type { NostrEvent } from "nostr-tools/core";
-import { encrypt, getConversationKey } from "nostr-tools/nip44";
+import { decrypt, encrypt, getConversationKey } from "nostr-tools/nip44";
 import { finalizeEvent, generateSecretKey, getEventHash, getPublicKey } from "nostr-tools/pure";
 
 /** NIP-59's seal, NIP-17's chat message, and NIP-59's gift wrap. */
@@ -133,6 +139,41 @@ export function wrapFor(
     createdAt,
     oneTimeKey,
   );
+}
+
+/** What a recipient's client gets out of a gift wrap addressed to it. */
+export type ReadMessage = {
+  /**
+   * Who sealed it, which is the only authenticated identity in the envelope: the gift wrap is
+   * signed by a throwaway key and the rumor inside is not signed at all.
+   */
+  readonly sealAuthor: string;
+  /** The inner message, exactly as it was sealed. */
+  readonly rumor: Rumor;
+};
+
+/**
+ * Opens a gift wrap the way the recipient's own client does, in the same two explicit steps.
+ *
+ * Answers `undefined` when either layer will not decrypt under this key, which is how a test asks
+ * "and nobody else can read it": handed the wrong secret key, this is the same nothing a stranger
+ * intercepting the event would get.
+ */
+export function readDirectMessage(
+  wrap: NostrEvent,
+  recipientSecretKey: Uint8Array,
+): ReadMessage | undefined {
+  try {
+    const seal = JSON.parse(
+      decrypt(wrap.content, getConversationKey(recipientSecretKey, wrap.pubkey)),
+    ) as NostrEvent;
+    const rumor = JSON.parse(
+      decrypt(seal.content, getConversationKey(recipientSecretKey, seal.pubkey)),
+    ) as Rumor;
+    return { sealAuthor: seal.pubkey, rumor };
+  } catch {
+    return undefined;
+  }
 }
 
 /**

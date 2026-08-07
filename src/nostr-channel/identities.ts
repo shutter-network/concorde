@@ -1,9 +1,10 @@
 /**
- * The two statements the public-key mapping is made of: one insert, and one lookup.
+ * The three statements the public-key mapping is made of: one insert, and one lookup each way.
  *
- * The insert is the Operator's, from their own code and inside their own transaction. The lookup
+ * The insert is the Operator's, from their own code and inside their own transaction. One lookup
  * is the inbound path's, turning the author of a decrypted message into a User id — or into
- * nothing at all, which is how a stranger is dropped.
+ * nothing at all, which is how a stranger is dropped. The other is the outbound path's, turning a
+ * User into the key a reply is addressed to — or into nothing, which is how a send refuses.
  *
  * A public key here **proves nothing**, in exactly the sense the User Manager's `setPassword`
  * proves nothing: the Operator established out of band that this key belongs to this person, and
@@ -122,6 +123,26 @@ export async function selectUserFor(
     .where(eq(pubkeys.pubkey, publicKey))
     .limit(1);
   return row?.userId;
+}
+
+/**
+ * The public key one User's replies are addressed to, or `undefined` when nobody recorded one.
+ *
+ * On the caller's handle and widened over its schema, because this read happens **inside the
+ * transaction the Message is being written in**: an Operator who admits a User and answers them in
+ * one transaction would otherwise be refused by a read that cannot see their own uncommitted
+ * `recordPublicKey`.
+ */
+export async function selectPublicKeyFor<TSchema extends Record<string, unknown>>(
+  handle: Handle<TSchema>,
+  userId: string,
+): Promise<string | undefined> {
+  const [row] = await handle
+    .select({ pubkey: pubkeys.pubkey })
+    .from(pubkeys)
+    .where(eq(pubkeys.userId, userId))
+    .limit(1);
+  return row?.pubkey;
 }
 
 /**

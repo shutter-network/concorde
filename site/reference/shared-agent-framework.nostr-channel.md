@@ -18,11 +18,20 @@ keeps working unchanged.
 **One Channel per Messenger**, refused at registration, so a deployment runs Nostr or HTTP and
 not both. That is why `example/` keeps HTTP and there is no Nostr section in the quickstart.
 
+**A reply travels in two steps, and the split is the design.** `messenger.send` runs the
+Channel's own `send` inside the Operator's transaction, where the recipient's key is resolved,
+the reply is sealed into one gift wrap, its size is compared against what the Relay advertises,
+and the wrap is queued. Anything wrong there throws and takes the Message with it, so nothing
+claims to have been sent. The publish itself waits for that transaction to commit and happens in
+`drain`. A reply the Relay refuses keeps its queue row with the Relay's own reason on it and is
+never attempted again, so `select * from saf_nostr.outbox where reason is not null` answers "why
+did she not get it" with no API and no log trawl.
+
 `recordPublicKey` is the one method trusted code calls, and it proves nothing: the Operator
 establishes out of band that a key is a person's, and no route anywhere records one, so an
-injected prompt cannot claim a User's key (ADR-0049). This subpath also carries the two tables.
-Barrel `shared-agent-framework/users` beside it, because `pubkeys.user_id` references the User
-Manager's table.
+injected prompt cannot claim a User's key (ADR-0049). This subpath also carries the three tables.
+Barrel `shared-agent-framework/users` beside it, because `pubkeys.user_id` and `outbox.user_id`
+reference the User Manager's table.
 
 The Nostr identity is a **second** keypair, secp256k1 where the signing identity is Ed25519, and
 it cannot be that key or become it (ADR-0050). The framework parses no key material: the
@@ -120,6 +129,58 @@ Error.constructor
 
 ***
 
+### MessageTooLargeError
+
+The finished wrap is larger than the Relay said it accepts.
+
+Thrown inside the caller's transaction and before the Message row survives, so an over-long
+reply is a refusal at the call site rather than a queue row that fails once and stops. What is
+measured is the whole client message and not the reply, because sealing it more than doubles its
+length. The maximum is read from the Relay's own NIP-11 document, so a Relay that advertises
+none is a Relay this is never thrown for, and an over-long reply is then whatever that Relay
+does with it.
+
+#### Extends
+
+- `Error`
+
+#### Constructors
+
+##### Constructor
+
+```ts
+new MessageTooLargeError(
+   userId, 
+   bytes, 
+   limit): MessageTooLargeError;
+```
+
+###### Parameters
+
+###### userId
+
+`string`
+
+###### bytes
+
+`number`
+
+###### limit
+
+`number`
+
+###### Returns
+
+[`MessageTooLargeError`](#messagetoolargeerror)
+
+###### Overrides
+
+```ts
+Error.constructor
+```
+
+***
+
 ### NoSuchUserError
 
 No User has that id: PostgreSQL's `23503`, which is the foreign key catching a wrong id.
@@ -198,6 +259,45 @@ new PublicKeyConflictError(userId, publicKey): PublicKeyConflictError;
 Error.constructor
 ```
 
+***
+
+### UnrecordedPublicKeyError
+
+The User has no Nostr public key recorded, so there is no address to answer them at.
+
+Thrown inside the caller's transaction and **before the Message row survives**, which is the
+point: a Message recorded as sent that nothing can deliver is a durable claim that somebody was
+told something. The Operator records a key from their own trusted code, out of band, so this is
+an admission that never happened rather than a transient failure to retry.
+
+#### Extends
+
+- `Error`
+
+#### Constructors
+
+##### Constructor
+
+```ts
+new UnrecordedPublicKeyError(userId): UnrecordedPublicKeyError;
+```
+
+###### Parameters
+
+###### userId
+
+`string`
+
+###### Returns
+
+[`UnrecordedPublicKeyError`](#unrecordedpublickeyerror)
+
+###### Overrides
+
+```ts
+Error.constructor
+```
+
 ## Type Aliases
 
 ### NostrChannel
@@ -205,7 +305,9 @@ Error.constructor
 ```ts
 type NostrChannel = Channel & {
   publicKey: string;
+  drain: () => Promise<void>;
   recordPublicKey: <TSchema>(tx, userId, publicKey) => Promise<void>;
+  send: <TSchema>(tx, message) => Promise<void>;
   start: () => Promise<void>;
   stop: () => Promise<void>;
 };
@@ -238,6 +340,34 @@ holds the old one (ADR-0050).
 
 Hex and not an `npub`, for the reason there is no `nsec` decoder either. An Operator who
 wants the human-facing form calls `nip19.npubEncode` themselves.
+
+##### drain()
+
+```ts
+drain(): Promise<void>;
+```
+
+Publishes every queued reply the Relay has not answered for yet, and resolves when none is
+left.
+
+The half of a send that happens after the commit, exposed rather than hidden so that a test
+can drive it without waiting on a database notification. `start` wires the notification to
+this same method, so nothing in a running deployment calls it.
+
+A reply the Relay accepts leaves no trace. A reply it refuses keeps its row, carrying the
+Relay's own reason, and is **never attempted again** — not by a later notification, and not by
+a later process. Nothing here throws for a refusal; a refusal is a row and a log line.
+
+A reply the Relay took but never answered for, because the process stopped or died between the
+two, still has its row and goes out again on the next start. Both the Relay and the
+recipient's client key on the event's own id, so what a User sees is still one message.
+
+It publishes nothing while the Channel is stopped. Whatever is queued then waits for the next
+`start`.
+
+###### Returns
+
+`Promise`\<`void`\>
 
 ##### recordPublicKey()
 
@@ -301,13 +431,64 @@ there is no rotation here, in the same sense that there is none for either ident
 `PublicKeyConflictError` if that key belongs to another User, or that User already
   has one. The insert runs in a savepoint, so no refusal aborts the caller's transaction.
 
+##### send()
+
+```ts
+send<TSchema>(tx, message): Promise<void>;
+```
+
+Takes an outbound Message inside the transaction writing it, and **publishes nothing**.
+
+The Messenger calls this; trusted code reaches `messenger.send` instead, and gets this for
+free. What happens here is everything that can be known before a commit: the recipient's key
+is looked up on the caller's own transaction, the reply is sealed into one gift wrap, its size
+on the wire is compared against what the Relay advertises, and the finished wrap is queued. A
+failure at any of those steps is a throw that rolls the Message back with it, so a Message
+recorded as sent was always one that could go out.
+
+What it does **not** do is reach the Relay. The publish waits for the commit and happens in
+[NostrChannel.drain](#nostrchannel), so a rollback after this returns leaves nobody holding words the
+log denies.
+
+###### Type Parameters
+
+###### TSchema
+
+`TSchema` *extends* `Record`\<`string`, `unknown`\>
+
+###### Parameters
+
+###### tx
+
+[`Handle`](shared-agent-framework.md#handle)\<`TSchema`\>
+
+###### message
+
+[`MessageRecord`](shared-agent-framework.messenger.md#messagerecord)
+
+###### Returns
+
+`Promise`\<`void`\>
+
+###### Throws
+
+`UnrecordedPublicKeyError` if no Nostr public key is recorded for that User.
+
+###### Throws
+
+`MessageTooLargeError` if the wrap is larger than the Relay's advertised maximum
+  message length. The Relay is asked for that maximum once per connection, so a Channel that
+  has not started has not asked and bounds nothing: an over-long reply sent to a stopped
+  Channel is queued, and fails once at the next start rather than here.
+
 ##### start()
 
 ```ts
 start(): Promise<void>;
 ```
 
-Opens the connection to the Relay and subscribes to the agent's own gift wraps.
+Opens the connection to the Relay, subscribes to the agent's own gift wraps, and publishes
+whatever a previous process left queued.
 
 Nothing connects before this. It does not wait for the connection: a Relay that is down is an
 outage rather than a boot failure, and the client reconnects with a backoff of its own. A
@@ -323,11 +504,13 @@ second `start` finds a client already built and does nothing.
 stop(): Promise<void>;
 ```
 
-Closes the connection and stops handling what arrives on it.
+Closes the connection and stops handling what arrives on it or what is queued for it.
 
 It returns once nothing is in flight, so a Message half-written when shutdown began is either
-committed or rolled back before the Db is closed under it. The client is discarded rather
-than reused, because the library's `close` is terminal; a later `start` builds a fresh one.
+committed or rolled back before the Db is closed under it. A publish interrupted here leaves
+its row untouched rather than marking it refused, so the next `start` attempts it. The client
+is discarded rather than reused, because the library's `close` is terminal; a later `start`
+builds a fresh one.
 
 ###### Returns
 
@@ -448,6 +631,8 @@ that same object.
 
 ```ts
 const nostrChannelTables: {
+  outbox: PgTableWithColumns<{
+  }>;
   pubkeys: PgTableWithColumns<{
   }>;
   received: PgTableWithColumns<{
@@ -460,6 +645,29 @@ Everything the Nostr Channel keeps, as `db.handle` wants it.
 One object, so every module of this component asks for the same handle by the same name.
 
 #### Type Declaration
+
+##### outbox
+
+```ts
+outbox: PgTableWithColumns<{
+}>;
+```
+
+Every gift wrap that is owed to the Relay, or that the Relay refused.
+
+**This table is the seam between the two halves of a send.** A publish cannot be rolled back and
+a transaction can, so the whole wrap is built and stored inside the caller's transaction, and
+the network act happens after that transaction commits. A row is therefore a durable claim that
+a Message was accepted for delivery, written in the same transaction as the Message itself: a
+rollback loses both, and no recipient holds words the log denies.
+
+The row is deleted when the Relay accepts the wrap, so a healthy deployment keeps this table
+empty. A row carrying a `reason` is one the Relay refused, and it is **never attempted again**.
+Recovering it is an Operator replaying the row by hand, and this table is where retries, backoff
+and an attempt cap would land if they were ever wanted.
+
+So `select * from saf_nostr.outbox where reason is not null` is the whole answer to "why did she
+not get it", and it needs no API.
 
 ##### pubkeys
 
@@ -505,6 +713,31 @@ dropped and nothing whatever is stored for it, so a stranger who learns the agen
 identity cannot grow this table. That also means such an envelope is harmlessly re-dropped on
 every connect. The table is therefore the same order of magnitude as the Message log, and
 nothing prunes it.
+
+***
+
+### outbox
+
+```ts
+const outbox: PgTableWithColumns<{
+}>;
+```
+
+Every gift wrap that is owed to the Relay, or that the Relay refused.
+
+**This table is the seam between the two halves of a send.** A publish cannot be rolled back and
+a transaction can, so the whole wrap is built and stored inside the caller's transaction, and
+the network act happens after that transaction commits. A row is therefore a durable claim that
+a Message was accepted for delivery, written in the same transaction as the Message itself: a
+rollback loses both, and no recipient holds words the log denies.
+
+The row is deleted when the Relay accepts the wrap, so a healthy deployment keeps this table
+empty. A row carrying a `reason` is one the Relay refused, and it is **never attempted again**.
+Recovering it is an Operator replaying the row by hand, and this table is where retries, backoff
+and an attempt cap would land if they were ever wanted.
+
+So `select * from saf_nostr.outbox where reason is not null` is the whole answer to "why did she
+not get it", and it needs no API.
 
 ***
 

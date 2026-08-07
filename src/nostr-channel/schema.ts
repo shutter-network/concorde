@@ -1,5 +1,5 @@
 /**
- * The Nostr Channel's tables: `pubkeys` and `received`, in the `saf_nostr` schema.
+ * The Nostr Channel's tables: `pubkeys`, `received` and `outbox`, in the `saf_nostr` schema.
  *
  * Public API, re-exported from `shared-agent-framework/nostr-channel`. An Operator barrels that
  * subpath into their own `schema.ts` and generates their DDL from it. Keep this file to the
@@ -7,8 +7,9 @@
  *
  * **No Message is here.** The log is the Messenger's, whichever medium a Message travelled by
  * ([ADR-0048](../../docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)).
- * What this Channel keeps is the two things only it can know: which Nostr public key is which
- * User, and which envelopes it has already turned into Messages
+ * What this Channel keeps is the three things only it can know: which Nostr public key is which
+ * User, which envelopes it has already turned into Messages, and which wraps are still owed to
+ * the Relay
  * ([ADR-0049](../../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)).
  *
  * `pubkeys.user_id` is a foreign key onto `saf_users.users.id`, so this module imports the User
@@ -105,8 +106,87 @@ export const received = nostrChannelSchema.table("received", {
 });
 
 /**
+ * Every gift wrap that is owed to the Relay, or that the Relay refused.
+ *
+ * **This table is the seam between the two halves of a send.** A publish cannot be rolled back and
+ * a transaction can, so the whole wrap is built and stored inside the caller's transaction, and
+ * the network act happens after that transaction commits. A row is therefore a durable claim that
+ * a Message was accepted for delivery, written in the same transaction as the Message itself: a
+ * rollback loses both, and no recipient holds words the log denies.
+ *
+ * The row is deleted when the Relay accepts the wrap, so a healthy deployment keeps this table
+ * empty. A row carrying a `reason` is one the Relay refused, and it is **never attempted again**.
+ * Recovering it is an Operator replaying the row by hand, and this table is where retries, backoff
+ * and an attempt cap would land if they were ever wanted.
+ *
+ * So `select * from saf_nostr.outbox where reason is not null` is the whole answer to "why did she
+ * not get it", and it needs no API.
+ */
+export const outbox = nostrChannelSchema.table("outbox", {
+  /**
+   * The gift wrap's own event id: 32 bytes as 64 lowercase hex characters.
+   *
+   * The primary key, so the same wrap cannot be queued twice. It is also what the Relay
+   * acknowledges by, which is what makes a publish and the delete that follows it name one thing.
+   */
+  eventId: text("event_id").primaryKey(),
+  /**
+   * The User this wrap is addressed to, and the column an Operator filters by.
+   *
+   * A foreign key onto `saf_users.users.id`, like `pubkeys.user_id`. It is not the recipient's
+   * Nostr public key: that is inside the wrap, where the Relay cannot read it either.
+   */
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  /**
+   * The Message in the log that this wrap carries, so an Operator can read what was not delivered.
+   *
+   * Deliberately **not** a foreign key onto `saf_messenger.messages.id`. The wrap is opaque, so
+   * this id is the only route from a stuck row back to the words, and a plain column answers that
+   * with one join. A constraint would add a third cross-schema reference to a value written in the
+   * same transaction as the row it names, out of a record this component was just handed.
+   */
+  messageId: uuid("message_id").notNull(),
+  /**
+   * The finished gift wrap, as the JSON that goes on the wire.
+   *
+   * Stored whole and byte for byte, which is what keeps key material out of the publishing half:
+   * the wrap was sealed and signed inside the transaction, so nothing after the commit needs the
+   * agent's secret key to send it. It is encrypted to the recipient, so this column tells the
+   * Operator nothing about what it says.
+   */
+  wrap: text("wrap").notNull(),
+  /**
+   * Why the Relay refused it, in the Relay's own words, or `null` while nothing has retired it.
+   *
+   * NIP-01 prefixes an `OK` message's reason with a machine-readable word — `blocked:`,
+   * `rate-limited:`, `invalid:`, `auth-required:` — so "the Relay was down" and "the Relay refused
+   * this" are distinguishable without parsing prose.
+   *
+   * **`null` is what the publishing half selects on**, and that is what makes "never attempted
+   * again" hold across a notification, a restart and a stop and start alike. `null` is therefore
+   * "still owed" rather than "never tried": a publish a shutdown interrupted leaves the row
+   * exactly as the transaction wrote it, so that the next start owes it rather than reading it as
+   * spent.
+   */
+  reason: text("reason"),
+  /**
+   * When the transaction that accepted the Message wrote this row.
+   *
+   * `clock_timestamp()` and not `now()`, which is the transaction's start time. Two wraps queued
+   * in one transaction would share that exactly, and this column is the publishing order.
+   */
+  queuedAt: timestamp("queued_at", { withTimezone: true })
+    .notNull()
+    .default(sql`clock_timestamp()`),
+  /** When the Relay refused it, and `null` for as long as `reason` is. */
+  failedAt: timestamp("failed_at", { withTimezone: true }),
+});
+
+/**
  * Everything the Nostr Channel keeps, as `db.handle` wants it.
  *
  * One object, so every module of this component asks for the same handle by the same name.
  */
-export const nostrChannelTables = { pubkeys, received };
+export const nostrChannelTables = { pubkeys, received, outbox };

@@ -31,8 +31,16 @@
  * Nothing here throws and nothing here touches the database. Every refusal is an `Opened` with a
  * reason on it, which the Channel logs and drops, because a thrown error would end the
  * subscription and one malformed event would then cost every later message.
+ *
+ * **The other direction is one call, and it is the library's.** There is no `MUST` to express when
+ * sealing — a rumor the agent wrote carries the agent's own key by construction — so `sealEnvelope`
+ * below is `nostr-tools`' own NIP-17 wrap, and what this file adds to it is the decision about
+ * *which* of its two entry points is used. Both halves are here so that the seal and the unwrap
+ * cannot drift apart into two files nobody reads together.
  */
 
+import type { NostrEvent } from "nostr-tools/core";
+import { wrapEvent } from "nostr-tools/nip17";
 import { decrypt, getConversationKey } from "nostr-tools/nip44";
 
 /** NIP-59's seal: the sender's signed envelope around the rumor, with no tags at all. */
@@ -114,6 +122,34 @@ export function openEnvelope(
   if (rumor.kind !== chatKind) return { ok: false, reason: `the rumor is kind ${rumor.kind}` };
 
   return { ok: true, rumor };
+}
+
+/**
+ * Seals one reply for one recipient and answers with the single gift wrap that goes on the wire.
+ *
+ * **One wrap, not two.** `wrapManyEvents` produces a second wrap addressed to the sender, so that a
+ * client can recover its own sent messages from a Relay. The agent's record of what it said is the
+ * Message log, so the self-copy would halve nothing and put the agent's own events on the agent's
+ * own subscription. `wrapEvent` is therefore the entry point, and that is a decision rather than a
+ * shortcut (ADR-0049).
+ *
+ * Nothing about the result is dated now. NIP-59 randomises both the seal's and the wrap's
+ * `created_at` up to two days into the past, which is what hides when the agent answered from
+ * anyone reading the Relay — and, incidentally, what keeps the published event out of the future,
+ * which some Relays refuse outright. Only the rumor inside carries the real time, where nobody but
+ * the recipient can read it.
+ *
+ * @param text What the agent is saying, as the Messenger's log holds it.
+ * @param secretKey The agent's own 32 raw bytes, which seal and sign the inner layers.
+ * @param recipientPublicKey The recipient in lowercase hex. It is the only `p` tag on the wrap, so
+ *   nothing readable by the Relay names anybody else.
+ */
+export function sealEnvelope(
+  text: string,
+  secretKey: Uint8Array,
+  recipientPublicKey: string,
+): NostrEvent {
+  return wrapEvent(secretKey, { publicKey: recipientPublicKey }, text);
 }
 
 /**

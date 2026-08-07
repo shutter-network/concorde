@@ -17,11 +17,20 @@
  * **One Channel per Messenger**, refused at registration, so a deployment runs Nostr or HTTP and
  * not both. That is why `example/` keeps HTTP and there is no Nostr section in the quickstart.
  *
+ * **A reply travels in two steps, and the split is the design.** `messenger.send` runs the
+ * Channel's own `send` inside the Operator's transaction, where the recipient's key is resolved,
+ * the reply is sealed into one gift wrap, its size is compared against what the Relay advertises,
+ * and the wrap is queued. Anything wrong there throws and takes the Message with it, so nothing
+ * claims to have been sent. The publish itself waits for that transaction to commit and happens in
+ * `drain`. A reply the Relay refuses keeps its queue row with the Relay's own reason on it and is
+ * never attempted again, so `select * from saf_nostr.outbox where reason is not null` answers "why
+ * did she not get it" with no API and no log trawl.
+ *
  * `recordPublicKey` is the one method trusted code calls, and it proves nothing: the Operator
  * establishes out of band that a key is a person's, and no route anywhere records one, so an
- * injected prompt cannot claim a User's key (ADR-0049). This subpath also carries the two tables.
- * Barrel `shared-agent-framework/users` beside it, because `pubkeys.user_id` references the User
- * Manager's table.
+ * injected prompt cannot claim a User's key (ADR-0049). This subpath also carries the three tables.
+ * Barrel `shared-agent-framework/users` beside it, because `pubkeys.user_id` and `outbox.user_id`
+ * reference the User Manager's table.
  *
  * The Nostr identity is a **second** keypair, secp256k1 where the signing identity is Ed25519, and
  * it cannot be that key or become it (ADR-0050). The framework parses no key material: the
@@ -84,6 +93,7 @@ export {
 } from "./identities.ts";
 export type { NostrChannel, NostrChannelOptions } from "./nostr-channel.ts";
 export { createNostrChannel } from "./nostr-channel.ts";
+export { MessageTooLargeError, UnrecordedPublicKeyError } from "./outbound.ts";
 // A star and not a list, so every table stays a top-level name an Operator's `drizzle-kit` can
 // see. It never looks inside a wrapper object. What it does not carry is the User Manager's
 // tables. `schema.ts` imports them to declare the foreign key, and re-exports nothing.
