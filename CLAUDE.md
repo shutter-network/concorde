@@ -282,6 +282,19 @@ Conventions the build depends on:
   ([ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)). A new subpath is a new
   directory, its `index.ts`, an `exports` entry, an entry point in `site/typedoc.jsonc` and a
   block in `scripts/check-package.ts`.
+- **`src/http-client-tui/` is the one shipped directory that is not a subpath.** It is a
+  `bin`, `http-client-tui`, a line-oriented terminal client for the HTTP Channel's two routes
+  and the login. A `bin` is not importable, so the export map is untouched and there are still
+  thirteen subpaths and no root; it is in no `exports` entry and in no `site/typedoc.jsonc`
+  entry point, and the guard in `site/specifier-titles.mjs` compares those two against each
+  other and would fail on either. **It has zero dependencies and must keep them**: native
+  `fetch`, `node:readline/promises` and one hand-written escape sequence. A dependency added
+  here lands in every consumer's install, and the answer to needing one is a second package.
+  It imports the framework's own record types, as **types**, so a renamed field fails the
+  typecheck rather than reaching a reader as an `undefined`. `scripts/check-package.ts` runs
+  the command out of the installed tarball rather than looking for the file: the manifest, the
+  `node_modules/.bin` link, the executable bit and the shebang are four separate things, and
+  only running it reads all four.
 - **No syntax that needs a code transform**: no enums, namespaces, or parameter
   properties. `erasableSyntaxOnly` rejects them, because Node strips types
   rather than compiling them.

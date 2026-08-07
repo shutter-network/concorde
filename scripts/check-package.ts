@@ -36,6 +36,9 @@
  *    is dropped in silence and generates an **empty** migration. The runtime step below
  *    reproduces that collection against a barrel the consumer wrote with `export *`,
  *    which is what an Operator's `drizzle.config.ts` points at.
+ *  - **the `bin` runs there**, which no import above can reach: `http-client-tui` is a command and
+ *    not a specifier, so what an installed package owes is an executable file on the consumer's
+ *    `PATH` and the last step below runs it rather than looking for it.
  *  - **that barrel yields one distinct schema object per component**, which is the assertion
  *    ADR-0047's prefixed names exist for. `export *` drops a name that resolves to more than
  *    one binding, so a component whose schema object were renamed to a bare `schema` would be
@@ -332,6 +335,10 @@ try {
     "dist/scheduler/routes.d.ts",
     "dist/scheduler/schema.js",
     "dist/scheduler/schema.d.ts",
+    // The `bin`, which is the one shipped module that is neither a subpath nor reached from one.
+    // `package.json` names this exact path, so a rename that missed the manifest ships a broken
+    // command; the last step below is what runs it.
+    "dist/http-client-tui/main.js",
   ]) {
     assert.ok(entries.has(file), `the tarball should ship ${file}`);
   }
@@ -1769,6 +1776,41 @@ try {
   // one used to be: `"./messenger": null` retired with the `/schema` subpaths (ADR-0047), and an
   // undeclared specifier does not resolve for the same reason a misspelt one does not. Asserting
   // that would be asserting Node's own behaviour.
+
+  // And the `bin`, which nothing above reaches: it is on no specifier, so every import in this
+  // script is blind to it. What an installed package owes a consumer here is a **command**, and
+  // three separate things have to have gone right for one to exist — the manifest names a path
+  // that shipped, `npm` linked it into `node_modules/.bin` and made it executable, and the shebang
+  // survived compilation. A file test would see none of them, so the command is run.
+  //
+  // Run twice, because the two paths prove different halves. `--help` proves the module graph
+  // loads: it is the whole of it, every module being imported statically, so a relative import
+  // that failed to resolve from the installed tree fails here. No arguments at all proves the
+  // refusal path answers on stderr with the exit code a shell script can branch on.
+  //
+  // Nothing here asserts that the export map still has thirteen entries and no fourteenth for this
+  // command. A `bin` is not importable, so ADR-0051 is untouched, and `check:docs` already fails a
+  // subpath that TypeDoc has no entry point for.
+  step("checking the bin runs from the installed package");
+  const command = path.join(consumer, "node_modules", ".bin", "http-client-tui");
+  const help = run(command, ["--help"], consumer);
+  assert.match(
+    help,
+    /^Usage: http-client-tui <user-id>/,
+    "the installed command should answer its own usage; a command that cannot start is a command a consumer cannot run",
+  );
+  assert.match(
+    help,
+    /SAF_GATEWAY_URL/,
+    "the usage should name the variables the command reads, there being nowhere else a reader can find them",
+  );
+  const missingUser = refusalFrom(command, [], consumer);
+  assert.match(
+    missingUser,
+    /no User id was written/,
+    "the installed command should refuse an empty argument list on stderr and exit non-zero",
+  );
+
   step("package check passed");
 } finally {
   rmSync(workDir, { recursive: true, force: true });

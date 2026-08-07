@@ -64,6 +64,9 @@
       "default": "./dist/scheduler/index.js"
     }
   },
+  "bin": {
+    "http-client-tui": "./dist/http-client-tui/main.js"
+  },
   "files": [
     "dist"
   ],
