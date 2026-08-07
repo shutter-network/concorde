@@ -31,6 +31,20 @@ A sentence stays only if all three hold.
    renders directly above the prose. No "Required", no "Optional", no "Asynchronous because the
    library is", no `@returns` that restates `Promise<string>`.
 
+## Sometimes the answer is no comment
+
+The three tests take sentences out. On a small symbol they take all of them, and what is left is
+not a short comment but none. Delete it.
+
+An alias, a record of three named fields, a function the signature already describes: the heading
+and the types render either way, and they were the documentation. Prose on top of them says the
+name a second time. `Handle` is a handle to these tables. `ListeningServer` is a server that
+listens. A reader who reads that sentence has paid for it and holds what they held before.
+
+This is not a licence to leave the hard symbols bare. A component, its constructor, its options
+and its methods carry facts no signature holds, and the three tests never empty those. It applies
+where the type is the whole fact.
+
 ## One fact, one home
 
 | Where | Renders | Holds |
@@ -60,6 +74,11 @@ not read in the signature.
 Use the third person and omit the subject. Write `Signs the claims and answers with one compact
 JWS.` Do not write `This method signs the claims.` and do not write the imperative `Sign the
 claims.`
+
+This one rule is the doc comments' alone. An OpenAPI `description` renders in Swagger UI with no
+symbol beside it, and it addresses a caller rather than describing a symbol, so the second person
+belongs there: "the `typ` is yours, and nothing is reserved". Everything else in this guide holds
+for both.
 
 ## The module comment
 
@@ -188,6 +207,10 @@ Recorded rather than solved.
 - **Two terms have no owning component.** Operator and Shared Agent are used throughout and
   belong to no subpath, so the root module comment is the only place they can be defined. Every
   other domain term is either an exported type or owned by one component.
+- **A bare symbol and a forgotten symbol look the same.** The page renders a heading and a
+  signature in both cases, so a reader cannot tell that somebody decided there was nothing to say.
+  We take that, because a comment written to fill the space is paid for by every reader, and the
+  blank is paid for by the one who wondered.
 - **Nothing checks any of this.** `check:docs` catches a stale page and an unresolvable
   `{@link}`. It does not read prose. The one rule a machine could see is the ADR citation, and
   no check for it exists yet.
@@ -200,6 +223,13 @@ rustdoc book, Google's API reference comment guidance and AIP-192, the Microsoft
 Guide on reference documentation, and TSDoc. They agree on more than they disagree: document
 every public symbol, make the first sentence stand alone, never restate the name or the type,
 and state what the type cannot say.
+
+The first of those four is the one place this guide breaks with all of them at once. They ask for
+a comment on every public symbol; [Sometimes the answer is no
+comment](#sometimes-the-answer-is-no-comment) does not. Javadoc and rustdoc are the reason they
+can: both generate a summary index, where a blank cell is a visible hole in a table of names.
+TypeDoc renders in place here and extracts no index, so a symbol with no comment costs a reader
+nothing they can see.
 
 They disagree in five places, and this guide takes a side in each.
 

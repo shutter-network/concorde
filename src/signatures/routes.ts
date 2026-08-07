@@ -1,8 +1,6 @@
 /**
- * Signatures' routes: the signing, the lazy check, and the key.
- *
  * Two plugins, because they go on two Fastify instances, and both at no prefix. The path is part of
- * a contract whose other half is the artifact. A client hands `…/jwks.json` to its own JOSE library
+ * a contract whose other half is the artifact: a client hands `…/jwks.json` to its own JOSE library
  * and expects RFC 7517's container back. Neither path nor prefix is configurable, and neither
  * plugin is exported.
  *
@@ -12,20 +10,18 @@
  *
  * | Public server | Answers |
  * | --- | --- |
- * | `POST /verify` | 200, the verdict, and it is a **convenience**; 400; 401 |
+ * | `POST /verify` | 200, the verdict; 400; 401 |
  * | `GET /jwks.json` | 200, the JWK Set. **No Token**; 400 |
  *
- * Signing is the Agent server's alone and checking is not. Only the Shared Agent may make an
- * artifact, so there is no public route that signs. Anybody with a Token can ask about one. Asking
- * reveals nothing they could not work out from the key set. `GET /jwks.json` is the stated
- * exception to the User Manager's single 401 on this server. A public key is public. The whole
- * audience for this identity is a third party with no Token to present.
+ * `GET /jwks.json` is the stated exception to the User Manager's single 401 on the Public server,
+ * and the exception is the point: the whole audience for this identity is a third party with no
+ * Token to present. Signing has no public route at all, because only the Shared Agent may make an
+ * artifact. Checking one is open to any Token holder, since asking reveals nothing they could not
+ * work out from the key set themselves.
  *
- * Nothing here authenticates anybody. `POST /verify` takes the Manager's `requireUser` as one
- * option, so every refusal there is the Manager's single 401. Each route describes what it answers
- * with, which is how somebody writing a verifier learns the shape. Three of those sentences carry
- * more weight than the rest. What a signature does not prove, what a `typ` is and is not, and what
- * the lazy check is worth.
+ * Three of the description strings below carry more weight than the rest, and each is hoisted to a
+ * named constant so that it is edited as prose rather than found inside a template literal: what a
+ * signature does not prove, what a `typ` is and is not, and what the lazy check is worth.
  */
 
 import type { JsonWebKey } from "node:crypto";
@@ -34,37 +30,27 @@ import { refused, unknownParameter, unknownQueryRefusal } from "../route-convent
 import { authenticationFailed, bearerRequired } from "../users/routes.ts";
 import type { SignedClaims } from "./signatures.ts";
 
-/**
- * The JWK Set this Component serves: RFC 7517's container, with the one key in it.
- *
- * A Set and not a bare JWK, even though there is one key and there will only ever be one. That is
- * what lets a client's remote-key-set helper consume the URL with no glue code.
- */
+/** RFC 7517's container. Why a Set for one key is at the construction site in `signatures.ts`. */
 export type KeySet = {
   readonly keys: readonly JsonWebKey[];
 };
 
 /**
- * What `POST /sign` needs of the Component: one call, and nothing that holds a key.
- *
- * A type of its own rather than the whole `Signatures`. A route group that could reach the key
- * would be a route group somebody could later have hand it out.
+ * What `POST /sign` needs of the Component, which is one call and nothing that holds a key. A
+ * route group that could reach the key would be one somebody could later have hand it out.
  */
 export type StatementSigning = {
   sign(typ: string, claims: SignedClaims): Promise<string>;
 };
 
-/** What `POST /verify` needs of the Component: one question asked of one artifact. */
 export type ArtifactCheck = {
   verify(jws: string): Promise<Verdict>;
 };
 
 /**
- * What the check answers: whether the artifact is this Shared Agent's, and what it said if so.
- *
- * A union rather than one shape with two optional members. The header and the payload exist exactly
- * when the verdict is `true`. The verification reads them out of the artifact. So there is no state
- * in which one is known and the verdict is not.
+ * A union rather than one shape with two optional members. The verification reads the header and
+ * the payload out of the artifact, so they exist exactly when the verdict is `true` and there is no
+ * state in which one is known and the verdict is not.
  */
 export type Verdict =
   | { readonly verified: false }
@@ -74,44 +60,31 @@ export type Verdict =
       readonly payload: unknown;
     };
 
-/**
- * The refusal `GET /jwks.json` answers an unknown query parameter with.
- *
- * The sentence the message ends with is this route's. It says outright that there is nothing to
- * select by. The obvious guess, `?kid=`, is a parameter a client's key-set helper can have.
- */
+// Its own sentence, because the obvious guess here is `?kid=`, which a client's key-set helper can
+// have, and what that caller needs to hear is that there is nothing to select by.
 const rejectKeySetQuery = unknownQueryRefusal(
   "There is nothing to select here: the Shared Agent has one keypair, with no identifier and no rotation, so the whole set is the whole answer.",
 );
 
-/**
- * The refusal the two body routes answer an unknown query parameter with.
- *
- * Their own sentence rather than the one above. What somebody who wrote `?statement=…` needs to
- * hear is that the request is a body. It names neither route, since the two are on different
- * servers.
- */
+// Shared by the two body routes and naming neither, the two being on different servers. What
+// somebody who wrote `?statement=…` needs to hear is that the request is a body.
 const rejectBodyRouteQuery = unknownQueryRefusal(
   "Everything this route takes is in its body, and there is nothing here to select, filter or page.",
 );
 
 /**
- * One public JWK, written as the members that may be answered.
- *
- * A response schema is a serializer: Fastify compiles it with `fast-json-stringify`, which drops
- * every member the schema does not declare. Here that is doing a job rather than being survived.
- * This is a positive list of public members. So the private scalar `d` cannot reach this route,
- * even if the wrong `KeyObject` were exported into it. The other thing standing in front of that
- * failure is `createPublicKey` in the constructor, and neither is sufficient alone.
+ * A positive list of public members, and the second of the two things standing between a wrong
+ * argument and `d` being served from an unauthenticated route. The first is `createPublicKey` in
+ * the constructor, and neither is sufficient alone: a response schema is a serializer, so
+ * `fast-json-stringify` drops every member not declared here, which for once is doing a job rather
+ * than being survived.
  *
  * The list covers what a public JWK of any asymmetric type carries rather than only what today's
- * key needs. It covers `crv` and `x` for an `OKP` or `EC` key. It also covers `y`, the second `EC`
- * coordinate, and `n` and `e` for `RSA`. A shorter list would silently truncate somebody's key set,
- * and truncation here reads as a corrupt key.
+ * key needs — `y` for the second EC coordinate, `n` and `e` for RSA — because a shorter list would
+ * silently truncate somebody's key set, and truncation here reads as a corrupt key.
  *
- * Only `kty` is required, because it is the only member every key type has. There is no `kid`. The
- * keypair is the identity. A name beside it would answer the same question twice: which Shared
- * Agent signed this.
+ * Only `kty` is required, being the one member every key type has. There is no `kid`: the keypair
+ * is the identity, and a name beside it would answer the same question twice.
  */
 const jwkSchema = {
   type: "object",
@@ -130,44 +103,33 @@ const jwkSchema = {
   required: ["kty"],
 } as const;
 
-/** RFC 7517's container, which is what a client's key-set helper is written against. */
 const keySetSchema = {
   type: "object",
   properties: { keys: { type: "array", items: jwkSchema } },
   required: ["keys"],
 } as const;
 
-/**
- * The type label an artifact carries when the caller asks for none.
- *
- * Generic on purpose. The framework knows the agent signs things. It knows nothing about what kinds
- * of things they are, so the default says the one true thing. A caller with categories of its own
- * names them itself.
- */
+// Generic on purpose: the framework knows the agent signs things and nothing about what kinds of
+// things they are, so the default says the one true thing.
 const statementTyp = "saf-statement+jws";
 
 /**
- * The Statement being signed: non-empty, and with no upper bound.
+ * `minLength: 1` so that an empty commitment is a 400 rather than a signed nothing, and no
+ * `maxLength`, Fastify's `bodyLimit` being the bound and the Operator's to raise.
  *
- * `minLength: 1` so that an empty commitment is a 400 rather than a signed nothing. No `maxLength`,
- * because Fastify's `bodyLimit` is already the bound and it is the Operator's to raise.
- *
- * The same two sentences are true of a Decision's Statement and are written beside it too.
- * `route-conventions.ts` holds what the Components agree about the shape of a request. "A Statement
- * is a non-empty string" is a fact about the domain instead, which each Component may say for
- * itself.
+ * Duplicated beside a Decision's Statement rather than hoisted into `route-conventions.ts`, which
+ * holds what the components agree about the shape of a *request*. "A Statement is a non-empty
+ * string" is a fact about the domain, and each component may say it for itself.
  */
 const statementSchema = { type: "string", minLength: 1 } as const;
 
 /**
- * The type label, validated as a string of sane length and as nothing else.
+ * 128 characters: longer than any media type anybody writes, short enough to keep a megabyte out of
+ * a protected header. That is the whole of the validation and it is not a policy, so any label of
+ * that shape is signed, `saf-decision+jws` included.
  *
- * The bound is 128 characters. That is longer than any media type anybody writes. It is short
- * enough to keep a megabyte out of a protected header. That is the whole of the validation, and it
- * is not a policy. Any label of that shape is signed, `saf-decision+jws` included.
- *
- * `default` is applied by Fastify's ajv, which is configured with `useDefaults`, so the handler
- * reads a `typ` on every request. The same mechanism `limit` uses on every list in the framework.
+ * `default` is applied by Fastify's ajv under `useDefaults`, so the handler reads a `typ` on every
+ * request. The same mechanism `limit` uses on every list in the framework.
  */
 const typSchema = {
   type: "string",
@@ -177,13 +139,8 @@ const typSchema = {
   description: `What kind of thing this artifact is. It goes into the **protected header**, so the signature covers it. Swapping it invalidates the artifact, which keeps a receipt from being presented as an approval.\n\n**Any label, \`saf-decision+jws\` included.** Domain separation between your *own* categories — receipts, votes, approvals — is something only you can express. Give each of them a label of its own, or they collapse into one domain and become replayable as each other. Defaults to \`${statementTyp}\`.`,
 } as const;
 
-/**
- * The body of `POST /sign`: the string, and what to call it.
- *
- * There is no field for the payload. What is signed is `{ statement }` and the header. A caller
- * wanting more inside the artifact writes it into the Statement. A caller that writes a field
- * anyway has it dropped by `additionalProperties: false`.
- */
+// No field for the payload: what is signed is `{ statement }` and the header, so a caller wanting
+// more inside the artifact writes it into the Statement.
 const signSchema = {
   type: "object",
   properties: { statement: statementSchema, typ: typSchema },
@@ -191,7 +148,6 @@ const signSchema = {
   additionalProperties: false,
 } as const;
 
-/** What a signing answers with: the artifact, and nothing this Component kept. */
 const signedStatementSchema = {
   type: "object",
   properties: {
@@ -204,13 +160,8 @@ const signedStatementSchema = {
   required: ["jws"],
 } as const;
 
-/**
- * The body of `POST /verify`: one artifact, under the name a Decision carries it under.
- *
- * `jws` and not `artifact` or `signature`. The string a caller has in hand came out of a `jws`
- * field on a Decision. Or out of `jws` on a signing. A third name for one value is a client
- * author's mistake waiting to be made.
- */
+// `jws` and not `artifact` or `signature`: the string a caller has in hand came out of a `jws`
+// field, on a Decision or on a signing, and a third name for one value is a mistake waiting.
 const verifySchema = {
   type: "object",
   properties: { jws: { type: "string", minLength: 1 } },
@@ -219,15 +170,13 @@ const verifySchema = {
 } as const;
 
 /**
- * The verdict on the wire, with `header` and `payload` declared as empty schemas.
+ * `header` and `payload` are declared as empty schemas: no `type` on either, which passes any JSON
+ * through byte intact and renders in the document as "any". Constraining them would be this route
+ * having an opinion about what the agent signs.
  *
- * No `type` on either, which passes any JSON through byte intact and renders in the document as
- * "any". Constraining them would be this route having an opinion about what the agent signs. The
- * payload is whatever claims the signer was handed, and the header is whatever `jose` wrote.
- *
- * Both are absent from `required`, because both are absent from a `false` verdict. There is nothing
- * to report about an artifact that is not ours. Reporting its header would answer with the
- * unverified assertions of a string somebody posted.
+ * Both are absent from `required` because both are absent from a `false` verdict. Reporting the
+ * header of an artifact that is not ours would answer with the unverified assertions of a string
+ * somebody posted.
  */
 const verdictSchema = {
   type: "object",
@@ -239,7 +188,7 @@ const verdictSchema = {
     },
     header: {
       description:
-        "The protected header the signature covers, as it was written: the algorithm, and the `typ` the signer chose. **`typ` is that signer's own claim about its artifact and not a guarantee of this framework's** — a `\"saf-decision+jws\"` here means this identity labelled it a Decision, not that it is shaped like one and not that a row exists. Only an artifact fetched from `GET /decisions` is guaranteed well-formed (ADR-0042).",
+        "The protected header the signature covers, as it was written: the algorithm, and the `typ` the signer chose. **`typ` is that signer's own claim about its artifact and not a guarantee of this framework's** — a `\"saf-decision+jws\"` here means this identity labelled it a Decision, not that it is shaped like one and not that a row exists. Only an artifact fetched from `GET /decisions` is guaranteed well-formed.",
     },
     payload: {
       description:
@@ -249,41 +198,27 @@ const verdictSchema = {
   required: ["verified"],
 } as const;
 
-/**
- * The 401, which is the User Manager's and is described in its words.
- *
- * The imported sentence is the whole of what the refusal says. What this Component adds is where it
- * comes from. A client reading this route need not discover that the hook belongs elsewhere.
- */
+// The imported sentence is the whole of what the refusal says; what this adds is where it comes
+// from, so a client reading this route need not discover that the hook belongs elsewhere.
 const notAuthenticated = `${authenticationFailed} This part authenticates nobody: the refusal is the User Manager's \`requireUser\`, taken as one option on the route, so it is the same 401 the routes under \`/auth\` answer.`;
 
-/**
- * What the key set is for, said to the person who will use it, and what it does not establish.
- *
- * Both halves are load-bearing. The first is the mechanics: this is the URL a JOSE library
- * consumes. The second says plainly what a signature proves. A verifier who mistakes a
- * cryptographic artifact for evidence about the agent's conduct has been misled by us.
- */
+// Both halves are load-bearing. The first is the mechanics: this is the URL a JOSE library
+// consumes. The second says plainly what a signature proves, because a verifier who mistakes a
+// cryptographic artifact for evidence about the agent's conduct has been misled by us.
 const whatTheKeyIsFor =
   "The Shared Agent's public key, as a JWK Set (RFC 7517). It is what makes a Signed Statement checkable **without trusting this Gateway**. Fetch it once, keep it, and verify artifacts offline with any JOSE library in any language. That is the real verification path, and the only one worth anything to somebody who does not trust the Operator.\n\nOne keypair, always, so the set holds one key. There is no rotation, no key identifier and nothing to select between. What a valid signature proves is narrow. **The Operator committed to this Statement on the Shared Agent's behalf.** It says nothing whatever about how the agent behaved.";
 
-/**
- * What the lazy check is worth, which is the sentence this route ships with.
- *
- * It proves less than it looks like it proves, and there is no version of it that proves more. The
- * answer comes from the Gateway, so believing it means trusting the Gateway. The party this
- * identity exists for is the one who does not. Stated in the document, because of who most needs to
- * read it. That is the caller who would otherwise hand a third party a screenshot of a `true`.
- */
+// There is no version of this route that proves more: the answer comes from the Gateway, so
+// believing it means trusting the Gateway, and the party this identity exists for is the one who
+// does not. Stated in the document because of who most needs to read it, which is the caller who
+// would otherwise hand a third party a screenshot of a `true`.
 const whatTheCheckIsWorth =
   "A convenience, and **it proves less than it looks like it proves**. It answers one question: is this artifact this Shared Agent's? You have to believe the answer, because a dishonest Gateway says `true` to anything. So it is worth nothing to the party this identity exists for. That party does not trust the Operator. It is genuinely useful to a User, who trusts the Operator already. They want a quick confirmation without embedding a JOSE library.\n\n**Real verification is offline.** Fetch `GET /jwks.json` once, keep the key, and check the artifact yourself in whatever language you are already writing. That asks this Gateway nothing. The path is open to anybody holding the string, needs no Token, and keeps working after this deployment is gone.";
 
 /**
- * Signatures' Agent server route: the signing, which is the agent's alone.
- *
- * `POST /sign` and not a method the agent could call. The agent is a container over HTTP, and the
- * key is deliberately on this side of that boundary. A compromise of the container mints nothing
- * once the Gateway is stopped. A key handed to the agent signs forever.
+ * `POST /sign` and not a key the agent holds. The agent is a container over HTTP, and the key is
+ * deliberately on this side of that boundary: a compromise of the container mints nothing once the
+ * Gateway is stopped, where a key handed to the agent signs forever.
  */
 export function agentSignatureRoutes(signing: StatementSigning): FastifyPluginAsync {
   return async (fastify) => {
@@ -322,20 +257,16 @@ export function agentSignatureRoutes(signing: StatementSigning): FastifyPluginAs
 }
 
 /**
- * Signatures' Public server routes: the lazy check behind a Token, and the key in front of
- * everything.
- *
  * `presentedUser` is `requireUser`, taken as one option and not wrapped, extended or
- * re-implemented. So an unauthenticated check is the Manager's single 401, and this Component
- * authenticates nobody.
+ * re-implemented, so an unauthenticated check is the Manager's single 401.
  *
- * The Token is required and the User it names is then unused. It gates the surface rather than
- * scoping the answer. The Gateway is not a free signature oracle for whoever finds the port. The
+ * The Token is required and the User it names is then unused: it gates the surface rather than
+ * scoping the answer, the Gateway not being a free signature oracle for whoever finds the port. The
  * key set beside it takes none, which is the pair worth seeing together.
  *
- * The hook runs at `preHandler`, after validation. So a missing body and an unknown query parameter
- * are answered before a Token is looked at. That leaks nothing. A refusal names a field of the
- * route and never a User. It says nothing about the artifact, which nobody has looked at.
+ * The hook runs at `preHandler`, after validation, so a missing body and an unknown query parameter
+ * are answered before a Token is looked at. That leaks nothing: such a refusal names a field of the
+ * route and never a User, and says nothing about the artifact, which nobody has looked at.
  */
 export function publicSignatureRoutes(
   keySet: KeySet,

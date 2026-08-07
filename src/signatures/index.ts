@@ -1,22 +1,17 @@
 /**
- * Signatures, from `shared-agent-framework/signatures`.
+ * Signatures, the component that holds the Shared Agent's signing identity. A Signed Statement is
+ * one compact JWS: a string anybody can check against the agent's public key, offline, without
+ * reaching this Gateway and without trusting the Operator.
  *
- * `createSignatures` is the whole of it for an Operator. Hand it the Shared Agent's private key,
- * both servers and the User Manager. It derives the public half and registers three routes. `POST
- * /sign` is where only the agent reaches it. `POST /verify` sits behind the Manager's single 401,
- * and `GET /jwks.json` in front of everything. Then key it in the Gateway's record before the
- * Signal Worker, so that it outlives the drain. A Signal Handler's post phase may still need to
- * sign.
+ * {@link createSignatures} makes one. {@link Signatures} is what comes back, and its `sign` is the
+ * whole of what trusted code gets. {@link SignedClaims} is what goes into a payload.
  *
- * The key is yours to load and ours to hold. It is a `crypto.KeyObject`, and this framework parses
- * no PEM, reads no environment variable and opens no file. Write
- * `createPrivateKey(readFileSync(path))` and decide for yourself where that came from. Nothing here
- * generates a keypair, so a restart cannot silently invalidate every artifact ever published.
+ * The deployment brings the key. Nothing here parses a PEM, reads an environment variable or
+ * generates a keypair, so construction without one throws rather than inventing an identity.
  *
- * It answers with one method, `sign`, which is what trusted code has and no request does. Decisions
- * holds this object and signs in process, never by calling the Gateway's own routes. `SignedClaims`
- * is what goes into the payload. The order of its keys is the order of the bytes. A compact JWS is
- * signed as exactly what was emitted.
+ * Build the User Manager first, whose `requireUser` this takes, and build this before Decisions,
+ * which signs through it. Key it ahead of the Signal Worker in the Gateway's record: the Worker is
+ * keyed last so it drains first, and a Signal Handler's post phase may still need to sign.
  *
  * @example
  * A Gateway with Signatures, and a Statement signed from the Operator's own code.
