@@ -8,8 +8,8 @@
  *
  * **It owns the Message log and reaches nobody.** Getting a Message to a person is a Channel's
  * job: build one — `shared-agent-framework/http-channel` is the one that serves a browser — hand
- * it this Messenger, and it registers itself (ADR-0048). One Channel per Messenger, refused at
- * registration rather than documented.
+ * it this Messenger, and it registers itself. One Channel per Messenger, refused at registration
+ * rather than documented.
  *
  * It answers with three things no request can express. `register` takes the Channel and answers
  * with the only way to write an inbound Message. `send` writes a Message to one User from inside

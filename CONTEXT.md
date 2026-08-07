@@ -61,7 +61,7 @@ The Channel that serves Users over the Public server: a submission, and a cursor
 _Avoid_: HTTP Messenger, web channel, REST channel, polling API
 
 **Nostr Channel**:
-The Channel that exchanges NIP-17 private direct messages with Users over one Relay the Operator runs. It holds the Shared Agent's Nostr identity, the Relay connection, and the mapping from a Nostr public key to a User: its own tables and no share of anyone else's, so messaging and authentication stay fully separate. The first Channel with real work at either end, and the first part of the framework holding a long-lived connection it opened itself to something other than the Db. **It admits nobody**: a public key with no User is dropped and nothing is stored, because Users are preregistered. See [ADR-0049](./docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md) and [ADR-0050](./docs/adr/0050-the-shared-agent-has-a-nostr-identity-too.md).
+The Channel that exchanges NIP-17 private direct messages with Users over one Relay the Operator runs. It holds the Shared Agent's Nostr identity, the Relay connection, and three tables of its own and no share of anyone else's — which public key is which User, which envelopes it has already read, and which replies the Relay has not taken yet — so messaging and authentication stay fully separate. The first Channel with real work at either end, and the first part of the framework holding a long-lived connection it opened itself to something other than the Db. **It admits nobody**: a public key with no User is dropped and nothing is stored, because Users are preregistered. It announces exactly one thing about itself, a **Relay list**, and no profile. It is also the first component with no entry in the reference deployment, one Channel per Messenger meaning the example keeps HTTP. See [ADR-0049](./docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md) and [ADR-0050](./docs/adr/0050-the-shared-agent-has-a-nostr-identity-too.md).
 _Avoid_: Nostr Messenger, Nostr transport, relay client, DM bridge, npub adapter
 
 **User Manager**:
@@ -161,8 +161,12 @@ The Messenger's record of every Message in both directions. The **durable** reco
 _Avoid_: history, transcript, archive, outbox
 
 **Relay**:
-A Nostr server the Nostr Channel connects to, and in this framework's deployments **one, run by the Operator**. A transport and never a store: nothing in the protocol obliges it to retain anything, and the Message log is the durable record regardless of what it keeps. Users are told which one to point their client at, which is why a single one is an onboarding step here rather than the reachability failure it would be for a public agent. See [ADR-0049](./docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md).
+A Nostr server the Nostr Channel connects to, and in this framework's deployments **one, run by the Operator**. A transport and never a store: nothing in the protocol obliges it to retain anything, and the Message log is the durable record regardless of what it keeps. Users are told which one to point their client at, which is why a single one is an onboarding step here rather than the reachability failure it would be for a public agent — and it is the one this agent's **Relay list** names, since there is only one to name. A Relay that is down is an outage and not a boot failure: nothing the Channel sends it is awaited by `start`. See [ADR-0049](./docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md).
 _Avoid_: server, broker, hub, node, message queue
+
+**Relay list**:
+The only thing a Shared Agent publishes about itself on Nostr: one replaceable event naming the Relay at which it receives private direct messages, republished at every start of the Nostr Channel. It buys two narrow things and **not discoverability** — it stops a client that refuses to message a public key with no such list, and it steers a compliant sender to the right Relay — because only a client already connected to that Relay can read it, and Users were told which Relay to add out of band. Nothing else is published: no profile, no name, no picture, so the agent appears in a client as a bare public key. A Relay that refuses it is a warning on the log and a Channel that started anyway, so it is never a boot dependency. Not the Message log, not a directory, and not a claim about anything but where to write. See [ADR-0049](./docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md).
+_Avoid_: profile, metadata, announcement, advertisement, presence, directory entry
 
 ## Scheduling
 

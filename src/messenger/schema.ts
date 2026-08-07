@@ -37,8 +37,8 @@ import { users } from "../users/schema.ts";
  * same object.
  *
  * It was `saf_http_messages` while one component held the log *and* the only way of reaching a
- * person. A Channel is what reaches a person now, and it has no share of this schema: the medium
- * is gone from the name because it is gone from the ownership (ADR-0048).
+ * person, so a deployment upgrading from that version renames the schema. A Channel is what
+ * reaches a person now, and it has no share of this one.
  */
 export const messengerSchema = pgSchema("saf_messenger");
 

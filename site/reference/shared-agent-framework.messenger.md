@@ -9,8 +9,8 @@ drain.
 
 **It owns the Message log and reaches nobody.** Getting a Message to a person is a Channel's
 job: build one — `shared-agent-framework/http-channel` is the one that serves a browser — hand
-it this Messenger, and it registers itself (ADR-0048). One Channel per Messenger, refused at
-registration rather than documented.
+it this Messenger, and it registers itself. One Channel per Messenger, refused at registration
+rather than documented.
 
 It answers with three things no request can express. `register` takes the Channel and answers
 with the only way to write an inbound Message. `send` writes a Message to one User from inside
@@ -73,14 +73,14 @@ type Channel = Component & {
 
 What reaches one person over one medium: a name, a send, and a lifecycle.
 
-Two members over a `Component`, which is the same order of narrowness as `Component` itself
-rather than the plugin contract ADR-0021 rejected. A Channel is an ordinary Component an
-Operator constructs and keys, and it is switched off by not constructing it.
+Two members over a `Component`, which is the same order of narrowness as `Component` itself. A
+Channel is an ordinary Component an Operator constructs and keys, and it is switched off by not
+constructing it.
 
-A Channel registers **itself**, at the end of its own constructor, which is ADR-0032 verbatim:
-the same act as a component registering its routes on the servers it was handed. It has to be
-that way round, because a Channel is constructed with the Messenger and the reference cannot run
-both ways at construction time.
+A Channel registers **itself**, at the end of its own constructor: the same act as a component
+registering its routes on the servers it was handed. It has to be that way round, because a
+Channel is constructed with the Messenger and the reference cannot run both ways at construction
+time.
 
 #### Type Declaration
 
@@ -380,9 +380,8 @@ What a Channel gets back from `register`, and the only way an inbound Message ca
 
 There is no public `receive` on the Messenger. A Channel keeps this handle and writes through
 it, so **only a registered Channel can write an inbound Message**, and a Channel cannot claim
-to be a different one because it never names itself in the call. The alternative,
-`messenger.receive(tx, userId, channelName, text)`, is one more argument and one more thing to
-lie about (ADR-0048).
+to be a different one because it never names itself in the call. There is no
+`messenger.receive(tx, userId, channelName, text)` to reach for instead.
 
 #### Methods
 
@@ -401,8 +400,7 @@ The caller's transaction, so a Channel's own bookkeeping — a processed-event r
 — commits with the Message or not at all. A Message that was stored always has its Signal.
 
 Answers with the record as it was stored, `seq` and all. That is what the HTTP Channel's 201
-carries, and it is why this returns the record where ADR-0048's sketch returned nothing: the
-caller cannot read its own uncommitted write back through `history`.
+carries, and the caller cannot read its own uncommitted write back through `history`.
 
 ###### Type Parameters
 
@@ -566,8 +564,8 @@ Operator's to change. The table below is compiled against it, and their generati
 same object.
 
 It was `saf_http_messages` while one component held the log *and* the only way of reaching a
-person. A Channel is what reaches a person now, and it has no share of this schema: the medium
-is gone from the name because it is gone from the ownership (ADR-0048).
+person, so a deployment upgrading from that version renames the schema. A Channel is what
+reaches a person now, and it has no share of this one.
 
 ***
 

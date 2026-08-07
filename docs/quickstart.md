@@ -69,11 +69,15 @@ started. One call binds both ports, opens the pool and starts the worker, and it
 nothing about any of it — the framework logs no startup line anywhere, and any line you
 want about one is yours to write next to that call.
 
-Nothing else happens either, and that is the other half of the silence. This deployment's
-only Producer is the **HTTP Messenger**, so the first Signal this Gateway ever sees is a
-Message somebody posted, and until somebody posts one there is nothing to claim and nothing
-to run. A person logs in over the Public server, posts a Message, and reads the agent's
-answer back, which is [the next section](#a-conversation-in-four-requests).
+Nothing else happens either, and that is the other half of the silence. This deployment has
+two Producers, the **Messenger** and the **Scheduler**, and neither has anything to say yet:
+the Scheduler's one standing Schedule is a daily cron, and until it matures the first Signal
+this Gateway sees is a Message somebody posted. A person logs in over the Public server,
+posts a Message, and reads the agent's answer back, which is
+[the next section](#a-conversation-in-four-requests). The Messenger is what records that
+Message and emits that Signal; the **HTTP Channel** is what the person actually talks to, and
+swapping which Channel this deployment builds is how it would be reached over some other
+medium instead.
 
 ### What that command did
 
@@ -168,9 +172,10 @@ curl -s -XPOST localhost:8080/auth/tokens -H 'content-type: application/json' \
 ```
 
 **Three: a Message**, posted with that Token. `POST /messages` on the Public server is the
-whole of a person's way in. The body is `{ "text": … }` and it takes nothing else: the sender
-is the User the Token named, so there is no field a client could put a person in and
-therefore nothing to guard.
+whole of a person's way in, and it is the **HTTP Channel's** route: reaching a person is a
+Channel's job, and over HTTP that means serving the person when they ask. The body is
+`{ "text": … }` and it takes nothing else: the sender is the User the Token named, so there is
+no field a client could put a person in and therefore nothing to guard.
 
 ```sh
 TOKEN=saf_qEfrXGS-ld51ieI3atp3E6sG6cwzQHk4Csj5iPhUfGY
@@ -179,7 +184,7 @@ curl -s -XPOST localhost:8080/messages -H "authorization: Bearer $TOKEN" \
 ```
 
 A **201**, carrying the Message as it was stored, which is the same record shape every other
-surface of this part answers with:
+surface of messaging answers with, on either server and whichever Channel wrote it:
 
 ```json
 {"id":"50c52d4d-d1b2-4ef5-bfe2-da1bc8247bc5","userId":"3a577cbb-…","direction":"inbound",
@@ -216,8 +221,9 @@ curl -s "localhost:8080/messages?after=1" -H "authorization: Bearer $TOKEN"
 ```
 
 That Message was written by the agent, from inside its container, with `curl` against the
-Agent server. `POST /messages` there is the only thing in this deployment that reaches a
-person at all, and both the Prompt and
+Agent server. `POST /messages` there is the **Messenger's** route rather than a Channel's —
+the agent says what to send and to whom, and knows nothing about the medium that carries it —
+and it is the only thing in this deployment that reaches a person at all. Both the Prompt and
 [`../example/AGENTS.md`](../example/AGENTS.md) tell it so: a Run records that it finished and
 not what the agent said, so an answer written into its own conversation or into a file in the
 Workspace arrives nowhere. Until it makes that call your poll answers `{"messages":[]}`, and
@@ -272,8 +278,9 @@ Seven things about that surface, and most of them are refusals:
   matching, no field matching, and no `direction` parameter either. A client that wants one
   side of the conversation filters the page it already has.
 - **No Token is a 401**, and it is the User Manager's own single refusal rather than
-  anything of the Messenger's: both Public routes take `users.requireUser` as one option and
-  this part authenticates nobody.
+  anything of messaging's: both Public routes are the HTTP Channel's and take
+  `users.requireUser` as one option, and neither that Channel nor the Messenger behind it
+  authenticates anybody.
 - **An empty `text` is a 400**, so a stray keypress does not start a Run. There is no maximum
   and there will not be one: Fastify's 1 MB `bodyLimit` is already the bound and it is yours
   to raise on the server you constructed.
@@ -669,11 +676,16 @@ for a Run that never finishes.
 
 All JSON, all on the Agent server, and **all unscoped**. Which of them exist is a
 consequence of which parts were handed that server: four are the Signal Worker's, three the
-User Manager's, two the HTTP Messenger's, three Decisions' and one Signatures'. The Signal
-Worker is handed it by `createGateway`, and the reference deployment hands it to the other
-four in `extend`, so an agent talking to that Gateway gets the whole of that.
+User Manager's, two the **Messenger's**, three Decisions', one Signatures' and four the
+Scheduler's. The Signal Worker is handed it by `createGateway`, and the reference deployment
+hands it to the other five in `extend`, so an agent talking to that Gateway gets the whole of
+that. The **HTTP Channel** is not among them and contributes nothing here: it was handed the
+Public server only, because what it serves is a person and not the agent. That split is the
+whole of ADR-0048 on the wire — reading and writing the log are acts on the log and stayed
+with the Messenger, and submitting and polling are what HTTP as a medium *is* — and no
+request or response shape moved with it.
 
-**Which thirteen, though, is not written here and is not written in your `AGENTS.md`
+**Which seventeen, though, is not written here and is not written in your `AGENTS.md`
 either.** The server describes itself: `GET /openapi.json` answers a current OpenAPI
 document generated from the routes that deployment actually registered, and `/docs` is the
 same thing as a browsable page. It carries every path, what each takes, the shape of every
@@ -730,10 +742,10 @@ silently, in the answer and in the description alike
 
 ## What the entry point actually does
 
-Read [`../example/main.ts`](../example/main.ts) — seventy-odd lines including the comments,
+Read [`../example/main.ts`](../example/main.ts) — two hundred lines including the comments,
 and the best documentation this project has. Most of it is the Agent Container above; the
-deployment itself is three calls, one Signal Handler, and the loop at the bottom the
-framework does not ship. It builds the four opinionated parts by hand in `extend` and is
+deployment itself is three calls, two Signal Handlers, and the loop at the bottom the
+framework does not ship. It builds the six opinionated parts by hand in `extend` and is
 otherwise a thin consumer of `createGateway`, which is why there is so little of it even
 with the wiring on display.
 
@@ -756,7 +768,7 @@ nothing defaults it, which is a trade the framework will not make for a deployme
 ([ADR-0045](./adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md),
 [ADR-0030](./adr/0030-passwords-are-traded-for-bearer-tokens.md)).
 
-The construct call is the whole of the wiring, and `extend` is where the four opinionated
+The construct call is the whole of the wiring, and `extend` is where the six opinionated
 parts are built by hand from the infrastructure `createGateway` handed back, each a one-line
 `create*` call and only the ones this deployment wants:
 
@@ -767,12 +779,15 @@ const gateway = createGateway({
   publicListen: { port: publicPort, host: publicHost },
   agentListen: { port: agentPort, host: agentHost },
   extend: ({ db, agentServer, publicServer, worker }) => {
-    // The User Manager before the HTTP Messenger, which takes it as an argument.
+    // The User Manager before the Messenger and the Channel, both of which take it as an
+    // argument, and the Messenger before the Channel that registers itself with it.
     const users = createUsers({ db, tokenTtl, agentServer, publicServer });
     const signatures = createSignatures({ signingKey, agentServer, publicServer, users });
     const decisions = createDecisions({ db, signatures, users, agentServer, publicServer });
-    const messenger = createHttpMessenger({ db, users, worker, publicServer, agentServer });
-    return { users, signatures, decisions, messenger };
+    const messenger = createMessenger({ db, users, worker, agentServer });
+    const httpChannel = createHttpChannel({ db, messenger, users, publicServer });
+    const scheduler = createScheduler({ db, worker, agentServer });
+    return { users, signatures, decisions, messenger, httpChannel, scheduler };
   },
   handlers: () => ({ [messageReceivedKind]: /* your Signal Handler */ }),
 });
@@ -783,8 +798,8 @@ migration step somewhere before the second one.
 
 1. **Construct.** `createGateway({ … })` builds the Db, two `Fastify()`
    instances and the Signal Worker, and calls your `extend`, where the reference deployment
-   builds the User Manager, Signatures, Decisions and the HTTP Messenger by hand and returns
-   them. It hands each part what it needs and keys them in an order. Construction is also the whole of the
+   builds the User Manager, Signatures, Decisions, the Messenger, its HTTP Channel and the
+   Scheduler by hand and returns them. It hands each part what it needs and keys them in an order. Construction is also the whole of the
    wiring: a part handed a server registers its routes on that server, so there is no second
    item on a checklist for you to forget
    ([ADR-0032](./adr/0032-components-wire-themselves-at-construction.md)). Its *tables* are
@@ -819,68 +834,101 @@ this, and all of it before you write a Component of your own.
 
 One word, since it is the only thing the framework asks a part to be. A **Component** is a
 `start` and a `stop` and nothing else: no name, no routes field, no declared dependency and
-nothing resolved. All eight above are Components, the four whose methods do nothing
-included — the User Manager, Signatures, Decisions and the HTTP Messenger — because
-membership in the record is what gives a part a key and a position, rather than owning a timer
-([ADR-0037](./adr/0037-the-gateway-is-a-record-of-components.md)).
+nothing resolved. All ten above are Components, the five whose methods do nothing
+included — the User Manager, Signatures, Decisions, the Messenger and the HTTP Channel —
+because membership in the record is what gives a part a key and a position, rather than owning
+a timer ([ADR-0037](./adr/0037-the-gateway-is-a-record-of-components.md)). A Channel is that
+same two-method shape with two more members on it, a `name` and a `send`, and nothing else: no
+plugin contract to implement and no registry to appear in
+([ADR-0048](./adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)).
 
 Then the one thing the framework does not do for you, at the bottom of the file:
 **shutdown**.
 
-### The HTTP Messenger, and the one thing it asks of you
+### Messaging is two parts now: the Messenger, and the Channel that reaches a person
 
-Messaging is one call and five options, and every one of them is required:
+Messaging used to be one call. It is two, and the seam between them is the only thing this
+section is really about:
 
 ```ts
-const messenger = createHttpMessenger({ db, users, worker, publicServer, agentServer });
+const messenger = createMessenger({ db, users, worker, agentServer });
+const httpChannel = createHttpChannel({ db, messenger, users, publicServer });
 ```
 
-You write that line yourself, in `extend`, and the Gateway hands the result back at
-`gateway.components.messenger`. Two things about it are still not yours to get wrong. **Its
-position is decided by where `extend`'s parts are keyed**: it is a Component whose `start` and
-`stop` do nothing, keyed after the servers and ahead of the worker so that it outlives the
-drain, which is when a Handler's `post` phase reaches it (ADR-0037, ADR-0045). And **the
-order it must be constructed in cannot be written wrongly**, because the User Manager is an
-argument to this call, so you build `users` before you can name it here. What *is* still
-expressible wrongly is [your migration barrel](#migrations-as-a-separate-step): this part's
-`messages.user_id` is a foreign key onto `saf_users.users.id`, so a barrel carrying the
-Messenger without the User Manager generates a constraint onto a table it never creates.
+The **Messenger** owns the Message log — the table, the per-User `seq`, the cursored read,
+`send`, `history`, the Signal `kind`, and the agent's own route group on the Agent server —
+and **it reaches nobody**. A **Channel** owns getting a Message to one person over one medium,
+and the HTTP Channel is the one that serves a browser: a submission and a cursored read of the
+sender's own log, on the Public server, and nothing else. That is why the Messenger takes no
+Public server and the Channel takes no Signal Worker
+([ADR-0048](./adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)).
 
-That call registers its two route groups at
-`/messages`, the Public pair behind the Manager's `requireUser` and the Agent pair behind
-no credential at all, which is the whole of the wiring. Nothing here is a capability to leave
-out, unlike the User Manager's servers: a Messenger with no Public server cannot be reached
-by the people it exists for, and one with no Agent server cannot be answered, so each is a
-broken Messenger rather than a smaller one and both are unconstructable instead of documented.
-No route plugin is exported and no prefix is configurable either, which is this part's one
-stated departure from the door-out pattern every other part follows: these routes are half of
-a contract whose other half is the Signal `kind`, the record shape and a client written
+**No request or response shape changed when they split**, and neither prefix moved: `POST
+/messages` and `GET /messages` mean on both servers exactly what they meant before. A client
+written against the old part keeps working, and so does a Signal Handler, since
+`messageReceivedKind` and `MessageRecord` are what they were.
+
+You write both lines yourself, in `extend`, and the Gateway hands each back under the key you
+filed it under. Four things about them are not yours to get wrong.
+
+- **The order cannot be written wrongly.** The User Manager is an argument to both calls, and
+  the Messenger is an argument to the Channel, so `users` exists before either and `messenger`
+  before `httpChannel` — the type checker settles it, not a comment.
+- **The Channel wires itself.** `createHttpChannel` calls `messenger.register(...)` inside its
+  own constructor, so there is no wiring line in your entry point to forget. What `register`
+  answers with is the **only** way an inbound Message can be written: there is no public
+  `receive`, so nothing else in the Gateway can put words in a User's mouth.
+- **A second Channel on one Messenger throws** at that registration, so a deployment runs one
+  medium. Choosing the medium is choosing which Channel you construct, and switching one off
+  is not constructing it.
+- **Their position is decided by where `extend`'s parts are keyed**: both are Components whose
+  `start` and `stop` do nothing, keyed after the servers and ahead of the worker so that they
+  outlive the drain, which is when a Handler's `post` phase reaches them (ADR-0037, ADR-0045).
+
+What *is* still expressible wrongly is [your migration barrel](#migrations-as-a-separate-step).
+The Messenger's `messages.user_id` is a foreign key onto `saf_users.users.id`, so a barrel
+carrying the Messenger without the User Manager generates a constraint onto a table it never
+creates. The HTTP Channel is the opposite case and needs nothing from you: **it owns no tables
+at all**, so there is no `shared-agent-framework/http-channel` line in a barrel and leaving it
+out is correct rather than a mistake.
+
+Neither part exports a route plugin and neither prefix is configurable, which is messaging's
+one stated departure from the door-out pattern every other part follows: these routes are half
+of a contract whose other half is the Signal `kind`, the record shape and a client written
 against both, so an Operator who needs them somewhere else wants a messaging part of their own
 ([ADR-0034](./adr/0034-the-http-messenger-is-an-opinionated-messenger.md),
-[ADR-0021](./adr/0021-the-framework-has-no-plugin-system.md)).
+[ADR-0021](./adr/0021-the-framework-has-no-plugin-system.md)). Wanting a different *medium* is
+a different and much cheaper thing, and it is what a Channel is for.
 
-Two more things are exported beside the constructor, and they are the Signal contract a
+Two more things are exported beside `createMessenger`, and they are the Signal contract a
 Handler is written against: **`messageReceivedKind`**, so that a Handler map is not a string
 literal that can drift, and **`MessageRecord`**, because the payload *is* the Message record
 flat, so `templateHandler<MessageRecord>` type-checks a template's data function against the
-same shape every surface of this part answers with. Registering no Handler for that `kind` is
+same shape every surface of messaging answers with. Registering no Handler for that `kind` is
 a 201 followed by a permanently failed Signal: the Message is stored and readable, the agent
 never sees it, and the failure is visible only on the Signal row. That is not guarded, and it
 is the one thing to check first if Messages arrive and nothing runs.
 
-What the object itself carries, once the wiring has happened, is the two things no request can
-express. `send(tx, userId, text)` writes an outbound Message from inside a transaction of
-yours, so answering somebody and recording in your own tables why cannot come apart, and it
-returns the record because `history` takes no transaction and therefore cannot see your own
-uncommitted write. `history(userId, options?)` reads any person's whole log, with the same
-cursor the routes take, so a Handler can build a Prompt from more than the one Message that
-woke it. There is deliberately no method that writes an **inbound** Message: `direction` is
-decided by the server a request arrived on, and trusted code gets no path that puts words in a
-User's mouth. The reference deployment holds the object for the first of the two, and for one
-purpose: its Handler's `post` phase tells the person when the Run failed, which is otherwise
-the one event nothing in a Gateway can report, since a failed Run is never retried and
-somebody is waiting. A deployment whose Handlers neither send nor read simply never reaches
-for `gateway.components.messenger`; the part is there and costs nothing.
+What the Messenger carries, once the wiring has happened, is three things no request can
+express. `register(channel)` is the Channel's own, described above. `send(tx, userId, text)`
+writes an outbound Message from inside a transaction of yours, so answering somebody and
+recording in your own tables why cannot come apart, and it returns the record because
+`history` takes no transaction and therefore cannot see your own uncommitted write. It also
+hands the Message to the Channel **in that same transaction**, so a medium that cannot take it
+throws and your Message is never recorded as sent; a Messenger with no Channel registered at
+all throws too, before anything is written. `history(userId, options?)` reads any person's
+whole log, with the same cursor the routes take, so a Handler can build a Prompt from more
+than the one Message that woke it. There is deliberately no method that writes an **inbound**
+Message: only a registered Channel can, through the handle it got back.
+
+The HTTP Channel itself carries no trusted-code method at all. Its `send` is a no-op, because
+HTTP delivery is the User asking, and there is nothing for you to call on it — which is the
+point: whatever medium a deployment runs, trusted code says `messenger.send` and does not know
+which one it was. The reference deployment holds the Messenger for exactly one purpose: its
+Handler's `post` phase tells the person when the Run failed, which is otherwise the one event
+nothing in a Gateway can report, since a failed Run is never retried and somebody is waiting.
+A deployment whose Handlers neither send nor read simply never reaches for
+`gateway.components.messenger`; the parts are there and cost nothing.
 
 ## Things that will bite you
 
@@ -1133,16 +1181,19 @@ let them decide about, not one to send again on a timer. An `Idempotency-Key` **
 addable later at no cost to the fixed body shape, which is exactly why this is a note rather
 than a feature today.
 
-**Delivery is polling.** `?after=<seq>` is the whole of the resume mechanism, so a chat with a
-two-second poll is a chat with up to a two-second delay. That is usually invisible next to a
-Run: the worker is serial globally, one Run at a time for the whole Gateway, and *that* is the
-real latency story. It is nonetheless the first thing an Operator will want to change, and the
-answer today is the poll interval, because SSE or long-polling means the HTTP Messenger
-growing a `LISTEN` registration and a `stop` that closes open responses
+**Delivery is polling — over HTTP.** `?after=<seq>` is the whole of the resume mechanism, so a
+chat with a two-second poll is a chat with up to a two-second delay. That is usually invisible
+next to a Run: the worker is serial globally, one Run at a time for the whole Gateway, and
+*that* is the real latency story. It is nonetheless the first thing an Operator will want to
+change, and there are now two answers. Shortening the poll interval is one. Running a different
+**Channel** is the other, and it is the reason the split happened: a medium that pushes pushes,
+and the Nostr Channel does, delivering a reply into the client the person already has with
+nothing to poll. Making *HTTP* push means that Channel growing a `LISTEN` registration and a
+`stop` that closes open responses
 ([ADR-0035](./adr/0035-a-users-messages-are-one-log-read-by-cursor.md)). It is already a
 Component and already positioned to outlive the drain, so that day is two methods filling in
-rather than a place in an order to argue about (ADR-0037). Nothing about the data model has
-to change either, which is why it is deferred rather than designed around.
+rather than a place in an order to argue about (ADR-0037). Nothing about the data model has to
+change either, which is why it is deferred rather than designed around.
 
 ### Shutdown is two lines, and the policy is yours
 
@@ -1177,7 +1228,7 @@ What that reverse order is, and the one rule the whole of it comes from, is
 [ADR-0045](./adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md)'s and not this file's. The
 short of it: the **Signal Worker's `stop` is the only stop that does work** — every other
 one releases something — so the drain goes first, while both servers are still listening,
-the HTTP Messenger is still live and the pool is still open. Everything the Run in flight needs
+the Messenger and its Channel are still live and the pool is still open. Everything the Run in flight needs
 outlives it because nothing has closed yet. The cost is stated there too: the Public server
 keeps accepting submissions throughout the drain, and a Message posted during one is stored,
 stays `pending`, and is picked up on the next boot.
@@ -1276,21 +1327,29 @@ Your whole side of it is two files. The barrel:
 ```ts
 // schema.ts
 export * from "shared-agent-framework/decisions";
-export * from "shared-agent-framework/http-messenger";
+export * from "shared-agent-framework/messenger";
 export * from "shared-agent-framework/scheduler";
 export * from "shared-agent-framework/signals";
 export * from "shared-agent-framework/users";
 ```
 
-and a `drizzle.config.ts` pointing `schema` at it. Those are the same five specifiers
+and a `drizzle.config.ts` pointing `schema` at it. Those are five of the six specifiers
 `main.ts` takes the constructors from, because a component is one subpath and its tables
 arrive on it beside `createUsers` and the rest
 ([ADR-0047](./adr/0047-a-component-is-one-subpath.md)). Each exports its tables as top-level
 names because that is the
 only shape `drizzle-kit` reads: it takes `Object.values` of the module and keeps whatever
 passes `is(x, PgTable)`, never looking inside a plain object, so a barrel that gathered the
-tables into one exported record would push nothing at all and say so nowhere. Signatures is
-absent because it stores nothing: it is the only part of the framework with no schema at all.
+tables into one exported record would push nothing at all and say so nowhere.
+
+**Two parts this deployment constructs are missing from that list, and both correctly.**
+Signatures stores nothing at all, so it has no schema. The **HTTP Channel** has none either:
+the log it used to own belongs to the Messenger now, and HTTP delivery is the User asking, so
+there is nothing to queue ([ADR-0048](./adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)).
+A Channel is not a tableless kind of thing, though — a deployment running the **Nostr
+Channel** instead barrels `shared-agent-framework/nostr-channel` for its three tables, and
+needs the User Manager in the barrel for that Channel's own foreign key exactly as it does for
+the Messenger's ([ADR-0049](./adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)).
 
 **Set `schemaFilter` in that config, and derive it rather than typing it.** `drizzle-kit`
 defaults it to `["public"]` and applies it to *both* sides of the diff, so with every table
@@ -1308,11 +1367,12 @@ an `ANTHROPIC_API_KEY` is a broken migration job
 ([ADR-0032](./adr/0032-components-wire-themselves-at-construction.md)).
 
 **What goes in the barrel is the one thing here that nothing checks**, and the two ways to
-get it wrong fail very differently. Leave the User Manager out while the HTTP Messenger is
+get it wrong fail very differently. Leave the User Manager out while the Messenger is
 in, and generation dies loudly with `schema "saf_users" does not exist`, before it has
 touched anything: `messages.user_id` is a foreign key onto `saf_users.users.id` and there is
 no table for it to point at
-([ADR-0036](./adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)). Leave out a part
+([ADR-0036](./adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)). The Nostr Channel's
+`pubkeys.user_id` and `outbox.user_id` fail the same way for the same reason (ADR-0049). Leave out a part
 you nonetheless construct in `main.ts`, and **nothing** says anything — its tables are
 simply absent, and you learn that on the first query needing one. Your `extend` and your
 barrel are two lists of the same parts, and keeping them in agreement is yours (ADR-0046,
@@ -1423,9 +1483,9 @@ publicServer.fastify.post("/ask", { preHandler: users.requireUser }, async (requ
 });
 ```
 
-That is the whole integration surface, and it is the same one the HTTP Messenger's own Public
+That is the whole integration surface, and it is the same one the HTTP Channel's own Public
 routes use: `requireUser` as one option, `request.safUser` in the handler, and no
-authentication of its own anywhere in that part. Four things about it are decisions rather than
+authentication of its own anywhere in messaging. Four things about it are decisions rather than
 omissions, and are cheaper to learn now than to discover:
 
 - **Seeding the first User is yours, and it happens once.** A User has no natural key — no
@@ -1448,9 +1508,12 @@ omissions, and are cheaper to learn now than to discover:
 **Your own Producer.** Anything that calls `worker.emit(tx, { kind, payload })`. A webhook
 route, a poller, a loop. Note the transaction: `emit` takes yours rather than finding one,
 so recording something in your own tables and telling the agent about it either both
-happen or neither does — and a rollback wakes nobody. The HTTP Messenger is a Producer of
+happen or neither does — and a rollback wakes nobody. The Messenger is a Producer of
 exactly that kind and holds no privilege for being ours: it inserts a Message and emits
-`message.received` in one transaction, and a Producer of yours beside it is a peer.
+`message.received` in one transaction, and a Producer of yours beside it is a peer. A
+**Channel** is not one, despite being where an inbound Message comes from: it hands the
+Message to the Messenger, which is what writes the Signal
+([ADR-0048](./adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)).
 
 **Your own Component.** Anything with a `start` and a `stop` starts and stops with
 everything else — a poller, a queue consumer, a metrics endpoint of your own. There is no
@@ -1870,7 +1933,13 @@ So you do not go looking:
   [the reasons and what each costs](#three-things-about-messages-and-none-of-them-is-a-bug).
 - **Any way to remove a User**, any account-recovery flow, and any limit on password
   guessing. All three refused, with the reasoning above and in the ADRs.
-- **The Scheduler** — recurrence and future work. Designed, not built.
+- **A second medium.** This stack runs the **HTTP Channel**, and one Channel per Messenger is
+  refused at registration, so nothing here is reached over anything but HTTP. The framework
+  ships a **Nostr Channel** as the other one — NIP-17 private direct messages over one Relay
+  the Operator runs — and swapping it in is swapping which Channel line `extend` has, plus its
+  three tables in your barrel. It is not in this deployment and so not in this document; its
+  page in the API reference is where it is written down
+  ([ADR-0049](./adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)).
 - **Timeouts, cancellation, and retry.** Refused, with the consequences spelled out
   above.
 - **Authentication on the Agent server.** Refused, with the consequences spelled out

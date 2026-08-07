@@ -74,7 +74,8 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
  * which replies the Relay has not taken yet — are nobody else's (ADR-0049). It is also the one
  * line carrying error classes: five refusals an Operator branches on with `instanceof`, two from
  * a send and three from recording a key, and `main.ts` below catches every one. The Scheduler's
- * `ScheduleSpecError` is the only other class the package exports and is not named here yet.
+ * `ScheduleSpecError` is the only other class the package exports, and it is caught there too, so
+ * every exported error class is now reached through an `instanceof` rather than only imported.
  * Every table is named individually rather than pulled in as a namespace, because naming them is
  * what proves the module flat-exports them: a table that had retreated into `usersTables` would
  * fail to import here, where an `import * as` would resolve and say nothing (ADR-0046). Every
@@ -94,7 +95,7 @@ const consumerImports = [
   'import { createNostrChannel, MalformedPublicKeyError, MessageTooLargeError, NoSuchUserError, nostrChannelSchema, outbox as outboxTable, pubkeys as pubkeysTable, PublicKeyConflictError, received as receivedTable, UnrecordedPublicKeyError } from "shared-agent-framework/nostr-channel";',
   'import { createSignatures } from "shared-agent-framework/signatures";',
   'import { createDecisions, decisions as decisionsTable, decisionsSchema } from "shared-agent-framework/decisions";',
-  'import { createScheduler, scheduleFiredKind, schedulerSchema, schedules as schedulesTable } from "shared-agent-framework/scheduler";',
+  'import { createScheduler, scheduleFiredKind, ScheduleSpecError, schedulerSchema, schedules as schedulesTable } from "shared-agent-framework/scheduler";',
 ];
 
 function run(command: string, args: string[], cwd: string): string {
@@ -1381,6 +1382,19 @@ try {
       "  const everything: DecisionRecord[] = await decisions.history(page);",
       "  const newest: DecisionRecord[] = await decisions.history();",
       '  shipped.info({ decided: decided.seq, log: everything.length, page: newest.length }, "a Decision is on the record");',
+      "  // The Scheduler's three management methods, and the one error class it exports. A spec that",
+      "  // resolves to no fire is refused before anything is persisted, and an Operator branches on",
+      "  // that with `instanceof` — so the class is caught here rather than only imported, which is",
+      "  // what would notice it going missing from the subpath.",
+      "  try {",
+      "    const outcome: ScheduleOutcome = await scheduler.schedule(scheduleInput);",
+      "    const standing: ScheduleRecord[] = await scheduler.list();",
+      "    await scheduler.cancel(outcome.schedule.name);",
+      '    shipped.info({ created: outcome.created, standing: standing.length }, "a Schedule is declared");',
+      "  } catch (refused) {",
+      "    const named: boolean = refused instanceof ScheduleSpecError;",
+      '    shipped.warn({ named }, "a Schedule spec was refused before anything was persisted");',
+      "  }",
       "  // One record, under the consumer's own words for its parts, that starts in key",
       "  // order and stops in the reverse of it. **Every** part is in it, the User Manager, the",
       "  // Messenger and its HTTP Channel, Signatures and Decisions included, and those five come",

@@ -5,8 +5,8 @@ The Nostr Channel, from `shared-agent-framework/nostr-channel`.
 `createNostrChannel` is the whole of it for an Operator. Hand it the Db, the Messenger, the
 User Manager, the Shared Agent's Nostr secret key as 32 raw bytes, and the address of the one
 Relay the Operator runs. It registers itself with that Messenger, and what it gets back is the
-only way to write an inbound Message (ADR-0048). Then key it in the Gateway's record before the
-Signal Worker, so that it stops after the drain.
+only way to write an inbound Message. Then key it in the Gateway's record before the Signal
+Worker, so that it stops after the drain.
 
 **It registers no route on either server.** What a User reaches over this medium is the Relay,
 so a deployment running this and nothing else has a Public server with only the User Manager's
@@ -24,7 +24,7 @@ Relay to add, so nobody finds this agent by looking for it. Nothing else about i
 no profile, no name, no picture — so it appears in a client as a bare public key.
 
 **One Channel per Messenger**, refused at registration, so a deployment runs Nostr or HTTP and
-not both. That is why `example/` keeps HTTP and there is no Nostr section in the quickstart.
+not both.
 
 **A reply travels in two steps, and the split is the design.** `messenger.send` runs the
 Channel's own `send` inside the Operator's transaction, where the recipient's key is resolved,
@@ -37,13 +37,13 @@ did she not get it" with no API and no log trawl.
 
 `recordPublicKey` is the one method trusted code calls, and it proves nothing: the Operator
 establishes out of band that a key is a person's, and no route anywhere records one, so an
-injected prompt cannot claim a User's key (ADR-0049). This subpath also carries the three tables.
-Barrel `shared-agent-framework/users` beside it, because `pubkeys.user_id` and `outbox.user_id`
+injected prompt cannot claim a User's key. This subpath also carries the three tables. Barrel
+`shared-agent-framework/users` beside it, because `pubkeys.user_id` and `outbox.user_id`
 reference the User Manager's table.
 
 The Nostr identity is a **second** keypair, secp256k1 where the signing identity is Ed25519, and
-it cannot be that key or become it (ADR-0050). The framework parses no key material: the
-constructor takes bytes an Operator decoded themselves, and no `nsec` decoder is shipped.
+it cannot be that key or become it. The framework parses no key material: the constructor takes
+bytes an Operator decoded themselves, and no `nsec` decoder is shipped.
 
 ## Example
 
@@ -104,8 +104,8 @@ key recorded as an `npub1…`, in upper case, or with a `0x` in front of it is c
 byte against the author of every decrypted message and matches none of them, so the User simply
 never hears from the agent and nothing anywhere says why.
 
-This decodes nothing. An Operator holding an `npub` calls `nip19.decode` themselves, which is
-ADR-0050's parse-nothing rule read from the other side.
+This decodes nothing. An Operator holding an `npub` calls `nip19.decode` themselves, the way
+they decode the secret key the constructor takes.
 
 #### Extends
 
@@ -344,7 +344,7 @@ built with.
 What a User's client shows as the agent's identity, and what an Operator tells a User to
 message. It is an address as well as an identity, which is what makes it unrotatable in
 practice: every recorded key is a row written from the other side, and every User's client
-holds the old one (ADR-0050).
+holds the old one.
 
 Hex and not an `npub`, for the reason there is no `nsec` decoder either. An Operator who
 wants the human-facing form calls `nip19.npubEncode` themselves.
@@ -392,8 +392,8 @@ An Operator records a key from their own code, having established out of band th
 theirs. That is the whole of admission over this medium, and it is deliberately the whole:
 **no route on either server records a key**, because doing so is authorization-shaped — it
 grants access to a Message log — so it joins `users.setAttributes` in the class an injected
-prompt cannot reach (ADR-0049). The recorded cost is that the agent cannot admit a stranger,
-and a message from a key nobody recorded is dropped with nothing stored.
+prompt cannot reach. The cost is that the agent cannot admit a stranger, and a message from a
+key nobody recorded is dropped with nothing stored.
 
 A write, so it takes the caller's transaction first: recording a key and whatever the
 Operator writes about the admission commit together or not at all. It replaces nothing —
@@ -598,13 +598,12 @@ readonly secretKey: Uint8Array;
 ```
 
 The Shared Agent's Nostr secret key: **32 raw bytes**, and the second keypair a deployment
-running this holds (ADR-0050).
+running this holds.
 
 Raw bytes because that is both Nostr libraries' own convention, and because the framework
 parses no key material and generates none: an Operator reads their own key and states it
-here, exactly as they hand `createSignatures` a `KeyObject` they built themselves (ADR-0041).
-No `nsec` decoder is shipped — shipping one would be the framework parsing key material behind
-a friendlier name — so an Operator holding an `nsec` calls `nip19.decode` themselves.
+here, exactly as they hand `createSignatures` a `KeyObject` they built themselves. No `nsec`
+decoder is shipped, so an Operator holding an `nsec` calls `nip19.decode` themselves.
 
 It cannot be the signing identity and could not become one: that key is Ed25519 and this
 curve is secp256k1. Copying this one impersonates the agent to its Users; copying that one
@@ -691,9 +690,8 @@ pubkeys: PgTableWithColumns<{
 Which Nostr public key belongs to which User, and the whole of admission over this medium.
 
 **Written from trusted code only.** There is no route on either server that records one, so an
-injected prompt cannot claim a User's key and take over their conversation
-(ADR-0049). The recorded cost is that the agent cannot admit a stranger: a key nobody put here
-is a key whose messages are dropped.
+injected prompt cannot claim a User's key and take over their conversation. The cost is that
+the agent cannot admit a stranger: a key nobody put here is a key whose messages are dropped.
 
 Uniqueness runs both ways, and the two constraints refuse different mistakes. `user_id` is the
 primary key, so one User holds at most one Nostr key. `pubkey` is unique, so a key already
@@ -710,7 +708,7 @@ received: PgTableWithColumns<{
 Every envelope that has already become a Message, keyed by the gift wrap's event id.
 
 **This is the correctness mechanism for inbound, and the subscription's `since`-lessness is
-why** (ADR-0049). NIP-59 randomises a wrap's timestamp up to two days into the past, so a
+why.** NIP-59 randomises a wrap's timestamp up to two days into the past, so a
 timestamp watermark is not a valid cursor and the Channel re-reads what the Relay holds on
 every connect instead. A primary key is what turns that repetition into nothing: the insert
 shares the transaction that writes the Message, so a conflict means "already processed" and a
@@ -763,9 +761,8 @@ const pubkeys: PgTableWithColumns<{
 Which Nostr public key belongs to which User, and the whole of admission over this medium.
 
 **Written from trusted code only.** There is no route on either server that records one, so an
-injected prompt cannot claim a User's key and take over their conversation
-(ADR-0049). The recorded cost is that the agent cannot admit a stranger: a key nobody put here
-is a key whose messages are dropped.
+injected prompt cannot claim a User's key and take over their conversation. The cost is that
+the agent cannot admit a stranger: a key nobody put here is a key whose messages are dropped.
 
 Uniqueness runs both ways, and the two constraints refuse different mistakes. `user_id` is the
 primary key, so one User holds at most one Nostr key. `pubkey` is unique, so a key already
@@ -784,7 +781,7 @@ const received: PgTableWithColumns<{
 Every envelope that has already become a Message, keyed by the gift wrap's event id.
 
 **This is the correctness mechanism for inbound, and the subscription's `since`-lessness is
-why** (ADR-0049). NIP-59 randomises a wrap's timestamp up to two days into the past, so a
+why.** NIP-59 randomises a wrap's timestamp up to two days into the past, so a
 timestamp watermark is not a valid cursor and the Channel re-reads what the Relay holds on
 every connect instead. A primary key is what turns that repetition into nothing: the insert
 shares the transaction that writes the Message, so a conflict means "already processed" and a

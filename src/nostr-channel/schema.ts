@@ -36,9 +36,8 @@ export const nostrChannelSchema = pgSchema("saf_nostr");
  * Which Nostr public key belongs to which User, and the whole of admission over this medium.
  *
  * **Written from trusted code only.** There is no route on either server that records one, so an
- * injected prompt cannot claim a User's key and take over their conversation
- * (ADR-0049). The recorded cost is that the agent cannot admit a stranger: a key nobody put here
- * is a key whose messages are dropped.
+ * injected prompt cannot claim a User's key and take over their conversation. The cost is that
+ * the agent cannot admit a stranger: a key nobody put here is a key whose messages are dropped.
  *
  * Uniqueness runs both ways, and the two constraints refuse different mistakes. `user_id` is the
  * primary key, so one User holds at most one Nostr key. `pubkey` is unique, so a key already
@@ -80,7 +79,7 @@ export const pubkeys = nostrChannelSchema.table("pubkeys", {
  * Every envelope that has already become a Message, keyed by the gift wrap's event id.
  *
  * **This is the correctness mechanism for inbound, and the subscription's `since`-lessness is
- * why** (ADR-0049). NIP-59 randomises a wrap's timestamp up to two days into the past, so a
+ * why.** NIP-59 randomises a wrap's timestamp up to two days into the past, so a
  * timestamp watermark is not a valid cursor and the Channel re-reads what the Relay holds on
  * every connect instead. A primary key is what turns that repetition into nothing: the insert
  * shares the transaction that writes the Message, so a conflict means "already processed" and a

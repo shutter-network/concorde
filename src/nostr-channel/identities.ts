@@ -35,8 +35,8 @@ const publicKeyPattern = /^[0-9a-f]{64}$/;
  * byte against the author of every decrypted message and matches none of them, so the User simply
  * never hears from the agent and nothing anywhere says why.
  *
- * This decodes nothing. An Operator holding an `npub` calls `nip19.decode` themselves, which is
- * ADR-0050's parse-nothing rule read from the other side.
+ * This decodes nothing. An Operator holding an `npub` calls `nip19.decode` themselves, the way
+ * they decode the secret key the constructor takes.
  */
 export class MalformedPublicKeyError extends Error {
   constructor(publicKey: string) {

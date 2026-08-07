@@ -16,8 +16,8 @@
  * `nostr-tools`' own `unwrapEvent` decrypts twice and **returns the rumor, discarding the seal**,
  * so a caller never sees `seal.pubkey` and the comparison is not merely omitted but
  * inexpressible. That is why this is written over the encryption primitive instead of through
- * the convenience function, and why `impersonation.test.ts` exists: it is the only thing that
- * would notice this check being refactored away.
+ * the convenience function, and why `receiving.test.ts`'s `impersonation` case exists: it is the
+ * only thing that would notice this check being refactored away.
  *
  * **The order of the checks is itself the decision**, and it is the order below:
  *

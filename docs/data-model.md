@@ -2,11 +2,11 @@
 
 Terminology is in [CONTEXT.md](../CONTEXT.md); rationale is in [docs/adr/](./adr/).
 
-The model splits along the Gateway's internal boundaries ([ADR-0020](./adr/0020-producers-are-trusted-components-of-the-gateway.md)): the **Signal Worker** owns Signals and Runs, the **User Manager** owns Users and their Tokens, the **HTTP Messenger** owns Messages, and **Decisions** owns Decisions. The Scheduler keeps its own model, not described here. **Signatures appears nowhere below**: it stores nothing at all, holding a key and answering three routes ([ADR-0042](./adr/0042-a-signature-is-a-compact-jws.md)). The Workspace is files, not rows. Signal Handlers are code, not data.
+The model splits along the Gateway's internal boundaries ([ADR-0020](./adr/0020-producers-are-trusted-components-of-the-gateway.md)): the **Signal Worker** owns Signals and Runs, the **User Manager** owns Users and their Tokens, the **Messenger** owns Messages, the **Nostr Channel** owns what only it can know about that medium, and **Decisions** owns Decisions. The Scheduler keeps its own model, not described here. **Two components appear nowhere below**, both because they store nothing at all: Signatures, which holds a key and answers three routes ([ADR-0042](./adr/0042-a-signature-is-a-compact-jws.md)), and the **HTTP Channel**, which lost the log to the Messenger and has no queue either, HTTP delivery being the User asking ([ADR-0048](./adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)). The Workspace is files, not rows. Signal Handlers are code, not data.
 
-The split is literal: each part owns a PostgreSQL schema, and no table references another part's ([ADR-0022](./adr/0022-the-store-is-postgresql-through-drizzle.md)), with **exactly one exception**: the HTTP Messenger's `user_id`, which is a foreign key onto the User Manager's `users.id` and is the only enforcement that a Message names a real User ([ADR-0036](./adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)). A second exception is an ADR of its own.
+The split is literal: each part owns a PostgreSQL schema, and no table references another part's ([ADR-0022](./adr/0022-the-store-is-postgresql-through-drizzle.md)), with **exactly three exceptions, all onto the same column**. `saf_messenger.messages.user_id` is a foreign key onto the User Manager's `users.id` and is the only enforcement that a Message names a real User ([ADR-0036](./adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)); `saf_nostr.pubkeys.user_id` and `saf_nostr.outbox.user_id` are the same reference for the same reason on the Nostr Channel's side ([ADR-0049](./adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)). One direction, one target table, and the User Manager references nobody back.
 
-The Signal Worker's schema is **`saf_signals`**, the User Manager's is **`saf_users`**, the HTTP Messenger's is **`saf_http_messages`** and Decisions' is **`saf_decisions`**. A schema is named for its subject rather than for the part, so that renaming a part is not a schema migration; the HTTP Messenger's carries the part because "HTTP" is the durable half of that name, and what the rule protects against is a rename becoming a migration ([ADR-0034](./adr/0034-the-http-messenger-is-an-opinionated-messenger.md)). **None of these tables are created by the framework**, which ships schema definitions and applies nothing ([ADR-0046](./adr/0046-the-operator-owns-migrations.md)). Each component exports its tables on its own subpath, `shared-agent-framework/<component>`, beside its constructor ([ADR-0047](./adr/0047-a-component-is-one-subpath.md)); a deployment `export *`s the components it runs into one barrel, points its own `drizzle.config.ts` at it, and generates or pushes with its own `drizzle-kit`. So there is no migration tracking table here, one per part or otherwise, and no registration order: `drizzle-kit` sees a single schema graph and orders the statements within it. What the barrel can still get wrong is its **contents**. The foreign key below means a barrel carrying the HTTP Messenger without the User Manager generates a reference to a table it never creates and dies on `schema "saf_users" does not exist`; and a part constructed in `extend` but omitted from the barrel simply has no tables, felt as a PostgreSQL `relation does not exist` on the first query that needs them, because `db.start()` verifies nothing (ADR-0046, costs 1 and 2). The quickstart's [migration step](./quickstart.md#migrations-as-a-separate-step) says so at length.
+The Signal Worker's schema is **`saf_signals`**, the User Manager's is **`saf_users`**, the Messenger's is **`saf_messenger`**, the Nostr Channel's is **`saf_nostr`**, the Scheduler's is **`saf_scheduler`** and Decisions' is **`saf_decisions`**. A schema is named for its subject rather than for the part, so that renaming a part is not a schema migration; the Nostr Channel's is named for the protocol on exactly that rule, and the Messenger's was **`saf_http_messages`** until the medium stopped being anything it owned, so a deployment upgrading across that split renames the schema (ADR-0048). **None of these tables are created by the framework**, which ships schema definitions and applies nothing ([ADR-0046](./adr/0046-the-operator-owns-migrations.md)). Each component exports its tables on its own subpath, `shared-agent-framework/<component>`, beside its constructor ([ADR-0047](./adr/0047-a-component-is-one-subpath.md)); a deployment `export *`s the components it runs into one barrel, points its own `drizzle.config.ts` at it, and generates or pushes with its own `drizzle-kit`. So there is no migration tracking table here, one per part or otherwise, and no registration order: `drizzle-kit` sees a single schema graph and orders the statements within it. What the barrel can still get wrong is its **contents**. The foreign keys above mean a barrel carrying the Messenger, or the Nostr Channel, without the User Manager generates a reference to a table it never creates and dies on `schema "saf_users" does not exist`; and a part constructed in `extend` but omitted from the barrel simply has no tables, felt as a PostgreSQL `relation does not exist` on the first query that needs them, because `db.start()` verifies nothing (ADR-0046, costs 1 and 2). The HTTP Channel is the case that fails neither way: it has nothing to barrel, so leaving it out is correct. The quickstart's [migration step](./quickstart.md#migrations-as-a-separate-step) says so at length.
 
 ## Signal Worker (`saf_signals`)
 
@@ -23,7 +23,7 @@ An arrival record, emitted by a Producer. Immutable except for `state` and `erro
 | `state` | `pending` \| `processing` \| `done` \| `failed` |
 | `error` | nullable |
 
-There is **no `user_id` column**. The Signal Worker authenticates nobody, so attribution is not a fact it holds. The HTTP Messenger's payload contract carries the submitting User's id, which is trustworthy because that part writes it and the client never does ([ADR-0020](./adr/0020-producers-are-trusted-components-of-the-gateway.md), superseding [ADR-0019](./adr/0019-signals-are-attributed-arrival-records.md)).
+There is **no `user_id` column**. The Signal Worker authenticates nobody, so attribution is not a fact it holds. The Messenger's payload contract carries the submitting User's id, which is trustworthy because that part writes it and the client never does ([ADR-0020](./adr/0020-producers-are-trusted-components-of-the-gateway.md), superseding [ADR-0019](./adr/0019-signals-are-attributed-arrival-records.md)).
 
 ### Run
 
@@ -68,17 +68,17 @@ There is **no read position** here either, and none anywhere else: a client's cu
 
 Nothing reaps expired rows, so this table grows with every login. That is an operational note in the quickstart rather than a background job.
 
-## HTTP Messenger (`saf_http_messages`)
+## Messenger (`saf_messenger`)
 
 ### Message
 
-One entity, both directions, and **one table**: `messages` is the whole schema ([ADR-0034](./adr/0034-the-http-messenger-is-an-opinionated-messenger.md)).
+One entity, both directions, and **one table**: `messages` is the whole schema ([ADR-0034](./adr/0034-the-http-messenger-is-an-opinionated-messenger.md), [ADR-0048](./adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)). It is one log per User whichever medium a Message travelled by, and there is **no `channel` column**: one Channel per Messenger makes it constant in every row, and the day a second one is constructable the column, an argument to `send` and the name in the Signal payload arrive together.
 
 | Field | Notes |
 | --- | --- |
 | `id` | opaque; a uuid the Db defaults |
 | `user_id` | exactly one User — the recipient when outbound, the sender when inbound. No groups, no broadcast (ADR-0008). **A foreign key** onto `saf_users.users.id`, which is the one exception to the cross-part rule above and the only enforcement that this names a real User: the agent's 404 is PostgreSQL's `23503` caught, with no lookup in front of it (ADR-0036). It never fires a cascade, because nothing removes a User (ADR-0029) |
-| `direction` | `outbound` (agent → User) \| `inbound` (User → agent). A `check` constraint over the same list the TypeScript union comes from, as `signals.state` is. Decided by which server the request arrived on, so there is no field for a caller to set and nothing to get wrong |
+| `direction` | `outbound` (agent → User) \| `inbound` (User → agent). A `check` constraint over the same list the TypeScript union comes from, as `signals.state` is. Decided by which of the Messenger's two writes wrote it — a Channel's `receive` or trusted code's `send` — so there is no field for a caller to set and nothing to get wrong |
 | `seq` | monotonic **per User**, 1, 2, 3…, across **both** directions, which is what lets one cursored read serve a client's poll and its rendering alike (ADR-0035). Never null. Assigned as `coalesce(max(seq), 0) + 1` for that User inside a savepoint; `unique (user_id, seq)` makes a lost race visible and a bounded retry settles it, because inbound writes arrive concurrently and are no longer the serial worker's alone |
 | `text` | the whole content, a plain string, non-empty. No `maxLength`: the server's own `bodyLimit` is the bound and it is the Operator's to raise (ADR-0034) |
 | `created_at` | `clock_timestamp()` and not `now()`, for the reason `signals.emitted_at` uses it: two rows written in one transaction should not share a timestamp exactly |
@@ -89,13 +89,13 @@ A Message is **immutable** once written, like a Signal: no column here is ever u
 
 The agent's read ignores `direction` and takes both sides interleaved, which is the reason the log exists: a Session is a lossy cache of it. A User's own read is the same query with the User taken from their Token instead of a query parameter.
 
-There is **no `run_id`**. Populating one would require the HTTP Messenger to ask the Signal Worker which Run is in flight, since the agent never names a Run — a second dependency in the one direction we keep thin. Traceability stays available on the Signal Worker's side instead: the worker is globally serial, so at most one Run exists at any moment and the Signal Worker can attribute an agent's call to it without this part learning that Runs exist.
+There is **no `run_id`**. Populating one would require the Messenger to ask the Signal Worker which Run is in flight, since the agent never names a Run — a second dependency in the one direction we keep thin. Traceability stays available on the Signal Worker's side instead: the worker is globally serial, so at most one Run exists at any moment and the Signal Worker can attribute an agent's call to it without this part learning that Runs exist.
 
 There is no read position, no unread count and no receipt. A client's cursor is the largest `seq` it holds (ADR-0035).
 
 A **Conversation** entity may be added here if a deployment needs one. It is this part's concept and must not appear in the Signal Worker.
 
-### The HTTP Messenger's Signal contract
+### The Messenger's Signal contract
 
 The `kind` and payload shape of the Signals this part emits are **its contract, not the framework's** ([ADR-0020](./adr/0020-producers-are-trusted-components-of-the-gateway.md)). The Signal Worker treats the payload as opaque; a Signal Handler is written against this shape.
 
@@ -104,7 +104,54 @@ The `kind` and payload shape of the Signals this part emits are **its contract, 
 | `kind` | `message.received`, an exported constant rather than a construction option (ADR-0034) |
 | `payload` | the stored inbound Message, flat: `{ id, userId, direction, seq, text, createdAt }` |
 
-The payload **is** the record every other surface returns, not a projection of it: one shape for the POST response, both reads, the trusted-code methods and this. `direction` is always `inbound` here and `seq` is redundant for most Handlers; both are carried so that the part has one shape rather than two kept parallel by hand. `userId` is the id of the User the **User Manager** authenticated, read off the request and never from the body, which is what makes attribution trustworthy. `createdAt` is an ISO 8601 string, because JSON has no date. A Handler wanting more than the one Message reads that User's log through the part's own method rather than re-deriving anything from the payload.
+The payload **is** the record every other surface returns, not a projection of it: one shape for the POST response, both reads, the trusted-code methods and this. `direction` is always `inbound` here and `seq` is redundant for most Handlers; both are carried so that the part has one shape rather than two kept parallel by hand. `userId` is the id of the User the Channel resolved: over HTTP the one the **User Manager** authenticated, read off the request and never from the body; over Nostr the one whose recorded public key sealed the message. Either way the Channel writes it and no client ever does, which is what makes attribution trustworthy. `createdAt` is an ISO 8601 string, because JSON has no date. A Handler wanting more than the one Message reads that User's log through the part's own method rather than re-deriving anything from the payload. **The payload does not name the Channel**, and did not change when the split happened, so a Handler written against the HTTP Messenger needs no edit ([ADR-0048](./adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)).
+
+## Nostr Channel (`saf_nostr`)
+
+Three tables, and **no Message among them**: the log is the Messenger's whichever medium a Message travelled by. What this part keeps is the three things only it can know ([ADR-0049](./adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)). It has no section above because it has no entry in the reference deployment either — one Channel per Messenger, and the example runs HTTP.
+
+### Public key (`pubkeys`)
+
+Which Nostr public key belongs to which User, and the whole of admission over this medium.
+
+| Field | Notes |
+| --- | --- |
+| `user_id` | the **primary key**, so one User holds at most one Nostr key — otherwise there would be no answer to which one the agent writes back to. A foreign key onto `saf_users.users.id`, and the only enforcement that this names a real User: the refusal is PostgreSQL's `23503` caught, with no lookup in front of the write. No cascade, because nothing removes a User |
+| `pubkey` | 32 bytes as **64 lowercase hex characters**, which is what the wire format and both Nostr libraries use. Not an `npub`: NIP-19's display encodings are refused rather than decoded, because a stored one would be compared byte for byte against a decrypted message's author and match nothing, silently. **Unique**, so a key already recorded cannot be claimed by a second User — which is what stops one person's messages landing in another's log |
+| `recorded_at` | `clock_timestamp()`, for the reason `messages.created_at` uses it |
+
+**There is no route anywhere that writes this table**, on either server, which is the point: recording a key is authorization-shaped, so it joins `setAttributes` in the class an injected prompt cannot reach. Trusted code calls `recordPublicKey` in a transaction of its own, having established out of band that the key is that person's — it proves nothing, in exactly the sense `setPassword` proves nothing. **The cost is that the agent cannot admit a stranger**, and a message from a key nobody recorded is dropped with nothing whatever stored, not even a processed-event row.
+
+This is deliberately *not* shared with authentication. A unique constraint buys uniqueness and not authenticity, so a table both messaging and login read would be a trust root shared between them; full separation was cheaper, and the duplication is the recorded cost (ADR-0048, **Alias** under Rejected in CONTEXT.md).
+
+### Processed envelope (`received`)
+
+| Field | Notes |
+| --- | --- |
+| `event_id` | the gift wrap's own id, 64 lowercase hex characters, and the **primary key**. That constraint is the correctness mechanism for inbound: NIP-59 randomises a wrap's timestamp up to two days into the past, so a timestamp watermark is not a valid cursor and the subscription carries no `since` at all. The whole store is re-read on every connect, and this key turns the repetition into nothing. Reconnect overlap, the `created_at` tie when a paged read walks backwards, and a Relay delivering an event twice all collapse into it |
+| `received_at` | when this Gateway admitted it, which is **not** the timestamp the wrap carried |
+
+The insert shares the transaction that writes the Message, so a conflict means "already processed" and a rollback un-processes it. Only admitted events get a row, so a stranger cannot grow this table, and it stays the same order of magnitude as the Message log. Nothing prunes it.
+
+### Outbound queue (`outbox`)
+
+Every gift wrap owed to the Relay, or refused by it. **This table is the seam between the two halves of a send**: a publish cannot be rolled back and a transaction can, so the whole wrap is built and stored inside the caller's transaction and the network act happens after the commit.
+
+| Field | Notes |
+| --- | --- |
+| `event_id` | the wrap's own id, and the **primary key**, so the same wrap cannot be queued twice. It is also what the Relay acknowledges by, which makes a publish and the delete that follows it name one thing |
+| `user_id` | who the wrap is addressed to, and the column an Operator filters by. A foreign key onto `saf_users.users.id`, like `pubkeys.user_id`. **Not** the recipient's Nostr public key: that is inside the wrap, where the Relay cannot read it either |
+| `message_id` | the Message in the log this wrap carries, so an Operator can read what was not delivered. Deliberately **not** a foreign key onto `saf_messenger.messages.id`: the wrap is opaque, so this is the only route from a stuck row back to the words, and a plain column answers it with one join |
+| `wrap` | the finished gift wrap as the JSON that goes on the wire, stored whole. That is what keeps key material out of the publishing half — the wrap was sealed and signed inside the transaction — and what turns the Relay's advertised maximum message size into a synchronous throw rather than a queue row that fails once and stops. Encrypted to the recipient, so it tells the Operator nothing about what it says |
+| `reason` | why the Relay refused it, in the Relay's own words, or `null`. NIP-01 prefixes an `OK` reason with a machine-readable word — `blocked:`, `rate-limited:`, `invalid:`, `auth-required:` — so "the Relay was down" and "the Relay refused this" are distinguishable without parsing prose. **`null` is what the drain selects on**, which is what makes "attempted once" hold across a notification, a restart, and a stop and start alike |
+| `queued_at` | `clock_timestamp()`, and the publishing order |
+| `failed_at` | when the Relay refused it, and `null` for as long as `reason` is |
+
+A row is deleted when the Relay accepts the wrap, so a healthy deployment keeps this table empty. A row carrying a `reason` is **never attempted again**: there is no retry, no backoff and no attempt cap, which is ADR-0017 applied to publishing, and this table is where all three would land. So `select * from saf_nostr.outbox where reason is not null` is the whole answer to "why did she not get it", and it needs no API. The recorded cost is that a Relay restart mid-send loses that Message and the Operator replays the row by hand.
+
+### The Nostr Channel's Signal contract
+
+It has none, and that is the design: an inbound direct message becomes an inbound Message through the Messenger's own `receive`, so the Signal is the Messenger's, with the same `kind` and the same payload as an HTTP submission (ADR-0048). A Channel is not a Producer.
 
 ## Decisions (`saf_decisions`)
 
@@ -123,7 +170,7 @@ Four columns and no index beyond the primary key, since every query this part wi
 
 A Decision is **immutable** once written — no column is ever updated, and unlike the alternative write path considered in ADR-0043 that claim is literal rather than "not after publish". Nothing removes one: no delete, no TTL, no sweeper, no supersession field. A reversal is a new Decision whose statement says so, and the table grows forever as `messages` and `tokens` do.
 
-There is **no `run_id`**, for the HTTP Messenger's reason and two of its own: it would be a second cross-schema foreign key, tying this part's schema to the Signal Worker's as ADR-0036's ties the Messenger's to the User Manager's, and it would be null for a Decision published by a Signal Handler and so mean two things at once. Correlating a Decision to its Run is a manual timestamp join, ambiguous if two Runs publish inside one clock tick.
+There is **no `run_id`**, for the Messenger's reason and two of its own: it would be a second cross-schema foreign key, tying this part's schema to the Signal Worker's as ADR-0036's ties the Messenger's to the User Manager's, and it would be null for a Decision published by a Signal Handler and so mean two things at once. Correlating a Decision to its Run is a manual timestamp join, ambiguous if two Runs publish inside one clock tick.
 
 There is **no `key_id`**, so changing the signing key leaves the log holding artifacts under two keys with nothing saying which; a verifier needs the old public key out of band ([ADR-0041](./adr/0041-the-shared-agent-has-a-signing-identity.md)).
 
@@ -137,13 +184,13 @@ There is **no `key_id`**, so changing the signing key leaves the log holding art
 
 1. **A Message envelope exposes no cross-User provenance.** No originating Signal or Run identifier reaches a client: one Signal may produce Messages to several Users, so exposing it would reveal that another User acted, and a Run identifier discloses how much other activity intervened (ADR-0007).
 2. **No identifier or counter visible to a User is influenced by another User's activity — on a per-User surface.** Hence `Message.seq` is per-User rather than a global sequence. Numbering both directions does not touch this: it changes what is numbered, not whose activity moves the number (ADR-0035). **`Decision.seq` is the deliberate exception**, and the scoping clause is there for it: every User sees the same global sequence and it is moved by every other User's activity, so a reader can infer from a jump and a timestamp that somebody else acted. On a surface whose content is published to everyone on purpose that is the function rather than a leak (ADR-0043). Invariant 1's bar on Signal and Run provenance loses its stated reason on that surface for the same reason, and is honoured there anyway.
-3. **Every outbound Message belongs to exactly one Run, and every Run to exactly one Signal.** True but unrecorded in the HTTP Messenger — see Message above. An inbound Message belongs to no Run: it precedes one, and the link is the Signal it emitted, which is recorded on the Signal Worker's side.
+3. **Every outbound Message belongs to exactly one Run, and every Run to exactly one Signal.** True but unrecorded in the Messenger — see Message above. An inbound Message belongs to no Run: it precedes one, and the link is the Signal it emitted, which is recorded on the Signal Worker's side.
 4. **A Signal with no Prompts is still a Signal.** Handler-level refusal leaves an arrival record, which is what makes authorization auditable.
 5. **`state` transitions are one-way.** Nothing returns to `pending`; failed Signals are never re-run (ADR-0017).
 6. **Users never read Signals.** The Signal Worker's Signal log is not a user-facing surface at all (ADR-0020).
 7. **A stored credential is never readable, only verifiable.** A Token's plaintext exists once, in the response that issued it, and a password's never. Nothing in the framework can answer "what is this User's Token".
 8. **A User may read their own Attributes.** They govern that User's authorization, they are not secret, and a Signal Handler's behaviour reveals them anyway.
-9. **Only a User can cause an inbound Message.** There is no trusted-code path that writes one, so nothing in the Gateway and nothing the agent can reach puts words in a User's mouth. Trusted code writing history in uses the Operator's own SQL.
+9. **Only a User can cause an inbound Message.** There is no public `receive` on the Messenger: a Channel gets one back from `register`, so only a registered Channel can write an inbound Message and nothing else in the Gateway, and nothing the agent can reach, puts words in a User's mouth (ADR-0048). Over Nostr the same claim holds against a forged envelope, because the seal's author and the rumor's author must agree before anything is written (ADR-0049). Trusted code writing history in uses the Operator's own SQL.
 10. **A signature proves custody, not conduct.** It says the Operator committed to this Statement on the Shared Agent's behalf. It says nothing about how the Statement came to be, and an injected agent can obtain one (ADR-0041).
 11. **The Decision log is the one shared surface, and the only one.** Every authenticated User reads the same rows in the same order; nothing scopes it, and no other read in the model works that way.
 12. **A Decision exists as an artifact, not as a row.** The JWS is the Decision, so a valid one does not imply a row and a verifier needs none (ADR-0042, ADR-0043).
@@ -154,7 +201,8 @@ There is **no `key_id`**, so changing the signing key leaves the log holding art
 - **Session.** Not modelled; the Signal Worker stores only the name it routes to (ADR-0016).
 - **Agent configuration.** Opaque to the framework (ADR-0016).
 - **Per-Signal permissions.** Authorization lives in Signal Handlers (ADR-0009).
-- **Delivery state on Messages.** Cursors replace acks and redelivery bookkeeping (ADR-0015).
+- **Delivery state on Messages.** Cursors replace acks and redelivery bookkeeping (ADR-0015). What a Nostr Channel's `outbox` row records is that a wrap is owed to the Relay, not that a Message was delivered to a person; nothing anywhere records the second thing.
+- **Which Channel a Message travelled by.** No column on `messages`, no argument to `send`, and no name in the Signal payload. One Channel per Messenger makes all three constant, and the day a second one is constructable they arrive together (ADR-0048).
 - **Read state of any kind.** No stored cursor, no unread count, no receipts, no cross-device sync. The read position a client needs is the largest `seq` it holds (ADR-0035).
 - **Any way to remove or edit a Message.** No delete, no update, no retention setting (ADR-0035).
 - **Identity in the Signal Worker.** It belongs to the User Manager alone (ADR-0020, ADR-0029).
@@ -164,6 +212,6 @@ There is **no `key_id`**, so changing the signing key leaves the log holding art
 - **Failed-attempt counters or lockout state.** Deliberately absent; throttling is the deployment edge's (ADR-0030).
 - **Any record of a signature.** Signatures stores nothing, so an injected agent's Signed Statements exist only in a log line carrying the `typ` and a SHA-256 digest of the statement (ADR-0042).
 - **A `typ` allowlist or reserved prefix.** Nothing is reserved and `saf-decision+jws` is not special-cased; `typ` is the agent's own signed claim (ADR-0042).
-- **Key rotation, key identifiers and any stored key.** One keypair, supplied by the Operator, never generated and never persisted (ADR-0041).
+- **Key rotation, key identifiers and any stored key.** Two keypairs — the Signing identity and the Nostr identity — each supplied by the Operator, never generated and never persisted (ADR-0041, ADR-0050). The Nostr Channel stores *other people's* public keys and never its own.
 - **Any addressee on a Decision.** No `user_id`, no group, no Party (ADR-0043).
 - **Notification that a Decision was published.** No Signal and no push; Users poll (ADR-0043).

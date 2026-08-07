@@ -9,8 +9,7 @@
  *
  * **It owns no tables, and this subpath carries a constructor and nothing beside it.** The log is
  * the Messenger's, so there is nothing here for an Operator's migration barrel: barrel
- * `shared-agent-framework/messenger` instead, and `shared-agent-framework/users` beside it
- * (ADR-0047, ADR-0048).
+ * `shared-agent-framework/messenger` instead, and `shared-agent-framework/users` beside it.
  *
  * It answers with no method trusted code calls. Everything it does, it does for a request or for
  * the Messenger: `send` is a no-op, because HTTP delivery is the User asking, and `start` and
@@ -20,7 +19,7 @@
  *
  * There is **no route anywhere that chooses a Channel**, and no Message records which one it
  * travelled by: one Channel per Messenger, so a deployment runs HTTP or another medium and not
- * both (ADR-0048).
+ * both.
  *
  * @example
  * A Gateway a browser can talk to: the Messenger, and this Channel registered with it.

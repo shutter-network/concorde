@@ -133,7 +133,7 @@ const gateway = createGateway({
   runtime,
   publicListen: { port: publicPort, host: publicHost },
   agentListen: { port: agentPort, host: agentHost },
-  // The five opinionated parts, built by hand from the infrastructure `createGateway` hands us
+  // The six opinionated parts, built by hand from the infrastructure `createGateway` hands us
   // and returned so they become Components of the Gateway — keyed ahead of the Signal Worker, so
   // they stop after the drain a Handler's post phase reaches them through (ADR-0045). This is the
   // wiring and the construction order ADR-0038 hid; here they are where the deployment holding the

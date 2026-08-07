@@ -11,8 +11,16 @@ pushes the barrel before the Gateway starts. It is a **consumer** of
 `createGateway`, which builds the irreducible infrastructure and hands it to the Operator's
 `extend`
 ([ADR-0045](./docs/adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md)), so
-what is left in it is the Runtime, the four opinionated parts built by hand in `extend`, one
-Signal Handler and shutdown. `createBareGateway` is the escape one layer down, for a
+what is left in it is the Runtime, the six opinionated parts built by hand in `extend`, two
+Signal Handlers and shutdown. Six because messaging is two parts now: the Messenger owns the log
+and reaches nobody, and a **Channel** is what reaches a person over one medium
+([ADR-0048](./docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)). The
+example builds the HTTP Channel, and **the Nostr Channel is the first component with no entry in
+the reference deployment at all**: one Channel per Messenger is refused at registration, so a
+deployment runs one medium, and the example keeps the one the quickstart's spine is written in
+([ADR-0049](./docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)). The quickstart
+therefore gains no Nostr section, because a section for something the stack does not run would
+mislead by placement. `createBareGateway` is the escape one layer down, for a
 deployment whose infrastructure shape itself differs.
 
 **It runs only as a Compose stack**, `cd example && docker compose up -d --build`, from
@@ -66,11 +74,18 @@ share a database, and a test whose subject is what a fresh database ends up
 containing takes one of its own. See `src/test-support/database.ts`.
 
 `npm run check:package` is separate: it builds, packs, installs the tarball into a
-throwaway project, and checks that **all eight** subpaths resolve there — to the type checker
-and to Node both. Eight, because a component is one subpath and its tables arrive on it
+throwaway project, and checks that **all ten** subpaths resolve there — to the type checker
+and to Node both. Ten, because a component is one subpath and its tables arrive on it
 beside its constructor ([ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md)):
-the root, `/signals`, `/pi`, `/users`, `/http-messenger`, `/signatures`, `/decisions` and
-`/scheduler`, with no `/schema` specifier and no reserved `/messenger` among them. `/signals`
+the root, `/signals`, `/pi`, `/users`, `/messenger`, `/http-channel`, `/nostr-channel`,
+`/signatures`, `/decisions` and `/scheduler`, with no `/schema` specifier among them. It was
+eight until messaging split in two and a second medium arrived: `/messenger` was **reserved and
+unreachable**, held for the day a peer of the HTTP Messenger turned up, and what turned up was a
+Channel rather than a second Producer, so the reserved name went to the part that owns the log
+and `/http-messenger` became `/http-channel`
+([ADR-0048](./docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)).
+`/nostr-channel` is the tenth and the only Channel with tables of its own
+([ADR-0049](./docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)). `/signals`
 is the Signal Worker's own: its constructor, its options and the vocabulary a Signal
 Handler is written in come off `shared-agent-framework/signals` and **not** the package
 root. The check imports the
@@ -101,9 +116,12 @@ there are four commands in CI and three of them are not the inner loop.
 
 `npm run docs:dev` and `npm run docs:build` are the API reference: TypeDoc reads the doc
 comments out of `src`, writes one markdown page per entry point, and VitePress serves or builds
-them. The pages are the eight subpaths of the export map
+them. The pages are the ten subpaths of the export map
 ([ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md)), titled with the specifier a
-Developer imports from, and `example/` is not among them.
+Developer imports from, and `example/` is not among them. The Messenger and each Channel are
+separate pages for the reason they are separate subpaths: a Developer reads the one they are
+using, and the Nostr Channel's page is the only documentation of it anywhere in the deliverable,
+the reference deployment not running it.
 
 **[`docs/api-docs.md`](./docs/api-docs.md) is what those comments are written against**: which
 fact goes in a module comment, which in a constructor, which in a method, and which belongs in a
@@ -116,7 +134,7 @@ and this package pins 7. `site/README.md` argues that and states the **exit cond
 TypeDoc supports the compiler the root pins, the sub-package collapses into the root. All three
 root scripts `npm ci` that tree themselves, so a fresh clone needs no separate step.
 
-**`site/reference` is committed**, nine markdown pages: one per entry point, plus the `index.md`
+**`site/reference` is committed**, eleven markdown pages: one per entry point, plus the `index.md`
 that lists them and is the site root. That is what makes a change to the public API arrive as a
 readable diff in review rather than as something to notice in a source diff, and it only works
 because `typedoc.jsonc` sets `disableSources: true`. A file path, a line number and a commit
@@ -146,12 +164,12 @@ symbol that is on no subpath.
 The setting makes the block above an object type print its members instead of the word `object`.
 That block is the first thing on a page and it is what a reader takes the shape from, and most of
 this public API is object literals, so collapsed it left the shape to be assembled by hand out of
-the sections below on every one of the eight pages. Set on its own, though, it is worse than
+the sections below on every one of the ten pages. Set on its own, though, it is worse than
 leaving it off: `typedoc-plugin-markdown` renders each member as `name: <type>` and takes that
 type from `helpers.getDeclarationType`, which answers a member carrying signatures with the
-**return type of its first signature**, so roughly forty methods across `Db`, `Component`,
-`Runtime`, `Users`, `Decisions`, `Scheduler` and `HttpMessenger` print as properties holding their
-own return value, and `tx: Promise<T>` binds `T` to nothing at all. The word `object` said nothing
+**return type of its first signature**, so dozens of methods across `Db`, `Component`,
+`Runtime`, `Users`, `Decisions`, `Scheduler`, `Messenger`, `Channel` and `NostrChannel` print as
+properties holding their own return value, and `tx: Promise<T>` binds `T` to nothing at all. The word `object` said nothing
 and misled nobody; that block would mislead. So the plugin travels with the setting. It defines a
 theme, named on `typedoc.jsonc`'s `theme` line because defining one is how a render-context
 override is installed, and it widens that one helper for members reached from inside an expanded
@@ -219,10 +237,17 @@ columns that arrived against the columns the parts declare. That is what catches
 lost to a wrapper export, a schema-name collision between two parts, or a new part whose
 schema nobody added to the set.
 
-Signatures has none of any of this, and is the only part of which that is true: it stores
-nothing, so it has no schema and no tables, and its subpath carries a constructor and
-nothing beside it
-([ADR-0042](./docs/adr/0042-a-signature-is-a-compact-jws.md)).
+Two parts have none of any of this: Signatures and the HTTP Channel. Signatures stores nothing
+because a Signed Statement is never kept
+([ADR-0042](./docs/adr/0042-a-signature-is-a-compact-jws.md)); the HTTP Channel stores nothing
+because the log it used to own is the Messenger's now, and HTTP delivery is the User asking, so
+there is no queue either
+([ADR-0048](./docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)). Each has
+no schema and no tables, and each subpath carries a constructor and nothing beside it. The Nostr
+Channel is the counter-example that says a Channel is not a tableless kind of thing: it owns
+**three** tables, because the mapping from a Nostr public key to a User, the set of envelopes it
+has already read, and the queue of wraps the Relay has not taken yet are three things only it can
+know (ADR-0049).
 
 Conventions the build depends on:
 
@@ -268,28 +293,50 @@ Conventions the build depends on:
   already, because each is `saf_<component>.<its own name>`. The prefix on the other two
   reads worse at an import site and it is load-bearing (ADR-0047): an Operator's barrel is
   wildcard re-exports of component subpaths, and **`export *` drops a name that resolves to
-  more than one binding**, so five components exporting a bare `schema` produce a barrel
+  more than one binding**, so six components exporting a bare `schema` produce a barrel
   exporting none, an empty derived `schemaFilter`, and a `push` that compares nothing against
   nothing, creates not one table and exits 0. Nothing warns, and the Gateway starts on the
   strength of that success. The prefix keeps the names distinct by construction; the
   packaging check's "one distinct schema object per component" assertion is what notices if
   anyone shortens them anyway.
-- **`src/http-messenger/schema.ts` imports `src/users/schema.ts`.** That import is
-  how `messages.user_id` references `saf_users.users.id`
+- **Two schema modules import `src/users/schema.ts`, and there are two cross-schema
+  foreign keys.** `src/messenger/schema.ts` declares `messages.user_id` onto
+  `saf_users.users.id`
   ([ADR-0036](./docs/adr/0036-the-http-messengers-user-id-is-a-foreign-key.md),
-  ADR-0046). It was forbidden while each part generated a folder of its own,
+  ADR-0046), and `src/nostr-channel/schema.ts` declares `pubkeys.user_id` onto the same
+  column (ADR-0049). `outbox.user_id` is a third reference onto it, so the Nostr Channel
+  makes two of the three. It was forbidden while each part generated a folder of its own,
   because the generator would emit the User Manager's `CREATE TABLE` into the
-  Messenger's folder; with one generation graph it is the whole mechanism, and the
-  constraint is free. What it costs a deployment is that a barrel carrying the
-  Messenger without the User Manager generates a foreign key onto a table it never
-  creates. `src/schemas.test.ts` pushes all five parts' schemas together, which is
-  what keeps the assembled set honest.
-- **Nothing outside `src/db/` imports `pg`.** Enforced by a Biome override:
-  parts obtain a handle with `db.handle(schema)`, and the one thing that needs a
-  connection of its own — a `LISTEN` registration — with `db.listen(channel,
-  listener)`, which keeps that connection inside the Db too. The override is on
-  the whole tree but `src/db/**`, so a new directory is covered without being
-  listed.
+  importing part's folder; with one generation graph it is the whole mechanism, and the
+  constraint is free. What it costs a deployment is that a barrel carrying **either** the
+  Messenger or the Nostr Channel without the User Manager generates a foreign key onto a
+  table it never creates. `src/schemas.test.ts` pushes all six parts' schemas together,
+  which is what keeps the assembled set honest.
+- **Three libraries are confined to the one component that owns each, and the rule is
+  asserted rather than read.** `pg` is the Db's: parts obtain a handle with
+  `db.handle(schema)`, and the one thing that needs a connection of its own — a `LISTEN`
+  registration — with `db.listen(channel, listener)`, which keeps that connection inside
+  the Db too. `jose` is Signatures': a second party assembling JWS segments is a second
+  chance to emit something nobody can verify (ADR-0042). `nostr-tools` and
+  `@nostrify/nostrify` are the Nostr Channel's, for the reason ADR-0049 makes them
+  ordinary `dependencies` rather than peers — nothing from either crosses the API
+  boundary, and a second part reaching for one would make them something a consumer has
+  to install. All three live in **one** Biome `overrides` entry whose `includes` is the
+  whole tree minus every owning directory, so a new directory is covered without being
+  listed — and the cost of the single entry is that each exclusion frees all three
+  libraries there rather than one. `src/test-support/**` is excluded too, deliberately:
+  driving the fake Relay with a real client is the only thing that proves it is a Relay.
+
+  **One entry, deliberately.** Biome applies the *last* matching `overrides` entry for a
+  rule and **replaces** its configuration rather than merging it, so `pg` in one entry and
+  `jose` in a second leaves only `jose` live — which is exactly what had happened, silently,
+  for as long as there were two entries. A `//` comment anywhere in `biome.json` disables
+  the overrides too, with no parse error and no warning. Neither says anything on the
+  console, so `src/import-confinement.test.ts` runs the real Biome over a probe at a real
+  path and reads what it says, per library and per specifier — `nostr-tools` ships forty
+  subpaths and the component imports two, so the patterns name the subpaths as well as the
+  bare package. Add a confinement to that entry and to that test, and never as a second
+  entry.
 - **Exactly one shipped module imports a *value* from `fastify`, and it is
   `dist/gateway.js`.** It constructs the two infrastructure servers and
   cannot do it any other way
@@ -332,6 +379,17 @@ Conventions the build depends on:
   against a literal the type checker holds to the record type. Same rule as the flat table
   exports and the prefixed schema objects above: a silent failure gets something that scans
   for it rather than a comment.
+- **`src/nostr-channel/envelope.ts` unwraps the NIP-59 envelope by hand, over the
+  encryption primitive, and that is not an optimisation.** `nostr-tools`' own `unwrapEvent`
+  decrypts both layers and returns the rumor, **discarding the seal** — so `seal.pubkey` never
+  reaches a caller and NIP-17's one `MUST`, that the rumor's author equals the seal's, is not
+  merely omitted but inexpressible through it. Without that comparison any sender impersonates
+  any other by changing the pubkey on an unsigned rumor (ADR-0049). Sealing goes the other way
+  and *is* the library's one call, since a rumor the agent wrote carries the agent's key by
+  construction; both halves live in that one file so they cannot drift apart. The check has one
+  test whose whole subject is its absence, `src/nostr-channel/receiving.test.ts`'s forged
+  envelope, and rewriting the unwrap through a convenience function is the thing to refuse in
+  review.
 - **Nothing in `src/container/` knows about an Agent Implementation.** That
   directory is the Agent Container, the Mount Table and the process handling —
   what `docker run` takes and what to do with it — and it is exported from the

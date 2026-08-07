@@ -56,14 +56,14 @@ export const messageReceivedKind = "message.received";
 /**
  * What reaches one person over one medium: a name, a send, and a lifecycle.
  *
- * Two members over a `Component`, which is the same order of narrowness as `Component` itself
- * rather than the plugin contract ADR-0021 rejected. A Channel is an ordinary Component an
- * Operator constructs and keys, and it is switched off by not constructing it.
+ * Two members over a `Component`, which is the same order of narrowness as `Component` itself. A
+ * Channel is an ordinary Component an Operator constructs and keys, and it is switched off by not
+ * constructing it.
  *
- * A Channel registers **itself**, at the end of its own constructor, which is ADR-0032 verbatim:
- * the same act as a component registering its routes on the servers it was handed. It has to be
- * that way round, because a Channel is constructed with the Messenger and the reference cannot run
- * both ways at construction time.
+ * A Channel registers **itself**, at the end of its own constructor: the same act as a component
+ * registering its routes on the servers it was handed. It has to be that way round, because a
+ * Channel is constructed with the Messenger and the reference cannot run both ways at construction
+ * time.
  */
 export type Channel = Component & {
   /**
@@ -99,9 +99,8 @@ export type Channel = Component & {
  *
  * There is no public `receive` on the Messenger. A Channel keeps this handle and writes through
  * it, so **only a registered Channel can write an inbound Message**, and a Channel cannot claim
- * to be a different one because it never names itself in the call. The alternative,
- * `messenger.receive(tx, userId, channelName, text)`, is one more argument and one more thing to
- * lie about (ADR-0048).
+ * to be a different one because it never names itself in the call. There is no
+ * `messenger.receive(tx, userId, channelName, text)` to reach for instead.
  */
 export type MessengerHandle = {
   /**
@@ -111,8 +110,7 @@ export type MessengerHandle = {
    * — commits with the Message or not at all. A Message that was stored always has its Signal.
    *
    * Answers with the record as it was stored, `seq` and all. That is what the HTTP Channel's 201
-   * carries, and it is why this returns the record where ADR-0048's sketch returned nothing: the
-   * caller cannot read its own uncommitted write back through `history`.
+   * carries, and the caller cannot read its own uncommitted write back through `history`.
    *
    * @throws `UnknownUserError` if no User has that id. The insert runs in a savepoint, so the
    *   refusal does not abort the caller's transaction.

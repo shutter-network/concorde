@@ -111,13 +111,12 @@ export type NostrChannelOptions = {
   readonly users: Users;
   /**
    * The Shared Agent's Nostr secret key: **32 raw bytes**, and the second keypair a deployment
-   * running this holds (ADR-0050).
+   * running this holds.
    *
    * Raw bytes because that is both Nostr libraries' own convention, and because the framework
    * parses no key material and generates none: an Operator reads their own key and states it
-   * here, exactly as they hand `createSignatures` a `KeyObject` they built themselves (ADR-0041).
-   * No `nsec` decoder is shipped — shipping one would be the framework parsing key material behind
-   * a friendlier name — so an Operator holding an `nsec` calls `nip19.decode` themselves.
+   * here, exactly as they hand `createSignatures` a `KeyObject` they built themselves. No `nsec`
+   * decoder is shipped, so an Operator holding an `nsec` calls `nip19.decode` themselves.
    *
    * It cannot be the signing identity and could not become one: that key is Ed25519 and this
    * curve is secp256k1. Copying this one impersonates the agent to its Users; copying that one
@@ -154,7 +153,7 @@ export type NostrChannel = Channel & {
    * What a User's client shows as the agent's identity, and what an Operator tells a User to
    * message. It is an address as well as an identity, which is what makes it unrotatable in
    * practice: every recorded key is a row written from the other side, and every User's client
-   * holds the old one (ADR-0050).
+   * holds the old one.
    *
    * Hex and not an `npub`, for the reason there is no `nsec` decoder either. An Operator who
    * wants the human-facing form calls `nip19.npubEncode` themselves.
@@ -168,8 +167,8 @@ export type NostrChannel = Channel & {
    * theirs. That is the whole of admission over this medium, and it is deliberately the whole:
    * **no route on either server records a key**, because doing so is authorization-shaped — it
    * grants access to a Message log — so it joins `users.setAttributes` in the class an injected
-   * prompt cannot reach (ADR-0049). The recorded cost is that the agent cannot admit a stranger,
-   * and a message from a key nobody recorded is dropped with nothing stored.
+   * prompt cannot reach. The cost is that the agent cannot admit a stranger, and a message from a
+   * key nobody recorded is dropped with nothing stored.
    *
    * A write, so it takes the caller's transaction first: recording a key and whatever the
    * Operator writes about the admission commit together or not at all. It replaces nothing —
