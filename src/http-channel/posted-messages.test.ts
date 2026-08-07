@@ -31,6 +31,9 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
 import type { Logger } from "../logging.ts";
+import type { MessageRecord } from "../messenger/messages.ts";
+import { createMessenger, messageReceivedKind } from "../messenger/messenger.ts";
+import * as messengerSchema from "../messenger/schema.ts";
 import type { Signal, SignalHandlers } from "../signals/handlers.ts";
 import type { SignalRecord } from "../signals/routes.ts";
 import * as signalsSchema from "../signals/schema.ts";
@@ -43,14 +46,12 @@ import type { UserRecord } from "../users/routes.ts";
 import * as usersSchema from "../users/schema.ts";
 import type { ScryptParameters } from "../users/secrets.ts";
 import { createUsers } from "../users/users.ts";
-import { createHttpMessenger, messageReceivedKind } from "./http-messenger.ts";
-import type { MessageRecord } from "./messages.ts";
-import * as httpMessagesSchema from "./schema.ts";
+import { createHttpChannel } from "./http-channel.ts";
 
 let database: TestDatabase;
 let db: Db;
 
-/** Where the constructor put the Messenger's plugins, and the User Manager's login. */
+/** Where the two constructors put their plugins, and where the User Manager's login is. */
 const prefix = "/messages";
 const auth = "/auth";
 
@@ -98,14 +99,14 @@ before(async () => {
   // once per test and the tables are created once: this is the Operator's own apply, and
   // one call is the whole of it — a second push into this database would fail on `CREATE
   // SCHEMA` (ADR-0046).
-  await applySchema(db, signalsSchema, usersSchema, httpMessagesSchema);
+  await applySchema(db, signalsSchema, usersSchema, messengerSchema);
 });
 
 after(() => database.drop());
 
 /**
  * A whole Gateway with these Handlers: two servers, a started Signal Worker, a User
- * Manager and an HTTP Messenger, stopped again afterwards.
+ * Manager, a Messenger and an HTTP Channel, stopped again afterwards.
  *
  * Everything is constructed in the order an Operator constructs it, and the Messenger after
  * the Manager — which here is narrative rather than load-bearing, since the migrations are
@@ -128,9 +129,15 @@ async function withGateway(
     sweepIntervalMs,
   });
   const users = createUsers({ db, tokenTtl: hour, scrypt: cheap, agentServer, publicServer });
-  // Nothing is held: every capability under test is a route the constructor registered
-  // itself, and no route plugin is exported (ADR-0032, ADR-0034).
-  createHttpMessenger({ db, users, worker, publicServer, agentServer });
+  // Nothing is held: every capability under test is a route a constructor registered itself,
+  // and no route plugin is exported (ADR-0032, ADR-0034). The Messenger is built inline
+  // because the Channel registers with it and this file reaches the log only over HTTP.
+  createHttpChannel({
+    db,
+    messenger: createMessenger({ db, users, worker, agentServer }),
+    users,
+    publicServer,
+  });
 
   await worker.start();
   try {

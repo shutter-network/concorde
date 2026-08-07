@@ -1,5 +1,5 @@
 /**
- * The HTTP Messenger, as the agent can observe it.
+ * The Messenger, as the agent can observe it.
  *
  * The subject is what a caller can see, never how a Message is stored: every assertion here
  * is made over HTTP against two real Fastify instances and real PostgreSQL, and **nothing
@@ -8,8 +8,9 @@
  *
  * A real Signal Worker is constructed, because the part requires one, and it is never
  * started and never emits: the agent's send wakes nobody, and nothing in this file posts.
- * The Public server is constructed for the same reason, and what it answers from here — the
- * Manager's 401 on both of its routes, since this Db's own agent presents no Token — is the
+ * An HTTP Channel is constructed too, because a Messenger with no Channel registered refuses
+ * to send at all, and it is what puts the Public routes up: what they answer from here — the
+ * Manager's 401 on both of them, since this Db's own agent presents no Token — is the
  * last test in this file. What that 401 is made of is `own-messages.test.ts`'s subject, and
  * what a post does when one is presented is `posted-messages.test.ts`'s.
  *
@@ -23,6 +24,7 @@ import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
 import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
+import { createHttpChannel } from "../http-channel/http-channel.ts";
 import * as signalsSchema from "../signals/schema.ts";
 import { createSignalWorker } from "../signals/worker.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
@@ -31,9 +33,9 @@ import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import type { UserRecord } from "../users/routes.ts";
 import * as usersSchema from "../users/schema.ts";
 import { createUsers } from "../users/users.ts";
-import { createHttpMessenger } from "./http-messenger.ts";
 import type { MessageRecord } from "./messages.ts";
-import * as httpMessagesSchema from "./schema.ts";
+import { createMessenger } from "./messenger.ts";
+import * as messengerSchema from "./schema.ts";
 
 let database: TestDatabase;
 let db: Db;
@@ -68,10 +70,15 @@ before(async () => {
   const users = createUsers({ db, tokenTtl: 60 * 60 * 1000, agentServer });
   // Nothing is held: every capability this part has so far is a route, and it registered
   // both plugins itself (ADR-0032).
-  createHttpMessenger({ db, users, worker, publicServer, agentServer });
+  createHttpChannel({
+    db,
+    messenger: createMessenger({ db, users, worker, agentServer }),
+    users,
+    publicServer,
+  });
 
   // Three schemas, pushed as one graph the way an Operator's barrel is (ADR-0046).
-  await applySchema(db, signalsSchema, usersSchema, httpMessagesSchema);
+  await applySchema(db, signalsSchema, usersSchema, messengerSchema);
 });
 
 after(async () => {

@@ -25,7 +25,7 @@ export const usersSchema = pgSchema("saf_users");
  * A User: an opaque Gateway-issued id, arbitrary Attributes, and a credential that may not exist.
  *
  * There is no `deactivated_at` and no delete, because nothing removes a User. There is no read
- * position either, here or in the HTTP Messenger. A client's cursor is the largest `seq` it holds.
+ * position either, here or in the Messenger. A client's cursor is the largest `seq` it holds.
  */
 export const users = usersSchema.table("users", {
   id: uuid("id").primaryKey().defaultRandom(),

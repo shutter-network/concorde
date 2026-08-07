@@ -40,6 +40,7 @@ import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
 import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
+import { createHttpChannel } from "../http-channel/http-channel.ts";
 import type { Logger } from "../logging.ts";
 import type { SignalRecord } from "../signals/routes.ts";
 import * as signalsSchema from "../signals/schema.ts";
@@ -51,20 +52,20 @@ import type { UserRecord } from "../users/routes.ts";
 import * as usersSchema from "../users/schema.ts";
 import type { ScryptParameters } from "../users/secrets.ts";
 import { createUsers } from "../users/users.ts";
-import { createHttpMessenger, type HttpMessenger } from "./http-messenger.ts";
 import type { MessageRecord } from "./messages.ts";
-import * as httpMessagesSchema from "./schema.ts";
+import { createMessenger, type Messenger } from "./messenger.ts";
+import * as messengerSchema from "./schema.ts";
 
 let database: TestDatabase;
 let db: Db;
 /** The object under test, held the way a Signal Handler holds it. */
-let messenger: HttpMessenger;
+let messenger: Messenger;
 let worker: SignalWorker;
 /** Both servers, as an Operator constructs them: bare Fastify instances in a start order. */
 let agentServer: Component & { readonly fastify: FastifyInstance };
 let publicServer: Component & { readonly fastify: FastifyInstance };
 
-/** Where the constructor put the Messenger's plugins, and the User Manager's login. */
+/** Where the two constructors put their plugins, and where the User Manager's login is. */
 const prefix = "/messages";
 const auth = "/auth";
 
@@ -109,15 +110,16 @@ before(async () => {
     logger: silent,
   });
   // Both servers, so that `POST /users` and the login under `/auth` exist: a Token here is
-  // bought with a password at the Manager's own route. The Messenger takes it, so it is
+  // bought with a password at the Manager's own route. Both parts take it, so it is
   // constructed first; the foreign key's ordering is the push's to arrange (ADR-0046).
   const users = createUsers({ db, tokenTtl: hour, scrypt: cheap, agentServer, publicServer });
   // And held, which this file is the first to have a reason to do.
-  messenger = createHttpMessenger({ db, users, worker, publicServer, agentServer });
+  messenger = createMessenger({ db, users, worker, agentServer });
+  createHttpChannel({ db, messenger, users, publicServer });
 
   // The Manager's schema alongside the Messenger's, because `messages.user_id` references
   // `saf_users.users.id` and one push has to see both (ADR-0036, ADR-0046).
-  await applySchema(db, signalsSchema, usersSchema, httpMessagesSchema);
+  await applySchema(db, signalsSchema, usersSchema, messengerSchema);
 });
 
 after(async () => {
@@ -435,12 +437,20 @@ describe("the object the constructor answers with", () => {
     // An assertion of **absence**, and the reason it is the object's own keys rather than a
     // list of names to probe: a method added later appears here and fails this. There is no
     // `receive`, no `submit` and no `direction` parameter anywhere on it, because trusted code
-    // does not get a path that puts words in a User's mouth (ADR-0034).
+    // does not get a path that puts words in a User's mouth (ADR-0034). `register` answers with
+    // the inbound write, and a Channel's constructor is what calls it (ADR-0048), which is
+    // `channels.test.ts`'s subject.
     //
     // `start` and `stop` are the two that do nothing, and they are here because this part is
     // in the Gateway's record like every other one (ADR-0037). They are the whole of what
-    // membership added: two names, and no fourth capability.
-    assert.deepEqual(Object.keys(messenger).sort(), ["history", "send", "start", "stop"]);
+    // membership added: two names, and no further capability.
+    assert.deepEqual(Object.keys(messenger).sort(), [
+      "history",
+      "register",
+      "send",
+      "start",
+      "stop",
+    ]);
 
     // Which is what makes the claim checkable from outside as well: every Message trusted code
     // can write is outbound, and the only inbound one in this log arrived on the Public server

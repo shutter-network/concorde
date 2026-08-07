@@ -2,10 +2,10 @@
  * The firing core, observed at the highest seam: what fired (a Signal on the wire) and what the
  * Schedule became (a list result, or a subsequent fire), never the Scheduler's private state.
  *
- * Two seams, both from the HTTP Messenger's prior art. Timing is deterministic: the Scheduler
+ * Two seams, both from the Messenger's prior art. Timing is deterministic: the Scheduler
  * takes an injected clock, and this file sets `now`, awaits `tick`, and asserts what fired, with no
  * sleeping (ADR-0018). And the fired Signal is read back over a **real, unstarted** Signal Worker's
- * `GET /signals` route — `src/http-messenger/trusted.test.ts` does exactly this: the worker is
+ * `GET /signals` route — `src/messenger/trusted.test.ts` does exactly this: the worker is
  * constructed with its Agent routes and never started, so nothing drains the queue and the Signal
  * the Scheduler emitted sits there to be read. Because the emit and the schedule's retirement share
  * one transaction, the same read proves atomicity: after a tick, the Signal is readable *and* the

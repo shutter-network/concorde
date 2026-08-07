@@ -6,7 +6,7 @@
  * that comes with it. That position is ahead of the Signal Worker, so it outlives the drain. A
  * Signal Handler's post phase may still publish then.
  *
- * Four things a reader arriving from the HTTP Messenger will look for are absent on purpose. There
+ * Four things a reader arriving from the Messenger will look for are absent on purpose. There
  * is no `user_id` anywhere, because a Decision is addressed to nobody. No route can 404 for a
  * missing User, because there is no foreign key. There is no race, no retry and no lock, because
  * the number comes from a PostgreSQL sequence. And it is not a Producer: publishing emits no
@@ -92,7 +92,7 @@ export type DecisionsOptions = {
    * off this object and put on the route as one option. So this Component holds no Token, and it
    * answers the Manager's single 401.
    *
-   * Unlike the HTTP Messenger's, this is not a schema-level dependency. Nothing here references a
+   * Unlike the Messenger's, this is not a schema-level dependency. Nothing here references a
    * User, so a barrel may carry this schema without the User Manager's.
    */
   readonly users: Users;

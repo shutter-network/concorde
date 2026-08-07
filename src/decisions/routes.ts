@@ -150,7 +150,7 @@ const publishSchema = {
 /**
  * A read of the log: the window, and nothing naming a User.
  *
- * One schema for both surfaces, which is the difference from the HTTP Messenger's pair. There the
+ * One schema for both surfaces, which is the difference from the Messenger's pair. There the
  * agent's read is a User's plus a required `user`. Here the log has no owner to scope it to.
  */
 const historySchema = {

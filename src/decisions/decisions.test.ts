@@ -67,7 +67,7 @@ before(async () => {
   // routes are what this file asks about the queue, which is a higher seam than a table.
   createSignalWorker({ db, runtime: fakeRuntime(), handlers: {}, agentServer });
   // Required by Decisions for its Public read's 401 and by nothing else here. Construction
-  // order against it is free, unlike the HTTP Messenger's, there being no foreign key
+  // order against it is free, unlike the Messenger's, there being no foreign key
   // (ADR-0043).
   const users = createUsers({ db, tokenTtl: hour, agentServer, publicServer });
   const { privateKey } = generateKeyPairSync("ed25519");

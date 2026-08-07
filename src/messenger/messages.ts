@@ -1,18 +1,19 @@
 /**
  * The two statements this component is made of: one insert, and one read.
  *
- * The agent's send and a Signal Handler's `send` are the same statement with a different handle.
- * The agent's read, a User's own read and a Handler's `history` are one query. The User id comes
- * from a different place each time: a query parameter, a Token, or an argument.
+ * The agent's send and a Signal Handler's `send` are the same statement with a different handle,
+ * and a Channel's inbound `receive` is that same statement with the other direction. The agent's
+ * read, a User's own read and a Handler's `history` are one query. The User id comes from a
+ * different place each time: a query parameter, a Token, or an argument.
  */
 
 import { and, asc, desc, eq, gt, lt, sql } from "drizzle-orm";
 import type { Handle } from "../db/index.ts";
 import type { CursorWindow } from "../route-conventions.ts";
-import { type httpMessagesTables, type MessageDirection, messages } from "./schema.ts";
+import { type MessageDirection, messages, type messengerTables } from "./schema.ts";
 
 /** A handle typed to this component's own tables, and to no other's. */
-type MessagesHandle = Handle<typeof httpMessagesTables>;
+type MessagesHandle = Handle<typeof messengerTables>;
 
 /**
  * A Message, as every surface answers with it.

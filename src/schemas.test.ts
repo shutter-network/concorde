@@ -56,7 +56,7 @@ import { inArray, is } from "drizzle-orm";
 import { getTableConfig, PgTable, pgSchema, text } from "drizzle-orm/pg-core";
 import type { Db } from "./db/index.ts";
 import * as decisionsSchema from "./decisions/schema.ts";
-import * as httpMessagesSchema from "./http-messenger/schema.ts";
+import * as messengerSchema from "./messenger/schema.ts";
 import * as schedulerSchema from "./scheduler/schema.ts";
 import * as signalsSchema from "./signals/schema.ts";
 import { applySchema, type PartSchema } from "./test-support/apply-schema.ts";
@@ -69,7 +69,7 @@ import * as usersSchema from "./users/schema.ts";
  */
 const parts: Record<string, PartSchema> = {
   decisions: decisionsSchema,
-  "http-messenger": httpMessagesSchema,
+  messenger: messengerSchema,
   scheduler: schedulerSchema,
   signals: signalsSchema,
   users: usersSchema,

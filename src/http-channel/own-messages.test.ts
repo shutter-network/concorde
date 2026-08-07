@@ -29,6 +29,9 @@ import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
 import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
+import type { MessageRecord } from "../messenger/messages.ts";
+import { createMessenger } from "../messenger/messenger.ts";
+import * as messengerSchema from "../messenger/schema.ts";
 import * as signalsSchema from "../signals/schema.ts";
 import { createSignalWorker } from "../signals/worker.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
@@ -38,9 +41,7 @@ import type { UserRecord } from "../users/routes.ts";
 import * as usersSchema from "../users/schema.ts";
 import type { ScryptParameters } from "../users/secrets.ts";
 import { createUsers } from "../users/users.ts";
-import { createHttpMessenger } from "./http-messenger.ts";
-import type { MessageRecord } from "./messages.ts";
-import * as httpMessagesSchema from "./schema.ts";
+import { createHttpChannel } from "./http-channel.ts";
 
 let database: TestDatabase;
 let db: Db;
@@ -48,7 +49,7 @@ let db: Db;
 let agentServer: Component & { readonly fastify: FastifyInstance };
 let publicServer: Component & { readonly fastify: FastifyInstance };
 
-/** Where the constructor put the Messenger's plugins, and the User Manager's login. */
+/** Where the two constructors put their plugins, and where the User Manager's login is. */
 const prefix = "/messages";
 const auth = "/auth";
 
@@ -86,16 +87,22 @@ before(async () => {
   // test wants, since the row is what it reads and the Run is not its subject.
   const worker = createSignalWorker({ db, runtime: fakeRuntime(), handlers: {} });
   // Both servers, so that `POST /users` and the login under `/auth` exist: a Token here is
-  // bought with a password at the Manager's own route. The Messenger takes it, so it is
+  // bought with a password at the Manager's own route. Both parts take it, so it is
   // constructed first; the foreign key's ordering is the push's to arrange (ADR-0046).
   const users = createUsers({ db, tokenTtl: hour, scrypt: cheap, agentServer, publicServer });
-  // Nothing is held: the read under test is a route, and the constructor registered it
-  // itself, behind the Manager's own hook (ADR-0032).
-  createHttpMessenger({ db, users, worker, publicServer, agentServer });
+  // Nothing is held: the read under test is a route, and the Channel's constructor registered
+  // it itself, behind the Manager's own hook (ADR-0032). The Messenger is built inline because
+  // this file holds neither — the log it owns is reached only over HTTP here.
+  createHttpChannel({
+    db,
+    messenger: createMessenger({ db, users, worker, agentServer }),
+    users,
+    publicServer,
+  });
 
   // The Manager's schema alongside the Messenger's, because `messages.user_id` references
   // `saf_users.users.id` and one push has to see both (ADR-0036, ADR-0046).
-  await applySchema(db, signalsSchema, usersSchema, httpMessagesSchema);
+  await applySchema(db, signalsSchema, usersSchema, messengerSchema);
 });
 
 after(async () => {
@@ -356,7 +363,7 @@ describe("an unauthenticated read", () => {
       });
     }
 
-    // Byte for byte, not merely equivalent: the Messenger authenticates nobody, so this is
+    // Byte for byte, not merely equivalent: the Channel authenticates nobody, so this is
     // the Manager's one refusal reaching a route in another part unchanged (ADR-0030).
     const [first, ...rest] = refusals;
     assert.ok(first !== undefined);

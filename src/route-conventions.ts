@@ -2,7 +2,7 @@
  * The conventions every component's HTTP routes share.
  *
  * Internal to the framework, with one name excepted. `CursorWindow` below is a parameter of
- * `Decisions.history` and of `HttpMessenger.history`, so it is exported from the package root,
+ * `Decisions.history` and of `Messenger.history`, so it is exported from the package root,
  * where what belongs to no single component lives. Everything else here reaches no specifier.
  * An Operator writing routes of their own brings Fastify and writes them however they like.
  * These are the rules the framework's own components hold each other to, so that a Gateway
@@ -53,7 +53,7 @@ export const cappedLimit = `\`limit\` defaults to ${limitSchema.default} and is 
  * resolves to this.
  *
  * Exported from `shared-agent-framework`, the one name in this module that is. `Decisions.history`
- * and `HttpMessenger.history` each take `Partial` of it, every field optional, so a caller that
+ * and `Messenger.history` each take `Partial` of it, every field optional, so a caller that
  * wants the newest page passes nothing.
  *
  * Both cursors at once describes two windows, and the route refuses it with `bothCursors`.

@@ -162,7 +162,7 @@ const noPublicParameters = `${credentialsAreNotInUrls} ${unknownParameter}`;
  * A sentence per route rather than one in `info.description`. `POST /auth/tokens` is the exception,
  * and a reader must be told which route that is.
  *
- * Exported for the HTTP Messenger's Public routes, which take `requireUser` as one option of their
+ * Exported for the HTTP Channel's Public routes, which take `requireUser` as one option of their
  * own. A second sentence about one hook is a second thing to keep true.
  */
 export const bearerRequired =
@@ -174,7 +174,7 @@ export const bearerRequired =
  * Every authentication failure is one status and one message. Enumeration is refused because
  * Attributes govern authorization, and nothing rate limits the guessing.
  *
- * Exported for the reason `bearerRequired` above is. The HTTP Messenger's Public routes are refused
+ * Exported for the reason `bearerRequired` above is. The HTTP Channel's Public routes are refused
  * by `unauthorized` too, because they take this component's hook.
  */
 export const authenticationFailed =
@@ -459,7 +459,7 @@ function presentedToken(authorization: string | undefined): string | undefined {
  * Builds the preHandler that requires a Token: the whole integration surface.
  *
  * An ordinary Fastify hook rather than a plugin. An Operator adds it to a route of their own, on
- * either server and at any depth. The HTTP Messenger does the same.
+ * either server and at any depth. The HTTP Channel does the same.
  *
  * The User is assigned by a plain property write rather than with `decorateRequest`. A decoration
  * is scoped to the plugin instance that made it, and a sibling plugin cannot see it. Every refusal

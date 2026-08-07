@@ -326,7 +326,7 @@ Required, and it is where the Public read's authentication comes from. `requireU
 off this object and put on the route as one option. So this Component holds no Token, and it
 answers the Manager's single 401.
 
-Unlike the HTTP Messenger's, this is not a schema-level dependency. Nothing here references a
+Unlike the Messenger's, this is not a schema-level dependency. Nothing here references a
 User, so a barrel may carry this schema without the User Manager's.
 
 ## Variables

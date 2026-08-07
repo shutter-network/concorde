@@ -7,7 +7,7 @@
  * what a test needs from `applySchema`, and it also proves the column defaults came
  * across, which a catalogue count would not.
  *
- * The parts here are the two that stand alone. The HTTP Messenger's schema
+ * The parts here are the two that stand alone. The Messenger's schema
  * references the User Manager's, so pushing that one is the whole-set question and
  * belongs to the test that asks it, not to this one.
  *

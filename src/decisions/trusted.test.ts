@@ -10,7 +10,7 @@
  *
  * The subject is still what a caller can observe. There is no second seam for these methods
  * and deliberately no route of their own, so they are reached the way an Operator reaches
- * them, in a transaction of this file's own, and confirmed the way the HTTP Messenger's pair
+ * them, in a transaction of this file's own, and confirmed the way the Messenger's pair
  * is confirmed: over HTTP, on the agent's route and a User's, against two real Fastify
  * instances and real PostgreSQL. **The two methods and the routes are the only path to a row
  * anywhere in this file**: nothing here writes SQL of its own, holds a handle, or names a
@@ -114,7 +114,7 @@ before(async () => {
     logger: silent,
   });
   // Both servers, so that `POST /users` and the login under `/auth` exist. Construction order
-  // against Decisions is free, unlike the HTTP Messenger's, there being no foreign key here
+  // against Decisions is free, unlike the Messenger's, there being no foreign key here
   // (ADR-0043).
   const users = createUsers({ db, tokenTtl: hour, scrypt: cheap, agentServer, publicServer });
   const { privateKey } = generateKeyPairSync("ed25519");

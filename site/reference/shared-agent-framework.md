@@ -418,7 +418,7 @@ internal: an alias is transparent to the compiler, so a signature written agains
 resolves to this.
 
 Exported from `shared-agent-framework`, the one name in this module that is. `Decisions.history`
-and `HttpMessenger.history` each take `Partial` of it, every field optional, so a caller that
+and `Messenger.history` each take `Partial` of it, every field optional, so a caller that
 wants the newest page passes nothing.
 
 Both cursors at once describes two windows, and the route refuses it with `bothCursors`.
@@ -682,8 +682,9 @@ readonly optional extend?: (components) => E;
 Components of your own, built from the infrastructure this call constructed.
 
 This is where the opinionated components go: the User Manager, Signatures, Decisions, the
-HTTP Messenger and the Scheduler. What it returns is keyed ahead of the Worker, so those
-Components stop after the drain. That is what a Signal Handler's post phase needs.
+Messenger with the one Channel that reaches people, and the Scheduler. What it returns is
+keyed ahead of the Worker, so those Components stop after the drain. That is what a Signal
+Handler's post phase needs.
 
 ###### Parameters
 

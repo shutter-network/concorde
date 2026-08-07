@@ -27,9 +27,13 @@
       "types": "./dist/users/index.d.ts",
       "default": "./dist/users/index.js"
     },
-    "./http-messenger": {
-      "types": "./dist/http-messenger/index.d.ts",
-      "default": "./dist/http-messenger/index.js"
+    "./messenger": {
+      "types": "./dist/messenger/index.d.ts",
+      "default": "./dist/messenger/index.js"
+    },
+    "./http-channel": {
+      "types": "./dist/http-channel/index.d.ts",
+      "default": "./dist/http-channel/index.js"
     },
     "./signatures": {
       "types": "./dist/signatures/index.d.ts",

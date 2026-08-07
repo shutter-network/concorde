@@ -88,8 +88,9 @@ export type GatewayOptions<E extends GatewayExtension> = {
    * Components of your own, built from the infrastructure this call constructed.
    *
    * This is where the opinionated components go: the User Manager, Signatures, Decisions, the
-   * HTTP Messenger and the Scheduler. What it returns is keyed ahead of the Worker, so those
-   * Components stop after the drain. That is what a Signal Handler's post phase needs.
+   * Messenger with the one Channel that reaches people, and the Scheduler. What it returns is
+   * keyed ahead of the Worker, so those Components stop after the drain. That is what a Signal
+   * Handler's post phase needs.
    */
   readonly extend?: (components: InfraComponents) => E;
   /**

@@ -1,9 +1,14 @@
 /**
- * The HTTP Messenger's one table: `messages`, in the `saf_http_messages` schema.
+ * The Messenger's one table: `messages`, in the `saf_messenger` schema.
  *
- * Public API, re-exported from `shared-agent-framework/http-messenger`. An Operator barrels that
+ * Public API, re-exported from `shared-agent-framework/messenger`. An Operator barrels that
  * subpath into their own `schema.ts` and generates their DDL from it. Keep this file to the table
  * and the values that define it.
+ *
+ * The log is the Messenger's and no Channel's, which is the whole of
+ * [ADR-0048](../../docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md): one
+ * table for one User across both directions, whichever medium a Message travelled by. The HTTP
+ * Channel that used to own this table owns none.
  *
  * `user_id` is a foreign key onto `saf_users.users.id`, so this module imports the User Manager's
  * schema. It re-exports nothing of it. A barrel with this component and not the User Manager
@@ -25,21 +30,23 @@ import {
 import { users } from "../users/schema.ts";
 
 /**
- * The HTTP Messenger's schema, named for the component and not only for its subject.
+ * The Messenger's schema, named for the component that owns the log.
  *
  * Prefixed because the framework is installed into a database it does not own. The name is not an
  * Operator's to change. The table below is compiled against it, and their generation reads that
  * same object.
  *
- * "HTTP" is the durable half of this component's name. A second messaging Producer is a peer with
- * a schema of its own rather than a rename of this one.
+ * It was `saf_http_messages` while one component held the log *and* the only way of reaching a
+ * person. A Channel is what reaches a person now, and it has no share of this schema: the medium
+ * is gone from the name because it is gone from the ownership (ADR-0048).
  */
-export const httpMessagesSchema = pgSchema("saf_http_messages");
+export const messengerSchema = pgSchema("saf_messenger");
 
 /**
  * Which way a Message travelled: `inbound` or `outbound`.
  *
- * Decided by the server the request arrived on, so there is no field anywhere for a caller to set.
+ * Decided by which of the Messenger's two writes wrote it — a Channel's inbound `receive` or
+ * trusted code's outbound `send` — so there is no field anywhere for a caller to set.
  */
 export const messageDirections = ["inbound", "outbound"] as const;
 /** Which way one Message travelled. One of `messageDirections`. */
@@ -62,7 +69,7 @@ function directionIsKnown(column: PgColumn, directions: readonly string[]): SQL 
  *
  * One table for both directions, which is what makes a User's log a single numbered sequence.
  */
-export const messages = httpMessagesSchema.table(
+export const messages = messengerSchema.table(
   "messages",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -116,8 +123,8 @@ export const messages = httpMessagesSchema.table(
 );
 
 /**
- * Everything the HTTP Messenger keeps, as `db.handle` wants it.
+ * Everything the Messenger keeps, as `db.handle` wants it.
  *
  * One object, so every module of this component asks for the same handle by the same name.
  */
-export const httpMessagesTables = { messages };
+export const messengerTables = { messages };

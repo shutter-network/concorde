@@ -35,8 +35,8 @@
     // checker at the sources instead. Nothing in `src` imports the package by name,
     // so nothing else is affected.
     //
-    // The eight below are the whole export map, and they are eight because a component
-    // is one subpath: its constructor, its types and its tables arrive together
+    // The nine below are the whole export map, and a component is one subpath: its
+    // constructor, its types and its tables arrive together
     // ([ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md)). That is why there are
     // no `/schema` entries any more — `example/` is the reference Operator and its
     // migration barrel is assembled from the component subpaths, so the barrel
@@ -46,7 +46,8 @@
       "shared-agent-framework/signals": ["./src/signals/index.ts"],
       "shared-agent-framework/pi": ["./src/pi/index.ts"],
       "shared-agent-framework/users": ["./src/users/index.ts"],
-      "shared-agent-framework/http-messenger": ["./src/http-messenger/index.ts"],
+      "shared-agent-framework/messenger": ["./src/messenger/index.ts"],
+      "shared-agent-framework/http-channel": ["./src/http-channel/index.ts"],
       "shared-agent-framework/signatures": ["./src/signatures/index.ts"],
       "shared-agent-framework/decisions": ["./src/decisions/index.ts"],
       "shared-agent-framework/scheduler": ["./src/scheduler/index.ts"]

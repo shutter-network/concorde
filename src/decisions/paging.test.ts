@@ -2,7 +2,7 @@
  * The Decision log proven to page: a client walking it backwards and then forwards reconstructs
  * it **exactly once**, with nothing dropped and nothing repeated.
  *
- * The claim is the one the HTTP Messenger's own walk makes, and it is here for a sharper reason:
+ * The claim is the one the Messenger's own walk makes, and it is here for a sharper reason:
  * that log is per User, so a test can have one of its own by admitting one, and this log is
  * global. There is no window a reader can floor, a backwards walk running to the beginning of the
  * whole log because `after` and `before` together are refused as two windows, so the only way to

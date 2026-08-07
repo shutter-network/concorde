@@ -11,12 +11,15 @@
  * ([ADR-0046](../docs/adr/0046-the-operator-owns-migrations.md)). That is
  * a recorded cost of that ADR and not an oversight — we no longer author the bytes
  * applied to anybody's production database, so no check here can vouch for them.
- *  - **all eight** entry points resolve there, both to the type checker and to Node at
- *    runtime, and eight is the whole map: the root, `/signals`, `/pi`, `/users`,
- *    `/http-messenger`, `/signatures`, `/decisions` and `/scheduler`. A component is one
- *    subpath, carrying its constructor, its types **and its tables**
+ *  - **all nine** entry points resolve there, both to the type checker and to Node at
+ *    runtime, and nine is the whole map: the root, `/signals`, `/pi`, `/users`,
+ *    `/messenger`, `/http-channel`, `/signatures`, `/decisions` and `/scheduler`. A component is
+ *    one subpath, carrying its constructor, its types **and its tables**
  *    ([ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md)), so there is no `/schema`
- *    specifier to resolve any more and no reserved `/messenger` either. The root import below
+ *    specifier to resolve any more. `/messenger` was reserved and unreachable until the log was
+ *    taken out of the HTTP Messenger and the qualifier became a Channel's
+ *    ([ADR-0048](../docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)); it
+ *    is a real specifier now, and `/http-channel` is the ninth. The root import below
  *    is what proves the Signal Worker moved: it names every value the root still has, so a
  *    symbol that stayed behind on both specifiers would go unnoticed, but one still *only* at
  *    the root fails on the `/signals` import instead.
@@ -58,10 +61,12 @@ import { fileURLToPath } from "node:url";
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 /**
- * The consumer's imports, spelled once: the type checker and Node see the same eight.
+ * The consumer's imports, spelled once: the type checker and Node see the same nine.
  *
- * **Eight lines, one per entry point, and a component's tables ride on the same line as its
- * constructor** — which is the whole of ADR-0047. Every table is named individually rather
+ * **Nine lines, one per entry point, and a component's tables ride on the same line as its
+ * constructor** — which is the whole of ADR-0047. The HTTP Channel's line carries a constructor
+ * and nothing beside it, because it owns no tables at all: the log is the Messenger's, whichever
+ * medium a Message travelled by (ADR-0048). Every table is named individually rather
  * than pulled in as a namespace, because naming them is what proves the module flat-exports
  * them: a table that had retreated into `usersTables` would fail to import here, where an
  * `import * as` would resolve and say nothing (ADR-0046). Every schema object is named with its
@@ -75,7 +80,8 @@ const consumerImports = [
   'import { createSignalWorker, runs as runsTable, signals as signalsTable, workerSchema } from "shared-agent-framework/signals";',
   'import { createPiRuntime, interpretPiOutput, piRun } from "shared-agent-framework/pi";',
   'import { createUsers, tokens as tokensTable, users as usersTable, usersSchema } from "shared-agent-framework/users";',
-  'import { createHttpMessenger, httpMessagesSchema, messageReceivedKind, messages as messagesTable } from "shared-agent-framework/http-messenger";',
+  'import { createMessenger, messageReceivedKind, messages as messagesTable, messengerSchema } from "shared-agent-framework/messenger";',
+  'import { createHttpChannel } from "shared-agent-framework/http-channel";',
   'import { createSignatures } from "shared-agent-framework/signatures";',
   'import { createDecisions, decisions as decisionsTable, decisionsSchema } from "shared-agent-framework/decisions";',
   'import { createScheduler, scheduleFiredKind, schedulerSchema, schedules as schedulesTable } from "shared-agent-framework/scheduler";',
@@ -205,20 +211,31 @@ try {
     "dist/users/secrets.js",
     "dist/users/users.js",
     "dist/users/users.d.ts",
-    // The HTTP Messenger, under its own subpath. Its `schema.js` is where the foreign key
+    // The Messenger, under its own subpath. Its `schema.js` is where the foreign key
     // onto `saf_users.users.id` is declared now, so an Operator's generation writes the
     // constraint that used to be hand-edited into a shipped folder (ADR-0034, ADR-0036,
-    // ADR-0046).
-    "dist/http-messenger/index.js",
-    "dist/http-messenger/index.d.ts",
-    "dist/http-messenger/http-messenger.js",
-    "dist/http-messenger/http-messenger.d.ts",
-    "dist/http-messenger/messages.js",
-    "dist/http-messenger/messages.d.ts",
-    "dist/http-messenger/routes.js",
-    "dist/http-messenger/routes.d.ts",
-    "dist/http-messenger/schema.js",
-    "dist/http-messenger/schema.d.ts",
+    // ADR-0046). Its `routes.js` carries the agent's route group *and* the serializer the
+    // HTTP Channel's own routes render a `MessageRecord` through, which is why that module
+    // ships even for a deployment whose Channel is not HTTP.
+    "dist/messenger/index.js",
+    "dist/messenger/index.d.ts",
+    "dist/messenger/messenger.js",
+    "dist/messenger/messenger.d.ts",
+    "dist/messenger/messages.js",
+    "dist/messenger/messages.d.ts",
+    "dist/messenger/routes.js",
+    "dist/messenger/routes.d.ts",
+    "dist/messenger/schema.js",
+    "dist/messenger/schema.d.ts",
+    // The HTTP Channel, under its own subpath and with **no schema module**: it owns no tables,
+    // so there is no `schema.js` beside these and nothing on its subpath for an Operator to
+    // barrel. The second component of which that is true, after Signatures (ADR-0048).
+    "dist/http-channel/index.js",
+    "dist/http-channel/index.d.ts",
+    "dist/http-channel/http-channel.js",
+    "dist/http-channel/http-channel.d.ts",
+    "dist/http-channel/routes.js",
+    "dist/http-channel/routes.d.ts",
     // Signatures, under its own subpath and with **no schema module**: it is the one part of
     // the framework that stores nothing, so there is no `schema.js` beside these and nothing
     // on its subpath for an Operator to barrel (ADR-0042). It is also the only module that
@@ -428,15 +445,17 @@ try {
   // subpath (ADR-0047). It is a file of its own rather than lines in `main.ts` because that is
   // the shape — and because `export *` carries names without unwrapping objects, which is the
   // second half of why the schema modules flat-export their tables. The User Manager is here
-  // beside the HTTP Messenger deliberately: `messages.user_id` references
+  // beside the Messenger deliberately: `messages.user_id` references
   // `saf_users.users.id`, so a barrel with one and not the other generates a foreign key
-  // onto a table it never creates.
+  // onto a table it never creates. `/http-channel` is **not** here and must not be: a Channel
+  // owns no log, so that specifier carries no table and barrelling it would say nothing
+  // (ADR-0048).
   writeFileSync(
     path.join(consumer, "schema.ts"),
     [
       'export * from "shared-agent-framework/signals";',
       'export * from "shared-agent-framework/users";',
-      'export * from "shared-agent-framework/http-messenger";',
+      'export * from "shared-agent-framework/messenger";',
       'export * from "shared-agent-framework/decisions";',
       'export * from "shared-agent-framework/scheduler";',
       "",
@@ -515,15 +534,27 @@ try {
       "  Users,",
       "  UsersOptions,",
       '} from "shared-agent-framework/users";',
-      // The HTTP Messenger's own types, from its own subpath, for the same reason: a
+      // The Messenger's own types, from its own subpath, for the same reason: a
       // deployment with no messaging in it imports nothing from there, and one that does is
       // stating that it accepts this part's declined freedoms (ADR-0034). No route plugin
-      // type is among them, because none is exported.
+      // type is among them, because none is exported. `Channel` and `MessengerHandle` are
+      // here because they are the seam a second medium plugs into: the Channel a deployment
+      // writes itself is annotated against the first, and what `register` answers with —
+      // the only way an inbound Message can be written — is the second (ADR-0048).
       "import type {",
-      "  HttpMessenger,",
-      "  HttpMessengerOptions,",
+      "  Channel,",
       "  MessageRecord,",
-      '} from "shared-agent-framework/http-messenger";',
+      "  Messenger,",
+      "  MessengerHandle,",
+      "  MessengerOptions,",
+      '} from "shared-agent-framework/messenger";',
+      // And the HTTP Channel's, from the ninth specifier. Two names and no table among them:
+      // this component owns nothing to migrate, so its subpath carries a constructor and the
+      // types naming it (ADR-0047, ADR-0048).
+      "import type {",
+      "  HttpChannel,",
+      "  HttpChannelOptions,",
+      '} from "shared-agent-framework/http-channel";',
       // Signatures' own types, from its own subpath. `SignedClaims` is among them because the
       // caller builds the payload and therefore decides the bytes that get signed: the claims
       // are serialized in the order they were written, and nothing re-serializes them
@@ -543,7 +574,7 @@ try {
       '} from "shared-agent-framework/decisions";',
       // The Scheduler's own types, from its own subpath, for the same reason: a deployment with no
       // time-based behaviour imports nothing from there, and one that does is opting the second
-      // Producer in and wiring it like the HTTP Messenger (ADR-0018). No route plugin type is among
+      // Producer in and wiring it like the Messenger (ADR-0018). No route plugin type is among
       // them, because the part registers its routes itself and exports none.
       "import type {",
       "  ScheduleFiredRecord,",
@@ -595,7 +626,7 @@ try {
       "  signalsTable, runsTable, usersTable, tokensTable, messagesTable, decisionsTable, schedulesTable,",
       "];",
       "export const partSchemas: readonly PgSchema[] = [",
-      "  workerSchema, usersSchema, httpMessagesSchema, decisionsSchema, schedulerSchema,",
+      "  workerSchema, usersSchema, messengerSchema, decisionsSchema, schedulerSchema,",
       "];",
       "",
       "// The consequence the ADR records rather than mitigates: an exported table object is",
@@ -743,7 +774,7 @@ try {
       "}",
       "",
       "// The predefined Handler that renders its Prompt from a Handlebars file, written",
-      "// against the HTTP Messenger's own **exported payload type**: a submitted Message is",
+      "// against the Messenger's own **exported payload type**: a submitted Message is",
       "// a `MessageRecord`, so the template's data function type-checks against the record",
       "// every surface of that part answers with rather than against one re-declared here",
       "// (ADR-0034). The options are annotated separately, so a field that went missing from",
@@ -768,7 +799,7 @@ try {
       "// option is satisfied by what `serverComponent` returned, which is what proves it",
       "// does not narrow the instance type back to a bare one.",
       "const handlers: SignalHandlers = {",
-      "  // The HTTP Messenger's own `kind`, as the constant it exports rather than a string",
+      "  // The Messenger's own `kind`, as the constant it exports rather than a string",
       "  // literal of the same words: a Handler map is one of the two places that constant",
       "  // exists to keep from drifting (ADR-0034).",
       "  [messageReceivedKind]: fromTemplate,",
@@ -788,21 +819,50 @@ try {
       "// (ADR-0032).",
       "const workerRoutes: FastifyPluginAsync = worker.agentRoutes;",
       "",
-      "// The HTTP Messenger: the Db, the User Manager its `user_id` references with a",
-      "// foreign key, the Signal Worker a submission wakes, and **both** servers — all five",
-      "// required, because a Messenger nobody can reach or nobody can answer through is",
-      "// broken rather than smaller (ADR-0034). Its construction order against the User",
+      "// The Messenger: the Db, the User Manager its `user_id` references with a",
+      "// foreign key, the Signal Worker an inbound Message wakes, and the **Agent** server —",
+      "// all four required, because a Messenger the agent cannot answer through is broken",
+      "// rather than smaller (ADR-0034). There is no Public server option on it any more: what",
+      "// a User reaches is a Channel's, and a Channel that is not HTTP has no route on that",
+      "// server at all (ADR-0048). Its construction order against the User",
       "// Manager no longer matters — the framework applies no DDL — but the **barrel** above",
       "// must carry both schemas, or generation references a table it never creates",
-      "// (ADR-0036, ADR-0046). The two server options are satisfied by what `serverComponent`",
-      "// returned, as every other part's are.",
-      "const messengerOptions: HttpMessengerOptions = {",
-      "  db, users, worker, publicServer: publicComponent, agentServer: agentComponent,",
+      "// (ADR-0036, ADR-0046). The server option is satisfied by what `serverComponent`",
+      "// returned, as every other part's is.",
+      "const messengerOptions: MessengerOptions = {",
+      "  db, users, worker, agentServer: agentComponent,",
       "};",
-      "// Annotated, and what it carries is two methods and no route plugin: the departure from",
+      "// Annotated, and what it carries is three methods and no route plugin: the departure from",
       "// ADR-0032's door-out pattern that ADR-0034 states. `send` and `history` are used in",
       "// `useEverything` below, which is where the transaction split is visible.",
-      "export const messenger: HttpMessenger = createHttpMessenger(messengerOptions);",
+      "export const messenger: Messenger = createMessenger(messengerOptions);",
+      "// And the HTTP Channel, which is what reaches a person: the Messenger it registers itself",
+      "// with, the Db for the transaction a submission runs in, the User Manager whose hook",
+      "// authenticates that submission, and the Public server its two routes go on. A second",
+      "// Channel on this Messenger would be refused at that registration, which is why a",
+      "// deployment runs one medium (ADR-0048).",
+      "const httpChannelOptions: HttpChannelOptions = {",
+      "  db, messenger, users, publicServer: publicComponent,",
+      "};",
+      "export const httpChannel: HttpChannel = createHttpChannel(httpChannelOptions);",
+      "// The seam a second medium plugs into, written the way a deployment writes one: a Channel",
+      "// is an ordinary Component with a name and a `send` that takes the transaction the Message",
+      "// is being written in, and what it gets back from `register` is the only way an inbound",
+      "// Message can be written (ADR-0048). Annotated so a member that drifted fails here.",
+      "export function ownChannel(log: Messenger): [Channel, MessengerHandle] {",
+      "  const channel: Channel = {",
+      '    name: "own",',
+      "    send: async (tx, message) => {",
+      "      // A Channel's own durable work, in the transaction the Message is being written in:",
+      "      // both land or neither does, and the network act waits for the commit (ADR-0048).",
+      '      shipped.info({ seq: message.seq }, "carrying a Message");',
+      "      await write(tx);",
+      "    },",
+      "    start: async () => {},",
+      "    stop: async () => {},",
+      "  };",
+      "  return [channel, log.register(channel)];",
+      "}",
       "// The one shape every messaging surface answers with — the POST response, both reads,",
       "// the trusted-code methods and the Signal payload — annotated so a field that went",
       "// missing from the declaration fails here.",
@@ -889,14 +949,14 @@ try {
       "};",
       "",
       "// A Handler factory of the consumer's own, and the shape the construction cycle takes",
-      "// in their code: it closes over the Db, the HTTP Messenger and Decisions, and its post",
+      "// in their code: it closes over the Db, the Messenger and Decisions, and its post",
       "// phase is the only path by which a failed Run reaches the person waiting (ADR-0017,",
       "// ADR-0024). All three objects are constructed *after* the Signal Worker that dispatches",
       "// to this Handler, which is why `handlers` below is a callback rather than a map",
       "// (ADR-0038). The post phase is also where both trusted writes take the **same**",
       "// transaction: the notice and the commitment either both land or neither does, which is",
       "// what taking the transaction first is for (ADR-0023).",
-      "function notifier(db: Db, messenger: HttpMessenger, decisions: Decisions): SignalHandler<MessageRecord> {",
+      "function notifier(db: Db, messenger: Messenger, decisions: Decisions): SignalHandler<MessageRecord> {",
       "  return {",
       "    handle: (signal: Signal<MessageRecord>): Prompt[] => [",
       '      { session: "user_" + signal.payload.userId, text: signal.payload.text },',
@@ -948,7 +1008,8 @@ try {
       "  users: Users;",
       "  signatures: Signatures;",
       "  decisions: Decisions;",
-      "  messenger: HttpMessenger;",
+      "  messenger: Messenger;",
+      "  httpChannel: HttpChannel;",
       "  scheduler: Scheduler;",
       "  ownLoop: Component;",
       "};",
@@ -957,8 +1018,8 @@ try {
       "  runtime,",
       '  agentListen: { port: 7411, host: "localhost" },',
       '  publicListen: { port: 8080, host: "0.0.0.0" },',
-      "  // The four parts built from the infrastructure the callback is handed, and a Producer of",
-      "  // the consumer's own beside them — the User Manager before the HTTP Messenger for the",
+      "  // The five parts built from the infrastructure the callback is handed, and a Producer of",
+      "  // the consumer's own beside them — the User Manager before the Messenger for the",
       "  // foreign key (ADR-0036), Signatures before Decisions which holds it (ADR-0043). No",
       "  // `signingKey` or `tokenTtl` on the options any more: those belong to the parts, which are",
       "  // the consumer's now, so the key goes to `createSignatures` and the lifetime to",
@@ -978,9 +1039,14 @@ try {
       "      db: infra.db, signatures: gatewaySignatures, users: gatewayUsers,",
       "      agentServer: infra.agentServer, publicServer: infra.publicServer,",
       "    });",
-      "    const gatewayMessenger = createHttpMessenger({",
-      "      db: infra.db, users: gatewayUsers, worker: infra.worker,",
-      "      publicServer: infra.publicServer, agentServer: infra.agentServer,",
+      "    const gatewayMessenger = createMessenger({",
+      "      db: infra.db, users: gatewayUsers, worker: infra.worker, agentServer: infra.agentServer,",
+      "    });",
+      "    // And the Channel that reaches a person, registering itself with the Messenger above:",
+      "    // there is no wiring line here, because the constructor is the wiring (ADR-0032, ADR-0048).",
+      "    const gatewayChannel = createHttpChannel({",
+      "      db: infra.db, messenger: gatewayMessenger, users: gatewayUsers,",
+      "      publicServer: infra.publicServer,",
       "    });",
       "    // The Scheduler wired like the Messenger: the Db, the Worker it emits into, and the Agent",
       "    // server for its routes. Keyed ahead of the Worker like every `extend` part, so its stop —",
@@ -991,7 +1057,7 @@ try {
       "    });",
       "    return {",
       "      users: gatewayUsers, signatures: gatewaySignatures, decisions: gatewayDecisions,",
-      "      messenger: gatewayMessenger, scheduler: gatewayScheduler,",
+      "      messenger: gatewayMessenger, httpChannel: gatewayChannel, scheduler: gatewayScheduler,",
       "      ownLoop: heartbeat(infra.db, infra.worker),",
       "    };",
       "  },",
@@ -1017,7 +1083,8 @@ try {
       "// reached the same way.",
       "export const assembledDb: Db = assembled.components.db;",
       "export const assembledUsers: Users = assembled.components.users;",
-      "export const assembledMessenger: HttpMessenger = assembled.components.messenger;",
+      "export const assembledMessenger: Messenger = assembled.components.messenger;",
+      "export const assembledChannel: HttpChannel = assembled.components.httpChannel;",
       "export const assembledSignatures: Signatures = assembled.components.signatures;",
       "export const assembledDecisions: Decisions = assembled.components.decisions;",
       "export const assembledScheduler: Scheduler = assembled.components.scheduler;",
@@ -1188,7 +1255,7 @@ try {
       "  await db.tx((tx: Transaction) => users.revoke(tx, admitted.id));",
       '  shipped.info({ expiresAt: minted.expiresAt, of: minted.user.id }, "a Token was issued");',
       '  shipped.info({ admitted, sameUser, everyone: everyone.length }, "a User exists");',
-      "  // The HTTP Messenger's two methods, which are what trusted code has and no request",
+      "  // The Messenger's two write-and-read methods, which are what trusted code has and no request",
       "  // does. `send` takes the consumer's own transaction, so telling somebody something and",
       "  // recording why commit together or not at all (ADR-0023); `history` takes none, and",
       "  // therefore cannot see that write until it commits, which is why `send` answers with",
@@ -1229,9 +1296,9 @@ try {
       "  const newest: DecisionRecord[] = await decisions.history();",
       '  shipped.info({ decided: decided.seq, log: everything.length, page: newest.length }, "a Decision is on the record");',
       "  // One record, under the consumer's own words for its parts, that starts in key",
-      "  // order and stops in the reverse of it. **Every** part is in it, the User Manager and",
-      "  // the HTTP Messenger, Signatures and Decisions included, and those four come off subpaths",
-      "  // of their own — so this",
+      "  // order and stops in the reverse of it. **Every** part is in it, the User Manager, the",
+      "  // Messenger and its HTTP Channel, Signatures and Decisions included, and those five come",
+      "  // off subpaths of their own — so this",
       "  // record is also what proves the installed `.d.ts` files agree with the root's",
       "  // `Component` (ADR-0037). The order is the consumer's own and comes from one rule: the",
       "  // Signal Worker's `stop` is the only one that does work, so it is keyed after every part",
@@ -1242,7 +1309,7 @@ try {
       "  // framework checks any of it.",
       "  const gateway = createBareGateway({",
       "    db, agentServer: agentComponent, publicServer: publicComponent, users, signatures,",
-      "    decisions, messenger, worker: workerComponent, ownLoop,",
+      "    decisions, messenger, httpChannel, worker: workerComponent, ownLoop,",
       "  });",
       "  // The record comes back with its types intact, so a part is reached by the key it was",
       "  // filed under and is still what was put there — and the Gateway is itself a Component,",
@@ -1250,7 +1317,7 @@ try {
       "  const reached: Db = gateway.components.db;",
       "  const nested: Gateway<{ db: Db }> = createBareGateway({ db: reached });",
       "  const asComponent: Component = nested;",
-      "  // And the same eight from one call, which is the path an Operator's entry point actually",
+      "  // And the same nine from one call, which is the path an Operator's entry point actually",
       "  // takes. There is no migration step between construction and `start` any more: the",
       "  // Operator applied their schema before this process ran, and nothing here checks that",
       "  // they did (ADR-0038, ADR-0046).",
@@ -1281,9 +1348,9 @@ try {
       "-e",
       [
         ...consumerImports,
-        // Fastify, the consumer's own: the HTTP Messenger requires both servers, so
-        // constructing it at all needs two instances and there is no default of ours behind
-        // either (ADR-0031, ADR-0034).
+        // Fastify, the consumer's own: the Messenger requires the Agent server and the HTTP
+        // Channel the Public one, so constructing both needs two instances and there is no
+        // default of ours behind either (ADR-0031, ADR-0034, ADR-0048).
         'import Fastify from "fastify";',
         // The two description plugins, imported directly and called below. They arrive in
         // this project only because the framework declares them, so the import is half the
@@ -1354,18 +1421,25 @@ try {
         // effects, like every other part's.
         "const scratch = openDb('postgres://nobody@example.invalid/none');",
         "const directory = createUsers({ db: scratch, tokenTtl: 60000 });",
-        // And the HTTP Messenger, constructed after it and the way an Operator constructs
-        // it: all five arguments required, both servers among them, and the two nominal
+        // And the Messenger, constructed after it and the way an Operator constructs
+        // it: all four arguments required, the Agent server among them, and the two nominal
         // types satisfied by the objects the two calls above returned. Nothing connects and
         // nothing listens — what this proves is that the subpath resolves at runtime, that
-        // construction is free of side effects beyond the two registrations it makes, and
-        // that the object it answers with carries the **two** trusted-code methods and no
+        // construction is free of side effects beyond the one registration it makes, and
+        // that the object it answers with carries the **three** trusted-code methods and no
         // route plugin, because every other capability it has is a route it registered
         // itself (ADR-0034). Beside them, on this part and on the User Manager both, the
         // `start` and `stop` that do nothing: what an installed package has to carry for the
         // two of them to be in a Gateway's record at all (ADR-0037).
         "const messengerWorker = createSignalWorker({ db: scratch, runtime: { run: async () => ({ ok: true }) }, handlers: {} });",
-        "const messenger = createHttpMessenger({ db: scratch, users: directory, worker: messengerWorker, publicServer: { fastify: Fastify() }, agentServer: { fastify: Fastify() } });",
+        "const messenger = createMessenger({ db: scratch, users: directory, worker: messengerWorker, agentServer: { fastify: Fastify() } });",
+        // And the HTTP Channel from the ninth subpath, registering itself with that Messenger:
+        // what this proves is that the specifier resolves at runtime, that a Channel wires itself
+        // with no line in an entry point, and that the object it answers with is a name and the
+        // three methods a Channel is — with no trusted-code method at all, because everything it
+        // does it does for a request or for the Messenger (ADR-0048). That registration is also
+        // why a second Channel here would throw.
+        "const httpChannel = createHttpChannel({ db: scratch, messenger, users: directory, publicServer: { fastify: Fastify() } });",
         // Signatures and Decisions, constructed the way an Operator constructs them and in the
         // order they must be: Signatures takes the Manager's hook and Decisions holds
         // Signatures. Signatures takes **no Db**, being the one part with nothing to store, and
@@ -1415,8 +1489,9 @@ try {
         "    const u = createUsers({ db: infra.db, tokenTtl: 60000, agentServer: infra.agentServer, publicServer: infra.publicServer });",
         "    const s = createSignatures({ signingKey: generateKeyPairSync('ed25519').privateKey, users: u, agentServer: infra.agentServer, publicServer: infra.publicServer, logger: quiet });",
         "    const d = createDecisions({ db: infra.db, signatures: s, users: u, agentServer: infra.agentServer, publicServer: infra.publicServer });",
-        "    const m = createHttpMessenger({ db: infra.db, users: u, worker: infra.worker, publicServer: infra.publicServer, agentServer: infra.agentServer });",
-        "    return { users: u, signatures: s, decisions: d, messenger: m, ownLoop: { start: async () => {}, stop: async () => infra.worker.stop() } };",
+        "    const m = createMessenger({ db: infra.db, users: u, worker: infra.worker, agentServer: infra.agentServer });",
+        "    const c = createHttpChannel({ db: infra.db, messenger: m, users: u, publicServer: infra.publicServer });",
+        "    return { users: u, signatures: s, decisions: d, messenger: m, httpChannel: c, ownLoop: { start: async () => {}, stop: async () => infra.worker.stop() } };",
         "  },",
         "  handlers: (all) => ({ 'message.received': { handle: () => [{ session: 'user_1', text: typeof all.messenger.send }] } }),",
         "});",
@@ -1473,18 +1548,18 @@ try {
         // halves fail. The counting half catches the other mistake — two components sharing one
         // schema object, which is five names over four distinct values, so both counts read `4`.
         "const collectedSchemas = new Set(Object.values(barrel).filter((value) => is(value, PgSchema)));",
-        "const namedSchemas = [barrel.workerSchema, barrel.usersSchema, barrel.httpMessagesSchema, barrel.decisionsSchema, barrel.schedulerSchema];",
+        "const namedSchemas = [barrel.workerSchema, barrel.usersSchema, barrel.messengerSchema, barrel.decisionsSchema, barrel.schedulerSchema];",
         "const distinctSchemas = new Set(namedSchemas).size + ' of ' + collectedSchemas.size + ' distinct, every one collected ' + namedSchemas.every((value) => collectedSchemas.has(value));",
         // And the failure the flat shape exists to avoid, demonstrated rather than argued:
         // the `*Tables` wrappers `db.handle` takes ride along in every one of these modules
         // and the exporter sees **none** of them. A schema module that exported only its
         // wrapper would collect zero tables and generate an empty migration in silence.
-        "const wrappersSeen = [barrel.workerTables, barrel.usersTables, barrel.httpMessagesTables, barrel.decisionsTables, barrel.schedulerTables].filter((wrapper) => is(wrapper, PgTable) || is(wrapper, PgSchema)).length;",
+        "const wrappersSeen = [barrel.workerTables, barrel.usersTables, barrel.messengerTables, barrel.decisionsTables, barrel.schedulerTables].filter((wrapper) => is(wrapper, PgTable) || is(wrapper, PgSchema)).length;",
         // Nothing writes anything: there is no call between composing and interpreting,
         // because the module that used to hold one is gone from the package, and the
         // composed command line names no file for the agent to read either — the
         // Operator's `AGENTS.md` above is a mount and `pi` discovers it (ADR-0025).
-        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), mountArgs[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersSchema.schemaName, String(Object.keys(directory).sort()), httpMessagesSchema.schemaName, String(Object.keys(messenger).sort()), messageReceivedKind, decisionsSchema.schemaName, String(Object.keys(signatures).sort()), String(Object.keys(decisions).sort()), jws.split('.').length + ' segments, ' + Buffer.from(jwsSignature, 'base64url').length + ' signature bytes, verified ' + checked + ', private member ' + Object.hasOwn(keySet.keys[0], 'd'), String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(','), 'cron ' + cronNext + ' zone ' + zoneKnown, 'scheduler ' + String(Object.keys(scheduler).sort()) + ' fires ' + scheduleFiredKind + ' in ' + schedulerSchema.schemaName, 'barrel ' + barrelled.join(' ') + ' in ' + barrelledSchemas.join(' ') + ', wrappers seen ' + wrappersSeen, 'schemas ' + distinctSchemas];",
+        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), mountArgs[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersSchema.schemaName, String(Object.keys(directory).sort()), messengerSchema.schemaName, String(Object.keys(messenger).sort()), 'channel ' + httpChannel.name + ' ' + String(Object.keys(httpChannel).sort()), messageReceivedKind, decisionsSchema.schemaName, String(Object.keys(signatures).sort()), String(Object.keys(decisions).sort()), jws.split('.').length + ' segments, ' + Buffer.from(jwsSignature, 'base64url').length + ' signature bytes, verified ' + checked + ', private member ' + Object.hasOwn(keySet.keys[0], 'd'), String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(','), 'cron ' + cronNext + ' zone ' + zoneKnown, 'scheduler ' + String(Object.keys(scheduler).sort()) + ' fires ' + scheduleFiredKind + ' in ' + schedulerSchema.schemaName, 'barrel ' + barrelled.join(' ') + ' in ' + barrelledSchemas.join(' ') + ', wrappers seen ' + wrappersSeen, 'schemas ' + distinctSchemas];",
         "process.stdout.write(built.join(':'));",
       ].join("\n"),
     ],
@@ -1492,8 +1567,8 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword,start,stop:saf_http_messages:history,send,start,stop:message.received:saf_decisions:sign,start,stop:history,publish,start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,signatures,decisions,messenger,ownLoop,worker:Shared Agent Gateway: Agent server describes 10 paths:by hand /healthz:cron 2030-06-02T09:00:00.000Z zone true:scheduler cancel,list,schedule,start,stop,tick fires saf_schedule_fired in saf_scheduler:barrel saf_decisions.decisions saf_http_messages.messages saf_scheduler.schedules saf_signals.runs saf_signals.signals saf_users.tokens saf_users.users in saf_decisions saf_http_messages saf_scheduler saf_signals saf_users, wrappers seen 0:schemas 5 of 5 distinct, every one collected true",
-    "all eight subpaths should resolve at runtime, the Signal Worker's constructor arriving off `/signals` and not the root, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Manager should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the HTTP Messenger should construct into a schema of its own from all five of its required arguments and answer with an object carrying exactly its two trusted-code methods, because every other capability it has is a route it registered itself, and both of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the four parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone, and the Scheduler itself should construct from the installed `/scheduler` subpath and carry its management surface and its Component lifecycle, filing its table under a schema of its own, and an Operator's barrel — `export *` of all five **component** subpaths, which is the whole of what ADR-0046 asks them to write and where ADR-0047 puts the tables — should hand `drizzle-kit`'s own collection rule every one of the seven tables and all five schemas, and none of the `*Tables` wrappers, because a table reachable only through a wrapper object is dropped in silence and generates an empty migration, and those five schema objects should be five distinct values that the barrel carries under five distinct prefixed names, because a bare `schema` on each component is a name `export *` drops for ambiguity and an Operator whose `schemaFilter` comes back empty gets a push that creates nothing and exits 0",
+    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword,start,stop:saf_messenger:history,register,send,start,stop:channel http name,send,start,stop:message.received:saf_decisions:sign,start,stop:history,publish,start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,signatures,decisions,messenger,httpChannel,ownLoop,worker:Shared Agent Gateway: Agent server describes 10 paths:by hand /healthz:cron 2030-06-02T09:00:00.000Z zone true:scheduler cancel,list,schedule,start,stop,tick fires saf_schedule_fired in saf_scheduler:barrel saf_decisions.decisions saf_messenger.messages saf_scheduler.schedules saf_signals.runs saf_signals.signals saf_users.tokens saf_users.users in saf_decisions saf_messenger saf_scheduler saf_signals saf_users, wrappers seen 0:schemas 5 of 5 distinct, every one collected true",
+    "all nine subpaths should resolve at runtime, the Signal Worker's constructor arriving off `/signals` and not the root, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and the User Manager should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the Messenger should construct into a schema of its own from all four of its required arguments and answer with an object carrying exactly its three trusted-code methods, because every other capability it has is a route it registered itself, and the HTTP Channel should construct off the ninth subpath, register itself with that Messenger and answer with a name fixed by its type and the three methods a Channel is and no trusted-code method at all, and all of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the five parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone, and the Scheduler itself should construct from the installed `/scheduler` subpath and carry its management surface and its Component lifecycle, filing its table under a schema of its own, and an Operator's barrel — `export *` of all five **component** subpaths, which is the whole of what ADR-0046 asks them to write and where ADR-0047 puts the tables — should hand `drizzle-kit`'s own collection rule every one of the seven tables and all five schemas — the HTTP Channel absent from it because a Channel owns no log and has no table to barrel —, and none of the `*Tables` wrappers, because a table reachable only through a wrapper object is dropped in silence and generates an empty migration, and those five schema objects should be five distinct values that the barrel carries under five distinct prefixed names, because a bare `schema` on each component is a name `export *` drops for ambiguity and an Operator whose `schemaFilter` comes back empty gets a push that creates nothing and exits 0",
   );
 
   // The other half of ADR-0047's first move, which nothing above can see: `main.ts` imports the
