@@ -1,25 +1,24 @@
 /**
- * The NIP-59 envelope, unwrapped by hand, and the five checks that are the whole authentication
- * of an inbound message.
+ * The NIP-59 envelope, unwrapped by hand over the encryption primitive, and the five checks that
+ * are the whole authentication of an inbound message
+ * ([ADR-0049](../../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)).
  *
- * **This is the security core of the component**
- * ([ADR-0049](../../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)). A gift wrap
- * is signed by a fresh random key, and the rumor inside it is not signed at all, so the only
- * thing binding a message to its author is that the *seal* decrypts under a conversation key
- * derived from the author's own public key — and that the rumor agrees with the seal about who
+ * A gift wrap is signed by a fresh random key and the rumor inside it is signed by nobody. So the
+ * only thing that binds a message to its author is that the *seal* decrypted under a conversation
+ * key derived from that author's public key, and that the rumor agrees with the seal about who
  * that was. NIP-17 states the second half as its one `MUST`:
  *
  * > Clients MUST verify if pubkey of the `kind:13` is the same pubkey as that of the
  * > `unsignedMessageRumor`, otherwise any sender can impersonate any other by simply changing
  * > the pubkey on the rumor.
  *
- * `nostr-tools`' own `unwrapEvent` decrypts twice and **returns the rumor, discarding the seal**,
- * so a caller never sees `seal.pubkey` and the comparison is not merely omitted but
- * inexpressible. That is why this is written over the encryption primitive instead of through
- * the convenience function, and why `receiving.test.ts`'s `impersonation` case exists: it is the
- * only thing that would notice this check being refactored away.
+ * `nostr-tools`' own `unwrapEvent` decrypts both layers and returns the rumor, **discarding the
+ * seal**, so `seal.pubkey` never reaches a caller and the comparison is not merely omitted but
+ * inexpressible through it. Do not rewrite this over that function, or over any other convenience
+ * wrapper that hands back one layer. `receiving.test.ts`'s forged envelope is the only thing that
+ * would notice the check being refactored away.
  *
- * **The order of the checks is itself the decision**, and it is the order below:
+ * The order of the checks is itself the decision, and it is the order below:
  *
  * ```text
  * decrypt wrap -> seal;   require seal.kind is the seal kind and its tags are empty
@@ -28,42 +27,36 @@
  *                         require rumor kind is the chat kind
  * ```
  *
- * Nothing here throws and nothing here touches the database. Every refusal is an `Opened` with a
- * reason on it, which the Channel logs and drops, because a thrown error would end the
- * subscription and one malformed event would then cost every later message.
+ * Nothing here throws and nothing here touches the database. Every refusal is an `Opened` carrying
+ * a reason, which the Channel logs and drops, because a thrown error would end the subscription
+ * and one malformed event would then cost every later message.
  *
- * **The other direction is one call, and it is the library's.** There is no `MUST` to express when
- * sealing — a rumor the agent wrote carries the agent's own key by construction — so `sealEnvelope`
- * below is `nostr-tools`' own NIP-17 wrap, and what this file adds to it is the decision about
- * *which* of its two entry points is used. Both halves are here so that the seal and the unwrap
- * cannot drift apart into two files nobody reads together.
+ * Sealing goes the other way and is the library's one call: a rumor the agent wrote carries the
+ * agent's own key by construction, so there is no `MUST` to express. Both halves live in this one
+ * file so that they cannot drift apart into two nobody reads together.
  */
 
 import type { NostrEvent } from "nostr-tools/core";
 import { wrapEvent } from "nostr-tools/nip17";
 import { decrypt, getConversationKey } from "nostr-tools/nip44";
 
-/** NIP-59's seal: the sender's signed envelope around the rumor, with no tags at all. */
+// NIP-59's seal: the sender's signed envelope around the rumor, carrying no tags at all.
 export const sealKind = 13;
 
-/** NIP-17's private direct message, which is the only inner kind this Channel accepts. */
+// NIP-17's private direct message, which is the only inner kind this Channel accepts.
 export const chatKind = 14;
 
-/** NIP-59's gift wrap: what the Relay actually holds and serves, signed by a throwaway key. */
+// NIP-59's gift wrap: what the Relay holds and serves, signed by a throwaway key.
 export const giftWrapKind = 1059;
 
-/** NIP-42's authentication event, which is the whole of what this component reads from it. */
+// NIP-42's authentication event, which is the whole of what this component reads from that NIP.
 export const authenticationKind = 22242;
 
-/** NIP-17's relay list: where a public key receives private direct messages. */
+// NIP-17's relay list: where a public key receives private direct messages.
 export const directMessageRelaysKind = 10050;
 
-/**
- * What was inside an envelope, or why it was not admitted.
- *
- * A result rather than an exception, so a rejection is a log line and a dropped event. See the
- * module comment.
- */
+// A result and not an exception, for the reason in the file header: a rejection is a log line and
+// a dropped event, never the end of the subscription.
 export type Opened =
   | { readonly ok: true; readonly rumor: Rumor }
   | { readonly ok: false; readonly reason: string };
@@ -71,9 +64,9 @@ export type Opened =
 /**
  * The unsigned inner message: who wrote it, what kind it is, and what it says.
  *
- * `pubkey` is trustworthy **only because** `openEnvelope` compared it against the seal's author,
- * and the seal's author is trustworthy because the seal decrypted under a conversation key
- * derived from it. Read a `Rumor` from anywhere else and neither statement holds.
+ * `pubkey` is trustworthy only because `openEnvelope` compared it against the seal's author, and
+ * the seal's author is trustworthy because the seal decrypted under a conversation key derived
+ * from it. A `Rumor` from anywhere else carries neither statement.
  */
 export type Rumor = {
   readonly pubkey: string;
@@ -84,12 +77,12 @@ export type Rumor = {
 };
 
 /**
- * Unwraps one gift wrap addressed to this agent, and answers with the rumor or with why not.
+ * Unwraps one gift wrap addressed to this agent and answers with the rumor, or with why not.
  *
- * @param wrap The event the Relay served, which the client has already checked the signature of.
- * @param secretKey The agent's own 32 raw bytes, used for both conversation keys.
- * @param agentPublicKey The agent's own public key in lowercase hex, so that an envelope
- *   claiming to be from the agent itself is refused rather than answered.
+ * `wrap` is the event the Relay served, whose own signature the client checked before this ran.
+ * `secretKey` is the agent's 32 raw bytes, which both conversation keys are derived from.
+ * `agentPublicKey` is the agent's own public key in lowercase hex, so that an envelope claiming to
+ * come from the agent is refused rather than answered.
  */
 export function openEnvelope(
   wrap: { readonly pubkey: string; readonly content: string },
@@ -130,22 +123,20 @@ export function openEnvelope(
 /**
  * Seals one reply for one recipient and answers with the single gift wrap that goes on the wire.
  *
- * **One wrap, not two.** `wrapManyEvents` produces a second wrap addressed to the sender, so that a
+ * One wrap, not two. `wrapManyEvents` produces a second one addressed to the sender, so that a
  * client can recover its own sent messages from a Relay. The agent's record of what it said is the
- * Message log, so the self-copy would halve nothing and put the agent's own events on the agent's
- * own subscription. `wrapEvent` is therefore the entry point, and that is a decision rather than a
- * shortcut (ADR-0049).
+ * Message log, so the self-copy would halve nothing and would put the agent's own events on the
+ * agent's own subscription. `wrapEvent` is therefore the entry point, and that is a decision
+ * rather than a shortcut (ADR-0049).
  *
  * Nothing about the result is dated now. NIP-59 randomises both the seal's and the wrap's
- * `created_at` up to two days into the past, which is what hides when the agent answered from
- * anyone reading the Relay — and, incidentally, what keeps the published event out of the future,
- * which some Relays refuse outright. Only the rumor inside carries the real time, where nobody but
- * the recipient can read it.
+ * `created_at` up to two days into the past, which hides when the agent answered from anyone
+ * reading the Relay and keeps the published event out of the future, which some Relays refuse
+ * outright. Only the rumor carries the real time, where nobody but the recipient reads it.
  *
- * @param text What the agent is saying, as the Messenger's log holds it.
- * @param secretKey The agent's own 32 raw bytes, which seal and sign the inner layers.
- * @param recipientPublicKey The recipient in lowercase hex. It is the only `p` tag on the wrap, so
- *   nothing readable by the Relay names anybody else.
+ * `text` is the reply as the Messenger's log holds it, `secretKey` the agent's 32 raw bytes, and
+ * `recipientPublicKey` the recipient in lowercase hex. That last is the only `p` tag on the wrap,
+ * so nothing the Relay can read names anybody else.
  */
 export function sealEnvelope(
   text: string,
@@ -158,10 +149,9 @@ export function sealEnvelope(
 /**
  * One NIP-44 layer: decrypt with the conversation key for `author`, parse, and check the shape.
  *
- * Answers `undefined` for every failure alike — a bad conversation key, a payload that is not
- * NIP-44, plaintext that is not JSON, JSON that is not an event — because the caller does the
- * same thing with all of them and telling a sender which one it was would be a decryption
- * oracle.
+ * Answers `undefined` for every failure alike, a bad conversation key, a payload that is not
+ * NIP-44, plaintext that is not JSON and JSON that is not an event, because the caller does the
+ * same thing with all of them and telling a sender which one it was would be a decryption oracle.
  */
 function decryptEvent(payload: string, secretKey: Uint8Array, author: string): Rumor | undefined {
   let parsed: unknown;

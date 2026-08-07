@@ -80,8 +80,8 @@ const rejectBodyRouteQuery = unknownQueryRefusal(
  * than being survived.
  *
  * The list covers what a public JWK of any asymmetric type carries rather than only what today's
- * key needs — `y` for the second EC coordinate, `n` and `e` for RSA — because a shorter list would
- * silently truncate somebody's key set, and truncation here reads as a corrupt key.
+ * key needs: `y` for the second EC coordinate, `n` and `e` for RSA. A shorter list would silently
+ * truncate somebody's key set, and truncation here reads as a corrupt key.
  *
  * Only `kty` is required, being the one member every key type has. There is no `kid`: the keypair
  * is the identity, and a name beside it would answer the same question twice.
@@ -136,7 +136,7 @@ const typSchema = {
   minLength: 1,
   maxLength: 128,
   default: statementTyp,
-  description: `What kind of thing this artifact is. It goes into the **protected header**, so the signature covers it. Swapping it invalidates the artifact, which keeps a receipt from being presented as an approval.\n\n**Any label, \`saf-decision+jws\` included.** Domain separation between your *own* categories — receipts, votes, approvals — is something only you can express. Give each of them a label of its own, or they collapse into one domain and become replayable as each other. Defaults to \`${statementTyp}\`.`,
+  description: `What kind of thing this artifact is. It goes into the **protected header**, so the signature covers it. Swapping it invalidates the artifact, which keeps a receipt from being presented as an approval.\n\n**Any label, \`saf-decision+jws\` included.** Domain separation between your *own* categories, such as receipts, votes and approvals, is something only you can express. Give each of them a label of its own, or they collapse into one domain and become replayable as each other. Defaults to \`${statementTyp}\`.`,
 } as const;
 
 // No field for the payload: what is signed is `{ statement }` and the header, so a caller wanting
@@ -154,7 +154,7 @@ const signedStatementSchema = {
     jws: {
       type: "string",
       description:
-        'The **Signed Statement**: a compact JWS, `header.payload.signature`, base64url, one URL-safe string. Its payload is `{"statement":…}` and nothing else — no number and no timestamp, both of those being a Decision\'s — and its protected header carries the algorithm and the `typ` that was asked for. Nothing was stored: this string is the whole of what happened, so keep it or hand it on.',
+        'The **Signed Statement**: a compact JWS, `header.payload.signature`, base64url, one URL-safe string. Its payload is `{"statement":…}` and nothing else, with no number and no timestamp, both of those being a Decision\'s. Its protected header carries the algorithm and the `typ` that was asked for. Nothing was stored: this string is the whole of what happened, so keep it or hand it on.',
     },
   },
   required: ["jws"],
@@ -188,7 +188,7 @@ const verdictSchema = {
     },
     header: {
       description:
-        "The protected header the signature covers, as it was written: the algorithm, and the `typ` the signer chose. **`typ` is that signer's own claim about its artifact and not a guarantee of this framework's** — a `\"saf-decision+jws\"` here means this identity labelled it a Decision, not that it is shaped like one and not that a row exists. Only an artifact fetched from `GET /decisions` is guaranteed well-formed.",
+        "The protected header the signature covers, as it was written: the algorithm, and the `typ` the signer chose. **`typ` is that signer's own claim about its artifact and not a guarantee of this framework's**. A `\"saf-decision+jws\"` here means this identity labelled it a Decision, not that it is shaped like one and not that a row exists. Only an artifact fetched from `GET /decisions` is guaranteed well-formed.",
     },
     payload: {
       description:

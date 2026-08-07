@@ -1,18 +1,22 @@
 /**
- * The conventions every component's HTTP routes share.
- *
- * Internal to the framework, with one name excepted. `CursorWindow` below is a parameter of
- * `Decisions.history` and of `Messenger.history`, so it is exported from the package root,
- * where what belongs to no single component lives. Everything else here reaches no specifier.
- * An Operator writing routes of their own brings Fastify and writes them however they like.
- * These are the rules the framework's own components hold each other to, so that a Gateway
- * answers one way:
+ * The rules the framework's own components hold each other to, so that a Gateway answers one way
+ * whichever component was asked:
  *
  * - an unknown query parameter is a **400**, not a request answered with everything;
  * - an id in a path is **pattern-validated** before it reaches PostgreSQL;
  * - a list takes a **capped limit** with a default, and answers in an **envelope**;
  * - a log is paged by **one cursor pair**, `after` or `before` and never both;
  * - a refusal matches **Fastify's own error shape**, described with one schema.
+ *
+ * Internal, with one exception: `CursorWindow` is a parameter of two components' `history`
+ * methods, so it is exported from the package root, where what belongs to no single component
+ * lives (ADR-0047). Nothing else here reaches a specifier, and an Operator writing routes of
+ * their own brings Fastify and writes them however they like.
+ *
+ * The `description` strings are the other thing that leaves this file. They are interpolated into
+ * several components' route descriptions and rendered in the OpenAPI document, so the wording is
+ * public even where the name is not, and three of them are pinned word for word by
+ * `gateway.test.ts`.
  */
 
 import type { FastifyReply } from "fastify";
@@ -38,25 +42,27 @@ export const limitSchema = {
 /**
  * The two numbers above as the sentence a list route's description carries.
  *
- * Written from the schema, because the numbers are what moves. A component adds what happens to
- * the records past the cap. That depends on what its own route offers to narrow by.
+ * Interpolated from the schema, because the numbers are what moves. A component adds what becomes
+ * of the records past the cap, which depends on what its own route offers to narrow by.
  */
 export const cappedLimit = `\`limit\` defaults to ${limitSchema.default} and is capped at ${limitSchema.maximum}. A larger value is **refused with a 400** rather than quietly reduced.`;
 
 /**
- * Which stretch of a log a read asks for: one cursor, or the other, or neither, and a limit.
+ * Which stretch of a log a read asks for: one cursor, the other, or neither, and a limit.
  *
- * It carries no User id. Which log is read is settled elsewhere. A Token settles it on the
- * Public server, and a query parameter on the Agent server. So it is the same shape wherever
- * a log is paged. A component that wants its own name aliases this type, and the alias stays
- * internal: an alias is transparent to the compiler, so a signature written against one still
- * resolves to this.
+ * No cursor at all answers the newest page, which is what a client opening a log wants. `before`
+ * answers the newest page strictly below that `seq`, which is scrolling back, and `after` walks
+ * forwards from it, which is polling. `after: 0` reads a log from its beginning, nothing being
+ * numbered 0. All three answer ascending by `seq`, so pages concatenate without anything being
+ * reversed.
  *
- * Exported from `shared-agent-framework`, the one name in this module that is. `Decisions.history`
- * and `Messenger.history` each take `Partial` of it, every field optional, so a caller that
- * wants the newest page passes nothing.
+ * Both cursors together describe two windows rather than one. An HTTP route given both answers
+ * 400; a `history` method given both refuses nothing and reads between them.
  *
- * Both cursors at once describes two windows, and the route refuses it with `bothCursors`.
+ * It carries no User id. Which log is read is settled elsewhere, by the Token on the Public server
+ * and by a query parameter on the Agent server, so one shape serves wherever a log is paged. The
+ * two `history` methods take `Partial` of it, every field optional, so a caller wanting the newest
+ * page passes nothing at all.
  */
 export type CursorWindow = {
   readonly after?: number;
@@ -76,10 +82,9 @@ export type CursorWindow = {
 const cursorSchema = { type: "integer", minimum: 0, maximum: 2147483647 } as const;
 
 /**
- * The same cursor twice, described as the two different motions it is.
- *
- * One schema for the validation, and two descriptions over it. `after` and `before` share their
- * shape and nothing else.
+ * The same cursor twice, described as the two different motions it is. One schema for the
+ * validation, and two descriptions over it: `after` and `before` share their shape and nothing
+ * else.
  */
 export const afterCursor = {
   ...cursorSchema,
@@ -94,11 +99,10 @@ export const beforeCursor = {
 } as const;
 
 /**
- * The three cursor cases and the one order they all answer in, for a cursored read's
- * description.
+ * The three cursor cases and the one order they all answer in, for a cursored read's description.
  *
- * No schema conveys any of this. `after` and `before` are two optional integers, and that
- * shape says nothing about which is the newest page. A client that guesses wrong renders a log
+ * No schema conveys any of this. `after` and `before` are two optional integers, and that shape
+ * says nothing about which of them is the newest page. A client that guesses wrong renders a log
  * backwards, and nothing reports it.
  */
 export const cursorCases =
@@ -107,11 +111,11 @@ export const cursorCases =
 /**
  * Refuses both cursors at once, in the same body shape as `notFound`.
  *
- * A read given both would have to decide which window was meant, and no caller can predict
- * the answer. So it is a refusal rather than a resolution.
+ * A read given both would have to pick a window, and no caller can predict which. So it is a
+ * refusal rather than a resolution.
  *
- * @param whichLog A noun phrase naming the records the caller asked for. It goes into the
- *   message, so a shared refusal cannot name the wrong log.
+ * `whichLog` is a noun phrase naming the records the caller asked for. It goes into the message, so
+ * a refusal shared between components cannot name the wrong log.
  */
 export function bothCursors(reply: FastifyReply, whichLog: string): FastifyReply {
   return reply.code(400).send({
@@ -124,9 +128,9 @@ export function bothCursors(reply: FastifyReply, whichLog: string): FastifyReply
 /**
  * The shape of an id in a path or a query.
  *
- * Validated rather than passed through: PostgreSQL refuses to cast a malformed uuid, so a
- * mistyped path would answer 500 instead of the 400 it earned. Spelled as a pattern rather
- * than `format: "uuid"`, which needs an ajv plugin Fastify does not bundle.
+ * Validated rather than passed through: PostgreSQL refuses to cast a malformed uuid, so a mistyped
+ * path would answer 500 instead of the 400 it earned. Spelled as a pattern rather than
+ * `format: "uuid"`, which needs an ajv plugin Fastify does not bundle.
  */
 export const idSchema = {
   type: "string",
@@ -144,12 +148,12 @@ export const idParams = {
 /**
  * The shape of a **name** in a path, for a record addressed by a key its caller chose.
  *
- * PostgreSQL stores any text as a primary key without complaint. An unbounded or
- * control-character name would be accepted rather than refused. The pattern bounds the length
- * and holds the name to a url-safe charset: letters, digits, and three separators.
+ * PostgreSQL stores any text as a primary key without complaint, so an unbounded or
+ * control-character name would be accepted rather than refused. The pattern bounds the length and
+ * holds the name to a url-safe charset: letters, digits, and three separators.
  *
- * The Scheduler's Agent routes are the one family that addresses by name. A Schedule's
- * identity is a client-chosen key, and `PUT` on that key is the honest verb for it.
+ * The Scheduler's Agent routes are the one family that addresses by name, a Schedule's identity
+ * being a client-chosen key.
  */
 export const nameSchema = {
   type: "string",
@@ -167,18 +171,16 @@ export const nameParams = {
 /**
  * Builds the hook that refuses a query parameter a route does not have.
  *
- * A hook rather than the schema, because Fastify's ajv is configured with `removeAdditional`.
- * `additionalProperties: false` therefore deletes an unknown parameter and answers as though
- * it had never been written. `?limt=5` quietly returns fifty records. A route keeps
- * `additionalProperties: false` anyway, because that is what documents the parameter list.
+ * A hook and not the schema, because Fastify's ajv runs with `removeAdditional`.
+ * `additionalProperties: false` therefore deletes an unknown parameter and answers as though it
+ * had never been written, so `?limt=5` quietly returns fifty records. A route keeps
+ * `additionalProperties: false` anyway, that being what documents the parameter list.
  *
  * Apply the result per route with the parameters that route takes:
  * `const rejectUnknownQuery = unknownQueryRefusal("…"); rejectUnknownQuery("limit")`.
  *
- * @param explanation The sentence the refusal ends with, about this surface. Omit it and the
- *   message stops after the parameter list.
- * @returns A function that takes the allowed parameter names and returns a `preValidation`
- *   hook.
+ * `explanation` is the sentence the refusal ends with, about this surface. Omit it and the message
+ * stops after the parameter list.
  */
 export function unknownQueryRefusal(explanation?: string) {
   return (...allowed: readonly string[]) =>
@@ -220,8 +222,8 @@ export function notFound(reply: FastifyReply, what: string, id: string): Fastify
  * sentence saying what reaches it.
  *
  * A response schema is a serializer, so this one decides what a refusal can carry. The three
- * properties are what the framework's own refusals send. Fastify's validation failures also
- * send `code: "FST_ERR_VALIDATION"`, and a route declaring this for its 400 drops that field.
+ * properties are what the framework's own refusals send. Fastify's validation failures also send
+ * `code: "FST_ERR_VALIDATION"`, and a route declaring this for its 400 drops that field.
  */
 export const errorSchema = {
   type: "object",
@@ -234,13 +236,10 @@ export const errorSchema = {
 } as const;
 
 /**
- * Describes one refused status: the shared shape, and the sentence saying what reaches it
- * here.
+ * Describes one refused status: the shared shape, and the sentence saying what reaches it here.
  *
- * The shape is the same on every route, and the sentence never is. A caller reading one route
- * wants to know what it is about to be refused for.
- *
- * @param why What this route refuses, for the document.
+ * The shape is the same on every route and the sentence never is, because a caller reading one
+ * route wants to know what it is about to be refused for. `why` is that sentence.
  */
 export function refused(why: string) {
   return { ...errorSchema, description: why };

@@ -1,26 +1,16 @@
 /**
- * The `pi` Agent Implementation: an Agent Container, and one function.
+ * A container rather than this process, which is the load-bearing decision underneath all of
+ * `src/pi/`. Driving `pi` in-process through its TypeScript SDK is real, and it was rejected on
+ * exposure: `pi`'s shell tool hands its child `{ ...process.env }`, so an in-process agent would
+ * hold the Gateway's `DATABASE_URL` and could write to every table directly, bypassing the Agent
+ * server (ADR-0025). Only what the container's `env` names reaches the agent.
  *
- * There is no configuration here and no orchestration either. Everything about running an agent as
- * a container is the Agent Container Runtime's, and it knows nothing about `pi`. That covers the
- * argument assembly, the confinement flags, the mounts, the networks and the environment. It also
- * covers spawning, stdin, stderr, the exit status and the diagnosis appended to a failure. What is
- * left, and the whole of what `pi` adds, is `piRun`. Given a Prompt, it says what to put after the
- * image name and what to write on stdin. It also says how to read the answer.
- *
- * A container rather than this process, which is the load-bearing decision underneath all of it.
- * `pi`'s shell tool hands its child `{ ...process.env }`. So an in-process agent would hold the
- * Gateway's `DATABASE_URL` and could write to every table directly. Only what the container's `env`
- * names reaches the agent.
- *
- * Nothing here names a path, a model or a provider. The model and the provider are `defaultModel`
- * and `defaultProvider` in a `settings.json` the Operator mounts. The working directory and the
- * agent's own directory are `WORKDIR` and `PI_CODING_AGENT_DIR` in the image. Every deployment
- * builds that image, because no `pi` image is published. The Session directory is `pi`'s own to
- * resolve.
- *
- * The framework carries none of them, which also means it can refuse none of them. A deployment
- * missing any is a Gateway that starts, serves, and fails its first Run permanently.
+ * The split with `src/container/` runs one way. Everything about running an agent as a container
+ * lives there and knows nothing about `pi`: the argument assembly, the confinement flags, the
+ * mounts, the networks, the environment, the spawning, stdin, stderr, the exit status and the
+ * diagnosis appended to a failure. This file imports from it and nothing there imports back, and an
+ * import of `../pi/` into that directory is the thing to refuse in review, because the whole point
+ * of the split is that a second Agent Implementation takes it unchanged (ADR-0033).
  */
 
 import {
@@ -33,52 +23,15 @@ import type { RunPrompt } from "../signals/runtime.ts";
 import { interpretPiOutput } from "./output.ts";
 
 /**
- * The `pi` Runtime: one fresh container per Run, of the image the Operator named.
+ * Builds a Runtime that runs `pi` as one fresh container per Run, of the image the container names.
  *
- * Two defaults, spread beneath the Operator's own, which is the whole extension mechanism. There is
- * no registration, no base to extend and no lifecycle to implement. Both are conveniences rather
- * than rules, and an Operator who states either gets what they asked for:
+ * Two defaults sit beneath the Operator's own, and a container stating either one gets what it
+ * asked for. `entrypoint` is `["pi"]`, so an image that starts something else, or a `pi` installed
+ * somewhere unusual, is a field rather than a workaround. `PI_OFFLINE` is set, because a Gateway has
+ * no use for `pi`'s version check and its update telemetry, and a Run must not depend on reaching
+ * `pi.dev`.
  *
- *  - `entrypoint: ["pi"]`, for an image that starts something else. A `pi` installed somewhere
- *    unusual is then a field rather than a workaround in `extraArgs`.
- *  - `PI_OFFLINE`, because a Gateway has no use for `pi`'s version check and its update
- *    telemetry. A Run must not depend on reaching `pi.dev`.
- *
- * @param container The container one Run happens in. Only `image` is required.
- * @returns A Runtime to pass as `createGateway`'s `runtime`, plus `commandFor` for reading the
- *   composed command line without starting anything.
- * @throws If the image is empty, or if the Mount Table cannot mean what it says.
- *
- * @example
- * ```ts
- * import { createGateway, templateHandler } from "shared-agent-framework";
- * import { createPiRuntime } from "shared-agent-framework/pi";
- *
- * const runtime = createPiRuntime({
- *   image: "my-agent:1",
- *   networks: ["saf_default"],
- *   env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "" },
- * });
- *
- * // The command line, without starting a container: the one way to see the defaults applied.
- * console.log(runtime.commandFor({ session: "notes", text: "say hello" }).redactedArgs);
- *
- * const gateway = createGateway({
- *   databaseUrl: process.env.DATABASE_URL ?? "",
- *   runtime,
- *   agentListen: { host: "0.0.0.0", port: 8081 },
- *   publicListen: { host: "0.0.0.0", port: 8080 },
- *   handlers: () => ({
- *     "note.written": templateHandler({
- *       template: new URL("./prompts/note-written.hbs", import.meta.url),
- *       session: () => "notes",
- *       data: (signal) => signal.payload,
- *     }),
- *   }),
- * });
- *
- * await gateway.start();
- * ```
+ * @throws If the container names no image, or if its Mount Table cannot mean what it says.
  */
 export const createPiRuntime = (container: AgentContainer): AgentContainerRuntime =>
   createAgentContainerRuntime({
@@ -91,31 +44,23 @@ export const createPiRuntime = (container: AgentContainer): AgentContainerRuntim
   });
 
 /**
- * One Run, as `pi` needs it performed: three flags and the Prompt.
+ * Plans one Run as `pi` needs it performed: three flags, the Prompt on stdin, and a reader for the
+ * JSONL that comes back. The flags are `--mode json`, `--session-id <session>` and `--no-approve`,
+ * and nothing else is passed.
  *
- * The Prompt goes on stdin, never argv, and that is not a style choice. `pi` reads a leading
- * `@word` as a file to include. It refuses an argument starting with `-` as an unknown option. Both
+ * The Prompt goes on stdin, never argv, and that is not a style choice. `pi` reads a leading `@word`
+ * on argv as a file to include, and refuses an argument starting with `-` as an unknown option. Both
  * are ordinary Handlebars output. Piped stdin becomes the initial message with neither treatment
  * applied.
  *
- * Pure, and a total function of its Prompt. The Session is already a name by the time it gets here.
- * The Signal Worker resolved a Handler's request for a fresh one against the Run row it had just
- * written. There is nothing to generate and no naming convention of `pi`'s own.
+ * Pure, and a total function of its Prompt. Nothing is started, nothing is written, and no Session
+ * name is invented: the Session is already a name by the time it arrives here, the Signal Worker
+ * having answered a Handler's request for a fresh one against the Run row it had just written. The
+ * reader is {@link interpretPiOutput}, closed over that Session, so a failure says which Session it
+ * was.
  *
- * Read this when writing a second Agent Implementation. It is the entire size of the job.
- *
- * @param prompt The Prompt and the Session it belongs to.
- * @returns The agent's arguments, its stdin, and the reader for its stdout.
- * @throws If the Prompt has no text. The agent drops an empty message rather than answering it.
- *
- * @example
- * ```ts
- * import { piRun } from "shared-agent-framework/pi";
- *
- * const plan = piRun({ session: "user_42", text: "summarise the log" });
- * console.log(plan.args); // ["--mode", "json", "--session-id", "user_42", "--no-approve"]
- * console.log(plan.stdin); // "summarise the log"
- * ```
+ * @throws If the Prompt has no text. The agent drops an empty message rather than answering it, so
+ *   the Run would settle having said nothing.
  */
 export function piRun(prompt: RunPrompt): RunPlan {
   if (prompt.text.trim() === "") {

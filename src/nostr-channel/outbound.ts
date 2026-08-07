@@ -1,22 +1,22 @@
 /**
- * The statements the outbound queue is made of, and the two refusals that keep a Message from
- * being recorded as sent when it could never have gone out.
+ * The statements the outbound queue is made of, and the two refusals that keep a Message from being
+ * recorded as sent when it could never have gone out.
  *
- * **The send is split in two, because a publish cannot be rolled back and a transaction can**
+ * The send is split in two because a publish cannot be rolled back and a transaction can
  * ([ADR-0049](../../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)). Publishing
- * inside the caller's transaction would either hold that transaction open across a round trip to
- * the Relay, or leave a recipient holding words the rollback erased from the log. So everything
- * knowable happens before the commit — the address, the wrap, its size, the row — and the network
- * act happens after it.
+ * inside the caller's transaction would either hold that transaction open across a round trip to the
+ * Relay, or leave a recipient holding words the rollback erased from the log. So everything knowable
+ * happens before the commit, the address, the wrap, its size and the row, and the network act
+ * happens after it.
  *
- * That split is what puts the size bound here rather than in the publishing half. The wrap is
- * built early, so an over-long reply is a thrown error at the Operator's own call site with
- * nothing recorded, instead of a queue row that fails once and stops. A 32 KB reply becomes
- * roughly a 66 KB wrap — about a 1.4 KB floor plus 2.1x, because the payload is base64 of base64 —
- * and a common Relay default is 65536, so the case is ordinary rather than exotic.
+ * That split is what puts the size bound here rather than in the publishing half, and it is the
+ * thing to keep if this file is rearranged: built early, an over-long reply is a throw at the
+ * Operator's own call site with nothing recorded, where built late it is a queue row that fails once
+ * and stops.
  *
- * The other half is a pump: read the rows nothing has attempted, publish, delete on acceptance,
- * and leave a reason on anything else. Nothing here retries, and the queue table is where retries,
+ * The other half is a pump: read the rows nothing has attempted, publish, delete on acceptance, and
+ * leave a reason on anything else. Nothing retries, per
+ * [ADR-0017](../../docs/adr/0017-failed-runs-are-not-retried.md), and this table is where retries,
  * backoff and an attempt cap would land.
  */
 
@@ -25,25 +25,22 @@ import type { NostrEvent } from "nostr-tools/core";
 import type { Handle } from "../db/index.ts";
 import { type nostrChannelTables, outbox } from "./schema.ts";
 
-/** A handle typed to this component's own tables, and to no other's. */
+// A handle typed to this component's own tables, and to no other's.
 type NostrHandle = Handle<typeof nostrChannelTables>;
 
-/**
- * The channel a queued wrap notifies, and the one the Channel listens on.
- *
- * Prefixed for the same reason the schema is: notification channels are per database, and the
- * framework is installed into one it does not own. Not overridable — a Channel notifying one name
- * and listening on another looks healthy and publishes nothing until the next start.
- */
+// The PostgreSQL notification channel a queued wrap announces itself on, and the one the Channel
+// listens on. Prefixed for the reason the schema is, notification channels being per database. Not
+// overridable: a Channel notifying one name and listening on another looks healthy and publishes
+// nothing until the next start.
 export const outboxChannel = "saf_nostr_outbox";
 
 /**
  * The User has no Nostr public key recorded, so there is no address to answer them at.
  *
- * Thrown inside the caller's transaction and **before the Message row survives**, which is the
- * point: a Message recorded as sent that nothing can deliver is a durable claim that somebody was
- * told something. The Operator records a key from their own trusted code, out of band, so this is
- * an admission that never happened rather than a transient failure to retry.
+ * Thrown inside the transaction the Message is being written in and before that Message row
+ * survives, which is the point: a Message recorded as sent that nothing can deliver is a durable
+ * claim that somebody was told something. Nothing was written, and the fix is recording a key rather
+ * than sending again.
  */
 export class UnrecordedPublicKeyError extends Error {
   constructor(userId: string) {
@@ -55,14 +52,16 @@ export class UnrecordedPublicKeyError extends Error {
 }
 
 /**
- * The finished wrap is larger than the Relay said it accepts.
+ * The finished gift wrap is larger than the Relay said it accepts.
  *
- * Thrown inside the caller's transaction and before the Message row survives, so an over-long
- * reply is a refusal at the call site rather than a queue row that fails once and stops. What is
- * measured is the whole client message and not the reply, because sealing it more than doubles its
- * length. The maximum is read from the Relay's own NIP-11 document, so a Relay that advertises
- * none is a Relay this is never thrown for, and an over-long reply is then whatever that Relay
- * does with it.
+ * Thrown inside the caller's transaction and before the Message row survives, so an over-long reply
+ * is a refusal at the call site rather than something that fails after the fact. What is measured is
+ * the whole message that goes on the wire and not the reply, because sealing more than doubles its
+ * length: reckon on a 1.4 KB floor plus 2.1 times the reply, the payload being base64 of base64, so
+ * a 32 KB reply is roughly a 66 KB wrap against a common Relay default of 65536.
+ *
+ * The maximum comes from the Relay's own NIP-11 document. A Relay that advertises none is a Relay
+ * this is never thrown for, and an over-long reply is then whatever that Relay does with it.
  */
 export class MessageTooLargeError extends Error {
   constructor(userId: string, bytes: number, limit: number) {
@@ -73,7 +72,7 @@ export class MessageTooLargeError extends Error {
   }
 }
 
-/** One row of the queue, as the transaction that accepted the Message writes it. */
+// One row of the queue, as the transaction that accepted the Message writes it.
 export type QueuedWrap = {
   readonly userId: string;
   readonly messageId: string;
@@ -83,8 +82,8 @@ export type QueuedWrap = {
 /**
  * How many bytes this wrap costs on the wire, as the Relay counts them.
  *
- * NIP-11's `max_message_length` bounds the whole JSON message a client sends, not the event inside
- * it, so what is measured is the `["EVENT", …]` frame — and in bytes rather than characters,
+ * NIP-11's `max_message_length` bounds the whole JSON message a client sends and not the event
+ * inside it, so what is measured is the `["EVENT", …]` frame, and in bytes rather than characters,
  * because a reply in any script but Latin would otherwise be measured short.
  */
 export function wireSize(wrap: NostrEvent): number {
@@ -95,12 +94,11 @@ export function wireSize(wrap: NostrEvent): number {
  * Queues one finished wrap and wakes the publishing half, in the caller's transaction.
  *
  * The query-builder form and a widened schema parameter, so it works on a transaction carrying any
- * component's schema — including an Operator's own, in the transaction that also records why the
- * agent is answering.
+ * component's schema, including an Operator's own.
  *
- * The `NOTIFY` is in that transaction with the row. PostgreSQL delivers a notification at commit
- * and never on rollback, so this cannot announce a wrap the rollback erased, nor stay silent about
- * one that committed. The payload is empty because the publishing half drains the whole queue: a
+ * The `NOTIFY` is in that transaction with the row. PostgreSQL delivers a notification at commit and
+ * never on rollback, so this cannot announce a wrap the rollback erased, nor stay silent about one
+ * that committed. The payload is empty because the publishing half drains the whole queue: a
  * notification means only "look again", and PostgreSQL collapses identical ones sent in a single
  * transaction.
  */
@@ -121,10 +119,10 @@ export async function queueWrap<TSchema extends Record<string, unknown>>(
 /**
  * Every wrap nothing has attempted yet, oldest first.
  *
- * **`reason is null` is the whole of "at most once"**: a refused wrap keeps its reason and is never
+ * `reason is null` is the whole of "at most once": a refused wrap keeps its reason and is never
  * selected again, by this drain, by the one a later notification starts, or by the one the next
  * process runs at start. A row that outlived its process still has no reason, so it is picked up
- * here — which is the other half of the same predicate.
+ * here, which is the other half of the same predicate.
  */
 export async function selectUnpublished(
   handle: NostrHandle,
@@ -136,12 +134,8 @@ export async function selectUnpublished(
     .orderBy(asc(outbox.queuedAt), asc(outbox.eventId));
 }
 
-/**
- * Forgets a wrap the Relay accepted.
- *
- * A successful publish leaves no row behind, so a healthy deployment keeps this table empty and
- * anything in it is something an Operator wants to see.
- */
+// Forgets a wrap the Relay accepted, which is what keeps a healthy deployment's queue empty and
+// makes anything left in it something an Operator wants to see.
 export async function deletePublished(handle: NostrHandle, eventId: string): Promise<void> {
   await handle.delete(outbox).where(eq(outbox.eventId, eventId));
 }
@@ -149,9 +143,9 @@ export async function deletePublished(handle: NostrHandle, eventId: string): Pro
 /**
  * Leaves the reason on a wrap the Relay refused, which retires it.
  *
- * Guarded on the row still having no reason, so two drains racing cannot overwrite the first
- * answer with the second — and so a row an Operator has already cleared by hand is not resurrected
- * by a publish that was in flight when they did it.
+ * Guarded on the row still having no reason, so two drains racing cannot overwrite the first answer
+ * with the second, and so a row an Operator has already cleared by hand is not resurrected by a
+ * publish that was in flight when they did it.
  */
 export async function recordRefusal(
   handle: NostrHandle,
@@ -167,9 +161,9 @@ export async function recordRefusal(
 /**
  * The wrap a row is carrying, as the Relay wants it.
  *
- * Cast rather than validated: this component wrote the column, in a transaction, out of an event
- * its own key signed. A row somebody edited by hand fails at the Relay's signature check instead,
- * and the reason it gives is stored like any other refusal.
+ * Cast rather than validated: this component wrote the column, in a transaction, out of an event its
+ * own key signed. A row somebody edited by hand fails at the Relay's signature check instead, and
+ * the reason it gives is stored like any other refusal.
  */
 export function wrapOf(row: typeof outbox.$inferSelect): NostrEvent {
   return JSON.parse(row.wrap) as NostrEvent;
@@ -178,9 +172,9 @@ export function wrapOf(row: typeof outbox.$inferSelect): NostrEvent {
 /**
  * What goes in the `reason` column: the message alone, and the stack goes to the log.
  *
- * The client library throws with the Relay's own `OK` reason as the message, which is why this is
- * a bare `error.message` and not a phrasing of ours: NIP-01 asks a Relay to prefix that string
- * with a machine-readable word, and rewording it would throw the only structure it has away.
+ * The client library throws with the Relay's own `OK` reason as the message, which is why this is a
+ * bare `error.message` and not a phrasing of ours. NIP-01 asks a Relay to prefix that string with a
+ * machine-readable word, and rewording it would throw the only structure it has away.
  */
 export function describeRefusal(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

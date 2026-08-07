@@ -1,12 +1,17 @@
 /**
- * The Agent Container, and the Runtime that runs one.
+ * Nothing in this file may learn what an Agent Implementation is. Every field below is one
+ * `docker run` takes, and the whole bet of ADR-0033 is that the next agent program needs all of
+ * them unchanged and contributes only a `run` function.
  *
- * The container is inert data an Operator writes. `createAgentContainerRuntime` turns it,
- * plus one function, into the seam the Signal Worker drives. That one function is the whole of
- * what an Agent Implementation adds.
+ * `composeArgv` is the one place argument order is decided, and it is called twice for two
+ * different reasons: once at construction for its throwing alone, with the result dropped, and
+ * once per Run for the command line. Keeping a composed result in a closure beside one computed
+ * per Run is how the two come to disagree, and composing is pure and a handful of string checks,
+ * so the duplicate work is not worth removing.
  *
- * Nothing here has heard of `pi` or of any other agent. The fields below are what `docker run`
- * takes, and a second Agent Implementation needs all of them unchanged.
+ * Environment values are redacted with no exceptions list. Such a list would have to be right
+ * about every provider's key name forever, and it would have to name `pi`'s own variables inside a
+ * module that must not know them.
  */
 
 import { defaultLogger, type Logger } from "../logging.ts";
@@ -15,95 +20,107 @@ import { type MountTable, mountArguments } from "./mount-table.ts";
 import { runContainer } from "./process.ts";
 
 /**
- * The container one Run happens in, as an Operator declares it.
+ * The container one Run happens in, as an Operator declares it. Inert: it creates nothing, checks
+ * no path and starts nothing.
  *
- * Only `image` is required. Everything else is a default, or a fact about a deployment that
- * most deployments do not have.
+ * Only `image` is required. Everything else is a default worth overriding, or a fact about a
+ * deployment that most deployments do not have.
+ *
+ * The container is always run with `--rm`, with stdin open and no TTY, and as this process's own
+ * uid and gid. None of the three is configurable: a TTY makes an agent decide it is being used
+ * interactively, and a container running as root leaves files in a bind mount that a Signal
+ * Handler can read and delete but cannot change.
  */
 export type AgentContainer = {
   /** The container image. The one thing no deployment can leave out. */
   readonly image: string;
   /**
-   * What the container sees on disk. Absent means nothing at all.
+   * What the container can reach on disk. Absent means nothing at all.
    *
-   * That is a legitimate deployment. An image that bakes in its own configuration and keeps no
-   * state mounts nothing. The cost is silent, because no Session survives a
-   * `--rm` container. Every Run is then a first Run, and no log line says so.
+   * That is a real deployment: an image that bakes in its own configuration and keeps no state
+   * mounts nothing. What it costs is silent, because nothing written survives the container. Every
+   * Run is then a first Run, whatever Session it names, and no log line says so.
    */
   readonly mounts?: MountTable;
   /**
-   * What to run inside the image, overriding its own `ENTRYPOINT`.
+   * What to run inside the image, in place of its own `ENTRYPOINT`.
    *
-   * The first word becomes `--entrypoint`, which takes exactly one. Anything after it goes
-   * after the image name, ahead of what the agent's own function contributes.
+   * The first word becomes `--entrypoint`, which takes exactly one. Anything after it is the
+   * container's command and lands after the image name, ahead of what the agent's own function
+   * contributes.
    */
   readonly entrypoint?: readonly string[];
   /**
    * The container networks to join, one `--network` each.
    *
-   * Plural, because a container can join several. There is no default: the container runtime's
-   * own is the shared bridge, and no network at all breaks every Run. The agent needs both its
-   * model and the Agent server.
+   * Plural, a container being able to join several. There is no default and no good one: the
+   * container runtime's own is the shared bridge, and no network at all breaks every Run, the
+   * agent needing both its model and the Agent server.
    */
   readonly networks?: readonly string[];
   /**
    * Environment variables for the agent's container, such as a provider API key or a proxy.
    *
-   * Only what is named here reaches the agent. None of the Gateway's own environment does. That
-   * is why the agent runs in a container rather than in this process. Every **value** is
-   * hidden in the loggable copy of the command line.
+   * Only what is named here reaches the agent, and none of the Gateway's own environment does,
+   * which is most of why the agent runs in a container at all. Every **value** is hidden in the
+   * loggable copy of the command line, with no exception for a name that looks harmless.
    */
   readonly env?: Readonly<Record<string, string>>;
   /**
-   * Container flags the framework does not model, spliced last, so a flag here overrides one
+   * Container flags the framework does not model, spliced in last so that one here overrides one
    * the framework set.
    *
-   * This is the one escape hatch, and it is also how to countermand `--user`: a later `--user`
-   * wins. It reaches the container runtime only. There is still no way to pass the agent itself an
-   * unmodelled flag.
+   * The one escape hatch, and how to countermand `--user`, a later `--user` winning. It reaches
+   * the container runtime only: there is still no way to pass the agent itself an unmodelled flag.
    */
   readonly extraArgs?: readonly string[];
   /** How the container runtime is invoked. Defaults to `["docker"]`, and `["podman"]` works. */
   readonly containerCommand?: readonly string[];
-  /** Defaults to a `pino` instance on stdout. */
+  /**
+   * Where this Runtime logs its two `debug` lines per Run, the composed command line and how the
+   * container ended. Defaults to a `pino` instance on stdout, which drops both.
+   */
   readonly logger?: Logger;
 };
 
-/**
- * How to perform one Run: the agent's arguments, its stdin, and how to read what comes back.
- */
+/** How to perform one Run: the agent's arguments, its stdin, and how to read what comes back. */
 export type RunPlan = {
   /** The agent's own arguments, placed after the image name. */
   readonly args: readonly string[];
   /** Written to the container's stdin, which is then closed. */
   readonly stdin: string;
   /**
-   * Reads the container's stdout into an outcome.
+   * Reads the container's stdout into an outcome, and decides whether the Run succeeded.
    *
-   * Raw bytes rather than text, so a multi-byte character split across two chunks is the
-   * reader's to reassemble. Report a bad stream as a failed Run rather than throwing.
+   * Raw bytes rather than text, so a multi-byte character split across two chunks is this
+   * function's to reassemble. Report a bad stream as a failed Run rather than throwing: a throw
+   * kills the container and propagates, where a failure is recorded against the Run with the exit
+   * status and stderr appended to the message.
+   *
+   * The stream is what decides. A reader that answers success is believed even if the container
+   * then exits non-zero, which is logged as the contradiction it is.
    */
   outcome(stdout: AsyncIterable<Uint8Array>): Promise<RunOutcome>;
 };
 
 /**
- * What one containerised agent is: a box, and how to drive an agent inside it.
+ * What one containerised agent is: the box an Operator declares, and the one function that drives
+ * an agent inside it.
  *
- * `container` is contained rather than intersected. So an Operator's declaration and an
- * author's behaviour stay visibly apart. A field written in the wrong half is a
- * type error.
+ * The two are separate fields rather than one flat object, so a field written in the wrong half is
+ * a type error rather than a container flag nothing reads.
  */
 export type AgentContainerRuntimeSpec = {
   readonly container: AgentContainer;
   /**
-   * The whole of what an Agent Implementation adds.
+   * The whole of what an Agent Implementation adds. Called once per Run, and its result drives both
+   * the command line and the reading of stdout.
    *
-   * One function rather than two, because `outcome` is produced per Run. It can therefore close
-   * over what this Run is and name the Session when it fails. It is called once per Run, and
-   * its result drives both the command line and the reader.
+   * One function and not two, because `outcome` comes out of it per Run and can therefore close
+   * over which Run this is and name the Session when it fails.
    *
-   * It is handed a `RunPrompt`, so the Session is always a string. The Signal Worker settled
-   * the fresh-Session case before the Runtime was called.
+   * `prompt.session` is always a string here. A Signal Handler may ask for a fresh Session, and
+   * the Signal Worker has already settled that and named it before anything reaches this.
    */
   run(prompt: RunPrompt): RunPlan;
 };
@@ -115,62 +132,42 @@ export type ComposedCommand = {
   /** Its arguments: the container's flags, then the image, then the agent's own. */
   readonly args: readonly string[];
   /**
-   * The same arguments with every environment **value** replaced, for a log line.
+   * The same arguments with every environment **value** replaced. Log this and never `args`.
    *
-   * Redacted here, because this is the one place that knows which arguments are values and
-   * which are flags. Log this rather than `args`.
+   * Redacted here because this is the one place that knows which argument is a value and which is
+   * a flag. A variable set to nothing stays visibly empty, there being nothing in it to hide.
    */
   readonly redactedArgs: readonly string[];
-  /** The Prompt, or whatever else the agent's function asked to have written to stdin. */
+  /** The Prompt, or whatever else the agent's own function asked to have written to stdin. */
   readonly stdin: string;
 };
 
 /**
- * A Runtime, plus one pure method the seam itself does not need.
+ * A Runtime, plus one pure method the seam itself has no use for.
  *
- * `commandFor` composes a command line without starting a container. It is the only way to
- * see the Runtime's own defaults applied.
+ * `commandFor` composes the command line for a Prompt without starting anything, which is the only
+ * way to see this Runtime's own defaults applied to a declaration.
  */
 export type AgentContainerRuntime = Runtime & {
   commandFor(prompt: RunPrompt): ComposedCommand;
 };
 
 /**
- * Builds a Runtime that runs the agent as one fresh container per Run.
+ * Builds a Runtime that runs the agent as one fresh container per Run, discarding the container
+ * afterwards.
  *
- * Construction composes a command line once, for its throwing alone. So a deployment that
- * cannot work is refused where the Operator wrote it. That matters, because a failed Run is
- * never retried.
+ * A command line is composed once here and thrown away, so that a declaration which cannot work is
+ * refused where the Operator wrote it. That is worth a startup failure because the alternative is
+ * a Run that fails at the first Signal and is never retried.
  *
- * @param spec The container to run, and the one function that drives the agent inside it.
  * @throws If the image is empty, or if the Mount Table cannot mean what it says.
- *
- * @example
- * ```ts
- * import { createAgentContainerRuntime } from "shared-agent-framework";
- *
- * const runtime = createAgentContainerRuntime({
- *   container: {
- *     image: "my-agent:1",
- *     networks: ["saf_agent"],
- *     env: { MY_API_KEY: process.env.MY_API_KEY ?? "" },
- *     mounts: { entries: [{ agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" }] },
- *   },
- *   run: (prompt) => ({
- *     args: ["--session", prompt.session],
- *     stdin: prompt.text,
- *     outcome: async () => ({ ok: true }),
- *   }),
- * });
- * ```
  */
 export function createAgentContainerRuntime(
   spec: AgentContainerRuntimeSpec,
 ): AgentContainerRuntime {
   const log = spec.container.logger ?? defaultLogger();
-  // Called for its throwing, and the result deliberately dropped: every Run composes its own.
-  // Composing is pure and a handful of string checks. One result kept in a closure beside
-  // another computed per Run is how the two come to disagree. What this call buys is the *when*.
+  // Called for its throwing, and the result deliberately dropped; see the file header. What this
+  // call buys is the *when*.
   composeArgv(spec.container, []);
 
   const compose = (plan: RunPlan): ComposedCommand => ({
@@ -228,9 +225,9 @@ export function createAgentContainerRuntime(
  * The whole command line for one Run, and a copy safe to log. The only place argument order is
  * decided.
  *
- * The process being started is the container runtime, not the agent. Everything before the image
- * name is the runtime's, and everything after it is the agent's. A flag on the wrong side reaches
- * the wrong program.
+ * The process being started is the container runtime and not the agent, so everything before the
+ * image name belongs to the runtime and everything after it to the agent. A flag put on the wrong
+ * side reaches the wrong program and is not refused by anything.
  */
 function composeArgv(
   container: AgentContainer,
@@ -276,12 +273,7 @@ function composeArgv(
   return { command, args, redactedArgs: redact(args) };
 }
 
-/**
- * Hides every environment value, with no exceptions list.
- *
- * A list of what is safe to log would have to know every provider's key name. So the names
- * survive and the values do not.
- */
+/** Hides every environment value: the names survive a log line and the values do not. */
 function redact(args: readonly string[]): readonly string[] {
   return args.map((arg, at) => {
     const flag = args[at - 1];
@@ -295,10 +287,9 @@ function redact(args: readonly string[]): readonly string[] {
 }
 
 /**
- * What to add to a failure the stream already decided on.
- *
- * The exit code and stderr are diagnosis. They only ever reach a message that already says the Run
- * failed. The Run's `error` column is where an Operator reads it.
+ * What to add to a failure the stream already decided on. The exit code and stderr are diagnosis
+ * and never a verdict, so they only ever reach a message that already says the Run failed, and the
+ * Run's `error` column is where an Operator reads it.
  */
 function diagnosis(result: {
   readonly exitCode: number | null;
@@ -316,10 +307,10 @@ function diagnosis(result: {
 }
 
 /**
- * This process's `uid:gid`, or nothing on a platform that has no such thing. Not configuration.
- *
- * Without `--user`, the agent's files in a bind mount are owned by uid 0. A Signal Handler running
- * as the Gateway's uid can then read and delete such a file. It cannot modify it in place.
+ * This process's `uid:gid`, or nothing on a platform that has no such thing. Not configuration, and
+ * the reason is ADR-0028: without `--user` the agent's files in a bind mount are owned by uid 0,
+ * and a Signal Handler running as the Gateway's uid can then read and delete such a file but never
+ * change it in place. `extraArgs` is the documented countermand.
  */
 function ownUser(): string | undefined {
   if (typeof process.getuid !== "function" || typeof process.getgid !== "function") {

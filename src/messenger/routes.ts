@@ -1,29 +1,24 @@
 /**
- * The Messenger's routes, one group at `/messages` on the Agent server.
- *
- * One plugin, because the agent's acts on the log — sending a Message and reading a User's
- * whole history — are acts on the log rather than acts of any one medium, so they belong to
- * the component that owns the log
+ * One plugin, on the Agent server, at the prefix the constructor supplies. The agent's acts are
+ * acts on the log rather than acts of any one medium, so they belong to the component that owns the
+ * log; a User's own submission and cursored poll are what HTTP as a Channel *is*, and they live in
+ * `../http-channel/routes.ts`
  * ([ADR-0048](../../docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)).
- * A User's own submission and cursored poll are what HTTP as a Channel *is*, and they are in
- * `../http-channel/routes.ts`. Neither plugin is exported and neither prefix is configurable.
- * The paths below are relative, because the constructor supplies the prefix.
+ * Neither plugin is exported and neither prefix is configurable.
  *
  * | Agent server | Answers |
  * | --- | --- |
  * | `POST /messages` | 201, the created outbound `MessageRecord`; 404 if no such User; 503 |
  * | `GET /messages?user=&after=&before=&limit=` | `{ messages: [...] }`, ascending by `seq`; 400 |
  *
- * **Half of this module is exported for the HTTP Channel to import**, and that is deliberate:
- * the serializer both surfaces answer a `MessageRecord` through, the cursor sentences both
- * reads carry, and the two helpers both groups refuse with. The record is the Messenger's, so
- * its wire shape is declared here once and the Channel renders the same object. A second copy
- * would drift silently, since a response schema is a serializer that drops what it does not
- * declare and warns about none of it. None of it reaches a specifier.
+ * Half of this module is exported for the HTTP Channel to import, and that is deliberate: the
+ * serializer both surfaces answer a `MessageRecord` through, the cursor sentences both reads carry,
+ * and the two helpers both groups refuse with. The record is the Messenger's, so its wire shape is
+ * declared here once and the Channel renders the same object. A second copy would drift in silence,
+ * a response schema being a serializer that drops what it does not declare and warns about none of
+ * it. None of it reaches a specifier.
  *
  * Nothing here authenticates anybody, and there is nothing on this server to authenticate with.
- * `user` is required on the agent's read, because `seq` numbers one User's log and cannot cursor
- * an interleaved result.
  *
  * Each route's own `description` is what `/openapi.json` serves, so those sentences are the API
  * documentation rather than commentary. The cursor rules are the sharpest of them, because no
@@ -55,9 +50,9 @@ import { messageDirections } from "./schema.ts";
 /**
  * The read both surfaces need, and the reason it is a type of its own.
  *
- * A User's own read and the agent's are one implementation. The User id comes from a Token or from
- * a query parameter. Two of them could disagree about what `before` means, and no test of one
- * surface would catch it.
+ * A User's own read and the agent's are one implementation, with the User id arriving from a Token
+ * or from a query parameter. Two of them could disagree about what `before` means, and no test of
+ * one surface would catch it.
  */
 export type MessageHistory = {
   history(userId: string, window: MessageWindow): Promise<MessageRecord[]>;
@@ -66,9 +61,9 @@ export type MessageHistory = {
 /**
  * What the agent's routes need: the shared read and a send, with no Db and no table objects.
  *
- * `send` takes no `direction`, because the method that writes it decided it. It takes no
- * transaction either, because a request that sends a Message has one statement in it — the
- * constructor opens the transaction that carries that statement and the Channel's own work.
+ * `send` takes no `direction`, because the method that writes it decided it, and no transaction,
+ * because a request that sends a Message has one statement in it. The constructor opens the
+ * transaction carrying that statement and the Channel's own work.
  */
 export type MessageOperations = MessageHistory & {
   send(userId: string, text: string): Promise<MessageRecord>;
@@ -89,8 +84,8 @@ export const rejectUnknownQuery = unknownQueryRefusal(notSearchable);
 /**
  * How a client knows to ask again, which the envelope answers with no field of its own.
  *
- * A `hasMore` would be a second thing to keep true about a page whose length already says it.
- * There is no read state anywhere to compute one against. That absence is only safe written down.
+ * A `hasMore` would be a second thing to keep true about a page whose length already says it, and
+ * there is no read state anywhere to compute one against. That absence is only safe written down.
  */
 export const fullPageMeansMore =
   "The envelope carries **no more-results flag**, because a full page is one. `messages.length === limit` means there may be more. The next request is this one with the cursor moved on. `after` takes the largest `seq` received, to walk forwards. `before` takes the smallest, to walk back. A short page is the end of that direction for now. There is no read state of any kind (no stored position, no unread count and no receipts). So the cursor a client needs is one it already holds, because it is holding the Messages.";
@@ -102,19 +97,19 @@ export const capped = `${cappedLimit} The Messages past the cap are reachable by
  * The 404, which describes the referenced User rather than the route.
  *
  * What is worth a client's attention is where it comes from. There is no lookup in front of the
- * write. This status is a constraint refusing rather than a check failing.
+ * write, so this status is a constraint refusing rather than a check failing.
  */
 const noSuchUser =
-  "No User has that id, and nothing was stored. There is deliberately no lookup in front of the write: `userId` is a foreign key onto the User Manager's table, so a well-formed uuid naming nobody reaches the insert and the constraint is what refuses it (ADR-0036). A malformed one never gets that far: the pattern on `userId` refuses it as a 400 first, which is what keeps a typo from being a 500 out of PostgreSQL.";
+  "No User has that id, and nothing was stored. There is deliberately no lookup in front of the write: `userId` is a foreign key onto the User Manager's table, so a well-formed uuid naming nobody reaches the insert and the constraint is what refuses it. A malformed one never gets that far: the pattern on `userId` refuses it as a 400 first, which is what keeps a typo from being a 500 out of PostgreSQL.";
 
 /**
  * The 503, which is this component's other failure and the one a caller acts on.
  *
- * It is described rather than left as a generic server error. The right response to it is to send
- * the same thing again. That is not what a 5xx usually means.
+ * It is described rather than left as a generic server error, because the right response to it is
+ * to send the same thing again, and that is not what a 5xx usually means.
  */
 export const lostTheRace =
-  "The Message **was not recorded**, and sending it again is the right thing to do. Nothing is wrong with the request and the log is intact: `seq` is computed per User inside the insert and a unique constraint makes a lost race visible, so this is one User's own concurrent writers outrunning a bounded retry (ADR-0035). A 503 and not a 500 for that reason.";
+  "The Message **was not recorded**, and sending it again is the right thing to do. Nothing is wrong with the request and the log is intact: `seq` is computed per User inside the insert and a unique constraint makes a lost race visible, so this is one User's own concurrent writers outrunning a bounded retry. A 503 and not a 500 for that reason.";
 
 /**
  * The text of a Message: non-empty, and with no upper bound.
@@ -150,13 +145,13 @@ const agentHistorySchema = {
  * `MessageRecord` on the wire, and the serializer both surfaces answer through.
  *
  * Fastify compiles a response schema with `fast-json-stringify`. It drops every field the schema
- * does not declare, and says nothing about it. So a field added to the type in `messages.ts` and
+ * does not declare, and says nothing about it, so a field added to the type in `messages.ts` and
  * forgotten here is missing from every answer. The round trip in `gateway.test.ts` catches that.
  *
  * One shape for all four routes, and the reason it is exported: two of those routes are the HTTP
- * Channel's now, and a Message has one shape whichever component serves it. The property
- * descriptions are on the two fields whose name is not the whole story. `seq` is the cursor and
- * does not say so, and `direction` is a field a caller cannot set.
+ * Channel's, and a Message has one shape whichever component serves it. The property descriptions
+ * are on the two fields whose name is not the whole story. `seq` is the cursor and does not say so,
+ * and `direction` is a field a caller cannot set.
  */
 export const messageRecordSchema = {
   type: "object",
@@ -291,9 +286,9 @@ export async function answerHistory(
  * What a refused send answers with: the two things the insert can fail for.
  *
  * Anything else is rethrown as a 500. The 404 arrives from a caught error class rather than from a
- * branch. The foreign key is the only enforcement, and there is no lookup in front of it.
+ * branch, the foreign key being the only enforcement and there being no lookup in front of it.
  *
- * Both surfaces refuse through this one function, and only the agent can meet the 404. A User's own
+ * Both surfaces refuse through this one function, and only the agent can meet the 404: a User's own
  * post carries the id the Manager's hook just read a User by. So the Public route describes no 404,
  * and both submissions describe the 503.
  */

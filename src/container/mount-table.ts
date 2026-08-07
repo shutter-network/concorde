@@ -1,14 +1,16 @@
 /**
- * The Mount Table: what the agent's container sees on disk.
+ * A value and a pure function, and keeping it that way is the whole decision (ADR-0028). It creates
+ * nothing, writes nothing and stats nothing, so a pre-flight check on any of these paths does not
+ * belong here however cheap it looks. Everything refused below is decidable from the value alone,
+ * and that is the criterion the list of refusals is built on.
  *
- * A value and a pure function, and that is the whole of it. It creates nothing, writes nothing
- * and stats nothing. Resolution refuses a declaration that cannot mean what it says, and
- * emission turns the result into `--mount` arguments.
+ * Every mount is emitted as `--mount type=bind` and never `-v`. `-v` invents a missing source as a
+ * `root`-owned directory, even where a file was meant, where `--mount` refuses and names the path.
+ * That is the check this module is allowed not to write.
  *
- * Every mount is emitted as `--mount type=bind`, never `-v`. `-v` invents a missing source as a
- * `root`-owned directory, even where a file was meant. `--mount` refuses it and names the path.
- * So a typo is a daemon refusal an Operator can read. That refusal arrives at the first Run, and
- * a failed Run is never retried.
+ * Resolution treats every path as a plain string, which is why a `.` or `..` segment is refused
+ * rather than normalized: `..` string-prefixes a root it resolves outside of, so an entry could
+ * read as covered while mounting anywhere.
  */
 
 import path from "node:path";
@@ -16,57 +18,63 @@ import path from "node:path";
 /**
  * One entry: a directory or a single file the agent's container can reach.
  *
- * The declaration does not say which of the two it is. Each path is named for the actor that
- * resolves it: `agentPath` the agent's own container, and `gatewayPath` the Gateway process.
+ * Nothing here says which of the two it is, and nothing needs to. Each path is named for the actor
+ * that resolves it: `agentPath` for the agent's own container, `gatewayPath` for the Gateway
+ * process.
  */
 export type Mount = {
   /**
-   * Where the agent's container resolves it: the mount point the agent sees. Absolute, and
-   * always POSIX whatever this platform is.
+   * The mount point the agent sees. Absolute, and POSIX whatever platform this is.
+   *
+   * Two entries naming one `agentPath` are refused, a trailing slash making no difference.
    */
   readonly agentPath: string;
-  /** Where the Gateway process resolves it, on its own side. Absolute. */
+  /** Where the Gateway process resolves the same thing, on its own side. Absolute. */
   readonly gatewayPath: string;
   /**
    * Whether the agent can write it. Defaults to `false`.
    *
-   * A read-only **file** nested inside a read-write **directory** works. The container runtime
-   * sorts bind mounts by destination depth. So the file is unwritable and unlinkable, and every
-   * sibling operation still succeeds.
+   * A read-only **file** nested inside a read-write **directory** works, the container runtime
+   * sorting bind mounts by destination depth: the file is unwritable and unlinkable while every
+   * operation on its siblings still succeeds. That is how a file the agent must not change becomes
+   * one it cannot.
    */
   readonly readOnly?: boolean;
 };
 
 /**
- * The whole of the agent container's filesystem.
+ * The whole of what the agent's container can reach on disk.
  *
- * Everything else about the container is the `AgentContainer`'s: the image, the entry point, the
- * networks and the environment.
+ * Everything else about the container belongs to the `AgentContainer` that carries this: the image,
+ * the entry point, the networks and the environment.
  */
 export type MountTable = {
   /**
-   * What the container sees.
+   * The entries, in whatever order suits the reader.
    *
-   * Declaration order is preserved and means nothing. The daemon sorts bind mounts by
-   * destination depth. A nested entry nests under its parent, whatever order they were written
-   * in.
+   * Declaration order is preserved in the arguments and means nothing to the outcome. The daemon
+   * sorts bind mounts by destination depth, so a nested entry nests under its parent however the
+   * two were written.
    *
-   * An empty list is a deployment too, and is not refused. Nothing the agent writes outlives its
-   * `--rm` container, so every Run is a first Run.
+   * An empty list is a deployment too and is not refused. Nothing the agent writes then outlives
+   * the container, so every Run is a first Run.
    */
   readonly entries: readonly Mount[];
   /**
-   * How this Gateway's own filesystem maps to the host's, for a Gateway in a container.
+   * How this Gateway's own filesystem maps to the host's, for a Gateway that is itself in a
+   * container.
    *
-   * Absent means the Gateway runs on the host, which is the common case. Every entry's
-   * `gatewayPath` is then its own source, because the daemon resolves the same string. The two
-   * part company only when the Gateway is itself in a container. That is one fact about the
-   * deployment, not a property of each mount.
+   * Absent means the Gateway runs on the host, which is the common case: every entry's
+   * `gatewayPath` is then its own bind source, the daemon resolving the same string this process
+   * does. The two part company only for a containerised Gateway, and that is one fact about the
+   * deployment rather than a property of each mount, which is why it is stated once here.
    *
-   * Present, it is exhaustive. A `gatewayPath` equal to the root resolves to `hostPath` whole,
-   * and one below it resolves to `hostPath` plus the remainder. An entry falling **outside** the
-   * root is refused at resolution, naming the entry and the root. `hostPath` is handed to the
-   * daemon unread. Nothing discovers either value, so state both yourself.
+   * Present, it is exhaustive. A `gatewayPath` equal to the root resolves to `hostPath` whole, one
+   * below it resolves to `hostPath` with the remainder appended, and one falling **outside** the
+   * root is refused, naming the entry and the root. Nothing discovers either value, so state both
+   * yourself. A shared tree spanning more than one host mount cannot be expressed through one
+   * pair: write daemon-namespace paths into each `gatewayPath` and declare no root at all, at the
+   * price of paths this process cannot itself list.
    */
   readonly hostRoot?: {
     /** Where the shared tree sits inside this Gateway's own container. Absolute. */
@@ -77,37 +85,19 @@ export type MountTable = {
 };
 
 /**
- * Turns a Mount Table into its `--mount` arguments, or refuses it.
+ * Turns a Mount Table into one `--mount` and its value per entry, in declaration order, or refuses
+ * the table.
  *
- * Pure and total. It applies `hostRoot`, and it refuses:
+ * Pure and total. It applies `hostRoot`, and it refuses a relative path on either side, a `.` or
+ * `..` segment in any path it resolves, an entry falling outside the root, and two entries naming
+ * one target.
  *
- * - a relative path on either side;
- * - a `.` or `..` segment in any path it resolves;
- * - an entry falling outside the root;
- * - two entries naming one target.
+ * It performs no I/O, so it cannot say whether any of these paths exists. That answer comes from
+ * the daemon at the first Run, as a Run that failed and will not be retried, which is why
+ * `createAgentContainerRuntime` calls this at construction: the refusals it can make, it makes
+ * where the Operator wrote the table.
  *
- * It performs no I/O, so it cannot tell you whether any path exists. That is the daemon's
- * answer at the first Run.
- *
- * `createAgentContainerRuntime` calls it during construction, so a table that cannot work is
- * refused where the Operator wrote it.
- *
- * @returns One `--mount` and its value per entry, in declaration order, and nothing else.
- * @throws On any of the four refusals above.
- *
- * @example
- * ```ts
- * import { mountArguments } from "shared-agent-framework";
- *
- * const args = mountArguments({
- *   entries: [
- *     { agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
- *     { agentPath: "/workspace/AGENTS.md", gatewayPath: "/srv/saf/AGENTS.md", readOnly: true },
- *   ],
- *   hostRoot: { gatewayPath: "/srv/saf", hostPath: "/var/lib/saf" },
- * });
- * // ["--mount", "type=bind,source=/var/lib/saf/workspace,target=/workspace", …]
- * ```
+ * @throws On any of those four.
  */
 export function mountArguments(table: MountTable): readonly string[] {
   if (table.hostRoot !== undefined) {
@@ -122,10 +112,9 @@ export function mountArguments(table: MountTable): readonly string[] {
 type ResolvedEntry = {
   readonly agentPath: string;
   /**
-   * What the daemon is given as the bind source: the `gatewayPath` through `hostRoot`.
-   *
-   * The same string as `gatewayPath` for a Gateway on the host. The two are kept apart anyway,
-   * because only one of them is the daemon's.
+   * The bind source the daemon is given: the `gatewayPath` put through `hostRoot`. The same string
+   * under identity mapping, and kept under a second name anyway, because only one of the two is
+   * the daemon's to resolve.
    */
   readonly hostPath: string;
   readonly readOnly: boolean;
@@ -195,14 +184,11 @@ function field(name: string, value: string): string {
 }
 
 /**
- * Refuses a `.` or `..` **segment** in a path the framework resolves.
+ * Refuses a `.` or `..` **segment** in a path the framework resolves; the file header says why.
  *
- * A segment is a component between slashes, and only a whole `.` or `..` is one. A filename that
- * merely contains dots, such as `my.file` or `..hidden`, is not one. An empty segment from a
- * doubled slash is not one either.
- *
- * Resolution treats these paths as plain strings, so a dot segment makes every comparison
- * unsound. Under a `hostRoot`, a `..` string-prefixes a root it resolves outside of.
+ * A segment is what sits between two slashes, and only a whole `.` or `..` is one. A filename that
+ * merely contains dots, `my.file` or `..hidden`, is not, and neither is the empty segment a doubled
+ * slash leaves.
  */
 function refuseDotSegment(label: string, value: string): void {
   if (value.split("/").some((segment) => segment === "." || segment === "..")) {
@@ -213,12 +199,10 @@ function refuseDotSegment(label: string, value: string): void {
 }
 
 /**
- * Refuses two entries that resolve to one target.
- *
- * `agentPath`s are compared after one trailing slash is trimmed. The daemon would otherwise refuse
- * this at the first Run, and a failed Run is never retried.
- *
- * An image-internal symlink aliasing two distinct targets stays the daemon's business.
+ * Refuses two entries that resolve to one target, comparing `agentPath`s with one trailing slash
+ * trimmed. It moves here from the daemon's side of the line only because it needs no I/O; an
+ * image-internal symlink aliasing two distinct targets is undecidable from the value and stays the
+ * daemon's business.
  */
 function refuseDuplicateAgentPath(entries: readonly ResolvedEntry[]): void {
   const seen = new Set<string>();

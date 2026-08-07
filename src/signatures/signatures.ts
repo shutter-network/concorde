@@ -257,9 +257,9 @@ const algorithmForCurve: Readonly<Record<string, string>> = {
 
 // From the JWK export and not from `asymmetricKeyDetails`: the latter gives OpenSSL's curve names,
 // `prime256v1` and `secp384r1`, where the JWK gives JOSE's own, which is already the vocabulary the
-// header needs and the vocabulary `jose` is handed. There is no standard derivation to lean on —
-// JWK's `alg` member is optional and Node leaves it absent for every key type — so this table is
-// ours, and getting it wrong is safe in the way that matters: the library refuses to sign rather
+// header needs and the vocabulary `jose` is handed. There is no standard derivation to lean on,
+// JWK's `alg` member being optional and left absent by Node for every key type, so this table is
+// ours. Getting it wrong is safe in the way that matters: the library refuses to sign rather
 // than emitting something unverifiable.
 function algorithmFor(publicJwk: JsonWebKey): string {
   if (publicJwk.kty === "RSA") {

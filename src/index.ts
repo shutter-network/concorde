@@ -1,22 +1,31 @@
 /**
- * The framework core, from `shared-agent-framework`.
+ * The framework core, and the two words the rest of this reference is written in. A **Shared Agent**
+ * is an AI agent that acts for several parties at once and is controlled by none of them alone. The
+ * **Operator** is whoever runs one: they hold its configuration, write its Signal Handlers, and are
+ * trusted by every party.
  *
- * The root carries what belongs to no component:
+ * {@link createGateway} is where a deployment starts. It builds the four things every deployment
+ * has, hands them to an `extend` callback where the components you want are constructed by hand,
+ * and answers with a {@link Gateway}. A Gateway is a record of {@link Component}s under your own
+ * keys, started in key order and stopped in the reverse of it, and a Component itself.
+ * {@link createBareGateway} takes such a record directly, for a deployment whose infrastructure
+ * shape is what differs.
  *
- * - `createGateway`, which builds the infrastructure every deployment needs.
- * - `createBareGateway`, which assembles a Gateway from a record you wrote yourself.
- * - `Component`, the contract every part of a Gateway satisfies.
- * - `openDb`, the PostgreSQL client every component queries through.
- * - The Agent Container, which declares how the agent's container runs.
- * - `templateHandler`, a Signal Handler that renders a Handlebars file.
- * - `CursorWindow`, the stretch of a log a paged read asks for, which two components take as
- *   an argument and neither of them owns.
+ * What is left here belongs to no one component. {@link openDb} is the PostgreSQL client every
+ * component queries through. {@link createAgentContainerRuntime} runs an agent as one fresh
+ * container per Run, taking an {@link AgentContainer} and a {@link MountTable} that know nothing
+ * about which agent program it is. {@link templateHandler} is a Signal Handler that renders a
+ * Handlebars file, {@link defaultLogger} is what a part logs through when you supply nothing, and
+ * {@link CursorWindow} is the stretch of a log a paged read asks for, which two components take and
+ * neither owns.
  *
- * Each opinionated component has a subpath of its own, and the root imports none of them.
- * A deployment loads only the components it builds.
+ * The opinionated components are each on a subpath of their own and nothing here imports one, so a
+ * deployment loads only what it builds. The vocabulary a Signal Handler is written in is on
+ * `shared-agent-framework/signals`, and the agent program the reference deployment runs is on
+ * `shared-agent-framework/pi`.
  *
  * @example
- * The smallest Gateway that runs: no component of the Operator's own, and one Handler.
+ * The smallest Gateway that runs: nothing of the Operator's own beyond one Signal Handler.
  * ```ts
  * import { createGateway, templateHandler } from "shared-agent-framework";
  * import { createPiRuntime } from "shared-agent-framework/pi";
@@ -24,7 +33,8 @@
  * const gateway = createGateway({
  *   databaseUrl: process.env.DATABASE_URL ?? "",
  *   runtime: createPiRuntime({ image: "my-agent:1" }),
- *   agentListen: { host: "127.0.0.1", port: 8081 },
+ *   // Not loopback: the agent reaches this server from a container of its own.
+ *   agentListen: { host: "0.0.0.0", port: 8081 },
  *   publicListen: { host: "0.0.0.0", port: 8080 },
  *   handlers: () => ({
  *     "note.written": templateHandler({

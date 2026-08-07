@@ -1,24 +1,33 @@
 # shared-agent-framework
 
-The framework core, from `shared-agent-framework`.
+The framework core, and the two words the rest of this reference is written in. A **Shared Agent**
+is an AI agent that acts for several parties at once and is controlled by none of them alone. The
+**Operator** is whoever runs one: they hold its configuration, write its Signal Handlers, and are
+trusted by every party.
 
-The root carries what belongs to no component:
+[createGateway](#creategateway) is where a deployment starts. It builds the four things every deployment
+has, hands them to an `extend` callback where the components you want are constructed by hand,
+and answers with a [Gateway](#gateway). A Gateway is a record of [Component](#component)s under your own
+keys, started in key order and stopped in the reverse of it, and a Component itself.
+[createBareGateway](#createbaregateway) takes such a record directly, for a deployment whose infrastructure
+shape is what differs.
 
-- `createGateway`, which builds the infrastructure every deployment needs.
-- `createBareGateway`, which assembles a Gateway from a record you wrote yourself.
-- `Component`, the contract every part of a Gateway satisfies.
-- `openDb`, the PostgreSQL client every component queries through.
-- The Agent Container, which declares how the agent's container runs.
-- `templateHandler`, a Signal Handler that renders a Handlebars file.
-- `CursorWindow`, the stretch of a log a paged read asks for, which two components take as
-  an argument and neither of them owns.
+What is left here belongs to no one component. [openDb](#opendb) is the PostgreSQL client every
+component queries through. [createAgentContainerRuntime](#createagentcontainerruntime) runs an agent as one fresh
+container per Run, taking an [AgentContainer](#agentcontainer) and a [MountTable](#mounttable) that know nothing
+about which agent program it is. [templateHandler](#templatehandler) is a Signal Handler that renders a
+Handlebars file, [defaultLogger](#defaultlogger) is what a part logs through when you supply nothing, and
+[CursorWindow](#cursorwindow) is the stretch of a log a paged read asks for, which two components take and
+neither owns.
 
-Each opinionated component has a subpath of its own, and the root imports none of them.
-A deployment loads only the components it builds.
+The opinionated components are each on a subpath of their own and nothing here imports one, so a
+deployment loads only what it builds. The vocabulary a Signal Handler is written in is on
+`shared-agent-framework/signals`, and the agent program the reference deployment runs is on
+`shared-agent-framework/pi`.
 
 ## Example
 
-The smallest Gateway that runs: no component of the Operator's own, and one Handler.
+The smallest Gateway that runs: nothing of the Operator's own beyond one Signal Handler.
 ```ts
 import { createGateway, templateHandler } from "shared-agent-framework";
 import { createPiRuntime } from "shared-agent-framework/pi";
@@ -26,7 +35,8 @@ import { createPiRuntime } from "shared-agent-framework/pi";
 const gateway = createGateway({
   databaseUrl: process.env.DATABASE_URL ?? "",
   runtime: createPiRuntime({ image: "my-agent:1" }),
-  agentListen: { host: "127.0.0.1", port: 8081 },
+  // Not loopback: the agent reaches this server from a container of its own.
+  agentListen: { host: "0.0.0.0", port: 8081 },
   publicListen: { host: "0.0.0.0", port: 8080 },
   handlers: () => ({
     "note.written": templateHandler({
@@ -58,10 +68,16 @@ type AgentContainer = {
 };
 ```
 
-The container one Run happens in, as an Operator declares it.
+The container one Run happens in, as an Operator declares it. Inert: it creates nothing, checks
+no path and starts nothing.
 
-Only `image` is required. Everything else is a default, or a fact about a deployment that
-most deployments do not have.
+Only `image` is required. Everything else is a default worth overriding, or a fact about a
+deployment that most deployments do not have.
+
+The container is always run with `--rm`, with stdin open and no TTY, and as this process's own
+uid and gid. None of the three is configurable: a TTY makes an agent decide it is being used
+interactively, and a container running as root leaves files in a bind mount that a Signal
+Handler can read and delete but cannot change.
 
 #### Properties
 
@@ -79,10 +95,11 @@ How the container runtime is invoked. Defaults to `["docker"]`, and `["podman"]`
 readonly optional entrypoint?: readonly string[];
 ```
 
-What to run inside the image, overriding its own `ENTRYPOINT`.
+What to run inside the image, in place of its own `ENTRYPOINT`.
 
-The first word becomes `--entrypoint`, which takes exactly one. Anything after it goes
-after the image name, ahead of what the agent's own function contributes.
+The first word becomes `--entrypoint`, which takes exactly one. Anything after it is the
+container's command and lands after the image name, ahead of what the agent's own function
+contributes.
 
 ##### env?
 
@@ -92,9 +109,9 @@ readonly optional env?: Readonly<Record<string, string>>;
 
 Environment variables for the agent's container, such as a provider API key or a proxy.
 
-Only what is named here reaches the agent. None of the Gateway's own environment does. That
-is why the agent runs in a container rather than in this process. Every **value** is
-hidden in the loggable copy of the command line.
+Only what is named here reaches the agent, and none of the Gateway's own environment does,
+which is most of why the agent runs in a container at all. Every **value** is hidden in the
+loggable copy of the command line, with no exception for a name that looks harmless.
 
 ##### extraArgs?
 
@@ -102,12 +119,11 @@ hidden in the loggable copy of the command line.
 readonly optional extraArgs?: readonly string[];
 ```
 
-Container flags the framework does not model, spliced last, so a flag here overrides one
+Container flags the framework does not model, spliced in last so that one here overrides one
 the framework set.
 
-This is the one escape hatch, and it is also how to countermand `--user`: a later `--user`
-wins. It reaches the container runtime only. There is still no way to pass the agent itself an
-unmodelled flag.
+The one escape hatch, and how to countermand `--user`, a later `--user` winning. It reaches
+the container runtime only: there is still no way to pass the agent itself an unmodelled flag.
 
 ##### image
 
@@ -123,7 +139,8 @@ The container image. The one thing no deployment can leave out.
 readonly optional logger?: Logger;
 ```
 
-Defaults to a `pino` instance on stdout.
+Where this Runtime logs its two `debug` lines per Run, the composed command line and how the
+container ended. Defaults to a `pino` instance on stdout, which drops both.
 
 ##### mounts?
 
@@ -131,11 +148,11 @@ Defaults to a `pino` instance on stdout.
 readonly optional mounts?: MountTable;
 ```
 
-What the container sees on disk. Absent means nothing at all.
+What the container can reach on disk. Absent means nothing at all.
 
-That is a legitimate deployment. An image that bakes in its own configuration and keeps no
-state mounts nothing. The cost is silent, because no Session survives a
-`--rm` container. Every Run is then a first Run, and no log line says so.
+That is a real deployment: an image that bakes in its own configuration and keeps no state
+mounts nothing. What it costs is silent, because nothing written survives the container. Every
+Run is then a first Run, whatever Session it names, and no log line says so.
 
 ##### networks?
 
@@ -145,9 +162,9 @@ readonly optional networks?: readonly string[];
 
 The container networks to join, one `--network` each.
 
-Plural, because a container can join several. There is no default: the container runtime's
-own is the shared bridge, and no network at all breaks every Run. The agent needs both its
-model and the Agent server.
+Plural, a container being able to join several. There is no default and no good one: the
+container runtime's own is the shared bridge, and no network at all breaks every Run, the
+agent needing both its model and the Agent server.
 
 ***
 
@@ -159,10 +176,10 @@ type AgentContainerRuntime = Runtime & {
 };
 ```
 
-A Runtime, plus one pure method the seam itself does not need.
+A Runtime, plus one pure method the seam itself has no use for.
 
-`commandFor` composes a command line without starting a container. It is the only way to
-see the Runtime's own defaults applied.
+`commandFor` composes the command line for a Prompt without starting anything, which is the only
+way to see this Runtime's own defaults applied to a declaration.
 
 #### Type Declaration
 
@@ -193,11 +210,11 @@ type AgentContainerRuntimeSpec = {
 };
 ```
 
-What one containerised agent is: a box, and how to drive an agent inside it.
+What one containerised agent is: the box an Operator declares, and the one function that drives
+an agent inside it.
 
-`container` is contained rather than intersected. So an Operator's declaration and an
-author's behaviour stay visibly apart. A field written in the wrong half is a
-type error.
+The two are separate fields rather than one flat object, so a field written in the wrong half is
+a type error rather than a container flag nothing reads.
 
 #### Properties
 
@@ -215,14 +232,14 @@ readonly container: AgentContainer;
 run(prompt): RunPlan;
 ```
 
-The whole of what an Agent Implementation adds.
+The whole of what an Agent Implementation adds. Called once per Run, and its result drives both
+the command line and the reading of stdout.
 
-One function rather than two, because `outcome` is produced per Run. It can therefore close
-over what this Run is and name the Session when it fails. It is called once per Run, and
-its result drives both the command line and the reader.
+One function and not two, because `outcome` comes out of it per Run and can therefore close
+over which Run this is and name the Session when it fails.
 
-It is handed a `RunPrompt`, so the Session is always a string. The Signal Worker settled
-the fresh-Session case before the Runtime was called.
+`prompt.session` is always a string here. A Signal Handler may ask for a fresh Session, and
+the Signal Worker has already settled that and named it before anything reaches this.
 
 ###### Parameters
 
@@ -246,7 +263,7 @@ type ChannelListener = {
 };
 ```
 
-What `db.listen` reports.
+What `listen` reports.
 
 `notified` is the point of it. The other two are about the connection underneath, and a caller
 has to care: PostgreSQL queues nothing for a listener that is not connected. Whatever was sent
@@ -260,10 +277,10 @@ while the connection was down is gone, and no gap is visible in what does arrive
 optional connected(): void;
 ```
 
-The registration is in place, on the first connection and again after every loss.
+The registration is in place: once on the first connection, and again after every loss.
 
-A reconnection is exactly where a notification goes missing. So a caller that cannot afford
-to miss one acts here too.
+A reconnection is exactly where a notification goes missing, so a caller that cannot afford to
+miss one does its own catching-up from here.
 
 ###### Returns
 
@@ -275,7 +292,7 @@ to miss one acts here too.
 optional lost(error): void;
 ```
 
-The connection was lost, or an attempt to open one failed. Another follows.
+The connection was lost, or an attempt to open one failed. Another attempt follows.
 
 ###### Parameters
 
@@ -293,7 +310,7 @@ The connection was lost, or an attempt to open one failed. Another follows.
 notified(payload): void;
 ```
 
-A notification arrived. `payload` is `NOTIFY`'s, empty when it carried none.
+A notification arrived. `payload` is `NOTIFY`'s, and is empty when it carried none.
 
 ###### Parameters
 
@@ -316,12 +333,14 @@ type Component = {
 };
 ```
 
-One part of a Gateway. It starts, and it stops.
+One part of a Gateway: it starts, and it stops.
 
-Both methods are necessary. If a part has nothing to start and nothing to release, give
-two methods that do nothing.
+Both methods are required. A part with nothing to start and nothing to release supplies two that
+do nothing, which is ordinary rather than an apology: the record is the Gateway's directory of
+its own parts, and membership gives a part a position before it needs one.
 
-A Component has no name. Its key in the Gateway record is its name.
+A Component has no name of its own. Its key in the Gateway's record is its name, and that key is
+what a failed start is reported under.
 
 #### Methods
 
@@ -384,10 +403,10 @@ The program: the container runtime.
 readonly redactedArgs: readonly string[];
 ```
 
-The same arguments with every environment **value** replaced, for a log line.
+The same arguments with every environment **value** replaced. Log this and never `args`.
 
-Redacted here, because this is the one place that knows which arguments are values and
-which are flags. Log this rather than `args`.
+Redacted here because this is the one place that knows which argument is a value and which is
+a flag. A variable set to nothing stays visibly empty, there being nothing in it to hide.
 
 ##### stdin
 
@@ -395,7 +414,7 @@ which are flags. Log this rather than `args`.
 readonly stdin: string;
 ```
 
-The Prompt, or whatever else the agent's function asked to have written to stdin.
+The Prompt, or whatever else the agent's own function asked to have written to stdin.
 
 ***
 
@@ -409,19 +428,21 @@ type CursorWindow = {
 };
 ```
 
-Which stretch of a log a read asks for: one cursor, or the other, or neither, and a limit.
+Which stretch of a log a read asks for: one cursor, the other, or neither, and a limit.
 
-It carries no User id. Which log is read is settled elsewhere. A Token settles it on the
-Public server, and a query parameter on the Agent server. So it is the same shape wherever
-a log is paged. A component that wants its own name aliases this type, and the alias stays
-internal: an alias is transparent to the compiler, so a signature written against one still
-resolves to this.
+No cursor at all answers the newest page, which is what a client opening a log wants. `before`
+answers the newest page strictly below that `seq`, which is scrolling back, and `after` walks
+forwards from it, which is polling. `after: 0` reads a log from its beginning, nothing being
+numbered 0. All three answer ascending by `seq`, so pages concatenate without anything being
+reversed.
 
-Exported from `shared-agent-framework`, the one name in this module that is. `Decisions.history`
-and `Messenger.history` each take `Partial` of it, every field optional, so a caller that
-wants the newest page passes nothing.
+Both cursors together describe two windows rather than one. An HTTP route given both answers
+400; a `history` method given both refuses nothing and reads between them.
 
-Both cursors at once describes two windows, and the route refuses it with `bothCursors`.
+It carries no User id. Which log is read is settled elsewhere, by the Token on the Public server
+and by a query parameter on the Agent server, so one shape serves wherever a log is paged. The
+two `history` methods take `Partial` of it, every field optional, so a caller wanting the newest
+page passes nothing at all.
 
 #### Properties
 
@@ -457,14 +478,15 @@ type Db = Component & {
 };
 ```
 
-The Gateway's PostgreSQL client: the pool, a schema-typed handle per component, transactions
-and `LISTEN` registrations.
+The one PostgreSQL client in a Gateway: the pool, a schema-typed handle per component,
+transactions, and `LISTEN` registrations.
 
-**No migrations.** The Operator generates and applies their own DDL. Nothing here creates a
-schema or tracks what was applied.
+**No migrations, and no DDL of any kind.** Nothing here creates a schema, applies a change or
+tracks what was applied. The Operator assembles the components they run into one barrel and
+pushes it with their own `drizzle-kit` before the Gateway starts.
 
-A Component, and normally the first entry in the Gateway's record. Everything queries it, and
-the drain queries it on the way down, so it starts first and stops last.
+A Component, and normally the first key in the Gateway's record. Everything queries it, and the
+Signal Worker's drain queries it on the way down, so it starts first and stops last.
 
 #### Type Declaration
 
@@ -474,9 +496,10 @@ the drain queries it on the way down, so it starts first and stops last.
 handle<TSchema>(schema): Handle<TSchema>;
 ```
 
-A handle over the shared pool, typed to `schema`.
+A handle over the shared pool, typed to `schema` and to nothing else.
 
-The pool itself is never handed out, which keeps `pg` out of the public API.
+The pool is never handed out, so `pg` reaches nothing in a deployment's own code. Call this
+once per component with that component's tables.
 
 ###### Type Parameters
 
@@ -501,11 +524,12 @@ listen(channel, listener): Listening;
 ```
 
 Registers `listen <channel>` on a connection of the Db's own, outside the pool, and reports
-what arrives on it.
+what arrives on it. This is the one place the Db holds a connection open on a caller's behalf.
 
-It cannot be a pooled connection. A `LISTEN` registration belongs to a session. A pooled
-connection goes back to the pool as soon as its query resolves. This is therefore the one
-place the Db keeps a connection open on a caller's behalf.
+It answers before that connection exists and never rejects, so a component registers in its
+own constructor. A failure to connect reaches `lost` and is retried with a growing backoff
+until `close`, which means a registration that has never once succeeded looks the same from
+here as a healthy one.
 
 ###### Parameters
 
@@ -521,9 +545,6 @@ place the Db keeps a connection open on a caller's behalf.
 
 [`Listening`](#listening)
 
-Immediately, without waiting for the connection, and it never rejects. Failures go
-  to `listener.lost` and are retried with a backoff until `close`.
-
 ##### start()
 
 ```ts
@@ -532,9 +553,9 @@ start(): Promise<void>;
 
 Opens the pool, and nothing else.
 
-Eager, so a URL nothing answers on is a startup failure naming the Db. It is not a surprise
-at the first query. Nothing about the schema is checked. A database behind the code surfaces
-as a raw PostgreSQL error at its first query.
+Eager, so a URL nothing answers on fails here, named as the Db, rather than at whichever query
+came first. Nothing about the schema is looked at: a database behind the code starts cleanly
+and raises a raw PostgreSQL error at its first query.
 
 ###### Returns
 
@@ -548,8 +569,8 @@ stop(): Promise<void>;
 
 Closes the pool and every connection `listen` opened.
 
-Listening connections are included because they are the Db's. One left connected keeps the
-process alive and its database undroppable.
+The listening connections are included because they are the Db's own. One left connected keeps
+the process alive and its database undroppable.
 
 ###### Returns
 
@@ -561,7 +582,12 @@ process alive and its database undroppable.
 tx<T>(body): Promise<T>;
 ```
 
-Runs `body` in a transaction: commits on return, rolls back on throw.
+Runs `body` in a transaction: commits when it returns, rolls back when it throws.
+
+Only writes made through the handle `body` is given are in it. A component's own handle takes
+its own connection, so a write through one inside `body` commits on its own and survives the
+rollback. That is why a method meant to join a caller's transaction takes the handle as an
+argument instead of finding one.
 
 ###### Type Parameters
 
@@ -589,9 +615,10 @@ type Gateway<C> = Component & {
 };
 ```
 
-Every Component a deployment has, under the Operator's own keys.
+Every Component a deployment runs, under the Operator's own keys.
 
-A Gateway is itself a Component, because it has a Component's shape.
+It has a Component's shape and therefore is one, so `start` and `stop` on the whole deployment
+are the same two calls as on any part of it.
 
 #### Type Declaration
 
@@ -601,7 +628,7 @@ A Gateway is itself a Component, because it has a Component's shape.
 readonly components: C;
 ```
 
-The record it was given, unchanged, so a part can be reached by its own key.
+The record as it was given, so a part is reached by the key you wrote it under.
 
 #### Type Parameters
 
@@ -617,11 +644,12 @@ The record it was given, unchanged, so a part can be reached by its own key.
 type GatewayExtension = Record<string, Component> & { [K in keyof InfraComponents]?: never };
 ```
 
-What `extend` can return: Components under keys of your own, and none of the four
-infrastructure keys.
+What `extend` may return: Components under keys of your own, and none of the four infrastructure
+keys.
 
-The four are refused because a spread would overwrite one in silence. To run a Db, a server or
-a Signal Worker of your own, call `createBareGateway` instead.
+Those four are a type error rather than a substitution, because a spread would overwrite one and
+keep its position, in silence. Call [createBareGateway](#createbaregateway) to run a Db, a server or a Signal
+Worker of your own.
 
 ***
 
@@ -640,8 +668,6 @@ type GatewayOptions<E> = {
 };
 ```
 
-Everything `createGateway` needs. Four required values, and four with defaults.
-
 #### Type Parameters
 
 ##### E
@@ -658,9 +684,9 @@ readonly agentListen: FastifyListenOptions;
 
 Where the Agent server binds. Use loopback.
 
-This server has no authentication at all, so reaching the port is read-write access to
-everything on it. Where the agent's own container reaches this process is a second value.
-State it in the instructions you mount into the Workspace.
+Nothing on this server authenticates anything, so reaching the port is read and write access
+to every route on it. Where the agent's own container reaches this process is a second value
+and is not derived from this one: state it in the instructions you mount into the Workspace.
 
 ##### databaseUrl
 
@@ -668,10 +694,11 @@ State it in the instructions you mount into the Workspace.
 readonly databaseUrl: string;
 ```
 
-Where the Db connects. The pool opens at `start`, not here.
+Where the Db connects. Nothing is on the wire until `start`, so a URL that answers nowhere
+fails there and not here.
 
-Required, and read from no environment. Construction throws and names this option when
-it is absent.
+No environment is read for it. Construction throws and names this option when it is absent,
+which is the one refusal a JavaScript caller can reach.
 
 ##### extend?
 
@@ -679,11 +706,13 @@ it is absent.
 readonly optional extend?: (components) => E;
 ```
 
-Components of your own, built from the infrastructure this call constructed.
+Builds Components of your own out of the four this call constructed, and returns them under
+keys of your own.
 
-This is where the opinionated components go: the User Manager, Signatures, Decisions, the
-Messenger with the one Channel that reaches people, and the Scheduler. What it returns is
-keyed ahead of the Worker, so those Components stop after the drain. That is what a Signal
+The opinionated components go here, each one `create*` call: Users, Signatures, Decisions, the
+Messenger with the single Channel that reaches people, and the Scheduler. A deployment that
+wants none of them omits this callback. What it returns is keyed ahead of the Worker, so those
+Components are still live through the drain and stop after it, which is what a Signal
 Handler's post phase needs.
 
 ###### Parameters
@@ -702,12 +731,12 @@ Handler's post phase needs.
 readonly handlers: (components) => SignalHandlers;
 ```
 
-The `kind`-to-Handler map, built from the four infrastructure Components and whatever
+Builds the `kind`-to-Handler map out of the four infrastructure Components and whatever
 `extend` returned.
 
-Required, and a callback because a Signal Handler usually needs a Component. It runs
-after `extend`, so a Handler can reach a component of your own. `extend` cannot see the
-handlers, which is the correct direction.
+A callback, because a Signal Handler almost always closes over a Component. It runs after
+`extend` and cannot be seen by it, so a Handler reaches a component of your own and never the
+reverse.
 
 ###### Parameters
 
@@ -725,7 +754,9 @@ handlers, which is the correct direction.
 readonly optional logger?: Logger;
 ```
 
-Defaults to a `pino` instance on stdout. The Signal Worker is what reads it.
+Where the Signal Worker logs. Defaults to a `pino` instance on stdout.
+
+It reaches the Worker and nothing else. A component built in `extend` takes its own.
 
 ##### publicListen
 
@@ -733,8 +764,8 @@ Defaults to a `pino` instance on stdout. The Signal Worker is what reads it.
 readonly publicListen: FastifyListenOptions;
 ```
 
-Where the Public server binds. This is the surface meant to be exposed, so loopback
-inside a container reaches nobody.
+Where the Public server binds. This is the surface meant to be exposed, so loopback inside a
+container reaches nobody.
 
 ##### runtime
 
@@ -742,8 +773,10 @@ inside a container reaches nobody.
 readonly runtime: Runtime;
 ```
 
-Drives the Agent Implementation. `createPiRuntime` from `shared-agent-framework/pi`
-returns one.
+What a Prompt is handed to, and what an outcome comes back from.
+
+`createPiRuntime` on `shared-agent-framework/pi` returns one for `pi`, and
+`createAgentContainerRuntime` builds one for any other agent program.
 
 ##### sweepIntervalMs?
 
@@ -751,7 +784,11 @@ returns one.
 readonly optional sweepIntervalMs?: number;
 ```
 
-How often the Signal Worker sweeps for pending work, in milliseconds. Its own default.
+How often the Signal Worker looks for Signals left pending, in milliseconds, in place of the
+Worker's own interval.
+
+It is the backstop and not the normal path, an emitted Signal waking the Worker as it is
+written, so this is how long a Signal can wait when a wake-up went missing.
 
 ***
 
@@ -760,11 +797,6 @@ How often the Signal Worker sweeps for pending work, in milliseconds. Its own de
 ```ts
 type Handle<TSchema> = PgDatabase<PgQueryResultHKT, TSchema>;
 ```
-
-A Drizzle handle over the pool, or inside a transaction, typed to the schema it carries.
-
-One type for both. A cross-component signature widens `TSchema` rather than naming one
-component's schema. A transaction carries the schema of the handle it started on.
 
 #### Type Parameters
 
@@ -789,13 +821,13 @@ type InfraComponents = {
 };
 ```
 
-The infrastructure every deployment has, under the keys it is filed under.
+The four parts every deployment has, under the keys they are filed under.
 
-This is the record `extend` receives, and the four keys `handlers` receives beside
-whatever `extend` returned.
+This is what `extend` is handed, and the four keys `handlers` is handed beside whatever `extend`
+returned. The same four keys are on `gateway.components` afterwards.
 
-This is not the start order. The Worker is keyed last in the Gateway's own record, so that
-it drains while everything else is still live.
+It is not the start order. The Worker is keyed last in the Gateway's record, so that it drains
+while everything else is still live.
 
 #### Properties
 
@@ -853,8 +885,6 @@ type Listening = {
 };
 ```
 
-A registration made by `db.listen`.
-
 #### Methods
 
 ##### close()
@@ -863,8 +893,8 @@ A registration made by `db.listen`.
 close(): Promise<void>;
 ```
 
-Stops listening and closes the connection. Idempotent, and safe to call while a
-reconnection is pending.
+Stops listening and closes the connection. Idempotent, and safe to call while a reconnection is
+pending.
 
 ###### Returns
 
@@ -880,11 +910,6 @@ type ListeningServer = {
   listen: (options) => Promise<unknown>;
 };
 ```
-
-The whole of what the framework asks of a server: somewhere to listen, and a way to close.
-
-A Fastify instance satisfies it. That is all that is asked. It is what keeps `fastify` a
-peer dependency with no runtime value imported.
 
 #### Methods
 
@@ -922,8 +947,6 @@ listen(options): Promise<unknown>;
 type LogFields = Record<string, unknown>;
 ```
 
-Structured context on one log line.
-
 ***
 
 ### Logger
@@ -937,10 +960,11 @@ type Logger = {
 };
 ```
 
-What every part of the Gateway accepts. Four levels and no more.
+What every part of a Gateway logs through. Four levels, and any object carrying them satisfies
+it, so a deployment that logs elsewhere passes its own object instead of adapting one.
 
-`fatal` and `trace` exist in `pino`, and nothing here has a use for them. Leaving them out
-keeps a hand-written logger short.
+`fatal` and `trace` are `pino`'s and are left out. Nothing here has a use for either, and their
+absence is what keeps a hand-written logger four methods long.
 
 #### Methods
 
@@ -1038,8 +1062,9 @@ type Mount = {
 
 One entry: a directory or a single file the agent's container can reach.
 
-The declaration does not say which of the two it is. Each path is named for the actor that
-resolves it: `agentPath` the agent's own container, and `gatewayPath` the Gateway process.
+Nothing here says which of the two it is, and nothing needs to. Each path is named for the actor
+that resolves it: `agentPath` for the agent's own container, `gatewayPath` for the Gateway
+process.
 
 #### Properties
 
@@ -1049,8 +1074,9 @@ resolves it: `agentPath` the agent's own container, and `gatewayPath` the Gatewa
 readonly agentPath: string;
 ```
 
-Where the agent's container resolves it: the mount point the agent sees. Absolute, and
-always POSIX whatever this platform is.
+The mount point the agent sees. Absolute, and POSIX whatever platform this is.
+
+Two entries naming one `agentPath` are refused, a trailing slash making no difference.
 
 ##### gatewayPath
 
@@ -1058,7 +1084,7 @@ always POSIX whatever this platform is.
 readonly gatewayPath: string;
 ```
 
-Where the Gateway process resolves it, on its own side. Absolute.
+Where the Gateway process resolves the same thing, on its own side. Absolute.
 
 ##### readOnly?
 
@@ -1068,9 +1094,10 @@ readonly optional readOnly?: boolean;
 
 Whether the agent can write it. Defaults to `false`.
 
-A read-only **file** nested inside a read-write **directory** works. The container runtime
-sorts bind mounts by destination depth. So the file is unwritable and unlinkable, and every
-sibling operation still succeeds.
+A read-only **file** nested inside a read-write **directory** works, the container runtime
+sorting bind mounts by destination depth: the file is unwritable and unlinkable while every
+operation on its siblings still succeeds. That is how a file the agent must not change becomes
+one it cannot.
 
 ***
 
@@ -1086,10 +1113,10 @@ type MountTable = {
 };
 ```
 
-The whole of the agent container's filesystem.
+The whole of what the agent's container can reach on disk.
 
-Everything else about the container is the `AgentContainer`'s: the image, the entry point, the
-networks and the environment.
+Everything else about the container belongs to the `AgentContainer` that carries this: the image,
+the entry point, the networks and the environment.
 
 #### Properties
 
@@ -1099,14 +1126,14 @@ networks and the environment.
 readonly entries: readonly Mount[];
 ```
 
-What the container sees.
+The entries, in whatever order suits the reader.
 
-Declaration order is preserved and means nothing. The daemon sorts bind mounts by
-destination depth. A nested entry nests under its parent, whatever order they were written
-in.
+Declaration order is preserved in the arguments and means nothing to the outcome. The daemon
+sorts bind mounts by destination depth, so a nested entry nests under its parent however the
+two were written.
 
-An empty list is a deployment too, and is not refused. Nothing the agent writes outlives its
-`--rm` container, so every Run is a first Run.
+An empty list is a deployment too and is not refused. Nothing the agent writes then outlives
+the container, so every Run is a first Run.
 
 ##### hostRoot?
 
@@ -1117,17 +1144,20 @@ readonly optional hostRoot?: {
 };
 ```
 
-How this Gateway's own filesystem maps to the host's, for a Gateway in a container.
+How this Gateway's own filesystem maps to the host's, for a Gateway that is itself in a
+container.
 
-Absent means the Gateway runs on the host, which is the common case. Every entry's
-`gatewayPath` is then its own source, because the daemon resolves the same string. The two
-part company only when the Gateway is itself in a container. That is one fact about the
-deployment, not a property of each mount.
+Absent means the Gateway runs on the host, which is the common case: every entry's
+`gatewayPath` is then its own bind source, the daemon resolving the same string this process
+does. The two part company only for a containerised Gateway, and that is one fact about the
+deployment rather than a property of each mount, which is why it is stated once here.
 
-Present, it is exhaustive. A `gatewayPath` equal to the root resolves to `hostPath` whole,
-and one below it resolves to `hostPath` plus the remainder. An entry falling **outside** the
-root is refused at resolution, naming the entry and the root. `hostPath` is handed to the
-daemon unread. Nothing discovers either value, so state both yourself.
+Present, it is exhaustive. A `gatewayPath` equal to the root resolves to `hostPath` whole, one
+below it resolves to `hostPath` with the remainder appended, and one falling **outside** the
+root is refused, naming the entry and the root. Nothing discovers either value, so state both
+yourself. A shared tree spanning more than one host mount cannot be expressed through one
+pair: write daemon-namespace paths into each `gatewayPath` and declare no root at all, at the
+price of paths this process cannot itself list.
 
 ###### gatewayPath
 
@@ -1185,10 +1215,15 @@ Written to the container's stdin, which is then closed.
 outcome(stdout): Promise<RunOutcome>;
 ```
 
-Reads the container's stdout into an outcome.
+Reads the container's stdout into an outcome, and decides whether the Run succeeded.
 
-Raw bytes rather than text, so a multi-byte character split across two chunks is the
-reader's to reassemble. Report a bad stream as a failed Run rather than throwing.
+Raw bytes rather than text, so a multi-byte character split across two chunks is this
+function's to reassemble. Report a bad stream as a failed Run rather than throwing: a throw
+kills the container and propagates, where a failure is recorded against the Run with the exit
+status and stderr appended to the message.
+
+The stream is what decides. A reader that answers success is believed even if the container
+then exits non-zero, which is logged as the contradiction it is.
 
 ###### Parameters
 
@@ -1214,8 +1249,6 @@ type TemplateHandlerOptions<TPayload> = {
 };
 ```
 
-What `templateHandler` needs. Every dependency is named here rather than in a context.
-
 #### Type Parameters
 
 ##### TPayload
@@ -1230,11 +1263,11 @@ What `templateHandler` needs. Every dependency is named here rather than in a co
 readonly data: (signal) => unknown;
 ```
 
-The values the template substitutes. A referenced value this does not supply fails the
-Signal rather than rendering empty.
+The values the template substitutes. A name the template references and this does not supply
+fails the Signal rather than rendering as nothing.
 
-A returned Promise is awaited, so this can be `async`. That is where a Handler queries
-what the Prompt needs: the Message log, the Workspace, or your own tables.
+A returned Promise is awaited, so this can be `async`, and it is where a Handler reads what the
+Prompt needs: the Message log, the Workspace, or tables of your own.
 
 ###### Parameters
 
@@ -1252,8 +1285,9 @@ what the Prompt needs: the Message log, the Workspace, or your own tables.
 readonly optional helpers?: Readonly<Record<string, Handlebars.HelperDelegate>>;
 ```
 
-Handlebars helpers, registered on this Handler's own environment and invisible to every
-other one. Their output is substituted unescaped, like everything else.
+Handlebars helpers, registered on an environment belonging to this Handler alone. Another
+Handler built by another call cannot see them, and neither can the shared `Handlebars`
+instance. What a helper returns is substituted unescaped, like everything else.
 
 ##### partials?
 
@@ -1261,10 +1295,10 @@ other one. Their output is substituted unescaped, like everything else.
 readonly optional partials?: Readonly<Record<string, string>>;
 ```
 
-Handlebars partials, as template source rather than as compiled templates.
+Handlebars partials, as template source rather than as templates already compiled.
 
-This Handler compiles them with the same options as the template itself, so `noEscape`
-and `strict` hold inside them too.
+They are compiled here with the same options as the template itself, so `noEscape` and `strict`
+hold inside them too.
 
 ##### session
 
@@ -1272,10 +1306,10 @@ and `strict` hold inside them too.
 readonly session: (signal) => string | null | Promise<string | null>;
 ```
 
-Which Session this Signal's Prompt continues, or `null` for a fresh one.
+Which Session this Signal's Prompt continues, or `null` to ask for a fresh one.
 
-The topology is yours to choose: one Session per User, one per Run, or one for the whole
-agent.
+The topology is yours: one Session per User, one per Run, or one for the whole agent. A
+returned Promise is awaited.
 
 ###### Parameters
 
@@ -1293,10 +1327,16 @@ agent.
 readonly template: string | URL;
 ```
 
-The Handlebars file, as a path or a `file:` URL. Re-read for every Prompt.
+The Handlebars file, as a path or a `file:` URL, read and compiled again for every Prompt.
+Edit the wording and the next Signal renders through it, with no restart.
 
-A relative path resolves against the process's working directory. For a template beside
-the module that names it, write `new URL("./prompt.hbs", import.meta.url)`.
+A relative path resolves against the process's working directory. For a template beside the
+module that names it, write `new URL("./prompt.hbs", import.meta.url)`.
+
+It is compiled with `noEscape`, so nothing substituted is HTML-escaped, and with `strict`,
+which fails the Signal on a variable `data` did not supply. `strict` also disables inverse
+sections: a caret block such as `^absent` throws, and the `unless` helper is what to write in
+its place. The `if`, `each` and `else` helpers behave as usual.
 
 ***
 
@@ -1306,10 +1346,10 @@ the module that names it, write `new URL("./prompt.hbs", import.meta.url)`.
 type Transaction = PgTransaction<PgQueryResultHKT, Record<string, never>, ExtractTablesWithRelations<Record<string, never>>>;
 ```
 
-What `db.tx` hands its callback: a `Handle`, plus `rollback()`.
+What `tx` hands its callback: a [Handle](#handle), plus `rollback()`.
 
-`rollback()` throws `TransactionRollbackError` rather than returning, so code using it as
-control flow has to catch and filter.
+`rollback()` throws `TransactionRollbackError` rather than returning, so code that uses it as
+control flow has to catch and then filter for it.
 
 ## Functions
 
@@ -1319,19 +1359,18 @@ control flow has to catch and filter.
 function createAgentContainerRuntime(spec): AgentContainerRuntime;
 ```
 
-Builds a Runtime that runs the agent as one fresh container per Run.
+Builds a Runtime that runs the agent as one fresh container per Run, discarding the container
+afterwards.
 
-Construction composes a command line once, for its throwing alone. So a deployment that
-cannot work is refused where the Operator wrote it. That matters, because a failed Run is
-never retried.
+A command line is composed once here and thrown away, so that a declaration which cannot work is
+refused where the Operator wrote it. That is worth a startup failure because the alternative is
+a Run that fails at the first Signal and is never retried.
 
 #### Parameters
 
 ##### spec
 
 [`AgentContainerRuntimeSpec`](#agentcontainerruntimespec)
-
-The container to run, and the one function that drives the agent inside it.
 
 #### Returns
 
@@ -1341,26 +1380,6 @@ The container to run, and the one function that drives the agent inside it.
 
 If the image is empty, or if the Mount Table cannot mean what it says.
 
-#### Example
-
-```ts
-import { createAgentContainerRuntime } from "shared-agent-framework";
-
-const runtime = createAgentContainerRuntime({
-  container: {
-    image: "my-agent:1",
-    networks: ["saf_agent"],
-    env: { MY_API_KEY: process.env.MY_API_KEY ?? "" },
-    mounts: { entries: [{ agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" }] },
-  },
-  run: (prompt) => ({
-    args: ["--session", prompt.session],
-    stdin: prompt.text,
-    outcome: async () => ({ ok: true }),
-  }),
-});
-```
-
 ***
 
 ### createBareGateway()
@@ -1369,15 +1388,17 @@ const runtime = createAgentContainerRuntime({
 function createBareGateway<C>(components): Gateway<C>;
 ```
 
-Assembles a Gateway from a record of Components. Start order is key order.
+Assembles a Gateway from a record of Components. Start order is key order, and stop order is the
+reverse of it.
 
-`start` starts each Component in turn. If one throws, it stops what had already started
-and rethrows, so a failed boot leaves nothing running. `stop` stops every Component in
-reverse, even if one throws, and a second call finds nothing to do.
+A Component counts as started only once its own `start` resolves. If one throws, everything
+already started is stopped and the error is rethrown, so a failed boot leaves nothing running.
+`stop` stops every Component even when one of them throws, gathers the failures into an
+`AggregateError`, and finds nothing left to do on a second call.
 
-Two things are not guarded. An integer-like key such as `"2"` sorts ahead of every word
-in any JavaScript object, so it starts first. A symbol key is never started at all,
-because `Object.entries` does not see one.
+Two properties of a JavaScript record are not guarded against. An integer-like key such as `"2"`
+sorts ahead of every word, so a Component under one starts first. A symbol key is never started
+at all.
 
 #### Type Parameters
 
@@ -1391,26 +1412,9 @@ because `Object.entries` does not see one.
 
 `C`
 
-The parts to run, in the order they must start.
-
 #### Returns
 
 [`Gateway`](#gateway)\<`C`\>
-
-#### Example
-
-```ts
-import { createBareGateway, openDb, serverComponent } from "shared-agent-framework";
-import Fastify from "fastify";
-
-const db = openDb(process.env.DATABASE_URL ?? "");
-const gateway = createBareGateway({
-  db,
-  publicServer: serverComponent(Fastify(), { host: "0.0.0.0", port: 8080 }),
-});
-
-await gateway.start();
-```
 
 ***
 
@@ -1420,13 +1424,15 @@ await gateway.start();
 function createGateway<E>(options): Gateway<never>;
 ```
 
-Builds the infrastructure, runs `extend` and `handlers`, and answers with a Gateway.
+Builds the Db, both self-describing servers and the Signal Worker, runs `extend` and then
+`handlers`, and answers with a Gateway keyed `db`, `agentServer`, `publicServer`, whatever
+`extend` returned, and `worker` last.
 
-Nothing here connects, listens or applies DDL. Construction only registers routes on the
-two servers. Your database already carries your own schema before you call `gateway.start()`.
+Nothing connects, listens or applies DDL. Construction registers routes and returns, so the
+database has to be carrying your own tables by the time you call `gateway.start()`.
 
-Register your own routes with `fastify.register`, not straight onto the instance. A route
-written directly on the instance is served and absent from the OpenAPI document.
+Register routes of your own with `fastify.register` rather than writing them onto the instance.
+A route written straight onto it is served, and absent from the OpenAPI document.
 
 #### Type Parameters
 
@@ -1440,46 +1446,13 @@ written directly on the instance is served and absent from the OpenAPI document.
 
 [`GatewayOptions`](#gatewayoptions)\<`E`\>
 
-Where the Db connects, where each server binds, the Runtime, and the two
-  callbacks that build the rest.
-
 #### Returns
 
 [`Gateway`](#gateway)\<`never`\>
 
-A Gateway whose `components` holds the four infrastructure keys and everything
-  `extend` returned.
-
 #### Throws
 
 If `databaseUrl` is absent.
-
-#### Example
-
-```ts
-import { createGateway, templateHandler } from "shared-agent-framework";
-import { createPiRuntime } from "shared-agent-framework/pi";
-import { createUsers } from "shared-agent-framework/users";
-
-const gateway = createGateway({
-  databaseUrl: process.env.DATABASE_URL ?? "",
-  runtime: createPiRuntime({ image: "my-agent:1" }),
-  agentListen: { host: "127.0.0.1", port: 8081 },
-  publicListen: { host: "0.0.0.0", port: 8080 },
-  extend: ({ db, agentServer, publicServer }) => ({
-    users: createUsers({ db, tokenTtl: 86_400_000, agentServer, publicServer }),
-  }),
-  handlers: ({ users }) => ({
-    "note.written": templateHandler({
-      template: new URL("./prompts/note-written.hbs", import.meta.url),
-      session: () => "notes",
-      data: async (signal) => ({ payload: signal.payload, users: await users.list() }),
-    }),
-  }),
-});
-
-await gateway.start();
-```
 
 ***
 
@@ -1489,23 +1462,17 @@ await gateway.start();
 function defaultLogger(): Logger;
 ```
 
-The logger a part uses when the Operator supplies none: JSON lines on stdout at `info`.
+What a part logs through when the Operator supplies nothing: `pino`, writing JSON lines to stdout
+at `info`.
+
+Typed as [Logger](#logger-2) and not as a `pino` logger, so nothing in a deployment's own code ends up
+holding `pino`'s types. Everything below `info` is dropped, and `debug` is where the parts write
+what they are doing, so a deployment that wants those lines configures `pino` itself and passes
+the result.
 
 #### Returns
 
 [`Logger`](#logger-2)
-
-A `pino` instance, typed as `Logger`, so `pino`'s own types stay out of the
-  public API.
-
-#### Example
-
-```ts
-import { defaultLogger, type Logger } from "shared-agent-framework";
-
-const log: Logger = defaultLogger();
-log.info({ signalId: "abc" }, "Signal claimed");
-```
 
 ***
 
@@ -1515,20 +1482,17 @@ log.info({ signalId: "abc" }, "Signal claimed");
 function mountArguments(table): readonly string[];
 ```
 
-Turns a Mount Table into its `--mount` arguments, or refuses it.
+Turns a Mount Table into one `--mount` and its value per entry, in declaration order, or refuses
+the table.
 
-Pure and total. It applies `hostRoot`, and it refuses:
+Pure and total. It applies `hostRoot`, and it refuses a relative path on either side, a `.` or
+`..` segment in any path it resolves, an entry falling outside the root, and two entries naming
+one target.
 
-- a relative path on either side;
-- a `.` or `..` segment in any path it resolves;
-- an entry falling outside the root;
-- two entries naming one target.
-
-It performs no I/O, so it cannot tell you whether any path exists. That is the daemon's
-answer at the first Run.
-
-`createAgentContainerRuntime` calls it during construction, so a table that cannot work is
-refused where the Operator wrote it.
+It performs no I/O, so it cannot say whether any of these paths exists. That answer comes from
+the daemon at the first Run, as a Run that failed and will not be retried, which is why
+`createAgentContainerRuntime` calls this at construction: the refusals it can make, it makes
+where the Operator wrote the table.
 
 #### Parameters
 
@@ -1540,26 +1504,9 @@ refused where the Operator wrote it.
 
 readonly `string`[]
 
-One `--mount` and its value per entry, in declaration order, and nothing else.
-
 #### Throws
 
-On any of the four refusals above.
-
-#### Example
-
-```ts
-import { mountArguments } from "shared-agent-framework";
-
-const args = mountArguments({
-  entries: [
-    { agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
-    { agentPath: "/workspace/AGENTS.md", gatewayPath: "/srv/saf/AGENTS.md", readOnly: true },
-  ],
-  hostRoot: { gatewayPath: "/srv/saf", hostPath: "/var/lib/saf" },
-});
-// ["--mount", "type=bind,source=/var/lib/saf/workspace,target=/workspace", …]
-```
+On any of those four.
 
 ***
 
@@ -1569,12 +1516,11 @@ const args = mountArguments({
 function openDb(url): Db;
 ```
 
-Opens the Db on a PostgreSQL connection URL.
+Opens the Db on a PostgreSQL connection URL, such as `postgres://user:pass@host:5432/db`.
 
-Synchronous, and it connects lazily: the pool opens its first connection when something is
-asked of it. That is what lets every component be constructed before anything is on the wire.
-`start` then opens the pool itself, rather than leaving a bad URL to whichever query came
-first.
+Synchronous, and nothing is on the wire yet: the pool opens its first connection when something
+is asked of it, which is what lets every component be constructed before the database has to be
+there. `start` is what opens the pool deliberately.
 
 #### Parameters
 
@@ -1582,26 +1528,9 @@ first.
 
 `string`
 
-A PostgreSQL connection URL, such as `postgres://user:pass@host:5432/db`.
-
 #### Returns
 
 [`Db`](#db)
-
-#### Example
-
-```ts
-import { openDb } from "shared-agent-framework";
-import { users } from "shared-agent-framework/users";
-
-const db = openDb(process.env.DATABASE_URL ?? "");
-await db.start();
-
-const handle = db.handle({ users });
-const rows = await handle.select().from(users).limit(10);
-
-await db.stop();
-```
 
 ***
 
@@ -1613,11 +1542,13 @@ function serverComponent<S>(server, listen): Component & {
 };
 ```
 
-Gives a server a place in the Gateway's start order.
+Gives a server a place in a Gateway's start order: `start` binds it, and `stop` closes it.
 
-It constructs nothing and defaults nothing. Call `Fastify()` with your own options, pass
-the instance here, and state where it listens. The instance comes back on `.fastify`, so
-your own routes go on the same server the framework's do.
+It constructs nothing and defaults nothing, so call `Fastify()` with whatever options you want
+and state where the instance binds. There is no default address. What comes back carries that
+instance on `.fastify` with its own type parameters intact, `withTypeProvider` and http2
+included, so routes of your own go on the same server the framework's components registered
+theirs on.
 
 #### Type Parameters
 
@@ -1631,36 +1562,15 @@ your own routes go on the same server the framework's do.
 
 `S`
 
-Anything with `listen` and `close`. A Fastify instance of any type
-  parameters, including `withTypeProvider` and http2.
-
 ##### listen
 
 `FastifyListenOptions`
-
-Where to bind. There is no default address.
 
 #### Returns
 
 [`Component`](#component) & \{
   `fastify`: `S`;
 \}
-
-#### Example
-
-```ts
-import { serverComponent } from "shared-agent-framework";
-import Fastify from "fastify";
-
-const publicServer = serverComponent(Fastify({ trustProxy: true }), {
-  host: "0.0.0.0",
-  port: 8080,
-});
-
-publicServer.fastify.register(async (instance) => {
-  instance.get("/health", async () => ({ ok: true }));
-});
-```
 
 ***
 
@@ -1672,9 +1582,13 @@ function templateHandler<TPayload>(options): SignalHandler<TPayload>;
 
 Builds a Signal Handler that renders one Prompt per Signal from a Handlebars template.
 
-One Prompt, always. This Handler does not fan out to several Sessions, and it does not
-decline a Signal. The contract allows both. To add a post phase, wrap it:
-`{ ...templateHandler(options), post }` is a valid Handler.
+One Prompt, always. It never fans a Signal out across several Sessions and never declines one,
+although the Handler contract allows both. It has no post phase either, and gains one by being
+spread: `{ ...templateHandler(options), post }` is a Handler.
+
+A template that cannot be read, and one that does not render, each fail the Signal with a message
+naming the file. Handlebars names the variable, the line and the column, and never the file,
+which is the one thing an Operator running several templates needs.
 
 #### Type Parameters
 
@@ -1688,21 +1602,6 @@ decline a Signal. The contract allows both. To add a post phase, wrap it:
 
 [`TemplateHandlerOptions`](#templatehandleroptions)\<`TPayload`\>
 
-The template, the Session to continue, and the values to substitute.
-
 #### Returns
 
 [`SignalHandler`](shared-agent-framework.signals.md#signalhandler)\<`TPayload`\>
-
-#### Example
-
-```ts
-import { templateHandler } from "shared-agent-framework";
-
-const handler = templateHandler<{ userId: string; body: string }>({
-  template: new URL("./prompts/message-received.hbs", import.meta.url),
-  session: (signal) => `user_${signal.payload.userId}`,
-  data: (signal) => signal.payload,
-  helpers: { upper: (value: string) => value.toUpperCase() },
-});
-```

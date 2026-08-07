@@ -1,21 +1,19 @@
 /**
- * The logging seam: a structural interface, and a `pino` default.
- *
- * Any object with the four methods satisfies `Logger`, so a deployment that logs through
- * something else passes that instead. The parameters are in `pino`'s order, fields first,
- * because `pino` is the default and must satisfy the interface unwrapped.
+ * The parameters are in `pino`'s order, fields first and message second, because `pino` is the
+ * default and has to satisfy the interface unwrapped. Reversing them to read better would cost a
+ * wrapper around the default and make every call site in the framework a translation.
  */
 
 import { pino } from "pino";
 
-/** Structured context on one log line. */
 export type LogFields = Record<string, unknown>;
 
 /**
- * What every part of the Gateway accepts. Four levels and no more.
+ * What every part of a Gateway logs through. Four levels, and any object carrying them satisfies
+ * it, so a deployment that logs elsewhere passes its own object instead of adapting one.
  *
- * `fatal` and `trace` exist in `pino`, and nothing here has a use for them. Leaving them out
- * keeps a hand-written logger short.
+ * `fatal` and `trace` are `pino`'s and are left out. Nothing here has a use for either, and their
+ * absence is what keeps a hand-written logger four methods long.
  */
 export type Logger = {
   debug(fields: LogFields, message: string): void;
@@ -25,18 +23,13 @@ export type Logger = {
 };
 
 /**
- * The logger a part uses when the Operator supplies none: JSON lines on stdout at `info`.
+ * What a part logs through when the Operator supplies nothing: `pino`, writing JSON lines to stdout
+ * at `info`.
  *
- * @returns A `pino` instance, typed as `Logger`, so `pino`'s own types stay out of the
- *   public API.
- *
- * @example
- * ```ts
- * import { defaultLogger, type Logger } from "shared-agent-framework";
- *
- * const log: Logger = defaultLogger();
- * log.info({ signalId: "abc" }, "Signal claimed");
- * ```
+ * Typed as {@link Logger} and not as a `pino` logger, so nothing in a deployment's own code ends up
+ * holding `pino`'s types. Everything below `info` is dropped, and `debug` is where the parts write
+ * what they are doing, so a deployment that wants those lines configures `pino` itself and passes
+ * the result.
  */
 export function defaultLogger(): Logger {
   return pino();

@@ -1,32 +1,28 @@
 /**
- * The HTTP Channel's routes: one group at `/messages` on the Public server.
- *
- * This is what HTTP as a Channel actually is — a User submitting, and a User polling their own
- * log by cursor ([ADR-0035](../../docs/adr/0035-a-users-messages-are-one-log-read-by-cursor.md),
- * [ADR-0048](../../docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)). The
- * agent's own two routes are acts on the log rather than acts of a medium, so they are the
- * Messenger's and live in `../messenger/routes.ts`. Neither plugin is exported and neither
- * prefix is configurable. The paths below are relative, because the constructor supplies the
- * prefix.
+ * One plugin, on the Public server, and it is what HTTP as a Channel actually is: a User
+ * submitting, and a User polling their own log by cursor (ADR-0035, ADR-0048). The agent's own two
+ * routes are acts on the log rather than acts of a medium, so they are the Messenger's and live in
+ * `../messenger/routes.ts`. The plugin is not exported and the prefix is not configurable. The
+ * paths below are relative, because the constructor supplies it.
  *
  * | Public server | Answers |
  * | --- | --- |
- * | `POST /messages` | 201, the created inbound `MessageRecord`, and a Signal; 401; 503 |
+ * | `POST /messages` | 201, the stored inbound `MessageRecord`, and a Signal; 400; 401; 503 |
  * | `GET /messages?after=&before=&limit=` | `{ messages: [...] }`, ascending by `seq`; 400; 401 |
  *
- * **The serializer, the cursor sentences and both refusal helpers are imported from the
- * Messenger's own route module rather than restated.** A `MessageRecord` has one shape on every
- * surface, and a response schema is a serializer whose drift is silent, so the copy that would
- * have made this file self-contained is exactly the copy that could lose a field on one surface
- * and nowhere else.
+ * The serializers, the shared sentences, the read helper and both refusal helpers are imported
+ * from the Messenger's own route module rather than restated. A `MessageRecord` has one shape on every surface, and a
+ * response schema is a serializer whose drift is silent, so the copy that would make this file
+ * self-contained is exactly the copy that could lose a field here and nowhere else. Do not inline
+ * one.
  *
  * Nothing here authenticates anybody. Both routes take the User Manager's `requireUser` as one
- * option on the route, and read the User off `request.safUser`. The routes have no parameter
- * naming a User at all, so no User can read another's log.
+ * option and read the User off `request.safUser`, and neither has a parameter naming a User at all,
+ * so no User can read another's log.
  *
  * Each route's own `description` is what `/openapi.json` serves, so those sentences are the API
- * documentation rather than commentary. The two routes describe their 401 and their Token in the
- * User Manager's own words, imported rather than restated.
+ * documentation rather than commentary. The 401 and the Token are described in the User Manager's
+ * words, imported rather than restated.
  */
 
 import type { FastifyPluginAsync, preHandlerAsyncHookHandler } from "fastify";
@@ -59,10 +55,10 @@ import { authenticationFailed, bearerRequired } from "../users/routes.ts";
 /**
  * What a User's own routes need: the shared read, and a submission.
  *
- * `submit` takes neither a `direction` nor a transaction, for the reasons the agent's `send`
- * takes neither. The transaction that carries the insert and its Signal is opened by this
- * Channel's constructor, around the Messenger's `receive`. What comes back is the stored record,
- * which is what the 201 answers with and what the Signal payload is.
+ * `submit` takes neither a direction nor a transaction. This is the Public server, so the only
+ * Message a request here can cause is an inbound one, and the transaction belongs to the
+ * constructor, which opens it around the Messenger's `receive`. What comes back is the stored
+ * record, which is both the 201's body and the Signal's payload.
  */
 export type OwnMessageOperations = MessageHistory & {
   submit(userId: string, text: string): Promise<MessageRecord>;
@@ -71,19 +67,18 @@ export type OwnMessageOperations = MessageHistory & {
 /**
  * The 401, which is the User Manager's and is described in its words.
  *
- * The imported sentence is the whole of what the refusal says. What this component adds is where it
- * comes from. A client reading a Message route learns that `/auth` answers the same.
+ * The imported sentence is the whole of the refusal. What this adds is where it comes from, so a
+ * client reading a Message route need not discover that the hook belongs elsewhere.
  */
 const notAuthenticated = `${authenticationFailed} This part authenticates nobody: the refusal is the User Manager's \`requireUser\`, taken as one option on the route, so it is the same 401 the routes under \`/auth\` answer.`;
 
 /**
- * The body of a User's own `POST /`: what they said, and nothing else.
+ * The body of `POST /`: what the User said, and nothing else.
  *
  * There is no `userId` here and nowhere for one to arrive. The submitting User is the one their
- * Token named, which is what makes the attribution in the Signal payload trustworthy.
- *
- * A client that posts a `userId` anyway has it dropped by `additionalProperties: false`. So nobody
- * can put words in another User's mouth.
+ * Token named, which is what makes the attribution in the Signal payload trustworthy. A client that
+ * posts one anyway has it dropped by `additionalProperties: false`, so nobody can put words in
+ * another User's mouth.
  */
 const submitSchema = {
   type: "object",
@@ -95,9 +90,9 @@ const submitSchema = {
 /**
  * A User's own read: the window, and nothing naming a User.
  *
- * The agent's schema is this one plus a required `user`. That is the whole difference between the
- * two surfaces. There is no such property to omit here. A request cannot ask about somebody else,
- * so nothing has to refuse one.
+ * The agent's schema is this one plus a required `user`, and that is the whole difference between
+ * the two surfaces. There is no such property here to omit, so a request cannot ask about somebody
+ * else and nothing has to refuse one.
  */
 const ownHistorySchema = {
   type: "object",
@@ -108,13 +103,12 @@ const ownHistorySchema = {
 /**
  * The Public server's Message routes: a User's own log, and the one way into it from outside.
  *
- * `presentedUser` is the User Manager's `requireUser`, taken as one option on each route and not
- * wrapped. So an unauthenticated read or post is the Manager's single 401, and this component
- * authenticates nobody.
+ * `presentedUser` is `requireUser`, taken as one option on each route and not wrapped, extended or
+ * re-implemented. So an unauthenticated read or submission is the Manager's single 401.
  *
- * The hook runs at `preHandler`, after validation. So a malformed window, an unknown query
- * parameter and an empty `text` are answered before a Token is read. That leaks nothing: a refusal
- * names a parameter or a field, and never a User.
+ * The hook runs at `preHandler`, after validation, so a malformed window, an unknown query
+ * parameter and an empty `text` are answered before a Token is read. That leaks nothing: such a
+ * refusal names a parameter or a field of the route, and never a User.
  */
 export function publicMessageRoutes(
   messageLog: OwnMessageOperations,

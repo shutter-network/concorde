@@ -1,28 +1,28 @@
 /**
- * The HTTP Channel, from `shared-agent-framework/http-channel`.
+ * The HTTP Channel, the component that reaches a User over HTTP and lets them reach back. A
+ * Channel is what carries a Message to one person over one medium; the Messenger owns the log and
+ * reaches nobody. This one is a submission and a poll on the Public server, which is what a browser
+ * can talk to with no client library.
  *
- * `createHttpChannel` is the whole of it for an Operator. Hand it the Db, the Messenger, the User
- * Manager and the Public server. It registers itself with the Messenger and puts one route group
- * at `/messages` on that server: a submission, and a cursored read of the submitting User's own
- * log. Then key it in the Gateway's record before the Signal Worker, beside the Messenger, so that
- * it stops after the drain.
+ * {@link createHttpChannel} makes one, and {@link HttpChannelOptions} is what it takes.
+ * {@link HttpChannel} is what comes back, and there is no method on it that trusted code calls.
+ * Answering a User is `messenger.send` and reading their log is `messenger.history`, and both are
+ * the same call whichever Channel a deployment built.
  *
- * **It owns no tables, and this subpath carries a constructor and nothing beside it.** The log is
- * the Messenger's, so there is nothing here for an Operator's migration barrel: barrel
- * `shared-agent-framework/messenger` instead, and `shared-agent-framework/users` beside it.
+ * Build the Messenger first, since the constructor registers with it, and build the User Manager
+ * first too, for the `requireUser` hook both routes run. A Messenger takes one Channel and refuses
+ * the second, so this is where a deployment settles on one medium and gives up the other. Key this
+ * in the Gateway's record ahead of the Signal Worker, beside the Messenger: the Worker is keyed
+ * last so it drains first, and a Signal Handler's post phase may still be answering somebody.
  *
- * It answers with no method trusted code calls. Everything it does, it does for a request or for
- * the Messenger: `send` is a no-op, because HTTP delivery is the User asking, and `start` and
- * `stop` are no-ops because polling holds nothing between requests. What trusted code wants —
- * `send` into whichever medium reaches a person, and `history` — is on the Messenger and is the
- * same call whichever Channel a deployment built.
- *
- * There is **no route anywhere that chooses a Channel**, and no Message records which one it
- * travelled by: one Channel per Messenger, so a deployment runs HTTP or another medium and not
- * both.
+ * Nothing is stored here and there are no tables, so this subpath has nothing for an Operator's
+ * migration barrel. Barrel `shared-agent-framework/messenger` for the log, and
+ * `shared-agent-framework/users` beside it. There is no queue either, because HTTP delivery is the
+ * User asking: an outbound Message is already in the log, and the next poll carries it.
  *
  * @example
- * A Gateway a browser can talk to: the Messenger, and this Channel registered with it.
+ * A Gateway a browser can talk to: the Messenger, this Channel registered with it, and a Handler
+ * for the Signal a submission emits.
  * ```ts
  * import { createGateway, templateHandler } from "shared-agent-framework";
  * import { createHttpChannel } from "shared-agent-framework/http-channel";
@@ -34,7 +34,8 @@
  * const gateway = createGateway({
  *   databaseUrl: process.env.DATABASE_URL ?? "",
  *   runtime: createPiRuntime({ image: "my-agent:1" }),
- *   agentListen: { host: "127.0.0.1", port: 8081 },
+ *   // Not loopback: the agent reaches this server from a container of its own.
+ *   agentListen: { host: "0.0.0.0", port: 8081 },
  *   publicListen: { host: "0.0.0.0", port: 8080 },
  *   extend: ({ db, agentServer, publicServer, worker }) => {
  *     const users = createUsers({ db, tokenTtl: 86_400_000, agentServer, publicServer });
@@ -55,6 +56,10 @@
  * });
  *
  * await gateway.start();
+ *
+ * // The Public server now answers `POST /messages` and `GET /messages?after=<seq>`. Nothing in
+ * // the Operator's own code calls this Channel: what the agent says back goes through the
+ * // Messenger and arrives on the same log the poll reads.
  * ```
  *
  * @module

@@ -1,23 +1,19 @@
 /**
- * The infrastructure constructor: the Db, both servers, and the Signal Worker.
+ * Two orderings in this file are load-bearing, and both fail silently when they are undone.
  *
- * One call builds what every deployment needs, hands it to the Operator's `extend`, and
- * answers with a Gateway. The opinionated components are not built here. Each is a one-line
- * `create*` call inside `extend`, so a deployment builds only the ones it wants.
+ * `describeSurface` runs **before** `extend`. Route discovery is an `onRoute` hook and every part
+ * registers its routes inside its own constructor, so a route queued before the hook is invisible
+ * to it. Move the two calls below `extend` and both OpenAPI documents are empty, with nothing on
+ * the console (ADR-0040, ADR-0045).
  *
- * ## The order
+ * The `handlers` map is built empty, handed to the worker, and filled by `Object.assign` at the
+ * end. That is what breaks the cycle between the worker, the Signal Handlers and a component a
+ * post phase calls. The worker keeps that exact object and reads it at dispatch, and nothing can
+ * dispatch before `start`.
  *
- * ```text
- * start:  db -> agentServer -> publicServer -> <extend's Components> -> worker
- * stop:   worker(drain) -> <extend's Components> -> publicServer -> agentServer -> db
- * ```
- *
- * The Signal Worker's `stop` is the only stop that does work. It waits for the Run in
- * flight. That Run reads the Db and reaches the Operator's own components. So the Worker is
- * keyed last and drains first, while everything else is still live.
- *
- * Both servers keep listening through the drain. A Message submitted then is stored, its
- * Signal stays `pending`, and the next boot runs it.
+ * Key order in the returned record is not the construction order above it: the Worker is
+ * constructed early and keyed last, so its drain runs while the Db, both servers and the
+ * Operator's own parts are all still live (ADR-0037, ADR-0045).
  */
 
 import fastifySwagger from "@fastify/swagger";
@@ -31,13 +27,13 @@ import type { Runtime, SignalHandler, SignalHandlers, SignalWorker } from "./sig
 import { createSignalWorker } from "./signals/index.ts";
 
 /**
- * The infrastructure every deployment has, under the keys it is filed under.
+ * The four parts every deployment has, under the keys they are filed under.
  *
- * This is the record `extend` receives, and the four keys `handlers` receives beside
- * whatever `extend` returned.
+ * This is what `extend` is handed, and the four keys `handlers` is handed beside whatever `extend`
+ * returned. The same four keys are on `gateway.components` afterwards.
  *
- * This is not the start order. The Worker is keyed last in the Gateway's own record, so that
- * it drains while everything else is still live.
+ * It is not the start order. The Worker is keyed last in the Gateway's record, so that it drains
+ * while everything else is still live.
  */
 export type InfraComponents = {
   db: Db;
@@ -47,84 +43,95 @@ export type InfraComponents = {
 };
 
 /**
- * What `extend` can return: Components under keys of your own, and none of the four
- * infrastructure keys.
+ * What `extend` may return: Components under keys of your own, and none of the four infrastructure
+ * keys.
  *
- * The four are refused because a spread would overwrite one in silence. To run a Db, a server or
- * a Signal Worker of your own, call `createBareGateway` instead.
+ * Those four are a type error rather than a substitution, because a spread would overwrite one and
+ * keep its position, in silence. Call {@link createBareGateway} to run a Db, a server or a Signal
+ * Worker of your own.
  */
 export type GatewayExtension = Record<string, Component> & {
   [K in keyof InfraComponents]?: never;
 };
 
-/** Everything `createGateway` needs. Four required values, and four with defaults. */
 export type GatewayOptions<E extends GatewayExtension> = {
   /**
-   * Where the Db connects. The pool opens at `start`, not here.
+   * Where the Db connects. Nothing is on the wire until `start`, so a URL that answers nowhere
+   * fails there and not here.
    *
-   * Required, and read from no environment. Construction throws and names this option when
-   * it is absent.
+   * No environment is read for it. Construction throws and names this option when it is absent,
+   * which is the one refusal a JavaScript caller can reach.
    */
   readonly databaseUrl: string;
   /**
-   * Drives the Agent Implementation. `createPiRuntime` from `shared-agent-framework/pi`
-   * returns one.
+   * What a Prompt is handed to, and what an outcome comes back from.
+   *
+   * `createPiRuntime` on `shared-agent-framework/pi` returns one for `pi`, and
+   * `createAgentContainerRuntime` builds one for any other agent program.
    */
   readonly runtime: Runtime;
   /**
    * Where the Agent server binds. Use loopback.
    *
-   * This server has no authentication at all, so reaching the port is read-write access to
-   * everything on it. Where the agent's own container reaches this process is a second value.
-   * State it in the instructions you mount into the Workspace.
+   * Nothing on this server authenticates anything, so reaching the port is read and write access
+   * to every route on it. Where the agent's own container reaches this process is a second value
+   * and is not derived from this one: state it in the instructions you mount into the Workspace.
    */
   readonly agentListen: FastifyListenOptions;
   /**
-   * Where the Public server binds. This is the surface meant to be exposed, so loopback
-   * inside a container reaches nobody.
+   * Where the Public server binds. This is the surface meant to be exposed, so loopback inside a
+   * container reaches nobody.
    */
   readonly publicListen: FastifyListenOptions;
   /**
-   * Components of your own, built from the infrastructure this call constructed.
+   * Builds Components of your own out of the four this call constructed, and returns them under
+   * keys of your own.
    *
-   * This is where the opinionated components go: the User Manager, Signatures, Decisions, the
-   * Messenger with the one Channel that reaches people, and the Scheduler. What it returns is
-   * keyed ahead of the Worker, so those Components stop after the drain. That is what a Signal
+   * The opinionated components go here, each one `create*` call: Users, Signatures, Decisions, the
+   * Messenger with the single Channel that reaches people, and the Scheduler. A deployment that
+   * wants none of them omits this callback. What it returns is keyed ahead of the Worker, so those
+   * Components are still live through the drain and stop after it, which is what a Signal
    * Handler's post phase needs.
    */
   readonly extend?: (components: InfraComponents) => E;
   /**
-   * The `kind`-to-Handler map, built from the four infrastructure Components and whatever
+   * Builds the `kind`-to-Handler map out of the four infrastructure Components and whatever
    * `extend` returned.
    *
-   * Required, and a callback because a Signal Handler usually needs a Component. It runs
-   * after `extend`, so a Handler can reach a component of your own. `extend` cannot see the
-   * handlers, which is the correct direction.
+   * A callback, because a Signal Handler almost always closes over a Component. It runs after
+   * `extend` and cannot be seen by it, so a Handler reaches a component of your own and never the
+   * reverse.
    */
   readonly handlers: (components: InfraComponents & E) => SignalHandlers;
-  /** Defaults to a `pino` instance on stdout. The Signal Worker is what reads it. */
+  /**
+   * Where the Signal Worker logs. Defaults to a `pino` instance on stdout.
+   *
+   * It reaches the Worker and nothing else. A component built in `extend` takes its own.
+   */
   readonly logger?: Logger;
-  /** How often the Signal Worker sweeps for pending work, in milliseconds. Its own default. */
+  /**
+   * How often the Signal Worker looks for Signals left pending, in milliseconds, in place of the
+   * Worker's own interval.
+   *
+   * It is the backstop and not the normal path, an emitted Signal waking the Worker as it is
+   * written, so this is how long a Signal can wait when a wake-up went missing.
+   */
   readonly sweepIntervalMs?: number;
 };
 
 /**
- * The `version` both OpenAPI documents declare.
- *
- * A constant in source, because the document covers a deployment's API and not the
- * framework's. `gateway.test.ts` asserts it against the package manifest.
+ * The `version` both OpenAPI documents declare. Not read from the package manifest: what the
+ * document covers is a deployment's HTTP API rather than this framework's releases, and the two
+ * are free to move apart. The test asserts they have not yet.
  */
 export const describedVersion = "0.0.0";
 
 /**
- * Registers one server's description: the OpenAPI document and the browsable page.
+ * Registers one server's description: the OpenAPI document at `/openapi.json`, and the browsable
+ * page at `/docs`. Neither is configurable and neither can be switched off. Both are absent from
+ * the document they serve, which nobody reading it needs.
  *
- * Called before `extend`, because route discovery is an `onRoute` hook and every component
- * registers its routes in its own constructor. Neither route is configurable and neither can
- * be switched off.
- *
- * `/openapi.json` serves the document, and `/docs` is the page. Both are absent from the
- * document they serve, which a reader of it does not need.
+ * Every caller of this must stay above `extend`; see the file header.
  */
 function describeSurface(fastify: FastifyInstance, title: string, description: string): void {
   fastify.register(fastifySwagger, {
@@ -138,45 +145,17 @@ function describeSurface(fastify: FastifyInstance, title: string, description: s
 }
 
 /**
- * Builds the infrastructure, runs `extend` and `handlers`, and answers with a Gateway.
+ * Builds the Db, both self-describing servers and the Signal Worker, runs `extend` and then
+ * `handlers`, and answers with a Gateway keyed `db`, `agentServer`, `publicServer`, whatever
+ * `extend` returned, and `worker` last.
  *
- * Nothing here connects, listens or applies DDL. Construction only registers routes on the
- * two servers. Your database already carries your own schema before you call `gateway.start()`.
+ * Nothing connects, listens or applies DDL. Construction registers routes and returns, so the
+ * database has to be carrying your own tables by the time you call `gateway.start()`.
  *
- * Register your own routes with `fastify.register`, not straight onto the instance. A route
- * written directly on the instance is served and absent from the OpenAPI document.
+ * Register routes of your own with `fastify.register` rather than writing them onto the instance.
+ * A route written straight onto it is served, and absent from the OpenAPI document.
  *
- * @param options Where the Db connects, where each server binds, the Runtime, and the two
- *   callbacks that build the rest.
- * @returns A Gateway whose `components` holds the four infrastructure keys and everything
- *   `extend` returned.
  * @throws If `databaseUrl` is absent.
- *
- * @example
- * ```ts
- * import { createGateway, templateHandler } from "shared-agent-framework";
- * import { createPiRuntime } from "shared-agent-framework/pi";
- * import { createUsers } from "shared-agent-framework/users";
- *
- * const gateway = createGateway({
- *   databaseUrl: process.env.DATABASE_URL ?? "",
- *   runtime: createPiRuntime({ image: "my-agent:1" }),
- *   agentListen: { host: "127.0.0.1", port: 8081 },
- *   publicListen: { host: "0.0.0.0", port: 8080 },
- *   extend: ({ db, agentServer, publicServer }) => ({
- *     users: createUsers({ db, tokenTtl: 86_400_000, agentServer, publicServer }),
- *   }),
- *   handlers: ({ users }) => ({
- *     "note.written": templateHandler({
- *       template: new URL("./prompts/note-written.hbs", import.meta.url),
- *       session: () => "notes",
- *       data: async (signal) => ({ payload: signal.payload, users: await users.list() }),
- *     }),
- *   }),
- * });
- *
- * await gateway.start();
- * ```
  */
 export function createGateway<E extends GatewayExtension = Record<string, never>>(
   options: GatewayOptions<E>,
@@ -197,24 +176,20 @@ export function createGateway<E extends GatewayExtension = Record<string, never>
   const agentServer = serverComponent(Fastify(), options.agentListen);
   const publicServer = serverComponent(Fastify(), options.publicListen);
 
-  // Before `extend`, and that is load-bearing. Route discovery is an `onRoute` hook, and every
-  // component registers its routes in its own constructor. A route queued before the hook is
-  // invisible to it. Move these two calls down and both documents are empty, silently.
+  // Before `extend`, and see the file header for why that cannot move.
   describeSurface(
     agentServer.fastify,
     "Shared Agent Gateway: Agent server",
-    "The HTTP surface only the Agent Implementation reaches. It has no authentication of any kind: reaching this port is read-write access to everything described here, and there is no credential to find or to present (ADR-0010).",
+    "The HTTP surface the agent reaches the Gateway on, and nothing else should. It has no authentication of any kind, so reaching this port is read and write access to everything described here. There is no credential to present and none to find.",
   );
   describeSurface(
     publicServer.fastify,
     "Shared Agent Gateway: Public server",
-    "The HTTP surface exposed outside the Gateway. A User trades a password for a bearer Token at `POST /auth/tokens` and presents it as `Authorization: Bearer …` on every route that acts as somebody (ADR-0030).",
+    "The HTTP surface exposed outside the Gateway. Trade a password for a bearer Token at `POST /auth/tokens`, then send it as `Authorization: Bearer …` on every route that acts as somebody. A route that asks for none says so.",
   );
 
-  // The map the worker holds, empty until the two callbacks have run. The worker keeps this
-  // exact object and reads `handlers[signal.kind]` at dispatch, so filling it below fills the
-  // worker's own map. Nothing can dispatch before `start`. This is what breaks the cycle
-  // between the worker, the handlers and a Messenger the post phase calls.
+  // The map the worker holds, empty until the two callbacks below have run. Filling it at the end
+  // of this function fills the worker's own; see the file header for the cycle that breaks.
   const handlers: Record<string, SignalHandler> = {};
 
   const worker = createSignalWorker({
@@ -237,9 +212,7 @@ export function createGateway<E extends GatewayExtension = Record<string, never>
   // case `E` is the parameter's default, `Record<string, never>`.
   const extension: E = options.extend === undefined ? ({} as E) : options.extend(infra);
 
-  // Key order is start order, and it is not the construction order above. The Worker is keyed
-  // last so that it stops first. The servers, the Db and whatever `extend` built are all still
-  // live while it drains.
+  // Key order is start order, and it is not the construction order above; see the file header.
   const components = {
     db,
     agentServer,

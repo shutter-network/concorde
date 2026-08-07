@@ -1,19 +1,16 @@
 /**
- * The Messenger's one table: `messages`, in the `saf_messenger` schema.
+ * An Operator's `drizzle-kit` reads this file, through the barrel they build out of the component
+ * subpaths (ADR-0046, ADR-0047). Keep it to the table and the values that define it.
  *
- * Public API, re-exported from `shared-agent-framework/messenger`. An Operator barrels that
- * subpath into their own `schema.ts` and generates their DDL from it. Keep this file to the table
- * and the values that define it.
+ * The one import of another component's schema in here is deliberate and is the mechanism rather
+ * than an accident: `user_id` references `saf_users.users.id`
+ * ([ADR-0036](../../docs/adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)), and one
+ * generation graph is what makes that legal. Nothing of the User Manager's is re-exported. What it
+ * costs an Operator is stated on the table below, where they can act on it.
  *
- * The log is the Messenger's and no Channel's, which is the whole of
- * [ADR-0048](../../docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md): one
- * table for one User across both directions, whichever medium a Message travelled by. The HTTP
- * Channel that used to own this table owns none.
- *
- * `user_id` is a foreign key onto `saf_users.users.id`, so this module imports the User Manager's
- * schema. It re-exports nothing of it. A barrel with this component and not the User Manager
- * generates a reference to a table nothing creates. Barrel `shared-agent-framework/users` beside
- * it. A Message is immutable once written, and nothing removes one, so the table grows forever.
+ * One table for both directions, whichever medium a Message travelled by, is the whole of
+ * [ADR-0048](../../docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md): the log
+ * is the Messenger's and no Channel's, and the HTTP Channel that used to own this table owns none.
  */
 
 import { type SQL, sql } from "drizzle-orm";
@@ -30,83 +27,86 @@ import {
 import { users } from "../users/schema.ts";
 
 /**
- * The Messenger's schema, named for the component that owns the log.
+ * The PostgreSQL schema the table below lives in, `saf_messenger`.
  *
- * Prefixed because the framework is installed into a database it does not own. The name is not an
- * Operator's to change. The table below is compiled against it, and their generation reads that
- * same object.
+ * Prefixed because the framework is installed into a database it does not own, and not an
+ * Operator's to change: the table is compiled against this object, and the same object is what a
+ * generation reads.
  *
- * It was `saf_http_messages` while one component held the log *and* the only way of reaching a
- * person, so a deployment upgrading from that version renames the schema. A Channel is what
- * reaches a person now, and it has no share of this one.
+ * It was `saf_http_messages` while one component held the log and the only way of reaching a
+ * person, so a deployment upgrading across that split renames the schema.
  */
 export const messengerSchema = pgSchema("saf_messenger");
 
 /**
- * Which way a Message travelled: `inbound` or `outbound`.
+ * Which way a Message travelled: `inbound` from the User to the agent, `outbound` from the agent to
+ * the User.
  *
- * Decided by which of the Messenger's two writes wrote it — a Channel's inbound `receive` or
- * trusted code's outbound `send` — so there is no field anywhere for a caller to set.
+ * Decided by which of the Messenger's two writes wrote it, a Channel's inbound `receive` or trusted
+ * code's outbound `send`, so there is no field anywhere for a caller to set and only a User can
+ * cause an inbound one.
  */
 export const messageDirections = ["inbound", "outbound"] as const;
-/** Which way one Message travelled. One of `messageDirections`. */
+
 export type MessageDirection = (typeof messageDirections)[number];
 
-/**
- * The constraint that keeps the column to the directions above.
- *
- * Derived from the same array the type is, rather than spelled a second time in SQL. Otherwise a
- * direction added to one gives a database that rejects a valid value. The values go in with
- * `sql.raw`, because a CHECK constraint is DDL and has nowhere to bind a parameter.
- */
+// Derived from the same array the type is, rather than spelled a second time in SQL. Otherwise a
+// direction added to one gives a database that rejects a valid value. The values go in with
+// `sql.raw`, because a CHECK constraint is DDL and has nowhere to bind a parameter.
 function directionIsKnown(column: PgColumn, directions: readonly string[]): SQL {
   const literals = directions.map((direction) => `'${direction}'`).join(", ");
   return sql`${column} in (${sql.raw(literals)})`;
 }
 
 /**
- * One Message, in one direction, belonging to exactly one User.
+ * One Message, in one direction, belonging to exactly one User: the durable record of what was
+ * said.
  *
- * One table for both directions, which is what makes a User's log a single numbered sequence.
+ * One table for both directions, which is what makes a User's log a single numbered sequence, and
+ * no column saying which Channel it travelled by. Nothing removes a row and no column is ever
+ * updated, so it grows forever.
+ *
+ * `user_id` is a foreign key onto the User Manager's `users` table. A barrel carrying this
+ * component without `shared-agent-framework/users` generates a reference to a table nothing
+ * creates, and dies on `schema "saf_users" does not exist`.
  */
 export const messages = messengerSchema.table(
   "messages",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     /**
-     * Exactly one User: the sender when inbound, the recipient when outbound.
+     * Exactly one User: the sender when inbound, the recipient when outbound. There are no groups
+     * and no broadcast.
      *
-     * There are no groups and no broadcast. A foreign key onto `saf_users.users.id`, and the only
-     * enforcement that this names a real User. The agent's 404 is PostgreSQL's `23503` caught,
-     * with no lookup in front of it.
-     *
-     * No `onDelete`, because nothing removes a User and no cascade can fire.
+     * The foreign key is the only enforcement that this names a real User, and there is no lookup
+     * in front of the write: the agent's 404 is PostgreSQL's `23503` caught. No `onDelete`, because
+     * nothing removes a User and no cascade can fire.
      */
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id),
     direction: text("direction").$type<MessageDirection>().notNull(),
     /**
-     * Per-User, monotonic from 1, and carried by both directions.
+     * Per-User, monotonic from 1, and carried by both directions, so one cursored read serves a
+     * client's poll and its rendering alike.
      *
-     * So one cursored read serves a client's poll and its rendering alike. There is no `serial` and
-     * no default. A sequence would be global, and another User's activity would move this number.
-     *
-     * `messages.ts` computes it as `coalesce(max(seq), 0) + 1` for that User, and the unique
-     * constraint below makes a lost race visible.
+     * No `serial` and no default. A sequence would be global, and another User's activity would
+     * move this number. `messages.ts` computes it as `coalesce(max(seq), 0) + 1` for that User, and
+     * the unique constraint below makes a lost race visible.
      */
     seq: integer("seq").notNull(),
     /**
-     * The whole content, a plain string. There is no `jsonb` and no payload convention.
+     * The whole content, a plain string. No `jsonb` and no payload convention, because a fixed
+     * shape is what makes a generic client possible.
      *
-     * A fixed shape is what makes a generic client possible. There is no length bound here or on
-     * the route. The server's own `bodyLimit` is the bound, and it is the Operator's to raise.
+     * No length bound here or on the route. The server's own `bodyLimit` is the bound, and it is
+     * the Operator's to raise.
      */
     text: text("text").notNull(),
     /**
      * `clock_timestamp()` and not `now()`, which is the transaction's start time.
      *
-     * An inbound Message and an outbound answer written in one transaction would share that
+     * An inbound Message and an outbound answer written in one transaction would otherwise share it
      * exactly. `signals.emitted_at` uses it for the same reason.
      */
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -122,9 +122,4 @@ export const messages = messengerSchema.table(
   ],
 );
 
-/**
- * Everything the Messenger keeps, as `db.handle` wants it.
- *
- * One object, so every module of this component asks for the same handle by the same name.
- */
 export const messengerTables = { messages };

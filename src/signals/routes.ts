@@ -1,12 +1,6 @@
 /**
- * The Signal Worker's contribution to the Agent server: reading prior Signals and Runs.
- *
- * A Fastify plugin. The Signal Worker registers it on the Agent server it was constructed with,
- * at no prefix. Pass no server and nothing is registered, which is how the group is switched
- * off. The plugin stays on `worker.agentRoutes`, so the prefix and the encapsulation stay yours.
- *
- * The surface is all `GET`, all JSON, and deliberately unscoped. The agent can read every Signal
- * and every Run, whatever Session its own Run is in:
+ * One plugin, registered by the Worker on the Agent server at no prefix, and exported on
+ * `worker.agentRoutes` as well so that a deployment can place it itself.
  *
  * | Route | Answers |
  * | --- | --- |
@@ -15,11 +9,15 @@
  * | `/runs?limit=&signalId=` | `{ runs: RunRecord[] }`, newest first |
  * | `/runs/:id` | `RunRecord`, or 404 |
  *
- * There is no Session parameter and no User parameter on any of them. With no cursor and no
- * offset, the records past the cap are reachable only by narrowing with `kind` or `signalId`.
+ * Unscoped by decision and not by omission: the agent reads every Signal and every Run whatever
+ * Session it is in, because Session routing organises context and was never a confidentiality
+ * mechanism (ADR-0011, ADR-0006). Do not add a `session` or a `user` parameter here. There is
+ * nothing on a Signal to scope by in any case, the Worker holding no identity (ADR-0020).
  *
- * Nothing here writes. A Signal is immutable but for the state the worker gives it. A Run is the
- * worker's record of its own work.
+ * All `GET`. Nothing here writes, a Signal being immutable but for the state the Worker gives it,
+ * and a Run being the Worker's record of its own work. This is the agent's read and only the
+ * agent's: ADR-0024 expects a Signal Handler to answer "has this arrived before?" for itself, and
+ * what it has for that is a handle over `workerTables` rather than a method on the Worker.
  */
 
 import { desc, eq } from "drizzle-orm";
@@ -49,13 +47,14 @@ import {
 export type WorkerHandle = Handle<typeof workerTables>;
 
 /**
- * A Signal as the agent reads it, and the JSON one route answers with.
+ * A Signal as the agent reads it, and the JSON two of these routes answer with.
  *
- * The `payload` reaches the agent as the Producer wrote it. `emittedAt` is an ISO 8601 string,
- * because JSON has no date.
+ * The `payload` arrives as the Producer wrote it, and `emittedAt` as an ISO 8601 string, JSON
+ * having no date.
  *
- * `state` and `error` are included. A Signal's outcome is most of what there is to know about a
- * prior arrival. A failed Signal is failed permanently, so the reason has to be readable.
+ * `state` and `error` are here, where {@link Signal} has neither: what there is to know about a
+ * prior arrival is mostly how it ended, and since a failed Signal is failed for good, the reason
+ * has to be readable by whoever finds it.
  */
 export type SignalRecord = {
   readonly id: string;
@@ -67,14 +66,15 @@ export type SignalRecord = {
 };
 
 /**
- * A Run as the agent reads it.
+ * A Run as the agent reads it: one Prompt, in one Session, and how it went.
  *
- * `signalId` is the Signal whose Handler produced this Prompt. `session` is a plain name rather
- * than a reference to anything, and every Run the Worker records now has one.
+ * `signalId` is the Signal whose Handler wrote the Prompt, and `prompt` is the text the agent was
+ * given rather than the template it came from. `session` is a plain name and a reference to
+ * nothing. Every Run the Worker records now carries one, and it stays nullable because rows written
+ * before that still hold `null`.
  *
- * `session` stays nullable here, because rows written before the Worker always named one still
- * hold `null`. The timings are ISO 8601 strings, or `null` for a Run that has not reached that
- * point.
+ * The timings are ISO 8601 strings, or `null` for a Run that has not reached that point, so a
+ * `running` Run has a `startedAt` and no `endedAt`.
  */
 export type RunRecord = {
   readonly id: string;
@@ -88,15 +88,15 @@ export type RunRecord = {
 };
 
 /**
- * The one sentence this whole surface turns on, and the one an agent is likeliest to assume the
+ * The sentence this whole surface turns on, and the one a reader is likeliest to assume the
  * opposite of.
  *
- * Written once and said in two places. It ends the refusal below, and it is in all four route
- * descriptions. A deployment that believed it was scoping something finds out at the first
- * request rather than never.
+ * Written once and said in two places: it ends the refusal below and it is in all four route
+ * descriptions. Somebody who believed a read here was scoped finds out at the first request rather
+ * than never.
  */
 const unscoped =
-  "Reads are not scoped by Session or by User, so there is no such parameter to pass.";
+  "Reads are not scoped by Session or by User, so there is no such parameter to pass, and the Session your own Run is in changes nothing about what you get back.";
 
 /** What a list route here says about its `limit`: the shared sentences, and the one it adds. */
 const capped = `${cappedLimit} There is no cursor and no offset, so the records past the cap are reachable only by narrowing.`;
@@ -109,14 +109,14 @@ const malformedId = "The id in the path is not a uuid, or a query parameter was 
 const rejectUnknownQuery = unknownQueryRefusal(unscoped);
 
 /**
- * `SignalRecord` on the wire, and the serializer the routes answer through.
+ * `SignalRecord` on the wire, and the serializer every answer carrying one passes through.
  *
- * Fastify compiles a response schema with `fast-json-stringify`. It drops every field the schema
- * does not declare, and says nothing about it. A field added to the type above and
- * forgotten here is silently missing from the Agent server's answers.
+ * Fastify compiles a response schema with `fast-json-stringify`, which drops every field the schema
+ * does not declare and says nothing about it. So a field added to the type above and forgotten here
+ * is missing from the Agent server's answers, and the round trip in `gateway.test.ts` is what
+ * catches that.
  *
- * The property descriptions are only on the fields whose name is not the whole story. `id` and
- * `kind` get none.
+ * A description goes only on a field whose name is not the whole story.
  */
 const signalRecordSchema = {
   type: "object",
@@ -152,8 +152,17 @@ const runRecordSchema = {
   type: "object",
   properties: {
     id: { type: "string" },
-    signalId: { type: "string" },
-    session: { type: "string", nullable: true },
+    signalId: {
+      type: "string",
+      description:
+        "The Signal whose Signal Handler wrote this Prompt. Several Runs can carry the same one, a Handler being free to answer with several Prompts.",
+    },
+    session: {
+      type: "string",
+      description:
+        "The Session this Run happened in, as a plain name that refers to nothing. A Handler that asked for a fresh Session gets `run_<this Run's id>`. It is `null` only on Runs recorded before the Worker named every Session.",
+      nullable: true,
+    },
     prompt: { type: "string" },
     state: {
       type: "string",
@@ -169,8 +178,8 @@ const runRecordSchema = {
 } as const;
 
 /**
- * A list answers in an envelope rather than as a bare array. That is where a cursor would go if
- * paging is ever wanted.
+ * A list answers in an envelope rather than as a bare array, as every component's does, and that is
+ * where a cursor would go the day either of these is paged.
  */
 const signalListSchema = {
   type: "object",
@@ -185,10 +194,10 @@ const runListSchema = {
 } as const;
 
 /**
- * Builds the Signal Worker's read routes, over a handle to its own tables.
+ * Builds the four read routes over a handle to the Worker's own two tables.
  *
- * @param handle Taken rather than the Db, so this plugin can read the Signal Worker's tables and
- *   nothing else.
+ * The handle and not the Db, so this plugin can read those tables and reach nothing else, and so
+ * that it cannot open a transaction of its own.
  */
 export function agentReadRoutes(handle: WorkerHandle): FastifyPluginAsync {
   return async (fastify) => {

@@ -1,16 +1,19 @@
 /**
- * Starting a container and reading what it wrote.
- *
  * The one place in the framework that spawns anything, and it spawns one thing: a Run. Four
- * things have to be right, and getting any of them wrong produces a hang rather than a failure.
+ * properties are load-bearing here, and undoing any of them buys a hang rather than a failure,
+ * because there are no timeouts anywhere in this framework.
  *
- *  - **stdout is read to the end**, even once the answer is known. A process whose stdout stops
- *    being read blocks when the pipe fills, and there are no timeouts anywhere.
- *  - **stderr is drained for the same reason.** Nothing decides anything by it, so stderr is
- *    diagnosis and never a verdict.
+ *  - **stdout is read to the end**, even after the answer is known. A process whose stdout stops
+ *    being read blocks as soon as the pipe fills.
+ *  - **stderr is drained from before stdout is read**, for the same reason, and never awaited
+ *    after. A chatty container would otherwise block on a full pipe while stdout is being read.
  *  - **a write to stdin can fail** with `EPIPE`, when the container exits before reading the
- *    Prompt. Unhandled, that takes the Gateway's process down.
- *  - **the process is waited for**, so a Run is finished when the container is gone.
+ *    Prompt. Unhandled, an `error` event on a stream takes the Gateway's process down, so the
+ *    handler is attached before anything is written.
+ *  - **the process is waited for**, so that a Run is finished only when the container is gone.
+ *
+ * Both `spawn` outcomes are awaited before anything else, because a later stream error cannot
+ * answer whether the container runtime is installed at all.
  */
 
 import { spawn } from "node:child_process";
@@ -26,14 +29,12 @@ export type ContainerCommand = {
 
 /** What a finished container left behind. */
 export type ContainerResult<T> = {
-  /** Whatever the reader made of stdout. */
+  /** Whatever the reader made of stdout, and the only thing that decides a Run. */
   readonly value: T;
   /**
-   * The exit status, or `null` when a signal ended it.
-   *
-   * Reported, never interpreted. An agent in machine-readable mode can exit 0 on a model error.
-   * An exit code cannot say whether a Run succeeded. It is worth putting in the message of a
-   * failure that was decided elsewhere.
+   * The exit status, or `null` when a signal ended it. Reported and never interpreted: an agent in
+   * machine-readable mode can exit 0 on a model error, so an exit code cannot say whether a Run
+   * succeeded. It is worth adding to a failure that was decided elsewhere.
    */
   readonly exitCode: number | null;
   /** The signal that ended it, if one did. */
@@ -43,22 +44,22 @@ export type ContainerResult<T> = {
 };
 
 /**
- * How much stderr is kept.
- *
- * The beginning rather than the end. The container runtime's own refusals come first: an image
- * it cannot find, or a flag it does not know. A wall of the agent's progress output would
- * otherwise push them out. Bounded, because this ends up in a Run's `error` column.
+ * How much stderr is kept, and it is the beginning rather than the end. The container runtime's own
+ * refusals come first, an image it cannot find or a flag it does not know, and a wall of the
+ * agent's progress output would push them out. Bounded at all because this reaches a Run's `error`
+ * column.
  */
 const stderrLimit = 4000;
 
 /**
- * Runs one container to completion and hands its stdout to `read`.
+ * Runs one container to completion and hands its stdout to `read`, which is given raw bytes rather
+ * than text.
  *
- * There is no timeout, here or anywhere. A Run that never returns halts the Gateway.
+ * There is no timeout, here or anywhere: a Run that never returns halts the Gateway.
  *
- * @param read Given raw bytes rather than text. A multi-byte character split across two chunks
- *   is the reader's to reassemble.
- * @throws If the container runtime cannot be started, or if `read` threw.
+ * @throws If the container runtime cannot be started, or if `read` threw. A reader is expected to
+ *   report a bad stream as a failed Run instead, so a throw is a stream failure, and the container
+ *   is killed before it propagates.
  */
 export async function runContainer<T>(
   invocation: ContainerCommand,
@@ -68,15 +69,14 @@ export async function runContainer<T>(
     stdio: ["pipe", "pipe", "pipe"],
   });
 
-  // Node emits exactly one of these. Waiting for both settles one question a later stream error
-  // cannot answer: whether the container runtime is there at all.
+  // Node emits exactly one of these two events; see the file header for why both are awaited.
   const failedToStart = await new Promise<Error | undefined>((settled) => {
     child.once("spawn", () => settled(undefined));
     child.once("error", (error) => settled(error));
   });
   if (failedToStart !== undefined) {
     throw new Error(
-      `the container runtime ${JSON.stringify(invocation.command)} could not be started: ${failedToStart.message}. It is the command the agent's container is run with — check that it is installed and on this process's PATH, or set containerCommand.`,
+      `the container runtime ${JSON.stringify(invocation.command)} could not be started: ${failedToStart.message}. It is the command the agent's container is run with: check that it is installed and on this process's PATH, or set containerCommand.`,
       { cause: failedToStart },
     );
   }
@@ -92,17 +92,15 @@ export async function runContainer<T>(
   const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((done) => {
     child.once("close", (code, signal) => done({ code, signal }));
   });
-  // Started before stdout is read rather than awaited after it, so stderr drains the whole
-  // time. A chatty container cannot then block on a full pipe.
+  // Started here and awaited at the end, so stderr drains while stdout is being read.
   const stderr = collect(child.stderr);
 
   let value: T;
   try {
     value = await read(child.stdout);
   } catch (error) {
-    // Only a stream failure gets here. A reader is expected to report a bad stream as a failed
-    // Run rather than throw. Whatever it was, the container must not outlive the call that
-    // started it: `docker run` forwards the signal and `--rm` cleans up.
+    // Whatever it was, the container must not outlive the call that started it: `docker run`
+    // forwards the signal and `--rm` cleans up.
     child.kill();
     throw error;
   }

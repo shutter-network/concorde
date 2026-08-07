@@ -1,34 +1,32 @@
 /**
- * The Scheduler's Agent routes: creating, listing, reading and cancelling Schedules.
- *
- * A Fastify plugin, like every other Component's routes. The Scheduler registers it at no prefix on
- * the Agent server it is constructed with. Passing no server switches the whole surface off. That
- * switch does double duty. A self-waking agent is a load on the single serial worker lane. A
+ * A Fastify plugin, like every other component's routes, registered at no prefix on the Agent
+ * server the Scheduler is constructed with. Passing no server registers none of it, and that switch
+ * does double duty: a self-waking agent is a load on the one serial worker lane, and a
  * prompt-injectable one is a hand on the Operator's own Schedules.
  *
  * | Route | Answers |
  * | --- | --- |
- * | `PUT /schedules/:name` | Upsert. 201 with the read model on create, 200 on update, 400 on an invalid spec. |
+ * | `PUT /schedules/:name` | Upsert. 201 with the read model on create, 200 on update, 400 on a spec that will not fire. |
  * | `GET /schedules` | Every live Schedule, ascending by `nextFireAt`, capped envelope, no cursor. 200. |
  * | `GET /schedules/:name` | 200 with the read model, or 404. |
  * | `DELETE /schedules/:name` | Cancel. 204, or 404 on an unknown name. |
  *
- * Addressing is by name, the sole identifier. That is the one divergence from the id-addressing
- * every other Agent route uses. A Schedule's identity is a client-chosen key, and `PUT` on that key
- * is the honest verb for its create-or-update. `PUT` carries no 404, so the 201-versus-200 in its
- * answer is the only signal of which happened. The whole surface is unscoped. With the routes
- * enabled the agent lists and cancels any Schedule, the Operator's included.
+ * Addressing is by name, and this is the one family in the framework that does it. A Schedule's
+ * identity is a key its caller chose, so `PUT` on that key is the honest verb for create-or-update
+ * and `nameParams` rather than `idParams` is what guards the path. `PUT` carries no 404, which
+ * leaves 201-versus-200 as the only signal of which happened. Nothing here is scoped by creator.
  *
- * Validation is two layers. The schema layer refuses an unknown `kind` and a spec missing its `at`
- * or `expr`, and pattern-checks the path `name`. But Fastify's ajv strips an unknown field rather
- * than refusing it. So `rejectUnknownScheduleBody` below is what turns three of those into 400s.
- * The handler layer checks the values ajv never looks at. Those are a cron `expr` `cron-parser`
- * rejects and a `tz` luxon does not know. It also refuses a malformed `at` or `until`, and a `once`
- * already past.
+ * Validation is two layers, and it has to be. The schema layer refuses an unknown `kind` and a spec
+ * missing its `at` or `expr`, and pattern-checks the path `name`. But Fastify's ajv runs with
+ * `removeAdditional`, so `additionalProperties: false` deletes an unknown field instead of refusing
+ * it, and `rejectUnknownScheduleBody` below is what turns three of those into 400s. The handler
+ * layer then checks the values ajv never looks at: an `expr` `cron-parser` rejects, a `tz` luxon
+ * does not know, a malformed `at` or `until`, and a `once` already past.
  *
- * Every route describes what it answers with. A response schema is the serializer
- * `fast-json-stringify` compiles. A field of the read model forgotten in it is dropped from the
- * wire and the document with no warning. The round-trip assertions in `routes.test.ts` guard that.
+ * Every route declares what it answers with. A response schema is the serializer
+ * `fast-json-stringify` compiles, so a field of the read model forgotten in one is dropped from the
+ * wire and from the document with no warning anywhere. The round-trip assertions in
+ * `routes.test.ts` are what notice.
  */
 
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
@@ -53,53 +51,36 @@ import {
 /**
  * What the routes need of the Scheduler, and no more.
  *
- * Five operations: the clock the past-`at` refusal reads, the upsert, a limited list, a read by
- * name and a cancel. A narrow object rather than the whole `Scheduler`, so the plugin reaches the
- * tables through these and nothing else.
+ * A narrow object rather than the whole Component, so this plugin reaches the table through these
+ * five and nothing else. `now` is the Scheduler's own clock, so the past-instant refusal is judged
+ * against the same instant a fire would be.
  */
 export type ScheduleRouteOperations = {
-  /** The Scheduler's own clock, so the route refuses a past `at` against the `now` a fire uses. */
   readonly now: () => Date;
-  /** Create-or-update by name, answering whether it created and with the resulting record. */
   schedule(input: ScheduleInput): Promise<ScheduleOutcome>;
-  /** Every live Schedule, ascending by next fire then name, bounded by the capped `limit`. */
   list(limit: number): Promise<ScheduleRecord[]>;
-  /** One live Schedule by name, or `undefined` when the name addresses none. */
   read(name: string): Promise<ScheduleRecord | undefined>;
-  /** Cancel by name, answering whether one was there to cancel. */
   cancel(name: string): Promise<boolean>;
 };
 
-/**
- * The body of `PUT /schedules/:name`: the recurrence, the opaque data, and a cron's end instant.
- *
- * The `name` is the path and never the body. So a request cannot name one Schedule in the path and
- * another in the body.
- */
+// No `name` here: it is the path and never the body, so a request cannot name one Schedule in the
+// path and another beside it.
 type ScheduleBody = {
   readonly spec: ScheduleSpec;
   readonly data?: unknown;
   readonly until?: string;
 };
 
-/**
- * A JSON value the Scheduler never interprets, as an empty schema.
- *
- * It passes any value through byte intact and renders as "any" in the document, the same shape
- * `signals.payload` uses. Constraining it would be the Scheduler having an opinion about `data` it
- * emits verbatim.
- */
+// An empty schema, which passes any JSON through intact and renders as "any" in the document. The
+// same shape `signals.payload` uses. Constraining it would be the Scheduler having an opinion about
+// bytes it copies verbatim.
 const dataSchema = {
   description:
     "Arbitrary JSON, echoed verbatim in the fired Signal's payload. The Scheduler never interprets it, so what a Schedule carries is the creator's convention and their Signal Handler is where it is read. Omitted, it is stored as null.",
 } as const;
 
-/**
- * The `spec` a `once` create takes on the wire: a single absolute instant.
- *
- * `at` is a string here, and the handler is where it is parsed. The reason is that ajv cannot tell
- * an ISO instant from any other string.
- */
+// `at` is a plain string and the handler parses it, because ajv cannot tell an ISO instant from any
+// other string.
 const onceSpecInSchema = {
   type: "object",
   properties: {
@@ -114,12 +95,7 @@ const onceSpecInSchema = {
   additionalProperties: false,
 } as const;
 
-/**
- * The `spec` a `cron` create takes on the wire: an expression and an optional zone.
- *
- * `tz` defaults to UTC, never the server's local zone. `expr` is validated by `cron-parser` in the
- * handler and not by ajv.
- */
+// `expr` and `tz` are likewise validated in the handler, by `cron-parser` and luxon.
 const cronSpecInSchema = {
   type: "object",
   properties: {
@@ -138,13 +114,9 @@ const cronSpecInSchema = {
   additionalProperties: false,
 } as const;
 
-/**
- * The body schema, which documents the shape rather than enforcing it.
- *
- * `additionalProperties: false` strips under `removeAdditional`, so the refusal a caller reads is
- * `rejectUnknownScheduleBody`'s. `spec` is the `oneOf` on `kind` that makes an unknown `kind` a
- * schema-layer 400. `until` is a cron-only bound, and a `once` carrying one is refused by the hook.
- */
+// This documents the shape rather than enforcing it: `additionalProperties: false` strips under
+// `removeAdditional`, so the refusal a caller reads comes from the hook below. The `oneOf` on `kind`
+// is the exception, and is what makes an unknown `kind` a schema-layer 400.
 const scheduleBodySchema = {
   type: "object",
   properties: {
@@ -160,12 +132,9 @@ const scheduleBodySchema = {
   additionalProperties: false,
 } as const;
 
-/**
- * The `spec` on the wire out: a `once` announces its instant, a `cron` its expression and zone.
- *
- * `tz` is required here, unlike the request, because a stored cron always has a resolved zone. The
- * `enum` on `kind` is what lets `fast-json-stringify` pick the arm to serialise a record through.
- */
+// `tz` is required on the way out and optional on the way in, a stored cron always having a
+// resolved zone. The `enum` on `kind` is what lets `fast-json-stringify` pick the arm to serialise
+// a record through.
 const onceSpecOutSchema = {
   type: "object",
   properties: { kind: { type: "string", enum: ["once"] }, at: { type: "string" } },
@@ -184,17 +153,10 @@ const cronSpecOutSchema = {
   additionalProperties: false,
 } as const;
 
-/**
- * `ScheduleRecord` on the wire, written as the fields that can be answered.
- *
- * `fast-json-stringify` drops every field this does not declare with no warning. So a field added
- * to `ScheduleRecord` and forgotten here is missing from the Agent server's answers. It is missing
- * from the document too. `routes.test.ts` compares a whole produced record to catch that.
- *
- * `nextFireAt` is a plain required string and not nullable. A read answers only live Schedules, and
- * a create is refused unless it resolves to a fire. `until` is nullable, and `data` is the same
- * any-JSON shape as the body's.
- */
+// The read model on the wire, written as the fields that can be answered. A field added to
+// `ScheduleRecord` and forgotten here goes missing from the answers and the document both, in
+// silence; see the file header. `nextFireAt` is a required plain string and not nullable, because a
+// read answers only live Schedules and a create that would arm nothing is refused first.
 const scheduleRecordSchema = {
   type: "object",
   properties: {
@@ -216,51 +178,41 @@ const scheduleRecordSchema = {
   required: ["name", "spec", "data", "until", "nextFireAt"],
 } as const;
 
-/** A list answers in an envelope rather than a bare array, as every Component's does. */
+// An envelope rather than a bare array, as every component's list is.
 const scheduleListSchema = {
   type: "object",
   properties: { schedules: { type: "array", items: scheduleRecordSchema } },
   required: ["schedules"],
 } as const;
 
-/**
- * A response that carries no body, which is `type: "null"` and not an empty object.
- *
- * Fastify's serializer answers an empty 204 against this without a 500, and `@fastify/swagger`
- * documents it with no `content`. The same spelling and reason as the User Manager's `noBody`.
- *
- * @param why What this status means, for the document.
- */
+// `type: "null"` and not an empty object: that is the spelling Fastify's serializer answers an empty
+// 204 against without a 500, and the one `@fastify/swagger` documents with no `content`. The same
+// spelling and the same reason as the User Manager's.
 function noBody(why: string) {
   return { type: "null", description: why } as const;
 }
 
-/** A handler-layer refusal in the shared error shape, carrying a `ScheduleSpecError`'s message. */
 function badSpec(reply: FastifyReply, error: ScheduleSpecError): FastifyReply {
   return reply.code(400).send({ statusCode: 400, error: "Bad Request", message: error.message });
 }
 
-/**
- * The keys each `spec` `kind` takes, so the body hook names the same set the schema declares.
- *
- * The one duplication `unknownQueryRefusal` also accepts, since `removeAdditional` means the schema
- * cannot be the refusal.
- */
+// The keys each `kind` takes, so the hook below refuses against the same set the schema declares.
+// The one duplication `unknownQueryRefusal` also accepts, `removeAdditional` meaning the schema
+// cannot be the refusal.
 const specKeys = {
   once: ["kind", "at"],
   cron: ["kind", "expr", "tz"],
 } as const;
 
 /**
- * Refuses an unknown field the body schema would otherwise strip in silence.
+ * The body's counterpart of `unknownQueryRefusal`, run in `preValidation` before
+ * `removeAdditional` deletes the evidence. It turns three things into 400s: an unknown top-level
+ * field, an unknown field inside a `spec` of a known `kind`, and a `once` carrying a cron-only
+ * `until`.
  *
- * The body's counterpart of `unknownQueryRefusal`, run in `preValidation` before `removeAdditional`
- * deletes the evidence. It turns three things into 400s. An unknown top-level field, and an unknown
- * field inside a `spec` of a known `kind`. And a `once` carrying a cron-only `until`.
- *
- * An unknown `kind` is left to the schema's `oneOf`, which refuses it with the required fields it
- * lacks. A malformed shape is left to the schema too. This hook narrows rather than asserts: it
- * refuses only a stray field on an otherwise well-formed request.
+ * It narrows rather than asserts, and must stay that way. An unknown `kind` and a malformed shape
+ * are the schema's `oneOf` to refuse, with the required fields it lacks. Widening this into a
+ * validator would be a second, worse copy of the schema.
  */
 async function rejectUnknownScheduleBody(
   request: FastifyRequest,
@@ -300,11 +252,10 @@ async function rejectUnknownScheduleBody(
   return undefined;
 }
 
-/** What a malformed path `name` is refused with, on the three routes that take one. */
+// Said on the three routes that take a path name, and written once.
 const malformedName =
   "The name in the path is not a legible url-safe key of up to 128 letters, digits, dots, dashes or underscores, or a query parameter was written.";
 
-/** The Scheduler's Agent routes, over the five operations above. */
 export function scheduleRoutes(operations: ScheduleRouteOperations): FastifyPluginAsync {
   const rejectUnknownQuery = unknownQueryRefusal(
     "Schedules are not scoped by creator, so there is no such parameter to pass.",

@@ -1,19 +1,22 @@
 /**
- * The HTTP Channel: the way a User reaches a Shared Agent over HTTP, and it over them.
+ * The order in the constructor is load-bearing. `register` runs before the routes are handed to
+ * Fastify, so a second HTTP Channel on one Messenger throws before it has put a duplicate route
+ * group on anybody's server. Do not move the wiring above it.
  *
- * One call builds it, and it registers one route group at `/messages` on the Public server: a
- * submission, and a cursored read of the submitting User's own log (ADR-0035). Delivery is
- * polling, so `?after=<seq>` is the whole of the resume mechanism, and `send` is a no-op:
- * **HTTP delivery is the User asking**, so there is nothing to hand anybody and no queue to put
- * it in (ADR-0048).
+ * What `register` answers with is the only way an inbound Message can be written: the Messenger has
+ * no public `receive`, on purpose, so that no other code can put words in a User's log and no
+ * Channel can claim to be a different one (ADR-0048). Handing the routes the Messenger itself
+ * gives them nothing to write through.
  *
- * **It owns no tables and no schema.** The log is the Messenger's, whichever Channel a Message
- * travelled by, and this subpath carries a constructor and nothing beside it — the second
- * component of which that is true, after Signatures (ADR-0042, ADR-0047).
+ * `send` is a no-op rather than an unwritten member, and there is no queue table behind it. The
+ * `Channel` type argues the general case at length: an implementation must not perform the network
+ * act inside the caller's transaction, because a publish cannot be rolled back and a transaction
+ * can. HTTP has no act to defer either. Delivery is the User asking, so the row in the log is the
+ * whole of it and the next poll carries it (ADR-0035). Do not add a queue here.
  *
- * It registers itself with the Messenger inside its own constructor, and what it gets back is the
- * only way to write an inbound Message. So an Operator's entry point performs no wiring, and
- * nothing but a registered Channel can put words in a User's log.
+ * The submission's transaction is opened here and not in the handler, because a route holds no Db.
+ * The Messenger's `receive` joins it rather than opening one, which is what would let a Channel
+ * with bookkeeping of its own commit that bookkeeping with the Message.
  */
 
 import type { FastifyInstance } from "fastify";
@@ -22,54 +25,47 @@ import type { Channel, Messenger } from "../messenger/messenger.ts";
 import type { Users } from "../users/users.ts";
 import { publicMessageRoutes } from "./routes.ts";
 
-/**
- * Where the route group lands, on the Public server.
- *
- * A constant and not an option. There is no prefix to configure and no plugin to register
- * elsewhere. So a client written for one deployment's HTTP Channel works against every other's.
- */
+// A constant and not an option: no prefix to configure and no plugin to register elsewhere, so a
+// client written for one deployment's HTTP Channel works against every other one.
 const messagesPrefix = "/messages";
 
-/**
- * Which Channel this is, fixed by its type.
- *
- * Not a construction option: two HTTP Channels on one Messenger are unconstructable anyway, so a
- * name a Developer could set would only be a name they could get wrong.
- */
+// Fixed by the type rather than settable at construction. Two HTTP Channels on one Messenger are
+// unconstructable anyway, so a name a Developer could pass would only be a name they could get
+// wrong.
 const channelName = "http";
 
-/** Everything `createHttpChannel` needs: the Db, two Components, and the Public server. */
 export type HttpChannelOptions = {
   /**
-   * The Db this component opens one transaction on, and queries through not at all.
+   * The Db one transaction is opened on, and queried through not at all.
    *
-   * It owns no tables. What it needs a Db for is the transaction a submission runs in: the Message
-   * and the Signal that wakes the agent for it are one act, and the Messenger's inbound write
-   * takes the transaction rather than opening one, so that a Channel with bookkeeping of its own
-   * can join it.
+   * This component owns no tables. What it needs a Db for is the submission: the Message and the
+   * Signal that wakes the agent for it are one act, and the Messenger's inbound write joins that
+   * transaction rather than opening one of its own.
    */
   readonly db: Db;
   /**
    * The Messenger that owns the log. Build it before this.
    *
-   * The constructor calls `register` on it, which is what makes this Channel the one that reaches
-   * people and hands back the only way to write an inbound Message. A second Channel on the same
-   * Messenger is refused there.
+   * The constructor registers with it, and what comes back is the only way to write an inbound
+   * Message. A Messenger that already has a Channel refuses the second, so this is where a
+   * deployment settles on one medium.
    */
   readonly messenger: Messenger;
   /**
-   * The User Manager whose Users these Messages belong to.
+   * Supplies the `requireUser` hook both routes take as one option, and nothing else is read off
+   * it.
    *
-   * Where the routes' authentication comes from, and the whole of what this option is for.
-   * `requireUser` is taken off this object and put on the route as one option, so every refusal is
-   * the Manager's single 401 and this component authenticates nobody.
+   * Taken and neither wrapped nor re-implemented, so this component authenticates nobody and an
+   * unauthenticated submission or read is refused with the same 401 the routes under `/auth`
+   * answer.
    */
   readonly users: Users;
   /**
-   * The Public server, where Users reach their own Messages, at `/messages`.
+   * Where Users submit and poll, at `/messages`.
    *
-   * Required. A Channel nobody can reach is broken rather than smaller. Structural, so what
-   * `serverComponent` returns satisfies it.
+   * A Channel nobody can reach is broken rather than smaller, so there is no assembly of this
+   * component that omits it. Structural: anything carrying a Fastify instance satisfies it,
+   * including what `serverComponent` returns.
    */
   readonly publicServer: {
     readonly fastify: FastifyInstance;
@@ -77,62 +73,36 @@ export type HttpChannelOptions = {
 };
 
 /**
- * The HTTP Channel as a Component, and it is a Channel and nothing more.
+ * The HTTP Channel as a Component, and every member of it does nothing.
  *
- * There is no method here that trusted code calls: everything this component does, it does for a
- * request on the Public server or for the Messenger that registered it. `send` is the Messenger's
- * to call and does nothing; `start` and `stop` do nothing, because polling opens no connection and
- * sets no ticker going.
+ * `send` is the Messenger's to call and is a no-op: HTTP delivery is the User asking, so an
+ * outbound Message needs nothing from here, being in the log already for the next poll to carry.
+ * `start` and `stop` are no-ops too, because polling opens no connection and sets no ticker going.
+ * `name` is `"http"`, which nothing routes on and nothing stores.
  *
- * A deployment holds it to key it in the Gateway's record, ahead of the Signal Worker like the
- * Messenger itself.
+ * Nothing is kept: no tables, no queue and no read position, so a restart loses nothing this
+ * component was holding and there is nothing here to migrate. The log and every Message in it are
+ * the Messenger's.
+ *
+ * So there is no method on this that trusted code calls. What a deployment holds the object for is
+ * its place in the Gateway's record, and everything it does it does for a request on the Public
+ * server or for the Messenger that registered it.
  */
 export type HttpChannel = Channel;
 
 /**
- * Builds the HTTP Channel, registers it with the Messenger, and puts its routes at `/messages` on
- * the Public server.
+ * Builds the HTTP Channel, registers it with the Messenger, and puts one route group at `/messages`
+ * on the Public server: a submission, and a cursored read of the submitting User's own log.
  *
- * Nothing here connects, listens or applies DDL. Key the result before the Signal Worker, so that
- * it stops after the drain: a Signal Handler's post phase runs `messenger.send` into this
- * component's `send`.
+ * Nothing here connects, listens or applies DDL.
  *
  * @throws `ChannelAlreadyRegisteredError` if a Channel is already registered with that Messenger.
- *
- * @example
- * Built in `extend`, after the Messenger it registers with.
- * ```ts
- * import { createGateway } from "shared-agent-framework";
- * import { createHttpChannel } from "shared-agent-framework/http-channel";
- * import { createMessenger } from "shared-agent-framework/messenger";
- * import { createPiRuntime } from "shared-agent-framework/pi";
- * import { createUsers } from "shared-agent-framework/users";
- *
- * const gateway = createGateway({
- *   databaseUrl: process.env.DATABASE_URL ?? "",
- *   runtime: createPiRuntime({ image: "my-agent:1" }),
- *   agentListen: { host: "127.0.0.1", port: 8081 },
- *   publicListen: { host: "0.0.0.0", port: 8080 },
- *   extend: ({ db, agentServer, publicServer, worker }) => {
- *     const users = createUsers({ db, tokenTtl: 86_400_000, agentServer, publicServer });
- *     const messenger = createMessenger({ db, users, worker, agentServer });
- *     return {
- *       users,
- *       messenger,
- *       http: createHttpChannel({ db, messenger, users, publicServer }),
- *     };
- *   },
- *   handlers: () => ({}),
- * });
- *
- * await gateway.start();
- * ```
+ *   Thrown before either route reaches the server, so a refused second Channel leaves nothing
+ *   behind on it.
  */
 export function createHttpChannel(options: HttpChannelOptions): HttpChannel {
-  // The whole component, and every member of it does nothing. `send` is the no-op the type on
-  // `Channel` argues for at length: HTTP delivery is the User asking, so an outbound Message needs
-  // nothing from this component — it is in the log, and the next poll carries it. `start` and
-  // `stop` are the two every Component has to have, and polling holds nothing between requests.
+  // The whole component, and every member of it does nothing. Built before the registration below,
+  // because that call takes it.
   const channel: HttpChannel = {
     name: channelName,
     send: async () => {},
@@ -140,9 +110,8 @@ export function createHttpChannel(options: HttpChannelOptions): HttpChannel {
     stop: async () => {},
   };
 
-  // Registered first, and registered as itself, so that a second HTTP Channel on one Messenger
-  // throws before it has put a duplicate route group on anybody's server. What comes back is the
-  // inbound write, and it exists on no other object anywhere.
+  // Registered as itself, and first: see the file header for both. What comes back is the inbound
+  // write, and it exists on no other object anywhere.
   const inbound = options.messenger.register(channel);
 
   const publicRoutes = publicMessageRoutes(

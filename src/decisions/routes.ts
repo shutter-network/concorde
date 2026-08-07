@@ -197,13 +197,13 @@ const decisionRecordSchema = {
     seq: {
       type: "integer",
       description:
-        "This Decision's number in the one global log, from 1. It is the cursor: the largest one held is what `after` takes to read whatever has been published since. **Gaps are expected and mean nothing** — a rolled-back publish burns a number — so a missing number is not a withheld Decision and nothing anywhere could tell you if it were.",
+        "This Decision's number in the one global log, from 1. It is the cursor: the largest one held is what `after` takes to read whatever has been published since. **Gaps are expected and mean nothing**, a rolled-back publish burning a number, so a missing number is not a withheld Decision and nothing anywhere could tell you if it were.",
     },
     statement: { type: "string" },
     jws: {
       type: "string",
       description:
-        'The **Decision itself**: a compact JWS, `header.payload.signature`, base64url. Its payload carries this record\'s `seq`, `createdAt` and `statement`, so everything above can be read back out of it by anybody holding the public key — which is what makes handing this one string to a third party the whole point. Its protected header carries `typ: "saf-decision+jws"`, covered by the signature, so an artifact of another kind cannot be presented as a Decision.',
+        'The **Decision itself**: a compact JWS, `header.payload.signature`, base64url. Its payload carries this record\'s `seq`, `createdAt` and `statement`, so everything above can be read back out of it by anybody holding the public key, which is what makes handing this one string to a third party the whole point. Its protected header carries `typ: "saf-decision+jws"`, covered by the signature, so an artifact of another kind cannot be presented as a Decision.',
     },
     createdAt: {
       type: "string",

@@ -1,25 +1,28 @@
 # shared-agent-framework/scheduler
 
-The Scheduler, from `shared-agent-framework/scheduler`.
+The Scheduler, the component that owns Schedules and wakes the deployment when one matures. A
+Schedule is a named, stored instruction to emit one Signal at future times: a cron expression in
+a named IANA time zone, or a single absolute instant. Its name is its whole identity, in one flat
+namespace the agent and the Operator share, so creating a name that exists updates it.
 
-`createScheduler` is the whole of it for an Operator. Hand it the Db and the Signal Worker, and
-it registers its Agent routes on the server it is given. Then key it in the Gateway's record like
-every other Component: `start` arms its firing timer and `stop` cancels it.
+[createScheduler](#createscheduler) makes one. [Scheduler](#scheduler) is what comes back, and `schedule` is the
+upsert both creators go through. [scheduleFiredKind](#schedulefiredkind) and [ScheduleFiredRecord](#schedulefiredrecord) are
+the two halves of the Signal contract, so a Handler for a matured Schedule is written
+`SignalHandler<ScheduleFiredRecord>` with no string literal of its own.
 
-It answers with the programmatic interface an Operator always has. That is `schedule`, an upsert
-by name, plus `list`, `cancel` and the awaitable `tick`. A `schedule` call the Scheduler will not
-accept throws `ScheduleSpecError` before anything is persisted. The Agent route catches exactly
-that and answers 400.
+Build the Signal Worker first, which every fire emits into, and put this ahead of it in the
+Gateway's record. Then register a Handler under that one `kind`: with none, a stored Schedule
+fires into a Signal that fails on every attempt. Passing no Agent server is how a deployment
+keeps the agent away from Schedules and keeps the methods for itself.
 
-`scheduleFiredKind` and `ScheduleFiredRecord` are the two halves of the Signal contract, so a
-Handler for a matured Schedule is `SignalHandler<ScheduleFiredRecord>`. Registering no Handler
-for that `kind` leaves a stored Schedule firing into a permanently failed Signal. This subpath
-also carries the one table. A Schedule references nobody, so a barrel carrying it alone generates
-cleanly.
+A missed fire is never replayed. Every next fire is derived forward from now, at each boot and
+after each fire, so a daily digest arranged before a week of downtime fires once afterwards
+rather than seven times. The subpath also carries the one table, which references nobody, so a
+barrel carrying it alone generates cleanly.
 
 ## Example
 
-A Gateway that wakes itself every morning, and the Handler the fire reaches.
+A Gateway that wakes itself every morning, and the Handler each fire reaches.
 ```ts
 import { createGateway, templateHandler } from "shared-agent-framework";
 import { createPiRuntime } from "shared-agent-framework/pi";
@@ -29,8 +32,10 @@ import { createScheduler, scheduleFiredKind } from "shared-agent-framework/sched
 const gateway = createGateway({
   databaseUrl: process.env.DATABASE_URL ?? "",
   runtime: createPiRuntime({ image: "my-agent:1" }),
-  agentListen: { host: "127.0.0.1", port: 8081 },
+  // Not loopback: the agent reaches this server from a container of its own.
+  agentListen: { host: "0.0.0.0", port: 8081 },
   publicListen: { host: "0.0.0.0", port: 8080 },
+  // Drop `agentServer` here and the routes vanish, leaving the methods below.
   extend: ({ db, worker, agentServer }) => ({
     scheduler: createScheduler({ db, worker, agentServer }),
   }),
@@ -45,26 +50,27 @@ const gateway = createGateway({
 
 await gateway.start();
 
-// The Operator's own Schedule, declared at boot. Re-running this converges to one row.
-await gateway.components.scheduler.schedule({
+// The Operator's own Schedule, arranged at boot. Running this again converges to one row.
+const { schedule } = await gateway.components.scheduler.schedule({
   name: "morning-digest",
   spec: { kind: "cron", expr: "0 7 * * *", tz: "Europe/Berlin" },
   data: { audience: "everybody" },
 });
+console.log(schedule.nextFireAt);
 ```
 
 ## Classes
 
 ### ScheduleSpecError
 
-A cron `expr`, a `tz` or an `until` the Scheduler will not accept.
+A cron `expr`, a `tz`, an `until` or a `once` instant the Scheduler will not accept.
 
-Thrown by `schedule` before anything is persisted. So a caller learns of the mistake at creation
+Thrown by `schedule` before anything is written, so a caller learns of the mistake at creation
 rather than through a Schedule that silently never fires.
 
-A named class rather than a bare `Error`, so the Agent routes catch exactly this and answer 400.
-Every other error stays a 500. Its `message` is the refusal reason and is safe to surface. It
-names the bad value and nothing about the Scheduler's internals.
+The `message` is the refusal reason and is safe to show a caller: it names the value that was
+refused and nothing about the Scheduler itself. A named class rather than a bare `Error` so that
+the Agent routes catch this and only this, and answer 400. Every other failure stays a 500.
 
 #### Extends
 
@@ -107,14 +113,11 @@ type ScheduleFiredRecord = {
 };
 ```
 
-The Signal a matured Schedule emits, and half of the Signal contract.
+The payload of the Signal a matured Schedule emits, flat, and half of the Signal contract.
 
-The other half is the fixed `scheduleFiredKind`. Every matured Schedule, from either creator,
-emits this one envelope. It carries the creator's opaque `data` verbatim, plus the metadata a
-Handler needs to correlate and to judge lateness.
-
-Exported so that an Operator's Handler is `SignalHandler<ScheduleFiredRecord>`, and neither the
-`kind` nor the payload shape is re-declared by hand.
+The other half is the fixed `kind`. Every fire of every Schedule, from either creator, arrives as
+this one shape, so a Handler is written `SignalHandler<ScheduleFiredRecord>` and neither the
+`kind` string nor the payload shape is spelled out a second time by hand.
 
 #### Properties
 
@@ -124,7 +127,7 @@ Exported so that an Operator's Handler is `SignalHandler<ScheduleFiredRecord>`, 
 readonly data: unknown;
 ```
 
-The creator's opaque data, exactly as it was supplied at creation.
+The creator's data, byte for byte as it was supplied. The Scheduler reads none of it.
 
 ##### firedAt
 
@@ -132,7 +135,7 @@ The creator's opaque data, exactly as it was supplied at creation.
 readonly firedAt: string;
 ```
 
-The instant the Scheduler actually emitted, ISO 8601. Late when it is past `scheduledFor`.
+When the Scheduler actually emitted, ISO 8601. Past `scheduledFor` means the fire was late.
 
 ##### scheduledFor
 
@@ -140,7 +143,7 @@ The instant the Scheduler actually emitted, ISO 8601. Late when it is past `sche
 readonly scheduledFor: string;
 ```
 
-The instant this fire was intended for, ISO 8601. A Handler compares it to `firedAt`.
+The instant the fire was arranged for, ISO 8601.
 
 ##### scheduleName
 
@@ -148,7 +151,7 @@ The instant this fire was intended for, ISO 8601. A Handler compares it to `fire
 readonly scheduleName: string;
 ```
 
-The Schedule this fire came from, its sole identifier and the reference to correlate on.
+The Schedule this fire came from, which is its whole identity and the thing to correlate on.
 
 ***
 
@@ -163,11 +166,12 @@ type ScheduleInput = {
 };
 ```
 
-What a create-or-update takes: the name, the recurrence, the opaque data, and a cron's bound.
+What a create-or-update takes.
 
-`data` is optional and stored as `null` when omitted. `until` bounds a recurring Schedule: after
-its last occurrence at or before that instant it is retired. It is meaningless for a `once`,
-which bounds itself by firing once. This layer ignores it there, and the Agent route refuses it.
+`data` is the creator's own, uninterpreted, and is stored as null when omitted. `until` bounds a
+`cron`: after its last occurrence at or before that instant the Schedule retires. It means
+nothing on a `once`, which bounds itself by firing once, and is ignored there rather than
+refused. The Agent route refuses it instead.
 
 #### Properties
 
@@ -203,8 +207,6 @@ readonly optional until?: string;
 type ScheduleKind = typeof scheduleKinds[number];
 ```
 
-Which of the two shapes a stored Schedule is, as the `kind` column's type.
-
 ***
 
 ### ScheduleOutcome
@@ -216,13 +218,12 @@ type ScheduleOutcome = {
 };
 ```
 
-What `schedule` answers with: whether the name was newly created, and the resulting record.
+What a create-or-update answers with.
 
-`created` distinguishes an insert from an update, which is the signal an HTTP `PUT` turns into
-201 versus 200. It is read from the upsert itself rather than from a lookup in front of it.
-
-A Schedule that resolved to no future fire is `created: false` with a `null` `nextFireAt`, since
-nothing was armed.
+`created` is read out of the write itself rather than from a lookup in front of it, so nothing
+races between the two. It is what an HTTP `PUT` turns into 201 versus 200. A create that resolved
+to no future fire is `created: false` carrying a record whose `nextFireAt` is null, nothing
+having been armed.
 
 #### Properties
 
@@ -253,11 +254,20 @@ type Scheduler = Component & {
 };
 ```
 
-What the constructor answers with: the interface the Operator always has.
+The Schedules a deployment has arranged, as a Component: an upsert by name, a list, a cancel, and
+the due-check the timer calls.
 
-`schedule`, `list` and `cancel` are the management surface, and they work whether or not the
-Agent routes are switched on. `tick` is the due-check the internal timer also calls, exposed as
-the testing seam. `start` arms that timer and `stop` cancels it.
+A Schedule is stored, so it outlives the Run and the process that arranged it. Nothing removes
+one but a cancel, a `once` that has fired, or a `cron` reaching its `until`. There is no expiry
+and nothing sweeps.
+
+The four methods work whether or not the Agent routes were switched on, and none of them is
+scoped: names live in one flat namespace that the Operator and the agent share, so either reaches
+what the other arranged.
+
+An occurrence is announced once. The Signal and the row's advance or delete commit in one
+transaction, so nothing can fire twice or retire silently. An occurrence that fell while the
+process was down is skipped rather than replayed, every next fire being derived forward from now.
 
 #### Type Declaration
 
@@ -267,10 +277,11 @@ the testing seam. `start` arms that timer and `stop` cancels it.
 cancel(name): Promise<boolean>;
 ```
 
-Cancels a Schedule by name, and answers whether one was there.
+Cancels the Schedule this name addresses, and answers whether one was there.
 
-So a caller learns that a name was already gone. It is not told that it stopped something which
-did not exist.
+A name that was already gone answers `false` rather than an idempotent `true`, so a caller is
+never told it stopped something that did not exist. A `cron` carrying no `until` has a next
+fire forever, so this is what ends one.
 
 ###### Parameters
 
@@ -288,7 +299,9 @@ did not exist.
 list(): Promise<ScheduleRecord[]>;
 ```
 
-Every Schedule, ascending by next fire then name, so an Operator sees what is arranged.
+Every Schedule, soonest to fire first and then by name.
+
+Unbounded: the cap on a page belongs to the Agent route rather than to this.
 
 ###### Returns
 
@@ -300,13 +313,20 @@ Every Schedule, ascending by next fire then name, so an Operator sees what is ar
 schedule(input): Promise<ScheduleOutcome>;
 ```
 
-Creates a Schedule, or updates the one already under this name.
+Creates a Schedule under this name, or updates the one already there, and answers with the
+record and whether the name was new.
 
-An upsert, so a retry or a revised plan converges to one Schedule rather than accumulating
-duplicates. It answers whether it created or updated, and with the resulting record.
+An upsert, so a retry or a revised plan converges to one Schedule instead of accumulating
+duplicates, and a declaration made at every boot is safe to re-run.
 
-A `once` whose instant is already past has no future fire. It is not armed, and any existing
-row under the name is removed. The record comes back with a `null` `nextFireAt`.
+A spec with no future fire is not refused here. A `once` whose instant has passed, and a `cron`
+whose `until` sits at or before its next occurrence, arm nothing: any row under the name is
+removed, and the record answers with a null `nextFireAt`. The Agent route refuses that same
+case with a 400 instead, a caller in the moment being able to act on it.
+
+The name is not pattern-checked here, and the Agent routes hold one to a url-safe key of at
+most 128 letters, digits, dots, dashes and underscores. So a name written from code outside
+that set is stored and listed, and cannot be read or cancelled over HTTP.
 
 ###### Parameters
 
@@ -320,8 +340,8 @@ row under the name is removed. The record comes back with a `null` `nextFireAt`.
 
 ###### Throws
 
-`ScheduleSpecError` if a cron `expr` is invalid, a `tz` unknown, or an `until`
-  malformed. Nothing is written first.
+`ScheduleSpecError` for a cron `expr` that will not parse, a `tz` that is no IANA zone,
+  or a malformed `until`. Nothing is written first.
 
 ##### start()
 
@@ -329,15 +349,14 @@ row under the name is removed. The record comes back with a `null` `nextFireAt`.
 start(): Promise<void>;
 ```
 
-Re-derives every Schedule's next fire forward from `now`, then arms the firing timer.
+Re-derives every Schedule's next fire forward from now, then arms the firing timer.
 
-The re-derivation is what makes a restart clean. The persisted `at` is display-only and is not
-trusted as a trigger across a boot. So an occurrence that fell during an outage is dropped for
-a spent `once` and jumped for a `cron`. Only a continuously-live process frozen through a fire
-time fires once late, because no boot ran.
+The re-derivation is what makes a restart clean. A stored next fire is not trusted as a trigger
+across a boot, so an occurrence that fell during an outage is dropped for a spent `once` and
+jumped for a `cron`, however many were missed. The one fire that still arrives late is on a
+process that stayed live and was frozen through the instant, because no boot ran.
 
-The timer is a single capped `setTimeout`, re-armed after every fire and on every `schedule`
-and `cancel`. A second `start` is a no-op rather than a second timer.
+A second `start` is a no-op rather than a second timer.
 
 ###### Returns
 
@@ -349,11 +368,13 @@ and `cancel`. A second `start` is a no-op rather than a second timer.
 stop(): Promise<void>;
 ```
 
-Cancels the firing timer, so no fire begins during or after the worker's drain.
+Cancels the firing timer, so no fire begins once it returns.
 
-A fire already committed is a pending Signal the next start's worker drains. What `stop`
-guarantees is that no new fire begins once it returns. A second `stop`, or a `stop` before any
-`start`, finds no timer and does nothing.
+A Gateway stops its Components in reverse key order and the Signal Worker is keyed last, so the
+Worker has already drained by the time this runs. A Schedule that matured during that drain has
+committed its Signal, and the next boot's Worker is what runs it.
+
+A second `stop`, or a `stop` before any `start`, finds no timer and does nothing.
 
 ###### Returns
 
@@ -365,11 +386,12 @@ guarantees is that no new fire begins once it returns. A second `stop`, or a `st
 tick(): Promise<void>;
 ```
 
-Fires every Schedule matured at the current `now`, and resolves when none is left.
+Fires every Schedule the clock has reached, and resolves when none is left.
 
-Each fire emits one Signal and retires the spent one-shot in one transaction. This is the
-awaitable seam the timer calls and the tests drive directly. Drive it serially: await one
-`tick` before the next, which is how the timer calls it too.
+The seam the timer calls, exposed so a test drives the same code with an injected clock and
+without sleeping. Drive it serially, awaiting one call before the next, which is how the timer
+calls it. It arms nothing: a `tick` on a stopped Scheduler fires what is due and leaves the
+timer as it found it.
 
 ###### Returns
 
@@ -389,14 +411,14 @@ type ScheduleRecord = {
 };
 ```
 
-A Schedule as every surface answers with it: the upsert response and the list.
+A Schedule as every surface answers with it: the upsert's answer and the list's entries.
 
-One shape and not a projection per surface. `spec` is the tagged union reconstructed from the
-row's columns, and `data` is the creator's opaque payload. `until` is a cron's optional end
-instant, null for a `once` and for an unbounded cron.
+One shape rather than a projection per surface, so a record in hand and a record read back later
+agree field for field. `spec` is the union rebuilt from the stored columns, with a cron's zone
+resolved. `until` is a cron's end instant, and is null for a `once` and for an unbounded cron.
 
-`nextFireAt` is when it fires next, derived forward from now rather than read from a trusted
-timestamp. It is `null` only for a Schedule with no future fire, which is therefore spent.
+`nextFireAt` is derived forward from now rather than read off a trusted timestamp. It is null
+only for a Schedule with no future fire, which is therefore spent and stored nowhere.
 
 #### Properties
 
@@ -447,8 +469,6 @@ type SchedulerOptions = {
 };
 ```
 
-Everything `createScheduler` needs: the Db, the Signal Worker, and four defaults.
-
 #### Properties
 
 ##### agentServer?
@@ -459,12 +479,17 @@ readonly optional agentServer?: {
 };
 ```
 
-The Agent server, if the agent is to create, list, read and cancel Schedules over HTTP.
+Where the agent creates, lists, reads and cancels Schedules over HTTP. Omit it and no route is
+registered anywhere, which is the switch that keeps the agent away from Schedules altogether.
+The methods below stay available either way.
 
-Given one, the constructor registers `PUT`, `GET` and `DELETE` on `/schedules` and
-`/schedules/:name` at no prefix. Omit it and nothing is registered anywhere. That is the
-disable switch. It stops the agent waking itself and touching the Operator's own Schedules. The
-programmatic interface below stays available regardless.
+Given one, the constructor registers `PUT /schedules/:name`, `GET /schedules`,
+`GET /schedules/:name` and `DELETE /schedules/:name`, at no prefix. These are the only routes
+in the framework that address a record by a name its caller chose rather than by an id the
+Gateway minted, which is why the create is a `PUT`.
+
+Worth switching off for two reasons. An agent that wakes itself can loop the one serial Signal
+lane, and nothing scopes a Schedule by creator, so the same routes reach the Operator's own.
 
 Structural, and asks for nothing but the Fastify instance, so what satisfies it is what
 `serverComponent` returns.
@@ -489,6 +514,9 @@ readonly optional logger?: Logger;
 
 Defaults to a `pino` instance on stdout.
 
+One info line per fire, naming the Schedule, and one error line for a due-check that failed.
+That failure is swallowed rather than thrown, so the line is the only record of it.
+
 ##### maxSleepMs?
 
 ```ts
@@ -498,12 +526,10 @@ readonly optional maxSleepMs?: number;
 The longest the firing timer sleeps before it wakes and re-derives due-ness, in milliseconds.
 Defaults to roughly a minute.
 
-A cap for correctness rather than tuning. It keeps the armed delay under the 24.85-day
-`setTimeout` ceiling. It also bounds the drift a long arm accrues across an NTP step, a suspend
-or a DST jump.
-
-There is no correctness in the exact value. Lower it and the timer polls more often. Raise it
-past the ceiling and a far Schedule overflows into an immediate wake.
+A bound on correctness rather than a tuning knob. It keeps an armed delay under the 24.85-day
+`setTimeout` ceiling, and it bounds the drift a long arm accrues across an NTP step, a suspend
+or a DST jump. Lower it and the timer wakes more often for nothing. Raise it past the ceiling
+and a far Schedule overflows into an immediate wake.
 
 ##### now?
 
@@ -511,10 +537,10 @@ past the ceiling and a far Schedule overflows into an immediate wake.
 readonly optional now?: () => Date;
 ```
 
-The clock the due-check reads. Defaults to real time.
+The clock the due-check, the derivations and every timestamp read. Defaults to real time.
 
-Injected so timing is deterministic in tests: set `now`, await `tick`, assert what fired, with
-no sleeping.
+Taken as an option so timing is deterministic in a test: set the instant, await `tick`, and
+assert what fired, with nothing sleeping.
 
 ###### Returns
 
@@ -526,11 +552,10 @@ no sleeping.
 readonly worker: SignalWorker;
 ```
 
-The Signal Worker a matured Schedule emits into.
+The Signal Worker every fire emits into.
 
-Required: a Scheduler that woke nobody would be a Producer that produces nothing. The emit
-shares the fire's transaction, which is what makes retiring a spent one-shot and announcing it
-one atomic act.
+The emit joins the fire's own transaction, so announcing an occurrence and retiring or
+advancing the Schedule commit together or not at all.
 
 ***
 
@@ -549,12 +574,11 @@ type ScheduleSpec =
 };
 ```
 
-How a Schedule recurs: a tagged union, with `kind` as the seam a future format is added at.
+How a Schedule recurs: a tagged union on `kind`.
 
- - `once` is a single absolute instant (ISO 8601). It needs no library and is the agent's most
-   ordinary request. cron cannot express it, having no year field.
- - `cron` is a recurring expression in a named IANA time zone, computed by `cron-parser`. `tz` is
-   optional: a caller who omits it gets UTC, never the server's local zone.
+ - `once` is one absolute instant, ISO 8601. cron cannot express it, having no year field.
+ - `cron` is a recurring expression evaluated in a named IANA time zone. `tz` may be omitted, and
+   then it is UTC rather than the zone the Gateway's host is set to.
 
 ## Variables
 
@@ -564,14 +588,13 @@ How a Schedule recurs: a tagged union, with `kind` as the seam a future format i
 const scheduleFiredKind: "saf_schedule_fired" = "saf_schedule_fired";
 ```
 
-The `kind` of the Signal every matured Schedule emits, and half of the Signal contract.
+The `kind` every matured Schedule emits under, and half of the Signal contract. The other half is
+that the payload is the fired record, flat.
 
-The other half is that the payload is the `ScheduleFiredRecord`, flat. So a Handler is written
-`SignalHandler<ScheduleFiredRecord>` and an Operator's map needs no string literal.
-
-A constant rather than a construction option. The creator never chooses the `kind`, which is the
-cap this Component puts on the agent's power. A `kind` with no Handler registered leaves a stored
-Schedule firing into a permanently failed Signal.
+A constant and not a construction option, which is the cap this component puts on the agent's
+power: whatever the agent arranges, it wakes the one Handler the Operator wrote. Register that
+Handler. A Schedule that fires with none registered under this `kind` leaves a Signal that fails
+on every attempt.
 
 ***
 
@@ -581,11 +604,6 @@ Schedule firing into a permanently failed Signal.
 const scheduleKinds: readonly ["once", "cron"];
 ```
 
-The two shapes a Schedule's recurrence takes, and the discriminant the row branches on.
-
-`once` is a single absolute instant and needs no library. `cron` is a recurring expression in a
-named time zone, parsed by `cron-parser`.
-
 ***
 
 ### schedulerSchema
@@ -594,10 +612,11 @@ named time zone, parsed by `cron-parser`.
 const schedulerSchema: PgSchema<"saf_scheduler">;
 ```
 
-The Scheduler's schema, named for the Component rather than only its subject.
+The PostgreSQL schema the Scheduler's table lives in, `saf_scheduler`.
 
-Prefixed because the framework is installed into a database it does not own. The name is not
-theirs to change: the table below is compiled against it, and their generation reads this object.
+Prefixed because the framework is installed into a database it does not own, and not
+configurable: the table is compiled against this object, and the same object is what a generation
+reads.
 
 ***
 
@@ -610,10 +629,6 @@ const schedulerTables: {
 };
 ```
 
-Everything the Scheduler keeps, as `db.handle` wants it.
-
-One object, so every module of this Component asks for the same handle by the same name.
-
 #### Type Declaration
 
 ##### schedules
@@ -623,10 +638,10 @@ schedules: PgTableWithColumns<{
 }>;
 ```
 
-One Schedule: a named instruction to emit the Scheduler's fixed Signal at future times.
+One Schedule: a named instruction to emit the Scheduler's one Signal at future times.
 
-`name` is the primary key and the sole identifier. There is no surrogate id. So creation is a
-`PUT`-shaped upsert on the name, and a cancel is a delete of it.
+`name` is the primary key and the only identifier. There is no surrogate id beside it, so a
+create is an upsert on the name and a cancel is a delete of it.
 
 ***
 
@@ -637,10 +652,10 @@ const schedules: PgTableWithColumns<{
 }>;
 ```
 
-One Schedule: a named instruction to emit the Scheduler's fixed Signal at future times.
+One Schedule: a named instruction to emit the Scheduler's one Signal at future times.
 
-`name` is the primary key and the sole identifier. There is no surrogate id. So creation is a
-`PUT`-shaped upsert on the name, and a cancel is a delete of it.
+`name` is the primary key and the only identifier. There is no surrogate id beside it, so a
+create is an upsert on the name and a cancel is a delete of it.
 
 ## Functions
 
@@ -650,7 +665,7 @@ One Schedule: a named instruction to emit the Scheduler's fixed Signal at future
 function createScheduler(options): Scheduler;
 ```
 
-Builds the Scheduler and registers its Agent routes when an Agent server is given.
+Builds the Scheduler, and registers the four Agent routes when an Agent server is given.
 
 Nothing here connects, listens or applies DDL. Put the result in the Gateway's record under a key
 of your own, ahead of the Signal Worker.
@@ -664,38 +679,3 @@ of your own, ahead of the Signal Worker.
 #### Returns
 
 [`Scheduler`](#scheduler)
-
-#### Example
-
-Built in `extend`, and then given the Operator's own boot-time Schedule.
-```ts
-import { createGateway, templateHandler } from "shared-agent-framework";
-import { createPiRuntime } from "shared-agent-framework/pi";
-import type { ScheduleFiredRecord } from "shared-agent-framework/scheduler";
-import { createScheduler, scheduleFiredKind } from "shared-agent-framework/scheduler";
-
-const gateway = createGateway({
-  databaseUrl: process.env.DATABASE_URL ?? "",
-  runtime: createPiRuntime({ image: "my-agent:1" }),
-  agentListen: { host: "127.0.0.1", port: 8081 },
-  publicListen: { host: "0.0.0.0", port: 8080 },
-  // No `agentServer` here, so the agent cannot reach the Schedules at all.
-  extend: ({ db, worker }) => ({ scheduler: createScheduler({ db, worker }) }),
-  handlers: () => ({
-    [scheduleFiredKind]: templateHandler<ScheduleFiredRecord>({
-      template: new URL("./prompts/digest.hbs", import.meta.url),
-      session: (signal) => signal.payload.scheduleName,
-      data: (signal) => signal.payload,
-    }),
-  }),
-});
-
-await gateway.start();
-
-const { scheduler } = gateway.components;
-const { created, schedule } = await scheduler.schedule({
-  name: "morning-digest",
-  spec: { kind: "cron", expr: "0 7 * * *", tz: "Europe/Berlin" },
-});
-console.log(created, schedule.nextFireAt);
-```

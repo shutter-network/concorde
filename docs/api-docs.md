@@ -196,6 +196,10 @@ here is repeated in `index.ts`.
 - **An internal name.** A private helper, an index, a column, a SQL construct.
 - **A phrasing more elaborate than the path the reader is on.** "Add it to the Gateway", not
   "keep it in the Gateway record under a key of your own".
+- **A literal `{{` … `}}`.** VitePress compiles every reference page as a Vue template and reads
+  that as an interpolation, so the site build fails on it, inside a code span as much as outside
+  one. This is the one rule here a check does catch: `check:docs` builds the site. Name the
+  Handlebars helper instead, and write `^absent` rather than the braced form.
 
 ## What these rules cost
 

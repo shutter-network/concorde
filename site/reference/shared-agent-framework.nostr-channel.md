@@ -1,62 +1,45 @@
 # shared-agent-framework/nostr-channel
 
-The Nostr Channel, from `shared-agent-framework/nostr-channel`.
+The Nostr Channel, the component that reaches a User in the Nostr client they already use, and
+lets them reach the Shared Agent from it. A **Channel** is what reaches one person over one
+medium, where the Messenger owns the log and reaches nobody. This one exchanges NIP-17 private
+direct messages over a single connection to one **Relay** the Operator runs, and a message from a
+public key the Operator recorded becomes an inbound Message and its Signal in one transaction, so
+a Signal Handler or a Prompt template written against the Messenger needs no change.
 
-`createNostrChannel` is the whole of it for an Operator. Hand it the Db, the Messenger, the
-User Manager, the Shared Agent's Nostr secret key as 32 raw bytes, and the address of the one
-Relay the Operator runs. It registers itself with that Messenger, and what it gets back is the
-only way to write an inbound Message. Then key it in the Gateway's record before the Signal
-Worker, so that it stops after the drain.
+[createNostrChannel](#createnostrchannel) makes one. [NostrChannel](#nostrchannel) is what comes back, and
+`recordPublicKey` is the only method trusted code calls: everything else on it is for the
+Messenger or for the Relay. [NostrChannelOptions](#nostrchanneloptions) takes the Shared Agent's Nostr secret key
+as 32 raw bytes, a second keypair that the signing identity neither is nor can become.
 
-**It registers no route on either server.** What a User reaches over this medium is the Relay,
-so a deployment running this and nothing else has a Public server with only the User Manager's
-login on it. Users message the agent from the Nostr client they already use, in NIP-17 private
-direct messages, and a message from a recorded key becomes an inbound Message and a Signal in
-one transaction — so every Signal Handler and Prompt template written against the Messenger
-keeps working unchanged.
+It registers no route on either server, a Relay being what a User reaches over this medium, so a
+deployment running this and nothing else has a Public server carrying only the login. It
+publishes one thing about itself and no profile, a relay list naming that Relay, so the agent
+appears in a client as a bare public key.
 
-**It publishes one thing about itself**, at every start: a NIP-17 relay list naming the Relay it
-was built with. That is what makes a client which refuses to message a public key with no such
-list message this agent, and what steers a client that reads one to the right Relay. **It does
-not buy discoverability.** Only a client already connected to that Relay can read the list, which
-is the onboarding assumption the whole design rests on: Users are preregistered and told which
-Relay to add, so nobody finds this agent by looking for it. Nothing else about it is published —
-no profile, no name, no picture — so it appears in a client as a bare public key.
+Build the Messenger first, which the constructor registers with, and the User Manager first,
+whose Users these public keys belong to. Key the result ahead of the Signal Worker in the
+Gateway's record: the Worker is keyed last so it drains first, and a Signal Handler's post phase
+may still send. One Channel per Messenger, refused at registration, so a deployment runs Nostr or
+HTTP and not both.
 
-**One Channel per Messenger**, refused at registration, so a deployment runs Nostr or HTTP and
-not both.
-
-**A reply travels in two steps, and the split is the design.** `messenger.send` runs the
-Channel's own `send` inside the Operator's transaction, where the recipient's key is resolved,
-the reply is sealed into one gift wrap, its size is compared against what the Relay advertises,
-and the wrap is queued. Anything wrong there throws and takes the Message with it, so nothing
-claims to have been sent. The publish itself waits for that transaction to commit and happens in
-`drain`. A reply the Relay refuses keeps its queue row with the Relay's own reason on it and is
-never attempted again, so `select * from saf_nostr.outbox where reason is not null` answers "why
-did she not get it" with no API and no log trawl.
-
-`recordPublicKey` is the one method trusted code calls, and it proves nothing: the Operator
-establishes out of band that a key is a person's, and no route anywhere records one, so an
-injected prompt cannot claim a User's key. This subpath also carries the three tables. Barrel
-`shared-agent-framework/users` beside it, because `pubkeys.user_id` and `outbox.user_id`
-reference the User Manager's table.
-
-The Nostr identity is a **second** keypair, secp256k1 where the signing identity is Ed25519, and
-it cannot be that key or become it. The framework parses no key material: the constructor takes
-bytes an Operator decoded themselves, and no `nsec` decoder is shipped.
+The subpath also carries the three tables, `pubkeys`, `received` and `outbox`, for the barrel an
+Operator's `drizzle-kit` reads. Barrel `shared-agent-framework/users` beside
+it: two of those tables reference the User Manager's, and a barrel without it generates a foreign
+key onto a table nothing creates.
 
 ## Example
 
-A Gateway a User reaches over Nostr, with the key recorded out of band.
+A Gateway a User reaches over Nostr, with their public key recorded out of band.
 ```ts
 import { readFileSync } from "node:fs";
-import { createGateway, templateHandler } from "shared-agent-framework";
-import type { MessageRecord } from "shared-agent-framework/messenger";
-import { createMessenger, messageReceivedKind } from "shared-agent-framework/messenger";
+import { createGateway } from "shared-agent-framework";
+import { createMessenger } from "shared-agent-framework/messenger";
 import { createNostrChannel } from "shared-agent-framework/nostr-channel";
 import { createPiRuntime } from "shared-agent-framework/pi";
 import { createUsers } from "shared-agent-framework/users";
 
+// The framework parses no key material: 32 raw bytes, decoded by the deployment.
 const secretKey = Uint8Array.from(
   Buffer.from(readFileSync(process.env.NOSTR_KEY_FILE ?? "", "utf8").trim(), "hex"),
 );
@@ -64,7 +47,8 @@ const secretKey = Uint8Array.from(
 const gateway = createGateway({
   databaseUrl: process.env.DATABASE_URL ?? "",
   runtime: createPiRuntime({ image: "my-agent:1" }),
-  agentListen: { host: "127.0.0.1", port: 8081 },
+  // Not loopback: the agent reaches this server from a container of its own.
+  agentListen: { host: "0.0.0.0", port: 8081 },
   publicListen: { host: "0.0.0.0", port: 8080 },
   extend: ({ db, agentServer, publicServer, worker }) => {
     const users = createUsers({ db, tokenTtl: 86_400_000, agentServer, publicServer });
@@ -81,31 +65,32 @@ const gateway = createGateway({
       }),
     };
   },
-  handlers: ({ messenger }) => ({
-    [messageReceivedKind]: templateHandler<MessageRecord>({
-      template: new URL("./prompts/message.hbs", import.meta.url),
-      session: (signal) => `user_${signal.payload.userId}`,
-      data: async (signal) => ({ log: await messenger.history(signal.payload.userId) }),
-    }),
-  }),
+  handlers: () => ({}),
 });
 
 await gateway.start();
+
+// Admission, out of band and from trusted code, in a transaction of the Operator's own.
+const { db, nostr } = gateway.components;
+await db.tx((tx) => nostr.recordPublicKey(tx, "a-user-id", "ab".repeat(32)));
+
+// What an Operator tells that User to message.
+console.log(nostr.publicKey);
 ```
 
 ## Classes
 
 ### MalformedPublicKeyError
 
-The public key offered was not a Nostr public key.
+The public key offered was not a Nostr public key: 64 lowercase hex characters are what one is.
 
-Refused at the call site rather than stored, because the alternative is silent and permanent: a
-key recorded as an `npub1…`, in upper case, or with a `0x` in front of it is compared byte for
-byte against the author of every decrypted message and matches none of them, so the User simply
-never hears from the agent and nothing anywhere says why.
+Refused at the call site rather than stored, because a stored one fails silently and permanently.
+A key written as an `npub1…`, in upper case, or with a `0x` in front of it is compared byte for
+byte against the author of every decrypted message and matches none of them, so the User never
+hears from the agent and nothing anywhere says why.
 
-This decodes nothing. An Operator holding an `npub` calls `nip19.decode` themselves, the way
-they decode the secret key the constructor takes.
+Nothing here decodes anything. An Operator holding an `npub` calls `nip19.decode` on it
+themselves, the way they decode the secret key the constructor takes.
 
 #### Extends
 
@@ -139,14 +124,16 @@ Error.constructor
 
 ### MessageTooLargeError
 
-The finished wrap is larger than the Relay said it accepts.
+The finished gift wrap is larger than the Relay said it accepts.
 
-Thrown inside the caller's transaction and before the Message row survives, so an over-long
-reply is a refusal at the call site rather than a queue row that fails once and stops. What is
-measured is the whole client message and not the reply, because sealing it more than doubles its
-length. The maximum is read from the Relay's own NIP-11 document, so a Relay that advertises
-none is a Relay this is never thrown for, and an over-long reply is then whatever that Relay
-does with it.
+Thrown inside the caller's transaction and before the Message row survives, so an over-long reply
+is a refusal at the call site rather than something that fails after the fact. What is measured is
+the whole message that goes on the wire and not the reply, because sealing more than doubles its
+length: reckon on a 1.4 KB floor plus 2.1 times the reply, the payload being base64 of base64, so
+a 32 KB reply is roughly a 66 KB wrap against a common Relay default of 65536.
+
+The maximum comes from the Relay's own NIP-11 document. A Relay that advertises none is a Relay
+this is never thrown for, and an over-long reply is then whatever that Relay does with it.
 
 #### Extends
 
@@ -191,10 +178,10 @@ Error.constructor
 
 ### NoSuchUserError
 
-No User has that id: PostgreSQL's `23503`, which is the foreign key catching a wrong id.
+No User has that id, so no key was recorded for them.
 
-An error class and not a status, because there is no route here to answer one with. Recording a
-key is trusted code's alone.
+The write itself is what establishes that the User exists, so a User created earlier in the
+caller's own transaction counts and needs no commit first.
 
 #### Extends
 
@@ -228,12 +215,14 @@ Error.constructor
 
 ### PublicKeyConflictError
 
-The key, or the User, is already spoken for: PostgreSQL's `23505`.
+The key, or the User, is already spoken for.
 
-Both directions are refused and this is deliberate. A key already recorded cannot be claimed by
-a second User, or one person's messages would land in another's log. And a User already holding
-a key cannot be given a second, because there would then be no answer to which one the agent
-writes back to.
+Both directions are refused. A key already recorded cannot be claimed by a second User, or one
+person's messages would land in another's log; and a User already holding a key cannot be given a
+second, because there would then be no answer to which one the agent writes back to.
+
+Neither is replaced. Whichever mapping exists is the one that stays, and getting rid of it is a
+`delete` an Operator writes against the table.
 
 #### Extends
 
@@ -273,10 +262,10 @@ Error.constructor
 
 The User has no Nostr public key recorded, so there is no address to answer them at.
 
-Thrown inside the caller's transaction and **before the Message row survives**, which is the
-point: a Message recorded as sent that nothing can deliver is a durable claim that somebody was
-told something. The Operator records a key from their own trusted code, out of band, so this is
-an admission that never happened rather than a transient failure to retry.
+Thrown inside the transaction the Message is being written in and before that Message row
+survives, which is the point: a Message recorded as sent that nothing can deliver is a durable
+claim that somebody was told something. Nothing was written, and the fix is recording a key rather
+than sending again.
 
 #### Extends
 
@@ -321,14 +310,24 @@ type NostrChannel = Channel & {
 };
 ```
 
-The Nostr Channel as a Component: a Channel, its own public key, and the one act of admission.
+The Nostr Channel as a Component: an identity, one Relay connection, and the one act of admission.
 
-`recordPublicKey` is the only method trusted code calls. Everything else this component does,
-it does for the Relay it is connected to or for the Messenger that registered it.
+Three tables are what it keeps, and no Message is among them: which public key belongs to which
+User, which envelopes it has already turned into Messages, and which replies the Relay has not
+taken yet. The Messages themselves are the Messenger's, whichever medium they travelled by.
 
-A deployment holds it to key it in the Gateway's record, ahead of the Signal Worker like the
-Messenger itself: a Signal Handler's post phase runs `messenger.send` into this component's
-`send`, so it has to outlive the drain.
+It admits nobody by itself. A message from a public key nobody recorded through
+[NostrChannel.recordPublicKey](#nostrchannel) is dropped with nothing stored for it, so a stranger who
+learns the agent's public key can neither reach the log nor grow the tables.
+
+The Relay connection is real work at both ends: nothing connects at construction, `start` opens
+it and `stop` closes it. What survives a stop is what PostgreSQL holds. A reply that was queued
+and not published keeps its row and goes out at the next start, and a Message already written
+stays written.
+
+A deployment holds it to key it in the Gateway's record, ahead of the Signal Worker as the
+Messenger itself is: a Signal Handler's post phase sends after the drain, and that send arrives
+here.
 
 #### Type Declaration
 
@@ -341,13 +340,12 @@ readonly publicKey: string;
 The Shared Agent's own Nostr public key, in lowercase hex, derived from the secret key it was
 built with.
 
-What a User's client shows as the agent's identity, and what an Operator tells a User to
-message. It is an address as well as an identity, which is what makes it unrotatable in
-practice: every recorded key is a row written from the other side, and every User's client
-holds the old one.
+What a User's client shows as the agent, and what an Operator tells a User to message. It is an
+address as well as an identity, which is what makes it unrotatable in practice: every recorded
+key was written from the other side, and every User's client holds this one.
 
-Hex and not an `npub`, for the reason there is no `nsec` decoder either. An Operator who
-wants the human-facing form calls `nip19.npubEncode` themselves.
+Hex and not an `npub`, for the reason the constructor takes bytes. An Operator who wants the
+human-facing form calls `nip19.npubEncode` on it themselves.
 
 ##### drain()
 
@@ -355,23 +353,22 @@ wants the human-facing form calls `nip19.npubEncode` themselves.
 drain(): Promise<void>;
 ```
 
-Publishes every queued reply the Relay has not answered for yet, and resolves when none is
-left.
+Publishes every queued reply the Relay has not answered for yet, and resolves when none is left.
 
-The half of a send that happens after the commit, exposed rather than hidden so that a test
-can drive it without waiting on a database notification. `start` wires the notification to
-this same method, so nothing in a running deployment calls it.
+The half of a send that happens after the commit, exposed so that a caller can wait for it
+rather than for a database notification. A running deployment needs no call: `start` wires the
+notification a queued reply raises to this same method.
 
 A reply the Relay accepts leaves no trace. A reply it refuses keeps its row, carrying the
-Relay's own reason, and is **never attempted again** — not by a later notification, and not by
-a later process. Nothing here throws for a refusal; a refusal is a row and a log line.
+Relay's own reason, and is never attempted again, not by a later notification and not by a later
+process. A refusal is a row and a log line rather than a throw.
 
-A reply the Relay took but never answered for, because the process stopped or died between the
-two, still has its row and goes out again on the next start. Both the Relay and the
-recipient's client key on the event's own id, so what a User sees is still one message.
+A reply the Relay took but never answered for, because the process stopped between the two,
+still has its row and goes out again at the next start. Both the Relay and the recipient's
+client key on the event's own id, so what a User sees is still one message.
 
-It publishes nothing while the Channel is stopped. Whatever is queued then waits for the next
-`start`.
+It publishes nothing while the Channel is stopped, and whatever is queued then waits for the
+next `start`.
 
 ###### Returns
 
@@ -386,18 +383,20 @@ recordPublicKey<TSchema>(
 publicKey): Promise<void>;
 ```
 
-Records that one Nostr public key belongs to one User, and **proves nothing**.
+Records that one Nostr public key belongs to one User, and proves nothing.
 
-An Operator records a key from their own code, having established out of band that it is
-theirs. That is the whole of admission over this medium, and it is deliberately the whole:
-**no route on either server records a key**, because doing so is authorization-shaped — it
-grants access to a Message log — so it joins `users.setAttributes` in the class an injected
-prompt cannot reach. The cost is that the agent cannot admit a stranger, and a message from a
-key nobody recorded is dropped with nothing stored.
+The Operator establishes out of band that the key is that person's, and this stores what they
+decided. It is the whole of admission over this medium, and deliberately the whole: no route on
+either server records a key, because recording one grants access to a Message log, so it sits
+with the other writes an injected prompt cannot reach. The cost is that the agent cannot admit a
+stranger.
 
-A write, so it takes the caller's transaction first: recording a key and whatever the
-Operator writes about the admission commit together or not at all. It replaces nothing —
-there is no rotation here, in the same sense that there is none for either identity.
+A write, so it takes the caller's transaction first: the key and whatever the Operator records
+about the admission commit together or not at all. `publicKey` is 64 lowercase hex characters,
+which is what a Nostr public key is on the wire.
+
+It replaces nothing. There is no rotation here, in the same sense that there is none for either
+identity.
 
 ###### Type Parameters
 
@@ -419,16 +418,13 @@ there is no rotation here, in the same sense that there is none for either ident
 
 `string`
 
-64 lowercase hex characters. An `npub` is refused rather than stored,
-  because a stored one would match no message and nothing would say why.
-
 ###### Returns
 
 `Promise`\<`void`\>
 
 ###### Throws
 
-`MalformedPublicKeyError` if that is not what it got.
+`MalformedPublicKeyError` if that is not what `publicKey` is.
 
 ###### Throws
 
@@ -436,8 +432,8 @@ there is no rotation here, in the same sense that there is none for either ident
 
 ###### Throws
 
-`PublicKeyConflictError` if that key belongs to another User, or that User already
-  has one. The insert runs in a savepoint, so no refusal aborts the caller's transaction.
+`PublicKeyConflictError` if that key belongs to another User, or that User already has
+  one. Every refusal here runs in a savepoint, so none of them aborts the caller's transaction.
 
 ##### send()
 
@@ -445,18 +441,18 @@ there is no rotation here, in the same sense that there is none for either ident
 send<TSchema>(tx, message): Promise<void>;
 ```
 
-Takes an outbound Message inside the transaction writing it, and **publishes nothing**.
+Takes an outbound Message inside the transaction writing it, and publishes nothing.
 
-The Messenger calls this; trusted code reaches `messenger.send` instead, and gets this for
-free. What happens here is everything that can be known before a commit: the recipient's key
-is looked up on the caller's own transaction, the reply is sealed into one gift wrap, its size
-on the wire is compared against what the Relay advertises, and the finished wrap is queued. A
-failure at any of those steps is a throw that rolls the Message back with it, so a Message
-recorded as sent was always one that could go out.
+The Messenger calls this, and trusted code reaches its `send` instead and gets this for free.
+What happens here is everything knowable before a commit: the recipient's key is read on the
+caller's own transaction, the reply is sealed into one gift wrap, its size on the wire is
+compared against what the Relay advertises, and the finished wrap is queued. A failure at any of
+those steps throws and rolls the Message back with it, so a Message recorded as sent was always
+one that could go out.
 
-What it does **not** do is reach the Relay. The publish waits for the commit and happens in
-[NostrChannel.drain](#nostrchannel), so a rollback after this returns leaves nobody holding words the
-log denies.
+What it does not do is reach the Relay. The publish waits for the commit and happens in
+[NostrChannel.drain](#nostrchannel), so a rollback after this returns leaves nobody holding words the log
+denies.
 
 ###### Type Parameters
 
@@ -484,10 +480,10 @@ log denies.
 
 ###### Throws
 
-`MessageTooLargeError` if the wrap is larger than the Relay's advertised maximum
-  message length. The Relay is asked for that maximum once per connection, so a Channel that
-  has not started has not asked and bounds nothing: an over-long reply sent to a stopped
-  Channel is queued, and fails once at the next start rather than here.
+`MessageTooLargeError` if the wrap exceeds the Relay's advertised maximum message
+  length. The Relay is asked for that maximum once per connection, so a Channel that has not
+  started has not asked and bounds nothing: an over-long reply sent to a stopped Channel is
+  queued, and fails once at the next start rather than here.
 
 ##### start()
 
@@ -498,13 +494,16 @@ start(): Promise<void>;
 Opens the connection to the Relay, subscribes to the agent's own gift wraps, publishes the
 agent's relay list, and publishes whatever a previous process left queued.
 
-Nothing connects before this. It does not wait for the connection: a Relay that is down is an
-outage rather than a boot failure, and the client reconnects with a backoff of its own. A
-second `start` finds a client already built and does nothing.
+Nothing connects before this, and this waits for none of it: a Relay that is down is an outage
+rather than a boot failure, and the client reconnects with a backoff of its own. A second
+`start` finds a client already built and does nothing.
 
-The relay list is one event naming the Relay this Channel was built with, and a Relay that
-refuses it is a warning on the log and a Channel that started anyway. A restart says it again,
-and nothing accumulates on the Relay for its having been said twice.
+The relay list is one event naming the Relay this Channel was built with, and it is the only
+thing the agent publishes about itself. It buys two narrow things and not discoverability: a
+client that refuses to message a public key with no such list will message this one, and a
+client that reads one is steered to the right Relay. Only a client already on that Relay can
+read it. A Relay that refuses it is a warning on the log and a Channel that started anyway, and
+a restart says it again at no cost, the kind being replaceable.
 
 ###### Returns
 
@@ -519,10 +518,8 @@ stop(): Promise<void>;
 Closes the connection and stops handling what arrives on it or what is queued for it.
 
 It returns once nothing is in flight, so a Message half-written when shutdown began is either
-committed or rolled back before the Db is closed under it. A publish interrupted here leaves
-its row untouched rather than marking it refused, so the next `start` attempts it. The client
-is discarded rather than reused, because the library's `close` is terminal; a later `start`
-builds a fresh one.
+committed or rolled back before the Db is closed under it. A publish interrupted here leaves its
+row untouched rather than marking it refused, so the next `start` attempts it.
 
 ###### Returns
 
@@ -543,8 +540,6 @@ type NostrChannelOptions = {
 };
 ```
 
-Everything `createNostrChannel` needs: the Db, two Components, an identity and a Relay.
-
 #### Properties
 
 ##### db
@@ -553,11 +548,10 @@ Everything `createNostrChannel` needs: the Db, two Components, an identity and a
 readonly db: Db;
 ```
 
-The Db this component queries through. It takes a handle to its own two tables.
+The Db this component queries through, and where the inbound transaction is opened.
 
-Also where the inbound transaction is opened: the Message, its Signal and this component's
-own record that the envelope was processed are one act, and the Messenger's inbound write
-takes a transaction rather than opening one so that they can be.
+Writing the Message, emitting its Signal and recording that this envelope was read are one act,
+so they share one transaction of this component's own.
 
 ##### logger?
 
@@ -567,6 +561,10 @@ readonly optional logger?: Logger;
 
 Defaults to a `pino` instance on stdout.
 
+A dropped envelope is a debug line and the only trace of it anywhere, nothing being stored for
+one. A reply the Relay refused is an error line beside the queue row that keeps the reason, and
+a relay list the Relay refused is a warning and nothing else.
+
 ##### messenger
 
 ```ts
@@ -575,9 +573,9 @@ readonly messenger: Messenger;
 
 The Messenger that owns the log. Build it before this.
 
-The constructor calls `register` on it, which is what makes this Channel the one that reaches
-people and hands back the only way to write an inbound Message. A second Channel on the same
-Messenger is refused there, which is why a deployment runs Nostr or HTTP and not both.
+The constructor registers with it, which is what makes this the Channel that reaches people and
+hands back the only way to write an inbound Message. A second Channel on the same Messenger is
+refused there, so a deployment runs one medium.
 
 ##### relayUrl
 
@@ -589,7 +587,8 @@ The Relay to connect to, as a `ws://` or `wss://` address.
 
 One Relay, and the Operator's own, so that Users' conversations do not traverse a stranger's
 server. It is used exactly as given, with no normalisation: Relays treat trailing variants as
-distinct addresses, and NIP-42's `relay` tag is compared by whatever rule the Relay chose.
+distinct addresses, and the address this agent authenticates with and the address it publishes
+in its relay list are compared by whatever rule the Relay chose.
 
 ##### secretKey
 
@@ -597,17 +596,17 @@ distinct addresses, and NIP-42's `relay` tag is compared by whatever rule the Re
 readonly secretKey: Uint8Array;
 ```
 
-The Shared Agent's Nostr secret key: **32 raw bytes**, and the second keypair a deployment
-running this holds.
+The Shared Agent's Nostr secret key: 32 raw bytes, and the second keypair a deployment running
+this holds.
 
-Raw bytes because that is both Nostr libraries' own convention, and because the framework
-parses no key material and generates none: an Operator reads their own key and states it
-here, exactly as they hand `createSignatures` a `KeyObject` they built themselves. No `nsec`
-decoder is shipped, so an Operator holding an `nsec` calls `nip19.decode` themselves.
+Raw bytes because that is both Nostr libraries' own convention, and because the framework parses
+no key material and generates none. An Operator reads their own key and states it here, exactly
+as they hand a `KeyObject` they built themselves to the signing identity. No `nsec` decoder is
+shipped, so an Operator holding one calls `nip19.decode` themselves.
 
-It cannot be the signing identity and could not become one: that key is Ed25519 and this
-curve is secp256k1. Copying this one impersonates the agent to its Users; copying that one
-forges its commitments.
+It cannot be the signing identity and could not become one, that key being Ed25519 and this
+curve secp256k1. Copying this one impersonates the agent to its Users; copying that one forges
+its commitments.
 
 ##### users
 
@@ -617,10 +616,10 @@ readonly users: Users;
 
 The User Manager whose Users these public keys belong to.
 
-Named nominally, and required, because `pubkeys.user_id` is a foreign key onto
-`saf_users.users.id`. This component needs our Manager at the schema level, and nothing is
-called on it: there is no route here for it to authenticate, and a Nostr public key is not a
-credential the Gateway issued.
+Nothing is called on it. It is named because `pubkeys.user_id` is a foreign key onto that
+Manager's table, so this component needs the real one rather than something shaped like it:
+there is no route here to authenticate, and a Nostr public key is not a credential the Gateway
+issued.
 
 ## Variables
 
@@ -630,11 +629,12 @@ credential the Gateway issued.
 const nostrChannelSchema: PgSchema<"saf_nostr">;
 ```
 
-The Nostr Channel's schema, named for the protocol rather than for the component.
+The PostgreSQL schema every table below lives in, `saf_nostr`, named for the protocol rather than
+for the component.
 
-Prefixed because the framework is installed into a database it does not own. The name is not
-an Operator's to change: the tables below are compiled against it, and their generation reads
-that same object.
+Prefixed because the framework is installed into a database it does not own, and not
+configurable: the tables are compiled against this object, and the same object is what a
+generation reads.
 
 ***
 
@@ -651,10 +651,6 @@ const nostrChannelTables: {
 };
 ```
 
-Everything the Nostr Channel keeps, as `db.handle` wants it.
-
-One object, so every module of this component asks for the same handle by the same name.
-
 #### Type Declaration
 
 ##### outbox
@@ -666,16 +662,14 @@ outbox: PgTableWithColumns<{
 
 Every gift wrap that is owed to the Relay, or that the Relay refused.
 
-**This table is the seam between the two halves of a send.** A publish cannot be rolled back and
-a transaction can, so the whole wrap is built and stored inside the caller's transaction, and
-the network act happens after that transaction commits. A row is therefore a durable claim that
-a Message was accepted for delivery, written in the same transaction as the Message itself: a
-rollback loses both, and no recipient holds words the log denies.
+A row is a durable claim that a Message was accepted for delivery, written in the same transaction
+as the Message itself: a rollback loses both, so no recipient holds words the log denies. The wrap
+is built and stored before that commit and published after it, which is what makes the table the
+seam between the two halves of a send.
 
-The row is deleted when the Relay accepts the wrap, so a healthy deployment keeps this table
-empty. A row carrying a `reason` is one the Relay refused, and it is **never attempted again**.
-Recovering it is an Operator replaying the row by hand, and this table is where retries, backoff
-and an attempt cap would land if they were ever wanted.
+A wrap the Relay accepts leaves no row, so a healthy deployment keeps this table empty. A row
+carrying a `reason` is one the Relay refused, and it is never attempted again; recovering it is an
+Operator replaying the row by hand.
 
 So `select * from saf_nostr.outbox where reason is not null` is the whole answer to "why did she
 not get it", and it needs no API.
@@ -689,13 +683,13 @@ pubkeys: PgTableWithColumns<{
 
 Which Nostr public key belongs to which User, and the whole of admission over this medium.
 
-**Written from trusted code only.** There is no route on either server that records one, so an
-injected prompt cannot claim a User's key and take over their conversation. The cost is that
-the agent cannot admit a stranger: a key nobody put here is a key whose messages are dropped.
+Written from trusted code only. No route on either server records a row here, so an injected
+prompt cannot claim a User's key and take over their conversation. The cost is that the agent
+cannot admit a stranger: a key nobody put here is a key whose messages are dropped.
 
 Uniqueness runs both ways, and the two constraints refuse different mistakes. `user_id` is the
 primary key, so one User holds at most one Nostr key. `pubkey` is unique, so a key already
-recorded cannot be claimed by a second User — which is what stops one person's key becoming a
+recorded cannot be claimed by a second User, which is what stops one person's key becoming a
 second person's inbox.
 
 ##### received
@@ -707,22 +701,17 @@ received: PgTableWithColumns<{
 
 Every envelope that has already become a Message, keyed by the gift wrap's event id.
 
-**This is the correctness mechanism for inbound, and the subscription's `since`-lessness is
-why.** NIP-59 randomises a wrap's timestamp up to two days into the past, so a
-timestamp watermark is not a valid cursor and the Channel re-reads what the Relay holds on
-every connect instead. A primary key is what turns that repetition into nothing: the insert
-shares the transaction that writes the Message, so a conflict means "already processed" and a
-rollback un-processes it.
+This is the correctness mechanism for inbound. NIP-59 randomises a wrap's timestamp up to two days
+into the past, so a timestamp watermark is not a valid cursor, and the Channel therefore asks the
+Relay for everything it holds on every connect. A primary key is what turns that repetition into
+nothing: the insert shares the transaction that writes the Message, so a conflict means "already
+processed" and a rollback un-processes it. Reconnect overlap and a Relay that serves one event
+twice collapse into the same constraint.
 
-Three other problems collapse into this one constraint: reconnect overlap, the `created_at`
-tie when the paged read of stored events walks backwards, and the Relay delivering an event
-twice.
-
-**Only admitted events get a row.** An envelope from a public key no `pubkeys` row names is
-dropped and nothing whatever is stored for it, so a stranger who learns the agent's public
-identity cannot grow this table. That also means such an envelope is harmlessly re-dropped on
-every connect. The table is therefore the same order of magnitude as the Message log, and
-nothing prunes it.
+Only admitted envelopes get a row. One from a public key no `pubkeys` row names is dropped with
+nothing stored for it, so a stranger who learns the agent's public key cannot grow this table, and
+that envelope is harmlessly re-dropped on every connect. The table is therefore the same order of
+magnitude as the Message log, and nothing prunes it.
 
 ***
 
@@ -735,16 +724,14 @@ const outbox: PgTableWithColumns<{
 
 Every gift wrap that is owed to the Relay, or that the Relay refused.
 
-**This table is the seam between the two halves of a send.** A publish cannot be rolled back and
-a transaction can, so the whole wrap is built and stored inside the caller's transaction, and
-the network act happens after that transaction commits. A row is therefore a durable claim that
-a Message was accepted for delivery, written in the same transaction as the Message itself: a
-rollback loses both, and no recipient holds words the log denies.
+A row is a durable claim that a Message was accepted for delivery, written in the same transaction
+as the Message itself: a rollback loses both, so no recipient holds words the log denies. The wrap
+is built and stored before that commit and published after it, which is what makes the table the
+seam between the two halves of a send.
 
-The row is deleted when the Relay accepts the wrap, so a healthy deployment keeps this table
-empty. A row carrying a `reason` is one the Relay refused, and it is **never attempted again**.
-Recovering it is an Operator replaying the row by hand, and this table is where retries, backoff
-and an attempt cap would land if they were ever wanted.
+A wrap the Relay accepts leaves no row, so a healthy deployment keeps this table empty. A row
+carrying a `reason` is one the Relay refused, and it is never attempted again; recovering it is an
+Operator replaying the row by hand.
 
 So `select * from saf_nostr.outbox where reason is not null` is the whole answer to "why did she
 not get it", and it needs no API.
@@ -760,13 +747,13 @@ const pubkeys: PgTableWithColumns<{
 
 Which Nostr public key belongs to which User, and the whole of admission over this medium.
 
-**Written from trusted code only.** There is no route on either server that records one, so an
-injected prompt cannot claim a User's key and take over their conversation. The cost is that
-the agent cannot admit a stranger: a key nobody put here is a key whose messages are dropped.
+Written from trusted code only. No route on either server records a row here, so an injected
+prompt cannot claim a User's key and take over their conversation. The cost is that the agent
+cannot admit a stranger: a key nobody put here is a key whose messages are dropped.
 
 Uniqueness runs both ways, and the two constraints refuse different mistakes. `user_id` is the
 primary key, so one User holds at most one Nostr key. `pubkey` is unique, so a key already
-recorded cannot be claimed by a second User — which is what stops one person's key becoming a
+recorded cannot be claimed by a second User, which is what stops one person's key becoming a
 second person's inbox.
 
 ***
@@ -780,22 +767,17 @@ const received: PgTableWithColumns<{
 
 Every envelope that has already become a Message, keyed by the gift wrap's event id.
 
-**This is the correctness mechanism for inbound, and the subscription's `since`-lessness is
-why.** NIP-59 randomises a wrap's timestamp up to two days into the past, so a
-timestamp watermark is not a valid cursor and the Channel re-reads what the Relay holds on
-every connect instead. A primary key is what turns that repetition into nothing: the insert
-shares the transaction that writes the Message, so a conflict means "already processed" and a
-rollback un-processes it.
+This is the correctness mechanism for inbound. NIP-59 randomises a wrap's timestamp up to two days
+into the past, so a timestamp watermark is not a valid cursor, and the Channel therefore asks the
+Relay for everything it holds on every connect. A primary key is what turns that repetition into
+nothing: the insert shares the transaction that writes the Message, so a conflict means "already
+processed" and a rollback un-processes it. Reconnect overlap and a Relay that serves one event
+twice collapse into the same constraint.
 
-Three other problems collapse into this one constraint: reconnect overlap, the `created_at`
-tie when the paged read of stored events walks backwards, and the Relay delivering an event
-twice.
-
-**Only admitted events get a row.** An envelope from a public key no `pubkeys` row names is
-dropped and nothing whatever is stored for it, so a stranger who learns the agent's public
-identity cannot grow this table. That also means such an envelope is harmlessly re-dropped on
-every connect. The table is therefore the same order of magnitude as the Message log, and
-nothing prunes it.
+Only admitted envelopes get a row. One from a public key no `pubkeys` row names is dropped with
+nothing stored for it, so a stranger who learns the agent's public key cannot grow this table, and
+that envelope is harmlessly re-dropped on every connect. The table is therefore the same order of
+magnitude as the Message log, and nothing prunes it.
 
 ## Functions
 
@@ -807,8 +789,8 @@ function createNostrChannel(options): NostrChannel;
 
 Builds the Nostr Channel and registers it with the Messenger.
 
-Nothing here connects, listens or applies DDL — the connection is `start`'s. Key the result
-before the Signal Worker, so that it stops after the drain.
+Nothing here connects, listens or applies DDL. Key the result before the Signal Worker, so that it
+stops after the drain.
 
 #### Parameters
 
@@ -823,50 +805,3 @@ before the Signal Worker, so that it stops after the drain.
 #### Throws
 
 `ChannelAlreadyRegisteredError` if a Channel is already registered with that Messenger.
-
-#### Example
-
-Built in `extend`, after the Messenger it registers with, and given an identity the Operator
-read for themselves.
-```ts
-import { readFileSync } from "node:fs";
-import { createGateway } from "shared-agent-framework";
-import { createMessenger } from "shared-agent-framework/messenger";
-import { createNostrChannel } from "shared-agent-framework/nostr-channel";
-import { createPiRuntime } from "shared-agent-framework/pi";
-import { createUsers } from "shared-agent-framework/users";
-
-// The framework parses no key material: 32 raw bytes, decoded by the deployment.
-const secretKey = Uint8Array.from(
-  Buffer.from(readFileSync(process.env.NOSTR_KEY_FILE ?? "", "utf8").trim(), "hex"),
-);
-
-const gateway = createGateway({
-  databaseUrl: process.env.DATABASE_URL ?? "",
-  runtime: createPiRuntime({ image: "my-agent:1" }),
-  agentListen: { host: "127.0.0.1", port: 8081 },
-  publicListen: { host: "0.0.0.0", port: 8080 },
-  extend: ({ db, agentServer, publicServer, worker }) => {
-    const users = createUsers({ db, tokenTtl: 86_400_000, agentServer, publicServer });
-    const messenger = createMessenger({ db, users, worker, agentServer });
-    return {
-      users,
-      messenger,
-      nostr: createNostrChannel({
-        db,
-        messenger,
-        users,
-        secretKey,
-        relayUrl: process.env.RELAY_URL ?? "",
-      }),
-    };
-  },
-  handlers: () => ({}),
-});
-
-await gateway.start();
-
-// Admission, out of band and from trusted code, in a transaction of the Operator's own.
-const { db, nostr } = gateway.components;
-await db.tx((tx) => nostr.recordPublicKey(tx, "a-user-id", "ab".repeat(32)));
-```

@@ -1,32 +1,41 @@
 /**
- * The User Manager's routes: Users on the Agent server, credentials on the Public one.
- *
  * Two plugins, because they go on two Fastify instances and either can be left out. Neither
  * carries a prefix of its own, so the paths below are relative to the prefix they are registered
- * under. The conventional prefixes are `/users` and `/auth`.
+ * under. The constructor's prefixes are `/users` and `/auth`.
  *
  * | Agent server | Answers |
  * | --- | --- |
- * | `POST /` | the created `UserRecord`, 201 |
- * | `GET /?limit=` | `{ users: UserRecord[] }`, newest first |
- * | `GET /:id` | `UserRecord`, or 404 |
+ * | `POST /` | 201, the created `UserRecord`; 400 |
+ * | `GET /?limit=` | `{ users: UserRecord[] }`, newest first; 400 |
+ * | `GET /:id` | one `UserRecord`; 400; 404 |
  *
  * | Public server | Answers |
  * | --- | --- |
- * | `POST /tokens` | an `IssuedToken` (the Token, its expiry, the User), or 401 |
- * | `GET /me` | the presented User, or 401 |
- * | `DELETE /tokens/current` | 204, having revoked the Token that was presented |
- * | `DELETE /tokens` | 204, having revoked every Token of the presented User |
- * | `PUT /password` | 204, or the same 401 if the current password is wrong |
+ * | `POST /tokens` | 201, an `IssuedToken`. **No Token required**; 400; 401 |
+ * | `GET /me` | the presented User; 400; 401 |
+ * | `DELETE /tokens/current` | 204, the presented Token revoked; 400; 401 |
+ * | `DELETE /tokens` | 204, every Token of the presented User revoked; 400; 401 |
+ * | `PUT /password` | 204; 400; 401 |
  *
- * Creating a User accepts a password and no Attributes. Attributes are where authorization lives,
- * so the route has no such parameter. There is no validator to bypass and no allow-list to
- * configure. The three routes that revoke and change are the only way a credential stops working
- * before it expires.
+ * **Creating a User takes a password and takes no Attributes, and that is an absent capability
+ * rather than a guard** ([ADR-0029](../../docs/adr/0029-users-are-a-part-of-their-own.md)).
+ * Attributes are where grouping and therefore authorization live
+ * ([ADR-0008](../../docs/adr/0008-party-is-not-in-the-data-model.md)), the Agent server has no
+ * authentication of any kind, and an injected prompt reaches everything on it
+ * ([ADR-0003](../../docs/adr/0003-prompt-injection-is-an-accepted-risk.md)). An agent able to
+ * choose Attributes could create a User with an administrator's, give it a password and log in.
+ * Do not add the parameter and do not add a validator in front of one: there is nothing here to
+ * bypass and nothing to configure.
  *
- * Each route's own `description` is what `/openapi.json` serves, so those sentences are the API
- * documentation rather than commentary. The `UserRecord` schema is the sharpest of them. It lists
- * the fields that can be answered, so a field nobody thought of cannot reach the wire.
+ * `authenticationFailed` and `bearerRequired` are exported because Signatures, Decisions and the
+ * HTTP Channel put this component's hook on routes of their own and describe it with these
+ * sentences. A second sentence about one hook is a second thing to keep true.
+ *
+ * Each route's own `description` is what `/openapi.json` serves, so those strings are the API
+ * documentation rather than commentary, and `docs/api-docs.md` governs them. A response schema is
+ * a serializer as well: `fast-json-stringify` drops every field the schema does not declare, with
+ * no warning anywhere, so `userRecordSchema` is a positive list and the password digest cannot
+ * reach the wire through a field nobody thought of.
  */
 
 import type { FastifyPluginAsync, FastifyReply, preHandlerAsyncHookHandler } from "fastify";
@@ -42,13 +51,11 @@ import {
 } from "../route-conventions.ts";
 
 /**
- * A User as the agent reads it, and the JSON these routes answer with.
+ * A User as every surface answers with one: both reads, the created record, and a login.
  *
- * `attributes` is `unknown`, because it is arbitrary JSON the Gateway never interprets. What a
- * Signal Handler makes of it is the Handler's business. `createdAt` is an ISO 8601 string, because
- * JSON has no date.
- *
- * There is no field for the password. Whether a User has one is not something this surface answers.
+ * `attributes` is arbitrary JSON that nothing in the Gateway interprets, and `createdAt` is ISO
+ * 8601, JSON having no date. Whether a User has a password is answered nowhere, on this shape or
+ * on any other.
  */
 export type UserRecord = {
   readonly id: string;
@@ -57,11 +64,10 @@ export type UserRecord = {
 };
 
 /**
- * What the agent's routes need of the User Manager: three operations, and no table objects.
+ * What the agent's routes need of the component: three operations and no table objects.
  *
- * `create` takes one thing, an optional initial password. Attributes are what the agent may not
- * supply, and there is no parameter for them. It takes no transaction either, because a request
- * that creates a User has one statement in it.
+ * `create` takes one thing, an initial password, and there is no parameter for Attributes. It
+ * takes no transaction either, a request that creates a User having one statement in it.
  */
 export type UserOperations = {
   create(options: { readonly password?: string }): Promise<UserRecord>;
@@ -69,12 +75,8 @@ export type UserOperations = {
   list(options: { readonly limit: number }): Promise<UserRecord[]>;
 };
 
-/**
- * What a client presents at the login route.
- *
- * `user` is the User's own opaque id, which is the only handle a User has. There is no email and
- * no username anywhere in this framework. Whoever admitted them told them the id.
- */
+// `user` is the User's own opaque id, which is the only handle a User has. There is no email and
+// no username anywhere in this framework: whoever admitted them told them the id.
 export type Credentials = {
   readonly user: string;
   readonly password: string;
@@ -83,23 +85,21 @@ export type Credentials = {
 /**
  * What a login answers with: the Token, when it expires, and the User it belongs to.
  *
- * A client needs no second request to know who it is.
+ * The User is embedded rather than referenced, so a client needs no second request to know who it
+ * is.
  */
 export type IssuedToken = {
   /** The Token, in the only response that will ever carry it. */
   readonly token: string;
-  /** When it stops working, ISO 8601, from the Manager's construction-time lifetime. */
+  /** When it stops working, ISO 8601, from the lifetime this Gateway was built with. */
   readonly expiresAt: string;
-  /** The User it belongs to, including the Attributes governing their authorization. */
+  /** The User it belongs to, Attributes and all. */
   readonly user: UserRecord;
 };
 
 /**
- * What a User changing their own password states: what they know, and what it becomes.
- *
- * `currentPassword` is required, and there is no shape of this type without it. That is the line
- * between self-service and account recovery. The only replacement that proves nothing is trusted
- * code's `setPassword`.
+ * `currentPassword` has no absent shape, and that is the line between self-service and account
+ * recovery. The only replacement that proves nothing is trusted code's `setPassword`.
  *
  * `user` is not read from the body. The route fills it from the presented Token, so a caller
  * cannot name somebody else.
@@ -111,11 +111,9 @@ export type PasswordChange = {
 };
 
 /**
- * What the Public routes need: a login, the two revocations, and a password change.
- *
- * `logIn` answers `undefined` for every kind of failure, and `changePassword` answers `false` for
- * every kind of its own. A wrong password, an unknown User and a User with no password reach the
- * route as one value. There is no reason code to leak.
+ * `logIn` answers `undefined` for every kind of failure and `changePassword` answers `false` for
+ * every kind of its own, so a wrong password, an unknown User and a User with no password reach
+ * the route as one value and there is no reason code for a route to leak.
  *
  * Both revocations answer nothing, not even a count. Revoking is idempotent: the row is gone
  * afterwards, whether or not this call removed it.
@@ -127,43 +125,31 @@ export type CredentialOperations = {
   changePassword(change: PasswordChange): Promise<boolean>;
 };
 
-/**
- * What the agent's routes say about there being nothing to search by.
- *
- * Said in two places and written once. It ends the refusal below, and it is in all three Agent
- * route descriptions. A caller who assumed a filter finds out at the first request.
- */
+// Said in three route descriptions and in the refusal below, and written once. The alternative is
+// `?attributes=admin` quietly answering the newest fifty Users, which reads as though a filter had
+// been applied.
 const unsearchable =
   "Users cannot be searched or filtered. Attributes are arbitrary JSON that the Gateway cannot index, and a User has no natural key to match on.";
 
-/** The refusal these routes answer an unknown query parameter with. */
 const rejectUnknownQuery = unknownQueryRefusal(unsearchable);
 
-/**
- * What the Public routes say about the same thing, which is a different sentence.
- *
- * What is useful on this surface is where a credential goes. A password or a Token in a URL is one
- * in every access log between here and the client.
- */
+// A different sentence for the Public surface, because what is useful there is where a credential
+// goes. A password or a Token in a URL is one in every access log between here and the client.
 const credentialsAreNotInUrls =
   "The Public routes take no query parameters at all. A credential travels in the body or in the Authorization header, never in a URL.";
 
 const rejectPublicQuery = unknownQueryRefusal(credentialsAreNotInUrls);
 
-/** What the one list route here says about its `limit`: the shared sentences, and one more. */
 const capped = `${cappedLimit} There is no cursor and no offset, and nothing to narrow by. The Users past the cap are not reachable through this route.`;
 
-/** What every Public route's description ends with, the two sentences above as one. */
 const noPublicParameters = `${credentialsAreNotInUrls} ${unknownParameter}`;
 
 /**
- * What the four Public routes that act as somebody say about the Token they want.
+ * What every route that acts as somebody says about the Token it wants.
  *
- * A sentence per route rather than one in `info.description`. `POST /auth/tokens` is the exception,
- * and a reader must be told which route that is.
- *
- * Exported for the HTTP Channel's Public routes, which take `requireUser` as one option of their
- * own. A second sentence about one hook is a second thing to keep true.
+ * A sentence per route rather than one in `info.description`. `POST /auth/tokens` is the
+ * exception, and a reader must be told which route that is. Exported for the other components
+ * whose routes take `requireUser`; see the file header.
  */
 export const bearerRequired =
   "**Requires a bearer Token**, presented as `Authorization: Bearer <token>` and obtained from `POST /auth/tokens`. The User acted on is the one that Token names, and no parameter anywhere names another.";
@@ -172,34 +158,19 @@ export const bearerRequired =
  * The one thing a 401 says, wherever it is answered.
  *
  * Every authentication failure is one status and one message. Enumeration is refused because
- * Attributes govern authorization, and nothing rate limits the guessing.
- *
- * Exported for the reason `bearerRequired` above is. The HTTP Channel's Public routes are refused
- * by `unauthorized` too, because they take this component's hook.
+ * Attributes govern authorization and nothing rate limits the guessing. Exported for the reason
+ * `bearerRequired` is.
  */
 export const authenticationFailed =
-  "Authentication failed, which is the whole of what is said: a wrong password, an id nobody holds, a User with no password, and a Token that is missing, malformed, unknown or expired are one status and one message, so nothing here answers who exists (ADR-0030).";
+  "Authentication failed, which is the whole of what is said: a wrong password, an id nobody holds, a User with no password, and a Token that is missing, malformed, unknown or expired are one status and one message, so nothing here answers who exists.";
 
-/**
- * What a Public route that reads no body is refused for.
- *
- * The whole of the 400 on the three of them. A route with nothing to validate has nothing else to
- * be refused for. Its own description says why it takes no parameters.
- */
+// The whole of the 400 on the three Public routes that read no body. A route with nothing to
+// validate has nothing else to be refused for.
 const aQueryParameterWasWritten = "A query parameter was written, and these routes take none.";
 
-/**
- * `UserRecord` on the wire, written as the fields that can be answered.
- *
- * Fastify compiles a response schema with `fast-json-stringify`. It answers with the properties it
- * declares and drops everything else without a word. So this is the second enforcement of the rule
- * `asUserRecord` holds by hand. The password hash is not on this wire, ever. A positive list cannot
- * be defeated by a field nobody thought of.
- *
- * A column added to `saf_users.users` reaches no response until somebody writes it here. A field
- * added to `UserRecord` and forgotten here is missing from every answer. The round trip in
- * `gateway.test.ts` catches that. The property description is on `attributes` alone.
- */
+// A positive list of the fields that can be answered. A column added to `saf_users.users` reaches
+// no response until somebody writes it here, and a field added to `UserRecord` and forgotten here
+// is missing from every answer. The round trip in `gateway.test.ts` catches the second case.
 const userRecordSchema = {
   type: "object",
   properties: {
@@ -208,27 +179,23 @@ const userRecordSchema = {
     // and renders in the document as "any".
     attributes: {
       description:
-        "Arbitrary JSON, defined by the deployment and interpreted by nothing in the Gateway. This is where grouping and therefore authorization live, since there is no Party entity (ADR-0008, ADR-0014). A User created through this API always has `{}`: the route has no parameter through which anything else could arrive, so the column's default is the only thing that can decide.",
+        "Arbitrary JSON, defined by the deployment and interpreted by nothing in the Gateway. This is where grouping and therefore authorization live. A User created through this API always has `{}`: the route has no parameter through which anything else could arrive, so the column's default is the only thing that can decide.",
     },
     createdAt: { type: "string" },
   },
   required: ["id", "attributes", "createdAt"],
 } as const;
 
-/** A list answers in an envelope rather than as a bare array, as every component's does. */
+// A list answers in an envelope rather than as a bare array, as every component's does.
 const userListSchema = {
   type: "object",
   properties: { users: { type: "array", items: userRecordSchema } },
   required: ["users"],
 } as const;
 
-/**
- * `IssuedToken` on the wire, with the same force and the same hazard as the shape above.
- *
- * The User is embedded rather than referenced, so a login answers everything a client needs.
- * `expiresAt` carries a description, because a client has to decide what to do at that moment.
- * `token` carries none: when its plaintext exists is the route's story rather than the field's.
- */
+// The same force and the same hazard as the shape above. `expiresAt` carries a description because
+// a client has to decide what to do at that moment; `token` carries none, when its plaintext
+// exists being the route's story rather than the field's.
 const issuedTokenSchema = {
   type: "object",
   properties: {
@@ -236,7 +203,7 @@ const issuedTokenSchema = {
     expiresAt: {
       type: "string",
       description:
-        "When the Token stops working, ISO 8601. Always present: a Token that never expires is unrepresentable, and the lifetime is the Gateway's rather than the client's to choose. Nothing renews a Token and nothing reaps an expired one: it simply stops being accepted, and a client past this time logs in again (ADR-0030).",
+        "When the Token stops working, ISO 8601. Always present: a Token that never expires is unrepresentable, and the lifetime is the Gateway's rather than the client's to choose. Nothing renews a Token and nothing reaps an expired one: it simply stops being accepted, and a client past this time logs in again.",
     },
     user: userRecordSchema,
   },
@@ -246,21 +213,17 @@ const issuedTokenSchema = {
 /**
  * A response that carries no body, which is `type: "null"` and not an empty object.
  *
- * Fastify's serializer answers an empty payload against this without a 500. `@fastify/swagger`
- * emits a described response with no `content`, so no client waits for a body to parse.
- *
- * @param why What this status means, for the document.
+ * Fastify's serializer answers an empty payload against this without a 500, and
+ * `@fastify/swagger` emits a described response with no `content`, so no client waits for a body
+ * to parse.
  */
 function noBody(why: string) {
   return { type: "null", description: why };
 }
 
-/**
- * The most a password can be, in characters. A bound rather than a policy.
- *
- * scrypt reads its whole input. So an unbounded password is unbounded memory-hard work, on a route
- * nothing rate limits. The number is far above any passphrase a person types.
- */
+// A bound rather than a policy. scrypt reads its whole input, so an unbounded password is
+// unbounded memory-hard work on a route nothing rate limits. The number is far above any
+// passphrase a person types.
 const maxPasswordLength = 1024;
 
 const passwordSchema = {
@@ -269,23 +232,17 @@ const passwordSchema = {
   maxLength: maxPasswordLength,
 } as const;
 
-/**
- * The body of `POST /`: an optional initial password, and nothing else.
- *
- * `null` is in the type list because a `POST` with no body creates a User with no password.
- * Fastify answers a missing body against an object-only schema with a 400.
- *
- * `additionalProperties: false` strips rather than refuses, because Fastify's ajv is configured
- * with `removeAdditional`. So an `attributes` field an agent was talked into posting reaches
- * nothing.
- */
+// `null` is in the type list because a `POST` with no body creates a User with no password, and
+// Fastify answers a missing body against an object-only schema with a 400.
+//
+// `additionalProperties: false` strips rather than refuses, Fastify's ajv being configured with
+// `removeAdditional`. So an `attributes` field an agent was talked into posting reaches nothing.
 const newUserSchema = {
   type: ["object", "null"],
   properties: { password: passwordSchema },
   additionalProperties: false,
 } as const;
 
-/** The agent's User routes, over the operations above. */
 export function agentUserRoutes(directory: UserOperations): FastifyPluginAsync {
   return async (fastify) => {
     fastify.post<{ Body: { password?: string } | null }>(
@@ -369,13 +326,9 @@ export function agentUserRoutes(directory: UserOperations): FastifyPluginAsync {
   };
 }
 
-/**
- * The body of `POST /tokens`: who is logging in, and what they know.
- *
- * The id is pattern-validated like an id in a path. PostgreSQL refuses to cast a malformed uuid,
- * so an unvalidated one would be a 500 out of a typo. A well-formed id nobody holds gets the same
- * 401 as a wrong password.
- */
+// The id is pattern-validated like an id in a path. PostgreSQL refuses to cast a malformed uuid,
+// so an unvalidated one would be a 500 out of a typo. A well-formed id nobody holds gets the same
+// 401 as a wrong password.
 const credentialsSchema = {
   type: "object",
   properties: { user: idSchema, password: passwordSchema },
@@ -383,13 +336,9 @@ const credentialsSchema = {
   additionalProperties: false,
 } as const;
 
-/**
- * The body of `PUT /password`: what the caller knows, and what they want instead.
- *
- * There is no `user` field. The User is the presented one, read from the Token. No request can
- * change another User's password, and no check can be got wrong. Both passwords carry the same
- * bound, because scrypt reads both.
- */
+// No `user` field: the User is the presented one, read from the Token, so no request can change
+// another User's password and no check can be got wrong. Both passwords carry the same bound,
+// because scrypt reads both.
 const passwordChangeSchema = {
   type: "object",
   properties: { currentPassword: passwordSchema, newPassword: passwordSchema },
@@ -401,10 +350,8 @@ const passwordChangeSchema = {
  * Answers the one 401 every authentication failure gets, whatever it was.
  *
  * A wrong password, a User that does not exist and a User with no password are one message. So are
- * a missing header, a malformed one, an unknown Token and an expired one. Nothing here answers who
- * exists.
- *
- * The body is Fastify's own error shape, so this surface answers one shape rather than two.
+ * a missing header, a malformed one, an unknown Token and an expired one. The body is Fastify's
+ * own error shape, so this surface answers one shape rather than two.
  */
 export function unauthorized(reply: FastifyReply): FastifyReply {
   return reply
@@ -412,58 +359,43 @@ export function unauthorized(reply: FastifyReply): FastifyReply {
     .send({ statusCode: 401, error: "Unauthorized", message: "authentication failed" });
 }
 
-/**
- * What the preHandler needs of the User Manager: a Token in, a User or nothing out.
- *
- * `undefined` for every way it can fail. An unknown Token and an expired one arrive here as one
- * value, so no route can leak a reason code.
- */
+// `undefined` for every way it can fail. An unknown Token and an expired one arrive here as one
+// value, so no route can leak a reason code.
 export type TokenOperations = {
   authenticate(token: string): Promise<UserRecord | undefined>;
 };
 
 /**
- * The authenticated User, on the request, typed for every deployment.
- *
- * This augmentation is global. Any `FastifyRequest` in a program that imports this subpath has the
- * field, whether or not the program builds the Manager. The name is namespaced, because
+ * The augmentation is global: any `FastifyRequest` in a program importing this subpath has the
+ * field, whether or not the program builds the component. The name is namespaced because
  * `@fastify/jwt` claims an unqualified `user`.
  *
  * It is not optional, though at runtime it is absent until `requireUser` has run. The type cannot
- * express "set only after this hook ran". So a route that forgets the preHandler still type-checks
- * and reads `undefined`.
+ * express "set only after this hook ran", so a route that forgets the preHandler still type-checks
+ * and reads `undefined`. Accepted, as everywhere else that Operator code is guidance rather than
+ * construction ([ADR-0030](../../docs/adr/0030-passwords-are-traded-for-bearer-tokens.md)).
  */
 declare module "fastify" {
   interface FastifyRequest {
-    /**
-     * The User the presented Token belongs to, assigned by `users.requireUser`.
-     *
-     * Present only on a route that took that preHandler. Reading it anywhere else reads
-     * `undefined` with a type that says otherwise.
-     */
+    /** The User the presented Token belongs to, assigned by `users.requireUser`. */
     safUser: UserRecord;
   }
 }
 
-/**
- * `Authorization: Bearer <token>`, or nothing.
- *
- * The scheme is matched case-insensitively, because RFC 7235 says it is. Everything else is exact:
- * one scheme, one space or more, and a credential with no whitespace in it.
- */
+// The scheme is matched case-insensitively, because RFC 7235 says it is. Everything else is exact:
+// one scheme, one space or more, and a credential with no whitespace in it.
 function presentedToken(authorization: string | undefined): string | undefined {
   return /^Bearer +(\S+)$/i.exec(authorization ?? "")?.[1];
 }
 
 /**
- * Builds the preHandler that requires a Token: the whole integration surface.
- *
- * An ordinary Fastify hook rather than a plugin. An Operator adds it to a route of their own, on
- * either server and at any depth. The HTTP Channel does the same.
+ * The whole integration surface: an ordinary Fastify hook and not a plugin, so an Operator adds it
+ * to a route of their own on either server and at any depth.
  *
  * The User is assigned by a plain property write rather than with `decorateRequest`. A decoration
- * is scoped to the plugin instance that made it, and a sibling plugin cannot see it. Every refusal
- * is `unauthorized` and nothing else.
+ * is scoped to the plugin instance that made it, so escaping that scope means depending on
+ * `fastify-plugin` and either surrendering route prefixes or re-implementing them. Do not convert
+ * this to one. Every refusal is `unauthorized` and nothing else.
  */
 export function requireUser(directory: TokenOperations): preHandlerAsyncHookHandler {
   return async (request, reply) => {
@@ -482,7 +414,10 @@ export function requireUser(directory: TokenOperations): preHandlerAsyncHookHand
  *
  * Registering neither this plugin nor a Public server is how a deployment replaces this
  * authentication with its own. An OIDC callback of the Operator's establishes identity and mints
- * an ordinary Token. Every other route in the Gateway is unchanged.
+ * an ordinary Token through `issueToken`, and every other route in the Gateway is unchanged. That
+ * is why there is no `Authenticator` interface here: an implementation of `verify(request)` still
+ * has to answer where the credential lives, so the useful extension point is issuance
+ * ([ADR-0030](../../docs/adr/0030-passwords-are-traded-for-bearer-tokens.md)).
  */
 export function publicUserRoutes(
   directory: CredentialOperations,

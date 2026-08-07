@@ -1,3 +1,20 @@
+/**
+ * This is the only module in the framework that imports `pg`, and it must stay so. Every other part
+ * obtains a handle with `handle(schema)`, and the one thing needing a connection to itself, a
+ * `LISTEN` registration, gets it with `listen(channel, listener)` rather than a pool of its own. A
+ * second importer would be a second lifetime nothing closes at `stop`, and the confinement is
+ * asserted by `src/import-confinement.test.ts` rather than left to review.
+ *
+ * `startListening` cannot use the pool: a `LISTEN` belongs to a session, and a pooled connection
+ * goes back the moment its query resolves. It also cannot throw at a caller. A dropped connection
+ * is ordinary operation rather than a failure, so every loss is reported and retried with a
+ * doubling backoff, and the recovery a missed notification needs is the caller's.
+ *
+ * `listen` returns before the connection exists, which is what lets a component register in its
+ * constructor. So `close` has to await the attempt in flight; without that it can return while a
+ * connection is still being opened, and the process stays alive holding it.
+ */
+
 import type { ExtractTablesWithRelations } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
@@ -5,22 +22,16 @@ import type { PgDatabase, PgQueryResultHKT, PgTransaction } from "drizzle-orm/pg
 import { Client, Pool } from "pg";
 import type { Component } from "../components.ts";
 
-/**
- * A Drizzle handle over the pool, or inside a transaction, typed to the schema it carries.
- *
- * One type for both. A cross-component signature widens `TSchema` rather than naming one
- * component's schema. A transaction carries the schema of the handle it started on.
- */
 export type Handle<TSchema extends Record<string, unknown> = Record<string, never>> = PgDatabase<
   PgQueryResultHKT,
   TSchema
 >;
 
 /**
- * What `db.tx` hands its callback: a `Handle`, plus `rollback()`.
+ * What `tx` hands its callback: a {@link Handle}, plus `rollback()`.
  *
- * `rollback()` throws `TransactionRollbackError` rather than returning, so code using it as
- * control flow has to catch and filter.
+ * `rollback()` throws `TransactionRollbackError` rather than returning, so code that uses it as
+ * control flow has to catch and then filter for it.
  */
 export type Transaction = PgTransaction<
   PgQueryResultHKT,
@@ -29,110 +40,99 @@ export type Transaction = PgTransaction<
 >;
 
 /**
- * What `db.listen` reports.
+ * What `listen` reports.
  *
  * `notified` is the point of it. The other two are about the connection underneath, and a caller
  * has to care: PostgreSQL queues nothing for a listener that is not connected. Whatever was sent
  * while the connection was down is gone, and no gap is visible in what does arrive.
  */
 export type ChannelListener = {
-  /** A notification arrived. `payload` is `NOTIFY`'s, empty when it carried none. */
+  /** A notification arrived. `payload` is `NOTIFY`'s, and is empty when it carried none. */
   notified(payload: string): void;
   /**
-   * The registration is in place, on the first connection and again after every loss.
+   * The registration is in place: once on the first connection, and again after every loss.
    *
-   * A reconnection is exactly where a notification goes missing. So a caller that cannot afford
-   * to miss one acts here too.
+   * A reconnection is exactly where a notification goes missing, so a caller that cannot afford to
+   * miss one does its own catching-up from here.
    */
   connected?(): void;
-  /** The connection was lost, or an attempt to open one failed. Another follows. */
+  /** The connection was lost, or an attempt to open one failed. Another attempt follows. */
   lost?(error: unknown): void;
 };
 
-/** A registration made by `db.listen`. */
 export type Listening = {
   /**
-   * Stops listening and closes the connection. Idempotent, and safe to call while a
-   * reconnection is pending.
+   * Stops listening and closes the connection. Idempotent, and safe to call while a reconnection is
+   * pending.
    */
   close(): Promise<void>;
 };
 
 /**
- * The Gateway's PostgreSQL client: the pool, a schema-typed handle per component, transactions
- * and `LISTEN` registrations.
+ * The one PostgreSQL client in a Gateway: the pool, a schema-typed handle per component,
+ * transactions, and `LISTEN` registrations.
  *
- * **No migrations.** The Operator generates and applies their own DDL. Nothing here creates a
- * schema or tracks what was applied.
+ * **No migrations, and no DDL of any kind.** Nothing here creates a schema, applies a change or
+ * tracks what was applied. The Operator assembles the components they run into one barrel and
+ * pushes it with their own `drizzle-kit` before the Gateway starts.
  *
- * A Component, and normally the first entry in the Gateway's record. Everything queries it, and
- * the drain queries it on the way down, so it starts first and stops last.
+ * A Component, and normally the first key in the Gateway's record. Everything queries it, and the
+ * Signal Worker's drain queries it on the way down, so it starts first and stops last.
  */
 export type Db = Component & {
   /**
    * Opens the pool, and nothing else.
    *
-   * Eager, so a URL nothing answers on is a startup failure naming the Db. It is not a surprise
-   * at the first query. Nothing about the schema is checked. A database behind the code surfaces
-   * as a raw PostgreSQL error at its first query.
+   * Eager, so a URL nothing answers on fails here, named as the Db, rather than at whichever query
+   * came first. Nothing about the schema is looked at: a database behind the code starts cleanly
+   * and raises a raw PostgreSQL error at its first query.
    */
   start(): Promise<void>;
 
   /**
    * Closes the pool and every connection `listen` opened.
    *
-   * Listening connections are included because they are the Db's. One left connected keeps the
-   * process alive and its database undroppable.
+   * The listening connections are included because they are the Db's own. One left connected keeps
+   * the process alive and its database undroppable.
    */
   stop(): Promise<void>;
 
   /**
-   * A handle over the shared pool, typed to `schema`.
+   * A handle over the shared pool, typed to `schema` and to nothing else.
    *
-   * The pool itself is never handed out, which keeps `pg` out of the public API.
+   * The pool is never handed out, so `pg` reaches nothing in a deployment's own code. Call this
+   * once per component with that component's tables.
    */
   handle<TSchema extends Record<string, unknown>>(schema: TSchema): Handle<TSchema>;
 
   /**
    * Registers `listen <channel>` on a connection of the Db's own, outside the pool, and reports
-   * what arrives on it.
+   * what arrives on it. This is the one place the Db holds a connection open on a caller's behalf.
    *
-   * It cannot be a pooled connection. A `LISTEN` registration belongs to a session. A pooled
-   * connection goes back to the pool as soon as its query resolves. This is therefore the one
-   * place the Db keeps a connection open on a caller's behalf.
-   *
-   * @returns Immediately, without waiting for the connection, and it never rejects. Failures go
-   *   to `listener.lost` and are retried with a backoff until `close`.
+   * It answers before that connection exists and never rejects, so a component registers in its
+   * own constructor. A failure to connect reaches `lost` and is retried with a growing backoff
+   * until `close`, which means a registration that has never once succeeded looks the same from
+   * here as a healthy one.
    */
   listen(channel: string, listener: ChannelListener): Listening;
 
-  /** Runs `body` in a transaction: commits on return, rolls back on throw. */
+  /**
+   * Runs `body` in a transaction: commits when it returns, rolls back when it throws.
+   *
+   * Only writes made through the handle `body` is given are in it. A component's own handle takes
+   * its own connection, so a write through one inside `body` commits on its own and survives the
+   * rollback. That is why a method meant to join a caller's transaction takes the handle as an
+   * argument instead of finding one.
+   */
   tx<T>(body: (tx: Transaction) => Promise<T>): Promise<T>;
 };
 
 /**
- * Opens the Db on a PostgreSQL connection URL.
+ * Opens the Db on a PostgreSQL connection URL, such as `postgres://user:pass@host:5432/db`.
  *
- * Synchronous, and it connects lazily: the pool opens its first connection when something is
- * asked of it. That is what lets every component be constructed before anything is on the wire.
- * `start` then opens the pool itself, rather than leaving a bad URL to whichever query came
- * first.
- *
- * @param url A PostgreSQL connection URL, such as `postgres://user:pass@host:5432/db`.
- *
- * @example
- * ```ts
- * import { openDb } from "shared-agent-framework";
- * import { users } from "shared-agent-framework/users";
- *
- * const db = openDb(process.env.DATABASE_URL ?? "");
- * await db.start();
- *
- * const handle = db.handle({ users });
- * const rows = await handle.select().from(users).limit(10);
- *
- * await db.stop();
- * ```
+ * Synchronous, and nothing is on the wire yet: the pool opens its first connection when something
+ * is asked of it, which is what lets every component be constructed before the database has to be
+ * there. `start` is what opens the pool deliberately.
  */
 export function openDb(url: string): Db {
   const pool = new Pool({ connectionString: url });
@@ -175,10 +175,9 @@ export function openDb(url: string): Db {
 }
 
 /**
- * How a listening connection names itself in `pg_stat_activity`.
- *
- * An Operator did not ask for this connection and cannot see it in the Db's surface. So it names
- * itself where they will look. The tests find and cut it by the same name.
+ * How a listening connection names itself in `pg_stat_activity`. An Operator never asked for this
+ * connection and cannot see it anywhere in the Db's surface, so it says what it is where they will
+ * look, and the tests find and terminate it by the same name.
  */
 export const listenApplicationName = "saf listen";
 
@@ -186,13 +185,7 @@ export const listenApplicationName = "saf listen";
 const firstRetryMs = 100;
 const maxRetryMs = 5_000;
 
-/**
- * Holds one connection open with a `LISTEN` on it, and puts it back whenever it is lost.
- *
- * A dropped connection is normal operation rather than a failure: PostgreSQL restarts,
- * connections are terminated, networks break. So nothing here throws at a caller. A loss is
- * reported and retried, and the caller's own recovery covers what went missing.
- */
+/** Holds one connection open with a `LISTEN` on it, and puts it back whenever it is lost. */
 function startListening(
   url: string,
   channel: string,

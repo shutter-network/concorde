@@ -1,13 +1,9 @@
 /**
- * The agent's container, from the package root.
- *
- * The package root rather than `./pi`, because nothing here knows about an Agent
- * Implementation. An Agent Container declares an image, what it sees on disk, and how it is
- * confined. A second Runtime needs the same declaration unchanged.
- *
- *  - `AgentContainer` is the declaration, and only its `image` is required.
- *  - `createAgentContainerRuntime` turns one plus a single function into a Runtime.
- *  - `mountArguments` turns what the container sees on disk into `--mount` arguments.
+ * Everything under this directory is exported from the **package root** and not from `./pi`,
+ * because nothing in it has heard of an Agent Implementation: it is what `docker run` takes and
+ * what to do with the process, and a second Agent Implementation needs all of it unchanged
+ * (ADR-0033). `src/pi/` is the other half and imports from here. Nothing here may import back, and
+ * an import of `../pi/` is the thing to refuse in review; no lint rule enforces it.
  */
 
 export type {

@@ -1,12 +1,22 @@
 /**
- * The User Manager, from `shared-agent-framework/users`.
+ * The User Manager, the component that holds the identities a Gateway authenticates. A User is an
+ * opaque Gateway-issued id, a set of Attributes the Operator writes, and a set of Tokens. There is
+ * no email and no username anywhere, so the id is the only handle a User has. Attributes are
+ * arbitrary JSON that nothing in the framework interprets, and they are where a deployment's
+ * grouping and therefore its authorization live.
  *
- * `createUsers` is the whole of it for an Operator. Hand it the Db, a Token lifetime and the
- * servers its two route groups belong on. It registers `agentRoutes` under `/users` and
- * `publicRoutes` under `/auth`. Then put it in the Gateway's record like every other Component.
+ * {@link createUsers} makes one. {@link Users} is what comes back, and it carries the methods and
+ * the `requireUser` hook that the rest of a deployment reaches for. {@link UserRecord} is what
+ * every surface here answers with.
  *
- * This subpath also carries the two tables, for the schema an Operator generates. It applies no
- * DDL itself. Importing it types `request.safUser` on every `FastifyRequest` in your program.
+ * Other components take that hook rather than authenticating anybody themselves, so build this one
+ * before them. Two of them also point a foreign key at the `users` table, so an Operator's barrel
+ * that carries the Messenger's tables or the Nostr Channel's without this subpath's generates a
+ * constraint onto a table it never creates.
+ *
+ * The subpath also exports the `users` and `tokens` tables, for the barrel an Operator's
+ * `drizzle-kit` reads, and importing it declares `request.safUser` on every `FastifyRequest` in
+ * the program, whether or not the program builds this component.
  *
  * @example
  * A Gateway with Users, and a User admitted from the Operator's own code.
@@ -18,7 +28,8 @@
  * const gateway = createGateway({
  *   databaseUrl: process.env.DATABASE_URL ?? "",
  *   runtime: createPiRuntime({ image: "my-agent:1" }),
- *   agentListen: { host: "127.0.0.1", port: 8081 },
+ *   // Not loopback: the agent reaches this server from a container of its own.
+ *   agentListen: { host: "0.0.0.0", port: 8081 },
  *   publicListen: { host: "0.0.0.0", port: 8080 },
  *   extend: ({ db, agentServer, publicServer }) => ({
  *     users: createUsers({ db, tokenTtl: 86_400_000, agentServer, publicServer }),
@@ -28,7 +39,7 @@
  *
  * await gateway.start();
  *
- * // A User with a password, which a client trades for a Token at `POST /auth/tokens`.
+ * // One transaction, so a User with no password never reaches the table.
  * const { db, users } = gateway.components;
  * const admitted = await db.tx(async (tx) => {
  *   const user = await users.create(tx);

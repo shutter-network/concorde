@@ -1,60 +1,43 @@
 /**
- * The Nostr Channel, from `shared-agent-framework/nostr-channel`.
+ * The Nostr Channel, the component that reaches a User in the Nostr client they already use, and
+ * lets them reach the Shared Agent from it. A **Channel** is what reaches one person over one
+ * medium, where the Messenger owns the log and reaches nobody. This one exchanges NIP-17 private
+ * direct messages over a single connection to one **Relay** the Operator runs, and a message from a
+ * public key the Operator recorded becomes an inbound Message and its Signal in one transaction, so
+ * a Signal Handler or a Prompt template written against the Messenger needs no change.
  *
- * `createNostrChannel` is the whole of it for an Operator. Hand it the Db, the Messenger, the
- * User Manager, the Shared Agent's Nostr secret key as 32 raw bytes, and the address of the one
- * Relay the Operator runs. It registers itself with that Messenger, and what it gets back is the
- * only way to write an inbound Message. Then key it in the Gateway's record before the Signal
- * Worker, so that it stops after the drain.
+ * {@link createNostrChannel} makes one. {@link NostrChannel} is what comes back, and
+ * `recordPublicKey` is the only method trusted code calls: everything else on it is for the
+ * Messenger or for the Relay. {@link NostrChannelOptions} takes the Shared Agent's Nostr secret key
+ * as 32 raw bytes, a second keypair that the signing identity neither is nor can become.
  *
- * **It registers no route on either server.** What a User reaches over this medium is the Relay,
- * so a deployment running this and nothing else has a Public server with only the User Manager's
- * login on it. Users message the agent from the Nostr client they already use, in NIP-17 private
- * direct messages, and a message from a recorded key becomes an inbound Message and a Signal in
- * one transaction — so every Signal Handler and Prompt template written against the Messenger
- * keeps working unchanged.
+ * It registers no route on either server, a Relay being what a User reaches over this medium, so a
+ * deployment running this and nothing else has a Public server carrying only the login. It
+ * publishes one thing about itself and no profile, a relay list naming that Relay, so the agent
+ * appears in a client as a bare public key.
  *
- * **It publishes one thing about itself**, at every start: a NIP-17 relay list naming the Relay it
- * was built with. That is what makes a client which refuses to message a public key with no such
- * list message this agent, and what steers a client that reads one to the right Relay. **It does
- * not buy discoverability.** Only a client already connected to that Relay can read the list, which
- * is the onboarding assumption the whole design rests on: Users are preregistered and told which
- * Relay to add, so nobody finds this agent by looking for it. Nothing else about it is published —
- * no profile, no name, no picture — so it appears in a client as a bare public key.
+ * Build the Messenger first, which the constructor registers with, and the User Manager first,
+ * whose Users these public keys belong to. Key the result ahead of the Signal Worker in the
+ * Gateway's record: the Worker is keyed last so it drains first, and a Signal Handler's post phase
+ * may still send. One Channel per Messenger, refused at registration, so a deployment runs Nostr or
+ * HTTP and not both.
  *
- * **One Channel per Messenger**, refused at registration, so a deployment runs Nostr or HTTP and
- * not both.
- *
- * **A reply travels in two steps, and the split is the design.** `messenger.send` runs the
- * Channel's own `send` inside the Operator's transaction, where the recipient's key is resolved,
- * the reply is sealed into one gift wrap, its size is compared against what the Relay advertises,
- * and the wrap is queued. Anything wrong there throws and takes the Message with it, so nothing
- * claims to have been sent. The publish itself waits for that transaction to commit and happens in
- * `drain`. A reply the Relay refuses keeps its queue row with the Relay's own reason on it and is
- * never attempted again, so `select * from saf_nostr.outbox where reason is not null` answers "why
- * did she not get it" with no API and no log trawl.
- *
- * `recordPublicKey` is the one method trusted code calls, and it proves nothing: the Operator
- * establishes out of band that a key is a person's, and no route anywhere records one, so an
- * injected prompt cannot claim a User's key. This subpath also carries the three tables. Barrel
- * `shared-agent-framework/users` beside it, because `pubkeys.user_id` and `outbox.user_id`
- * reference the User Manager's table.
- *
- * The Nostr identity is a **second** keypair, secp256k1 where the signing identity is Ed25519, and
- * it cannot be that key or become it. The framework parses no key material: the constructor takes
- * bytes an Operator decoded themselves, and no `nsec` decoder is shipped.
+ * The subpath also carries the three tables, `pubkeys`, `received` and `outbox`, for the barrel an
+ * Operator's `drizzle-kit` reads. Barrel `shared-agent-framework/users` beside
+ * it: two of those tables reference the User Manager's, and a barrel without it generates a foreign
+ * key onto a table nothing creates.
  *
  * @example
- * A Gateway a User reaches over Nostr, with the key recorded out of band.
+ * A Gateway a User reaches over Nostr, with their public key recorded out of band.
  * ```ts
  * import { readFileSync } from "node:fs";
- * import { createGateway, templateHandler } from "shared-agent-framework";
- * import type { MessageRecord } from "shared-agent-framework/messenger";
- * import { createMessenger, messageReceivedKind } from "shared-agent-framework/messenger";
+ * import { createGateway } from "shared-agent-framework";
+ * import { createMessenger } from "shared-agent-framework/messenger";
  * import { createNostrChannel } from "shared-agent-framework/nostr-channel";
  * import { createPiRuntime } from "shared-agent-framework/pi";
  * import { createUsers } from "shared-agent-framework/users";
  *
+ * // The framework parses no key material: 32 raw bytes, decoded by the deployment.
  * const secretKey = Uint8Array.from(
  *   Buffer.from(readFileSync(process.env.NOSTR_KEY_FILE ?? "", "utf8").trim(), "hex"),
  * );
@@ -62,7 +45,8 @@
  * const gateway = createGateway({
  *   databaseUrl: process.env.DATABASE_URL ?? "",
  *   runtime: createPiRuntime({ image: "my-agent:1" }),
- *   agentListen: { host: "127.0.0.1", port: 8081 },
+ *   // Not loopback: the agent reaches this server from a container of its own.
+ *   agentListen: { host: "0.0.0.0", port: 8081 },
  *   publicListen: { host: "0.0.0.0", port: 8080 },
  *   extend: ({ db, agentServer, publicServer, worker }) => {
  *     const users = createUsers({ db, tokenTtl: 86_400_000, agentServer, publicServer });
@@ -79,16 +63,17 @@
  *       }),
  *     };
  *   },
- *   handlers: ({ messenger }) => ({
- *     [messageReceivedKind]: templateHandler<MessageRecord>({
- *       template: new URL("./prompts/message.hbs", import.meta.url),
- *       session: (signal) => `user_${signal.payload.userId}`,
- *       data: async (signal) => ({ log: await messenger.history(signal.payload.userId) }),
- *     }),
- *   }),
+ *   handlers: () => ({}),
  * });
  *
  * await gateway.start();
+ *
+ * // Admission, out of band and from trusted code, in a transaction of the Operator's own.
+ * const { db, nostr } = gateway.components;
+ * await db.tx((tx) => nostr.recordPublicKey(tx, "a-user-id", "ab".repeat(32)));
+ *
+ * // What an Operator tells that User to message.
+ * console.log(nostr.publicKey);
  * ```
  *
  * @module

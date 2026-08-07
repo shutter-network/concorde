@@ -1,29 +1,32 @@
 /**
- * The Messenger, from `shared-agent-framework/messenger`.
+ * The Messenger, the component that owns the Message log. A Message is a `text` string travelling
+ * one way between the Shared Agent and one User, numbered from 1 inside that User's log across both
+ * directions, kept forever.
  *
- * `createMessenger` is the whole of it for an Operator. Hand it the Db, the User Manager, the
- * Signal Worker and the Agent server. It registers the agent's route group at `/messages` on that
- * server. Then key it in the Gateway's record before the Signal Worker, so that it stops after the
- * drain.
+ * {@link createMessenger} makes one. {@link Messenger} is what comes back, and it carries the three
+ * acts no request can express: taking a Channel, sending to one User inside a transaction of the
+ * caller's own, and reading any User's whole log. {@link MessageRecord} is what every surface
+ * answers with, and it is the Signal payload too: with {@link messageReceivedKind} beside it, an
+ * Operator's Handler map needs no string literal of its own and no payload type to re-declare.
  *
- * **It owns the Message log and reaches nobody.** Getting a Message to a person is a Channel's
- * job: build one — `shared-agent-framework/http-channel` is the one that serves a browser — hand
- * it this Messenger, and it registers itself. One Channel per Messenger, refused at registration
- * rather than documented.
+ * It reaches nobody. A {@link Channel} is what gets a Message to a person over one medium, and
+ * `shared-agent-framework/http-channel` and `shared-agent-framework/nostr-channel` are the two that
+ * ship. Construct one with this Messenger and it registers itself, so an entry point wires nothing
+ * further. One Channel per Messenger, refused at registration, so a deployment runs one medium and
+ * a `send` before any Channel exists throws rather than recording something nothing will deliver.
  *
- * It answers with three things no request can express. `register` takes the Channel and answers
- * with the only way to write an inbound Message. `send` writes a Message to one User from inside
- * the caller's transaction. `history` reads any User's log.
+ * Build the User Manager before this, which it takes beside the Signal Worker the Gateway hands to
+ * `extend`. Key this component and its Channel ahead of that Worker in the Gateway's record: the
+ * Worker is keyed last so it drains first, and a Signal Handler's post phase is where a person is
+ * told that their Run failed.
  *
- * `messageReceivedKind` and `MessageRecord` are the two halves of this component's Signal
- * contract, and neither changed when the log was taken out of the HTTP Messenger, so a Handler
- * written against that part needs no edit. An Operator's Handler map needs no string literal and
- * no re-declared payload. This subpath also carries the one table. Barrel
- * `shared-agent-framework/users` beside it, because `messages.user_id` references the User
- * Manager's table.
+ * The subpath also carries the one table. Barrel `shared-agent-framework/users` beside it, because
+ * `messages.user_id` references the User Manager's table and a barrel without it generates a
+ * foreign key onto a table nothing creates.
  *
  * @example
- * A Gateway that answers a submitted Message, and a Handler written against the record.
+ * A Gateway whose agent answers a submitted Message over HTTP, and a send from the Operator's own
+ * trusted code.
  * ```ts
  * import { createGateway, templateHandler } from "shared-agent-framework";
  * import { createHttpChannel } from "shared-agent-framework/http-channel";
@@ -35,7 +38,8 @@
  * const gateway = createGateway({
  *   databaseUrl: process.env.DATABASE_URL ?? "",
  *   runtime: createPiRuntime({ image: "my-agent:1" }),
- *   agentListen: { host: "127.0.0.1", port: 8081 },
+ *   // Not loopback: the agent reaches this server from a container of its own.
+ *   agentListen: { host: "0.0.0.0", port: 8081 },
  *   publicListen: { host: "0.0.0.0", port: 8080 },
  *   extend: ({ db, agentServer, publicServer, worker }) => {
  *     const users = createUsers({ db, tokenTtl: 86_400_000, agentServer, publicServer });
@@ -43,6 +47,7 @@
  *     return {
  *       users,
  *       messenger,
+ *       // The Channel takes the Messenger and registers itself with it.
  *       http: createHttpChannel({ db, messenger, users, publicServer }),
  *     };
  *   },
@@ -56,6 +61,12 @@
  * });
  *
  * await gateway.start();
+ *
+ * // A send that commits with whatever else the Operator's transaction writes.
+ * const { db, messenger } = gateway.components;
+ * async function tell(userId: string, text: string): Promise<void> {
+ *   await db.tx((tx) => messenger.send(tx, userId, text));
+ * }
  * ```
  *
  * @module

@@ -1,23 +1,26 @@
 /**
- * The Scheduler, from `shared-agent-framework/scheduler`.
+ * The Scheduler, the component that owns Schedules and wakes the deployment when one matures. A
+ * Schedule is a named, stored instruction to emit one Signal at future times: a cron expression in
+ * a named IANA time zone, or a single absolute instant. Its name is its whole identity, in one flat
+ * namespace the agent and the Operator share, so creating a name that exists updates it.
  *
- * `createScheduler` is the whole of it for an Operator. Hand it the Db and the Signal Worker, and
- * it registers its Agent routes on the server it is given. Then key it in the Gateway's record like
- * every other Component: `start` arms its firing timer and `stop` cancels it.
+ * {@link createScheduler} makes one. {@link Scheduler} is what comes back, and `schedule` is the
+ * upsert both creators go through. {@link scheduleFiredKind} and {@link ScheduleFiredRecord} are
+ * the two halves of the Signal contract, so a Handler for a matured Schedule is written
+ * `SignalHandler<ScheduleFiredRecord>` with no string literal of its own.
  *
- * It answers with the programmatic interface an Operator always has. That is `schedule`, an upsert
- * by name, plus `list`, `cancel` and the awaitable `tick`. A `schedule` call the Scheduler will not
- * accept throws `ScheduleSpecError` before anything is persisted. The Agent route catches exactly
- * that and answers 400.
+ * Build the Signal Worker first, which every fire emits into, and put this ahead of it in the
+ * Gateway's record. Then register a Handler under that one `kind`: with none, a stored Schedule
+ * fires into a Signal that fails on every attempt. Passing no Agent server is how a deployment
+ * keeps the agent away from Schedules and keeps the methods for itself.
  *
- * `scheduleFiredKind` and `ScheduleFiredRecord` are the two halves of the Signal contract, so a
- * Handler for a matured Schedule is `SignalHandler<ScheduleFiredRecord>`. Registering no Handler
- * for that `kind` leaves a stored Schedule firing into a permanently failed Signal. This subpath
- * also carries the one table. A Schedule references nobody, so a barrel carrying it alone generates
- * cleanly.
+ * A missed fire is never replayed. Every next fire is derived forward from now, at each boot and
+ * after each fire, so a daily digest arranged before a week of downtime fires once afterwards
+ * rather than seven times. The subpath also carries the one table, which references nobody, so a
+ * barrel carrying it alone generates cleanly.
  *
  * @example
- * A Gateway that wakes itself every morning, and the Handler the fire reaches.
+ * A Gateway that wakes itself every morning, and the Handler each fire reaches.
  * ```ts
  * import { createGateway, templateHandler } from "shared-agent-framework";
  * import { createPiRuntime } from "shared-agent-framework/pi";
@@ -27,8 +30,10 @@
  * const gateway = createGateway({
  *   databaseUrl: process.env.DATABASE_URL ?? "",
  *   runtime: createPiRuntime({ image: "my-agent:1" }),
- *   agentListen: { host: "127.0.0.1", port: 8081 },
+ *   // Not loopback: the agent reaches this server from a container of its own.
+ *   agentListen: { host: "0.0.0.0", port: 8081 },
  *   publicListen: { host: "0.0.0.0", port: 8080 },
+ *   // Drop `agentServer` here and the routes vanish, leaving the methods below.
  *   extend: ({ db, worker, agentServer }) => ({
  *     scheduler: createScheduler({ db, worker, agentServer }),
  *   }),
@@ -43,12 +48,13 @@
  *
  * await gateway.start();
  *
- * // The Operator's own Schedule, declared at boot. Re-running this converges to one row.
- * await gateway.components.scheduler.schedule({
+ * // The Operator's own Schedule, arranged at boot. Running this again converges to one row.
+ * const { schedule } = await gateway.components.scheduler.schedule({
  *   name: "morning-digest",
  *   spec: { kind: "cron", expr: "0 7 * * *", tz: "Europe/Berlin" },
  *   data: { audience: "everybody" },
  * });
+ * console.log(schedule.nextFireAt);
  * ```
  *
  * @module

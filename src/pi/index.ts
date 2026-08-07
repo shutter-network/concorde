@@ -1,23 +1,25 @@
 /**
- * The `pi` Agent Implementation, from `shared-agent-framework/pi`.
+ * The `pi` Agent Implementation, from `shared-agent-framework/pi`. An Agent Implementation is the
+ * interchangeable agent program a Run happens in, and `pi` is the one this package adapts.
  *
- * `createPiRuntime` is the whole of it for an Operator. Hand it an Agent Container, which comes
- * from the package root, because nothing about a container is `pi`'s. Then pass what comes back as
- * the Signal Worker's `runtime`. It contributes two overridable defaults and `piRun`, and nothing
- * else.
+ * {@link createPiRuntime} is the whole of it for an Operator: hand it an Agent Container, and pass
+ * what comes back as the Signal Worker's `runtime`. {@link piRun} and {@link interpretPiOutput} are
+ * pure functions, exported to be called from a test and to be read. `piRun` is what makes this `pi`
+ * rather than some other agent, and it is the entire size of the job for an author writing a second
+ * Agent Implementation.
  *
- * The other two exports are pure functions and are here to be read. `piRun` is what makes this `pi`
- * rather than any other agent. A Prompt goes in. The flags, the stdin and the outcome reader for
- * one Run come out. An author of a second Agent Implementation should read it, because it is the
- * entire size of the job. `interpretPiOutput` reads the JSONL event stream into a Run outcome. It
- * is where three traps live. The exit code says nothing, the terminal record is `agent_settled`
- * rather than `agent_end`, and the framing is LF-only.
+ * Nothing about a container is here. The Agent Container, the Mount Table, the argument assembly,
+ * the confinement flags, the process handling and the diagnosis appended to a failure all come from
+ * the package root, generic over which agent runs, so a second Agent Implementation takes them
+ * unchanged.
  *
- * There is no configuration type, no resolver and no invocation composer, because there is no
- * `pi`-shaped configuration left. The image, the mounts, the networks, the environment and the
- * flags describe a container and come from the package root. The model and the provider go in a
- * `settings.json` the Operator mounts. The working directory and the agent's own directory go in a
- * `Dockerfile` they build. The framework writes no file and names no path.
+ * Nothing `pi`-shaped is here either, and there is no configuration type at all. The model and the
+ * provider are `defaultModel` and `defaultProvider` in a `settings.json` the Operator mounts. The
+ * working directory and the agent's own directory are `WORKDIR` and `PI_CODING_AGENT_DIR` in an
+ * image the Operator builds, no `pi` image being published. The Session directory is `pi`'s own to
+ * resolve. Nothing here writes a file or names a path, and so nothing here can refuse a deployment
+ * that is missing one: that deployment is a Gateway which starts, serves, and then fails its first
+ * Run permanently.
  *
  * @example
  * A Gateway whose Runtime is `pi`, in a container the Operator declared.
@@ -25,20 +27,26 @@
  * import { createGateway, templateHandler } from "shared-agent-framework";
  * import { createPiRuntime } from "shared-agent-framework/pi";
  *
+ * const runtime = createPiRuntime({
+ *   image: "my-agent:1",
+ *   networks: ["saf_default"],
+ *   // Only what is named here reaches the agent. None of the Gateway's own environment does.
+ *   env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "" },
+ *   mounts: {
+ *     entries: [
+ *       { agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
+ *       { agentPath: "/workspace/AGENTS.md", gatewayPath: "/srv/saf/AGENTS.md", readOnly: true },
+ *     ],
+ *   },
+ * });
+ *
+ * // The command line, without starting a container: the one way to see the defaults applied.
+ * console.log(runtime.commandFor({ session: "notes", text: "say hello" }).redactedArgs);
+ *
  * const gateway = createGateway({
  *   databaseUrl: process.env.DATABASE_URL ?? "",
- *   runtime: createPiRuntime({
- *     image: "my-agent:1",
- *     networks: ["saf_default"],
- *     // Only what is named here reaches the agent. None of the Gateway's own environment does.
- *     env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "" },
- *     mounts: {
- *       entries: [
- *         { agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
- *         { agentPath: "/workspace/AGENTS.md", gatewayPath: "/srv/saf/AGENTS.md", readOnly: true },
- *       ],
- *     },
- *   }),
+ *   runtime,
+ *   // Not loopback: the agent reaches this server from a container of its own.
  *   agentListen: { host: "0.0.0.0", port: 8081 },
  *   publicListen: { host: "0.0.0.0", port: 8080 },
  *   handlers: () => ({
@@ -51,30 +59,6 @@
  * });
  *
  * await gateway.start();
- * ```
- *
- * @example
- * A second Agent Implementation, written by copying `piRun`.
- * ```ts
- * import type { RunPlan } from "shared-agent-framework";
- * import { createAgentContainerRuntime } from "shared-agent-framework";
- *
- * // One function is the whole of what an Agent Implementation adds.
- * const runtime = createAgentContainerRuntime({
- *   container: { image: "my-other-agent:1", entrypoint: ["other-agent"] },
- *   run: (prompt): RunPlan => ({
- *     args: ["--json", "--session", prompt.session],
- *     // On stdin, never argv: a Prompt is arbitrary text and an agent reads argv its own way.
- *     stdin: prompt.text,
- *     outcome: async (stdout) => {
- *       for await (const _chunk of stdout) {
- *         // Read the whole stream, even once the outcome is known: a subprocess whose stdout
- *         // stops being read blocks as soon as the pipe fills.
- *       }
- *       return { ok: true };
- *     },
- *   }),
- * });
  * ```
  *
  * @module
