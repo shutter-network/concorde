@@ -14,6 +14,14 @@
  * one transaction — so every Signal Handler and Prompt template written against the Messenger
  * keeps working unchanged.
  *
+ * **It publishes one thing about itself**, at every start: a NIP-17 relay list naming the Relay it
+ * was built with. That is what makes a client which refuses to message a public key with no such
+ * list message this agent, and what steers a client that reads one to the right Relay. **It does
+ * not buy discoverability.** Only a client already connected to that Relay can read the list, which
+ * is the onboarding assumption the whole design rests on: Users are preregistered and told which
+ * Relay to add, so nobody finds this agent by looking for it. Nothing else about it is published —
+ * no profile, no name, no picture — so it appears in a client as a bare public key.
+ *
  * **One Channel per Messenger**, refused at registration, so a deployment runs Nostr or HTTP and
  * not both. That is why `example/` keeps HTTP and there is no Nostr section in the quickstart.
  *

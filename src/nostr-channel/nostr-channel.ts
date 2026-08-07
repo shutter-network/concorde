@@ -15,6 +15,13 @@
  * builds the client, subscribes and listens for queued replies, and `stop` closes all three. A
  * stop followed by a start builds a fresh client, because the library's `close` is terminal.
  *
+ * **`start` awaits nothing it sends to the Relay**, and the relay list is the newest reason. Three
+ * things go out there — the NIP-11 request, the subscription and the announcement — and each is
+ * held as a promise `stop` waits for rather than one `start` waits for, because a Relay that is
+ * down is an outage and not a boot failure. A Relay that refuses the announcement outright is a
+ * warning for the same reason: the Gateway is more than this Channel, and a Relay's mood is not
+ * a reason for the rest of it not to come up.
+ *
  * **It admits nobody.** A message from a public key no `pubkeys` row names is dropped and nothing
  * whatever is stored for it, because the deployment is permissioned and an agent whose public
  * identity is known will be messaged by strangers. `recordPublicKey` is the only way in, it is
@@ -37,7 +44,13 @@ import { defaultLogger, type Logger } from "../logging.ts";
 import type { MessageRecord } from "../messenger/messages.ts";
 import type { Channel, Messenger } from "../messenger/messenger.ts";
 import type { Users } from "../users/users.ts";
-import { authenticationKind, giftWrapKind, openEnvelope, sealEnvelope } from "./envelope.ts";
+import {
+  authenticationKind,
+  directMessageRelaysKind,
+  giftWrapKind,
+  openEnvelope,
+  sealEnvelope,
+} from "./envelope.ts";
 import { insertPublicKey, selectPublicKeyFor, selectUserFor } from "./identities.ts";
 import {
   deletePublished,
@@ -225,12 +238,16 @@ export type NostrChannel = Channel & {
   drain(): Promise<void>;
 
   /**
-   * Opens the connection to the Relay, subscribes to the agent's own gift wraps, and publishes
-   * whatever a previous process left queued.
+   * Opens the connection to the Relay, subscribes to the agent's own gift wraps, publishes the
+   * agent's relay list, and publishes whatever a previous process left queued.
    *
    * Nothing connects before this. It does not wait for the connection: a Relay that is down is an
    * outage rather than a boot failure, and the client reconnects with a backoff of its own. A
    * second `start` finds a client already built and does nothing.
+   *
+   * The relay list is one event naming the Relay this Channel was built with, and a Relay that
+   * refuses it is a warning on the log and a Channel that started anyway. Republishing it at every
+   * start costs nothing, because the event replaces the one before it rather than joining it.
    */
   start(): Promise<void>;
 
@@ -312,6 +329,8 @@ export function createNostrChannel(options: NostrChannelOptions): NostrChannel {
   let reading: AbortController | undefined;
   /** The subscription loop, so `stop` can wait for whatever it was in the middle of. */
   let subscribed: Promise<void> = Promise.resolve();
+  /** The one announcement this start makes, held for the same reason the subscription is. */
+  let announced: Promise<void> = Promise.resolve();
   /** The `LISTEN` registration that turns a queued reply into a drain, held so `stop` closes it. */
   let listening: Listening | undefined;
   /**
@@ -363,6 +382,44 @@ export function createNostrChannel(options: NostrChannelOptions): NostrChannel {
       },
       options.secretKey,
     );
+  }
+
+  /**
+   * Says where this agent receives private direct messages, and says nothing else about it.
+   *
+   * One kind 10050 per start, carrying one `["relay", url]` tag. The spec's tag name and not the
+   * `["r", url]` much of the ecosystem emits: research found the two nearly evenly split in the
+   * wild, and the clients this reaches at all are the ones that read the specification.
+   *
+   * The address goes in exactly as the Operator gave it, for the reason the NIP-42 tag above
+   * carries it unchanged. There is no profile beside this and no second event of any kind: an
+   * agent an Operator hand-picked its Users for announces nothing it was not asked to.
+   *
+   * A refusal is a warning and never a throw. It reaches `start` through a promise nobody awaits,
+   * so a Relay that will not take it delays no boot and fails none; what it costs is a client that
+   * refuses to message a public key with no relay list, which is the whole reason this is
+   * published.
+   */
+  async function announce(client: NRelay1, signal: AbortSignal): Promise<void> {
+    const list = finalizeEvent(
+      {
+        kind: directMessageRelaysKind,
+        content: "",
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [["relay", options.relayUrl]],
+      },
+      options.secretKey,
+    );
+    try {
+      await client.event(list, { signal });
+    } catch (error) {
+      // A `stop` mid-publish is not a refusal, and the next start announces again regardless.
+      if (signal.aborted) return;
+      log.warn(
+        { err: error, relay: options.relayUrl },
+        "the Relay would not take the agent's Nostr relay list, so a client that requires one may refuse to message this agent",
+      );
+    }
   }
 
   /**
@@ -602,6 +659,10 @@ export function createNostrChannel(options: NostrChannelOptions): NostrChannel {
       advertisedLimit = limitOf(client);
       // Not awaited, for the same reason. `stop` is what waits for this.
       subscribed = subscribe(client, controller.signal);
+      // Nor this. It is published on every start rather than once ever, because the Relay is a
+      // transport and not a store: one that was rebuilt between two starts holds nothing this
+      // agent said, and a kind in the replaceable range makes saying it again free.
+      announced = announce(client, controller.signal);
       // The outbound wakeup. A queued wrap's `NOTIFY` shares the transaction that wrote its row,
       // so the drain is woken exactly when there is something to publish and never for a Message
       // a rollback erased. `connected` covers the first registration and every reconnection
@@ -634,6 +695,8 @@ export function createNostrChannel(options: NostrChannelOptions): NostrChannel {
       // in-flight publish return without writing, and this is what makes that "returned".
       await subscribed;
       subscribed = Promise.resolve();
+      await announced;
+      announced = Promise.resolve();
       await draining;
       draining = Promise.resolve();
       advertisedLimit = Promise.resolve(undefined);

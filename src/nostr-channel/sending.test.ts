@@ -24,6 +24,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import Fastify from "fastify";
+import type { NostrEvent } from "nostr-tools/core";
 import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
 import { serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
@@ -157,6 +158,16 @@ function queuedFor(userId: string): Promise<(typeof outbox.$inferSelect)[]> {
   return db.handle(nostrChannelTables).select().from(outbox).where(eq(outbox.userId, userId));
 }
 
+/**
+ * Every reply the Relay is holding, and nothing else the agent published.
+ *
+ * A start also publishes the agent's relay list, which is a claim `connecting.test.ts` owns and
+ * noise here: filtering to the gift wrap keeps "the Relay has one event" meaning "one reply".
+ */
+function replies(relay: FakeRelay): readonly NostrEvent[] {
+  return relay.published.filter((event) => event.kind === 1059);
+}
+
 /** How many times this exact event was ever offered to the Relay, accepted or refused. */
 function offered(relay: FakeRelay, eventId: string): number {
   return relay.received.filter(
@@ -165,14 +176,14 @@ function offered(relay: FakeRelay, eventId: string): number {
 }
 
 /**
- * What the Relay's one and only published event says, read as its recipient's client reads it.
+ * What the Relay's one and only reply says, read as its recipient's own client reads it.
  *
  * Asserting the count here rather than at each call site is what makes "exactly one event per
  * reply" part of every one of these assertions rather than a claim one test makes alone.
  */
 function soleReplyTo(relay: FakeRelay, recipient: Recipient): string | undefined {
-  assert.equal(relay.published.length, 1);
-  const [wrap] = relay.published;
+  assert.equal(replies(relay).length, 1);
+  const [wrap] = replies(relay);
   return wrap === undefined
     ? undefined
     : readDirectMessage(wrap, recipient.secretKey)?.rumor.content;
@@ -190,8 +201,8 @@ describe("the agent's reply reaching a User's Nostr client", () => {
       // One event for one reply. The protocol's self-copy — a second wrap addressed to the
       // sender, so a client can recover its own sent messages — is deliberately not published:
       // the agent's record of what it said is the Message log.
-      assert.equal(relay.published.length, 1);
-      const [wrap] = relay.published;
+      assert.equal(replies(relay).length, 1);
+      const [wrap] = replies(relay);
       assert.ok(wrap !== undefined);
 
       // Read the way the recipient's own client reads it, and the seal's author is what makes the
@@ -225,10 +236,10 @@ describe("the agent's reply reaching a User's Nostr client", () => {
       // tell a randomised clock from an honest one.
       for (const nth of [1, 2, 3, 4, 5]) await answer(messenger, recipient.id, `reply ${nth}`);
       await channel.drain();
-      assert.equal(relay.published.length, 5);
+      assert.equal(replies(relay).length, 5);
 
       const seconds = Math.floor(Date.now() / 1000);
-      for (const wrap of relay.published) {
+      for (const wrap of replies(relay)) {
         // The recipient, and nobody else: no second `p` tag, and no tag naming the agent.
         assert.deepEqual(wrap.tags, [["p", recipientKey]]);
         // Signed by a throwaway key, so the Relay cannot even see which of its Users is talking.
@@ -242,7 +253,7 @@ describe("the agent's reply reaching a User's Nostr client", () => {
 
       // And not the real time either: NIP-59 randomises the wrap's date up to two days into the
       // past, so five of them all landing inside the last hour would take about a billion runs.
-      const oldest = Math.min(...relay.published.map((wrap) => wrap.created_at));
+      const oldest = Math.min(...replies(relay).map((wrap) => wrap.created_at));
       assert.ok(oldest < seconds - 3600, "the published timestamps should not be the real ones");
     });
   });
@@ -282,7 +293,7 @@ describe("a reply that could never go out", () => {
       // with it. Nothing claims to have been sent, and nothing is queued to try later.
       assert.deepEqual(await messenger.history(stranger), []);
       assert.deepEqual(await queuedFor(stranger), []);
-      assert.deepEqual(relay.published, []);
+      assert.deepEqual(replies(relay), []);
     });
   });
 
@@ -299,13 +310,13 @@ describe("a reply that could never go out", () => {
         );
         assert.deepEqual(await messenger.history(recipient.id), []);
         assert.deepEqual(await queuedFor(recipient.id), []);
-        assert.deepEqual(relay.published, []);
+        assert.deepEqual(replies(relay), []);
 
         // And the bound is a bound rather than a blanket refusal: the same Relay takes a reply
         // that fits, which is what says the size was compared against what it advertised.
         await answer(messenger, recipient.id, "short enough");
         await channel.drain();
-        assert.equal(relay.published.length, 1);
+        assert.equal(replies(relay).length, 1);
       },
       { information: { limitation: { max_message_length: 4096 } } },
     );
@@ -331,7 +342,7 @@ describe("a reply that could never go out", () => {
       await channel.drain();
       assert.deepEqual(await messenger.history(recipient.id), []);
       assert.deepEqual(await queuedFor(recipient.id), []);
-      assert.deepEqual(relay.published, []);
+      assert.deepEqual(replies(relay), []);
       assert.deepEqual((await users.get(recipient.id))?.attributes, {});
     });
   });
@@ -415,7 +426,7 @@ describe("a reply queued while the Channel is not running", () => {
       // is a process that took the Message and died before it got it out.
       await answer(messenger, recipient.id, "queued by a process that went away");
       assert.equal((await queuedFor(recipient.id)).length, 1);
-      assert.deepEqual(relay.published, []);
+      assert.deepEqual(replies(relay), []);
 
       await second.start();
       // Waited for on the row rather than on the Relay, because the Relay records a publish
@@ -470,7 +481,7 @@ describe("a reply queued while the Channel is not running", () => {
       assert.equal(row?.messageId, said.id);
       // And no partial transaction: the Message it belongs to is in the log.
       assert.equal((await messenger.history(recipient.id))[0]?.id, said.id);
-      assert.deepEqual(relay.published, []);
+      assert.deepEqual(replies(relay), []);
 
       await channel.start();
       await waitUntil(

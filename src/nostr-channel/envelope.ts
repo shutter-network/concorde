@@ -56,6 +56,14 @@ export const giftWrapKind = 1059;
 export const authenticationKind = 22242;
 
 /**
+ * NIP-17's relay list: where a public key receives private direct messages.
+ *
+ * In NIP-01's replaceable range, which is what makes republishing it at every start idempotent
+ * rather than something that piles up on the Relay.
+ */
+export const directMessageRelaysKind = 10050;
+
+/**
  * What was inside an envelope, or why it was not admitted.
  *
  * A result rather than an exception, so a rejection is a log line and a dropped event. See the
