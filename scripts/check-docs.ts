@@ -19,12 +19,11 @@
  * is slow. CI runs it as its own step.
  *
  * **TypeDoc's warnings fail this check**, through `treatWarningsAsErrors` in `typedoc.jsonc`,
- * which says why. They did not until `CursorWindow` reached the package root: one dangling
- * reference was known and tolerated, and an export map is not something a documentation check
- * gets to force at an unrelated moment. With none left to tolerate, the tolerance only hid the
- * next one, and the comparison below cannot see that one — a page rendering a type nobody can
- * import is not a *stale* page, so it is committed and matches and this check passes. A failing
- * generation stops the run before there is anything to compare against.
+ * which is where the argument for that is written. What matters here is only the consequence: a
+ * failing generation stops the run before there is anything to compare against, and the
+ * comparison below would not have caught what the warning does. A page rendering a type nobody
+ * can import is honestly rendered rather than stale, so it is committed, it matches, and this
+ * check passes.
  */
 
 import { execFileSync } from "node:child_process";

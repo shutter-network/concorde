@@ -150,20 +150,22 @@ own return value, and `tx: Promise<T>` binds `T` to nothing at all. The word `ob
 and misled nobody; that block would mislead. So the plugin travels with the setting. It defines a
 theme, named on `typedoc.jsonc`'s `theme` line because defining one is how a render-context
 override is installed, and it widens that one helper for members reached from inside an expanded
-object, handing the renderer the member's own function type. It counts the nesting rather than
-flipping a flag, because an expanded object can hold another one and a flag would switch the
-widening back off for the outer object's remaining members. It leaves the helper alone everywhere
-else, because the Properties and Methods sections below the block call it for the part after the
-colon and print the name and the parameters themselves, so a widening applied there would print
-the parameters twice.
+object. Two constraints bind any rewrite of it, and the file argues both: the widening applies
+only inside an expanded object, because the sections below the block would otherwise print their
+parameters twice, and what tracks "inside" counts rather than flips, because an expanded object
+can hold another one.
 
-Three costs, recorded rather than solved. **`readonly` is dropped from an expanded member** and
-stays visible in the section a few lines below it; restoring it means reimplementing the whole
-declaration partial instead of wrapping one helper, which is a much larger patch surface bought
-for one modifier. **A `*Tables` variable prints as
-`{ runs: PgTableWithColumns<{ }>; signals: PgTableWithColumns<{ }> }`**, where naming the two
-tables is the gain and the empty braces are drizzle's own type under `excludeExternals`. And
-**`SignalHandler.handle` wraps its return union raggedly** across two lines of one page. The
+Four costs, recorded rather than solved. **A parameter prints without its type**, so `Runtime`
+reads `run: (prompt) => Promise<RunOutcome>` and the reader takes `RunPrompt` from the Methods
+section below. That is `expandParameters`, off by default, and it is how every function type in
+the reference already printed; turning it on widens far more than these blocks and was not asked
+for. **`readonly` is dropped from an expanded member** and stays visible in the section a few
+lines below it; restoring it means reimplementing the whole declaration partial instead of
+wrapping one helper, which is a much larger patch surface bought for one modifier. **A `*Tables`
+variable prints as `{ runs: PgTableWithColumns<{ }>; signals: PgTableWithColumns<{ }> }`**, where
+naming the two tables is the gain and the empty braces are drizzle's own type under
+`excludeExternals`. And **`SignalHandler.handle` wraps its return union raggedly** across three
+lines of one page. The
 plugin reads two names out of the render context, `partials.declarationType` and
 `helpers.getDeclarationType`, and a future `typedoc-plugin-markdown` that renamed either one, or
 that stopped asking the helper for a member's type, would leave the widening wired to nothing and

@@ -46,19 +46,21 @@ class ExpandedObjectContext extends MarkdownThemeContext {
     // in place to be wrapped here.
     let depth = 0;
 
-    const expandedObject = this.partials.declarationType;
+    const baseDeclarationType = this.partials.declarationType;
     this.partials.declarationType = (model, partialOptions) => {
       depth += 1;
       try {
-        return expandedObject(model, partialOptions);
+        return baseDeclarationType(model, partialOptions);
       } finally {
         depth -= 1;
       }
     };
 
-    const memberType = this.helpers.getDeclarationType;
+    const baseGetDeclarationType = this.helpers.getDeclarationType;
     this.helpers.getDeclarationType = (model) =>
-      depth > 0 && model.signatures?.length ? new ReflectionType(model) : memberType(model);
+      depth > 0 && model.signatures?.length
+        ? new ReflectionType(model)
+        : baseGetDeclarationType(model);
   }
 }
 
