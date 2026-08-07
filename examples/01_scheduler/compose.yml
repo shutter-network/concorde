@@ -1,0 +1,89 @@
+name: saf-example-01-scheduler
+
+# One database, named once: `migrate` applies the schema to it and the Gateway queries it.
+x-database-url: &database-url postgres://saf:saf@postgres:5432/saf
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?copy .env.example to .env and put your model key in it}
+      DATABASE_URL: *database-url
+      # The shared tree, named on both sides: BASE_DIR_GATEWAY is where this container sees it,
+      # BASE_DIR_HOST is where it is on the host. The daemon resolves the agent's mounts on the
+      # host, so AGENTS.md and settings.json are read from this directory rather than from the
+      # image, and editing either takes effect on the next Run.
+      BASE_DIR_GATEWAY: /app
+      BASE_DIR_HOST: ${PWD}
+    volumes:
+      # The Gateway runs the agent's container itself. This socket is root on the host.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./state/workspace:/app/state/workspace
+      - ./state/agent:/app/state/agent
+    ports:
+      # This example has no Channel, so the only thing on the Public server is the OpenAPI
+      # document at /openapi.json and the page at /docs. The Agent server is bound but
+      # published to nobody.
+      - "127.0.0.1:8080:8080"
+    networks: [db, agent]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      agent-image:
+        condition: service_completed_successfully
+    stop_grace_period: 300s
+
+  # This deployment owns its database, so this deployment applies its schema: one shot, and gone.
+  # `push` because this database is a volume you throw away. `--force` because a push that finds
+  # no TTY to ask about a destructive statement otherwise applies nothing and exits 0.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["npx", "drizzle-kit", "push", "--force"]
+    environment:
+      DATABASE_URL: *database-url
+    restart: "no"
+    networks: [db]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: saf
+      POSTGRES_PASSWORD: saf
+      POSTGRES_DB: saf
+    volumes:
+      - db:/var/lib/postgresql/data
+    networks: [db]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "saf", "-d", "saf"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # Built here so it exists before the first fire; the Gateway runs it, compose does not.
+  agent-image:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    image: saf-scheduler-agent:0.83.0
+    command: ["--version"]
+    restart: "no"
+    networks: [agent]
+
+networks:
+  db:
+    name: saf_scheduler_db
+  # main.ts names this network, so the agent's container can reach the Gateway as `gateway`.
+  agent:
+    name: saf_scheduler_agent
+
+volumes:
+  db:
