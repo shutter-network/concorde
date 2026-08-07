@@ -35,6 +35,10 @@
       "types": "./dist/http-channel/index.d.ts",
       "default": "./dist/http-channel/index.js"
     },
+    "./nostr-channel": {
+      "types": "./dist/nostr-channel/index.d.ts",
+      "default": "./dist/nostr-channel/index.js"
+    },
     "./signatures": {
       "types": "./dist/signatures/index.d.ts",
       "default": "./dist/signatures/index.js"
@@ -66,7 +70,6 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.6",
-    "@nostrify/nostrify": "0.54.0",
     "@types/luxon": "3.7.3",
     "@types/node": "24.13.3",
     "@types/pg": "8.20.2",
@@ -74,17 +77,18 @@
     "drizzle-kit": "0.31.10",
     "drizzle-orm": "0.45.2",
     "fastify": "5.11.0",
-    "nostr-tools": "2.24.1",
     "typescript": "7.0.2",
     "ws": "8.21.2"
   },
   "dependencies": {
     "@fastify/swagger": "^9.8.1",
     "@fastify/swagger-ui": "^6.1.1",
+    "@nostrify/nostrify": "^0.54.0",
     "cron-parser": "^5.7.0",
     "handlebars": "^4.7.9",
     "jose": "^6.2.8",
     "luxon": "^3.7.2",
+    "nostr-tools": "^2.24.1",
     "pg": "^8.22.0",
     "pino": "^10.3.1"
   },

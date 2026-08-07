@@ -32,7 +32,13 @@
   },
   "overrides": [
     {
-      "includes": ["**", "!src/db/**"],
+      "includes": [
+        "**",
+        "!src/db/**",
+        "!src/signatures/**",
+        "!src/nostr-channel/**",
+        "!src/test-support/**"
+      ],
       "linter": {
         "rules": {
           "style": {
@@ -40,25 +46,15 @@
               "level": "error",
               "options": {
                 "paths": {
-                  "pg": "The pool is the Db's alone: obtain a handle with db.handle(schema) instead. Fastify and Drizzle are public API; pg is not (ADR-0022)."
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "includes": ["**", "!src/signatures/**"],
-      "linter": {
-        "rules": {
-          "style": {
-            "noRestrictedImports": {
-              "level": "error",
-              "options": {
-                "paths": {
+                  "pg": "The pool is the Db's alone: obtain a handle with db.handle(schema) instead. Fastify and Drizzle are public API; pg is not (ADR-0022).",
                   "jose": "Building a JWS is Signatures' alone: ask it for one with signatures.sign(typ, claims). Decisions stores the string it answers with and never touches the format, and a second party assembling segments is a second chance to emit something nobody else can verify (ADR-0042)."
-                }
+                },
+                "patterns": [
+                  {
+                    "group": ["nostr-tools", "nostr-tools/**", "@nostrify/**"],
+                    "message": "Nostr is the Nostr Channel's alone, the way pg is the Db's: nothing from either library crosses this framework's API boundary, so they are ordinary dependencies rather than peers, and a second part reaching for one would make them something a consumer has to install (ADR-0049). src/test-support/** is exempt too, because a real client is the only thing that proves the fake Relay is a Relay."
+                  }
+                ]
               }
             }
           }

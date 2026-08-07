@@ -11,7 +11,8 @@
  * Two ways a set can be wrong, and they fail differently enough to need a test each.
  *
  * **A cross-schema foreign key names a part outside the set** is the loud one.
- * `messages.user_id` references `saf_users.users.id` in code (ADR-0036, ADR-0046), so
+ * `messages.user_id` and `pubkeys.user_id` both reference `saf_users.users.id` in code
+ * (ADR-0036, ADR-0046, ADR-0049), so
  * the set is coherent only while the User Manager is in it, and a set without it throws
  * on the `ADD CONSTRAINT` — `schema "saf_users" does not exist`. Pushing is enough to
  * catch that, and the first test pushes. What that test cannot do by itself is keep
@@ -57,6 +58,7 @@ import { getTableConfig, PgTable, pgSchema, text } from "drizzle-orm/pg-core";
 import type { Db } from "./db/index.ts";
 import * as decisionsSchema from "./decisions/schema.ts";
 import * as messengerSchema from "./messenger/schema.ts";
+import * as nostrChannelSchema from "./nostr-channel/schema.ts";
 import * as schedulerSchema from "./scheduler/schema.ts";
 import * as signalsSchema from "./signals/schema.ts";
 import { applySchema, type PartSchema } from "./test-support/apply-schema.ts";
@@ -70,6 +72,7 @@ import * as usersSchema from "./users/schema.ts";
 const parts: Record<string, PartSchema> = {
   decisions: decisionsSchema,
   messenger: messengerSchema,
+  "nostr-channel": nostrChannelSchema,
   scheduler: schedulerSchema,
   signals: signalsSchema,
   users: usersSchema,

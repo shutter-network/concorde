@@ -14,7 +14,7 @@
     "./expanded-object-methods.mjs"
   ],
 
-  // The nine entry points of the export map, in the order `package.json` lists them
+  // The ten entry points of the export map, in the order `package.json` lists them
   // ([ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md)). `example/` is not among
   // them: it is the reference deployment, not public API, so it is absent from the reference.
   // `specifier-titles.mjs` compares this list against `exports` both ways and fails the
@@ -26,6 +26,7 @@
     "../src/users/index.ts",
     "../src/messenger/index.ts",
     "../src/http-channel/index.ts",
+    "../src/nostr-channel/index.ts",
     "../src/signatures/index.ts",
     "../src/decisions/index.ts",
     "../src/scheduler/index.ts"
@@ -43,8 +44,8 @@
   "docsRoot": "./reference",
 
   // One file per entry point rather than one per exported symbol, so the whole public
-  // surface is nine files and a diff of it is readable. `flattenOutputFiles` is what keeps
-  // the eight subpath modules from nesting inside a directory named after the root module.
+  // surface is ten files and a diff of it is readable. `flattenOutputFiles` is what keeps
+  // the nine subpath modules from nesting inside a directory named after the root module.
   "outputFileStrategy": "modules",
   "flattenOutputFiles": true,
 
@@ -76,7 +77,7 @@
   // TypeDoc's default grouping by kind is kept and no custom group is declared: a component's
   // tables land under Variables and its constructor under Functions, which separates them
   // without hiding either. The page header and breadcrumb are dropped because the title is
-  // already the specifier and there are only nine pages to be lost among.
+  // already the specifier and there are only ten pages to be lost among.
   "hidePageHeader": true,
   "hideBreadcrumbs": true,
   "useCodeBlocks": true,
@@ -84,7 +85,7 @@
   // The block above an object type prints its members rather than the word `object`. It is the
   // first thing on a page and it is what a reader takes the shape from, and most of this public
   // API is object literals, so collapsed it left the shape to be assembled by hand out of the
-  // sections below on all nine pages.
+  // sections below on all ten pages.
   //
   // **It cannot be set without the theme on the next line.** The plugin renders each member from
   // `getDeclarationType`, which answers a method with the return type of its first signature, so

@@ -6,6 +6,7 @@
 - [shared-agent-framework/decisions](shared-agent-framework.decisions.md)
 - [shared-agent-framework/http-channel](shared-agent-framework.http-channel.md)
 - [shared-agent-framework/messenger](shared-agent-framework.messenger.md)
+- [shared-agent-framework/nostr-channel](shared-agent-framework.nostr-channel.md)
 - [shared-agent-framework/pi](shared-agent-framework.pi.md)
 - [shared-agent-framework/scheduler](shared-agent-framework.scheduler.md)
 - [shared-agent-framework/signals](shared-agent-framework.signals.md)
