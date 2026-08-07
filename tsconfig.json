@@ -42,7 +42,10 @@
     // migration barrel is assembled from the component subpaths, so the barrel
     // type-checks against `src` through exactly the same mappings its entry point does.
     "paths": {
-      "shared-agent-framework": ["./src/index.ts"],
+      "shared-agent-framework/gateway": ["./src/gateway/index.ts"],
+      "shared-agent-framework/logging": ["./src/logging/index.ts"],
+      "shared-agent-framework/db": ["./src/db/index.ts"],
+      "shared-agent-framework/agent-container": ["./src/agent-container/index.ts"],
       "shared-agent-framework/signals": ["./src/signals/index.ts"],
       "shared-agent-framework/pi": ["./src/pi/index.ts"],
       "shared-agent-framework/users": ["./src/users/index.ts"],

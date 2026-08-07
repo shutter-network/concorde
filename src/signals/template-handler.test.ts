@@ -21,16 +21,16 @@ import path from "node:path";
 import { after, before, describe, it, type TestContext } from "node:test";
 import { eq } from "drizzle-orm";
 import Handlebars from "handlebars";
-import type { Db } from "./db/index.ts";
-import type { Prompt, Signal, SignalHandler, SignalHandlers } from "./signals/handlers.ts";
-import * as signalsSchema from "./signals/schema.ts";
-import { signals } from "./signals/schema.ts";
-import { createSignalWorker, type SignalWorker } from "./signals/worker.ts";
+import type { Db } from "../db/index.ts";
+import { createSignalWorker, type SignalWorker } from "../signals/worker.ts";
+import { applySchema } from "../test-support/apply-schema.ts";
+import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
+import { type FakeRuntime, fakeRuntime } from "../test-support/fake-runtime.ts";
+import { waitUntil } from "../test-support/wait.ts";
+import type { Prompt, Signal, SignalHandler, SignalHandlers } from "./handlers.ts";
+import * as signalsSchema from "./schema.ts";
+import { signals } from "./schema.ts";
 import { templateHandler } from "./template-handler.ts";
-import { applySchema } from "./test-support/apply-schema.ts";
-import { createTestDatabase, type TestDatabase } from "./test-support/database.ts";
-import { type FakeRuntime, fakeRuntime } from "./test-support/fake-runtime.ts";
-import { waitUntil } from "./test-support/wait.ts";
 
 /**
  * Every character Handlebars escapes by default, in text a User could plausibly

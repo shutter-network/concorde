@@ -23,7 +23,7 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { AgentContainer, ComposedCommand } from "../container/index.ts";
+import type { AgentContainer, ComposedCommand } from "../agent-container/index.ts";
 import type { RunPrompt } from "../signals/runtime.ts";
 import { createPiRuntime, piRun } from "./runtime.ts";
 

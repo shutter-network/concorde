@@ -8,10 +8,15 @@
  * - a log is paged by **one cursor pair**, `after` or `before` and never both;
  * - a refusal matches **Fastify's own error shape**, described with one schema.
  *
- * Internal, with one exception: `CursorWindow` is a parameter of two components' `history`
- * methods, so it is exported from the package root, where what belongs to no single component
- * lives (ADR-0047). Nothing else here reaches a specifier, and an Operator writing routes of
- * their own brings Fastify and writes them however they like.
+ * Wholly internal: nothing here reaches a specifier, and an Operator writing routes of their own
+ * brings Fastify and writes them however they like. `CursorWindow` used to be the exception,
+ * exported from the package root as the one parameter two components' `history` methods share.
+ * With the root emptied there is nowhere for it (ADR-0051): a component is one subpath (ADR-0047),
+ * and putting it on one of the two would make the other's signature name a type from a part it has
+ * nothing to do with. So both spell the window out as an inline object literal in the public
+ * method, and each keeps its alias of this type internal. Reaching for that alias in a public
+ * signature again is what would put a name on a page that no specifier exports, which is a TypeDoc
+ * warning and a failed `check:docs`.
  *
  * The `description` strings are the other thing that leaves this file. They are interpolated into
  * several components' route descriptions and rendered in the OpenAPI document, so the wording is

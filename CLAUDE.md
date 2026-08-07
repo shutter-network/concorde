@@ -11,7 +11,7 @@ pushes the barrel before the Gateway starts. It is a **consumer** of
 `createGateway`, which builds the irreducible infrastructure and hands it to the Operator's
 `extend`
 ([ADR-0045](./docs/adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md)), so
-what is left in it is the Runtime, the six opinionated parts built by hand in `extend`, two
+what is left in it is the Runtime, the six components built by hand in `extend`, two
 Signal Handlers and shutdown. Six because messaging is two parts now: the Messenger owns the log
 and reaches nobody, and a **Channel** is what reaches a person over one medium
 ([ADR-0048](./docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)). The
@@ -74,24 +74,27 @@ share a database, and a test whose subject is what a fresh database ends up
 containing takes one of its own. See `src/test-support/database.ts`.
 
 `npm run check:package` is separate: it builds, packs, installs the tarball into a
-throwaway project, and checks that **all ten** subpaths resolve there — to the type checker
-and to Node both. Ten, because a component is one subpath and its tables arrive on it
-beside its constructor ([ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md)):
-the root, `/signals`, `/pi`, `/users`, `/messenger`, `/http-channel`, `/nostr-channel`,
-`/signatures`, `/decisions` and `/scheduler`, with no `/schema` specifier among them. It was
-eight until messaging split in two and a second medium arrived: `/messenger` was **reserved and
-unreachable**, held for the day a peer of the HTTP Messenger turned up, and what turned up was a
-Channel rather than a second Producer, so the reserved name went to the part that owns the log
-and `/http-messenger` became `/http-channel`
+throwaway project, and checks that **all thirteen** subpaths resolve there — to the type checker
+and to Node both. **There is no root among them**: `package.json` `exports` has no `.` entry and
+`import … from "shared-agent-framework"` resolves to nothing
+([ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)). Nine are components, because a
+component is one subpath and its tables arrive on it beside its constructor
+([ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md)): `/signals`, `/pi`, `/users`,
+`/messenger`, `/http-channel`, `/nostr-channel`, `/signatures`, `/decisions` and `/scheduler`,
+with no `/schema` specifier among them. Four are what the root used to hold and no component
+owns: `/gateway` the assembly, `/logging` the logging seam, `/db` the PostgreSQL client and
+`/agent-container` the container plumbing. It was eight until messaging split in two and a second
+medium arrived: `/messenger` was **reserved and unreachable**, held for the day a peer of the HTTP
+Messenger turned up, and what turned up was a Channel rather than a second Producer, so the
+reserved name went to the part that owns the log and `/http-messenger` became `/http-channel`
 ([ADR-0048](./docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)).
-`/nostr-channel` is the tenth and the only Channel with tables of its own
+`/nostr-channel` is the only Channel with tables of its own
 ([ADR-0049](./docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)). `/signals`
-is the Signal Worker's own: its constructor, its options and the vocabulary a Signal
-Handler is written in come off `shared-agent-framework/signals` and **not** the package
-root. The check imports the
-Worker from there and then proves the root refuses the same name, which is the only thing
-that would notice a root re-export creeping back and making one component reachable two
-ways. It also assembles an Operator's barrel out of those component specifiers and proves
+is the Signal Worker's own: its constructor, its options, the vocabulary a Signal
+Handler is written in, and `templateHandler` all come off `shared-agent-framework/signals`. The
+last step of the check proves the root itself resolves to nothing, which is what would notice a
+root export creeping back and making one name reachable two ways. It also assembles an Operator's
+barrel out of the component specifiers and proves
 it yields **one distinct schema object per component**, which is the assertion the prefixed
 schema names exist for — see the flat-exports convention below. It needs the network, so it stays out
 of the inner loop; it needs no database at all, because nothing in the package applies
@@ -116,12 +119,19 @@ there are four commands in CI and three of them are not the inner loop.
 
 `npm run docs:dev` and `npm run docs:build` are the API reference: TypeDoc reads the doc
 comments out of `src`, writes one markdown page per entry point, and VitePress serves or builds
-them. The pages are the ten subpaths of the export map
-([ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md)), titled with the specifier a
+them. The pages are the thirteen subpaths of the export map
+([ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md),
+[ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)), titled with the specifier a
 Developer imports from, and `example/` is not among them. The Messenger and each Channel are
 separate pages for the reason they are separate subpaths: a Developer reads the one they are
 using, and the Nostr Channel's page is the only documentation of it anywhere in the deliverable,
-the reference deployment not running it.
+the reference deployment not running it. **Two words the reference is written in are now defined
+nowhere in it.** **Operator** and **Shared Agent** appear on every page and belong to no
+component, and the deleted root page's module comment was the only place the rendered reference
+defined them. `site/reference/index.md` is generated from the entry point list and cannot be
+authored into, so handwritten documentation is what will close that hole
+([ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)). `CONTEXT.md` defines both and
+is not part of what a Developer is handed.
 
 **[`docs/api-docs.md`](./docs/api-docs.md) is what those comments are written against**: which
 fact goes in a module comment, which in a constructor, which in a method, and which belongs in a
@@ -134,7 +144,7 @@ and this package pins 7. `site/README.md` argues that and states the **exit cond
 TypeDoc supports the compiler the root pins, the sub-package collapses into the root. All three
 root scripts `npm ci` that tree themselves, so a fresh clone needs no separate step.
 
-**`site/reference` is committed**, eleven markdown pages: one per entry point, plus the `index.md`
+**`site/reference` is committed**, fourteen markdown pages: one per entry point, plus the `index.md`
 that lists them and is the site root. That is what makes a change to the public API arrive as a
 readable diff in review rather than as something to notice in a source diff, and it only works
 because `typedoc.jsonc` sets `disableSources: true`. A file path, a line number and a commit
@@ -152,8 +162,11 @@ the generation if they disagree, and before this command nothing but a human run
 fired it. CI runs it as its own step. TypeDoc's *warnings* fail it, through
 `treatWarningsAsErrors` in `typedoc.jsonc`. They did not while one dangling reference was known
 and ticketed, on the argument that an export-map change is not something a documentation check
-gets to force at an unrelated moment; `CursorWindow` reaching the package root left nothing to
-tolerate, and a tolerance with nothing behind it hides only the next one. The comparison against
+gets to force at an unrelated moment; that reference went away and a tolerance with nothing behind
+it hides only the next one. The dangling name was `CursorWindow`, and how it was answered is worth
+carrying: it reached the package root to silence this warning, which is the reason ADR-0051 gives
+for the root having become a bag of things. It is inlined at both `history` signatures now and
+exported nowhere. The comparison against
 the committed pages cannot cover that case, because a page naming a type no specifier exports is
 honestly rendered rather than stale: it is committed, it matches, the check passes, and a
 Developer reads a name they cannot type into an import. What the strictness costs is that the
@@ -164,7 +177,7 @@ symbol that is on no subpath.
 The setting makes the block above an object type print its members instead of the word `object`.
 That block is the first thing on a page and it is what a reader takes the shape from, and most of
 this public API is object literals, so collapsed it left the shape to be assembled by hand out of
-the sections below on every one of the ten pages. Set on its own, though, it is worse than
+the sections below on every one of the thirteen pages. Set on its own, though, it is worse than
 leaving it off: `typedoc-plugin-markdown` renders each member as `name: <type>` and takes that
 type from `helpers.getDeclarationType`, which answers a member carrying signatures with the
 **return type of its first signature**, so dozens of methods across `Db`, `Component`,
@@ -247,7 +260,9 @@ no schema and no tables, and each subpath carries a constructor and nothing besi
 Channel is the counter-example that says a Channel is not a tableless kind of thing: it owns
 **three** tables, because the mapping from a Nostr public key to a User, the set of envelopes it
 has already read, and the queue of wraps the Relay has not taken yet are three things only it can
-know (ADR-0049).
+know (ADR-0049). The four infrastructure subpaths own no tables either and no barrel names them:
+`/gateway`, `/logging`, `/db` and `/agent-container` carry constructors, seams and types
+([ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)).
 
 Conventions the build depends on:
 
@@ -260,6 +275,13 @@ Conventions the build depends on:
   source is gone. Nothing shipped resolves a path out of `import.meta.url` any
   more — that trick existed only to reach a shipped migration folder, and there is
   none (ADR-0046).
+- **Every subpath is a directory with an `index.ts`, and there is no `src/index.ts`.**
+  `shared-agent-framework/gateway` is `src/gateway/index.ts`, `/logging` is
+  `src/logging/index.ts`, and the same shape holds for all thirteen. The package root exports
+  nothing, so a module written at `src/index.ts` would ship and resolve to nowhere
+  ([ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)). A new subpath is a new
+  directory, its `index.ts`, an `exports` entry, an entry point in `site/typedoc.jsonc` and a
+  block in `scripts/check-package.ts`.
 - **No syntax that needs a code transform**: no enums, namespaces, or parameter
   properties. `erasableSyntaxOnly` rejects them, because Node strips types
   rather than compiling them.
@@ -338,7 +360,7 @@ Conventions the build depends on:
   bare package. Add a confinement to that entry and to that test, and never as a second
   entry.
 - **Exactly one shipped module imports a *value* from `fastify`, and it is
-  `dist/gateway.js`.** It constructs the two infrastructure servers and
+  `dist/gateway/gateway.js`.** It constructs the two infrastructure servers and
   cannot do it any other way
   ([ADR-0045](./docs/adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md));
   everywhere
@@ -359,7 +381,7 @@ Conventions the build depends on:
   [ADR-0045](./docs/adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md)).
   Move that
   registration below `extend` and the document is empty, which is why construction order in
-  `src/gateway.ts` is load-bearing for a second reason, alongside the
+  `src/gateway/gateway.ts` is load-bearing for a second reason, alongside the
   worker-before-Messenger cycle — migration registration order used to be a third and went
   with the subsystem (ADR-0046). So a route arrives with
   `tags`, a `summary`, a `description` and a `response` schema per status it can answer,
@@ -367,14 +389,14 @@ Conventions the build depends on:
   `example/AGENTS.md` holds a URL and no route table. An Operator's own route is described
   only if it was `register`ed: one written straight onto the instance after the
   constructor returns is served and absent from the document, and both spellings are
-  pinned in `src/gateway.test.ts`.
+  pinned in `src/gateway/gateway.test.ts`.
 - **A response schema is a serializer, and its drift is silent.** Fastify compiles one
   with `fast-json-stringify`, which drops every field the schema does not declare with no
   warning anywhere and answers 500 for a declared-required field the handler omits. A
   field added to a record type and forgotten in its schema is therefore missing from the
   wire *and* from the document, and no comparison of one HTTP response against another can
   see it, because a uniformly stripped field is stripped on both sides. That is what the
-  round-trip assertions in `src/gateway.test.ts` are for: each record type is
+  round-trip assertions in `src/gateway/gateway.test.ts` are for: each record type is
   produced through its part's own method, read back over HTTP, and the whole body compared
   against a literal the type checker holds to the record type. Same rule as the flat table
   exports and the prefixed schema objects above: a silent failure gets something that scans
@@ -390,16 +412,18 @@ Conventions the build depends on:
   test whose whole subject is its absence, `src/nostr-channel/receiving.test.ts`'s forged
   envelope, and rewriting the unwrap through a convenience function is the thing to refuse in
   review.
-- **Nothing in `src/container/` knows about an Agent Implementation.** That
+- **Nothing in `src/agent-container/` knows about an Agent Implementation.** That
   directory is the Agent Container, the Mount Table and the process handling —
-  what `docker run` takes and what to do with it — and it is exported from the
-  **package root**, because the whole point of it is that a second Agent
-  Implementation needs it unchanged
-  ([ADR-0033](./docs/adr/0033-an-agent-is-a-container-and-one-function.md)).
+  what `docker run` takes and what to do with it — and it is exported from
+  **`shared-agent-framework/agent-container`**, because the whole point of it is that a
+  second Agent Implementation needs it unchanged
+  ([ADR-0033](./docs/adr/0033-an-agent-is-a-container-and-one-function.md)). It sat at the
+  package root until that root was emptied, and it is named for the two glossary terms it
+  holds ([ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)).
   `src/pi/` is the other half and is one function plus two defaults; it imports
-  from `src/container/` and nothing imports back. Not enforced by a lint rule —
+  from `src/agent-container/` and nothing imports back. Not enforced by a lint rule —
   an import of `../pi/` from there is the thing to refuse in review.
-  Argument composition is tested in `src/container/agent-container.test.ts`
+  Argument composition is tested in `src/agent-container/agent-container.test.ts`
   through `commandFor` on a constructed Runtime, and the one test that starts a
   real container stays in `src/pi/container.test.ts`.
 

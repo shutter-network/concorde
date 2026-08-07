@@ -31,11 +31,12 @@ without it generates a foreign key onto a table nothing creates.
 A Gateway whose agent answers a submitted Message over HTTP, and a send from the Operator's own
 trusted code.
 ```ts
-import { createGateway, templateHandler } from "shared-agent-framework";
+import { createGateway } from "shared-agent-framework/gateway";
 import { createHttpChannel } from "shared-agent-framework/http-channel";
 import type { MessageRecord } from "shared-agent-framework/messenger";
 import { createMessenger, messageReceivedKind } from "shared-agent-framework/messenger";
 import { createPiRuntime } from "shared-agent-framework/pi";
+import { templateHandler } from "shared-agent-framework/signals";
 import { createUsers } from "shared-agent-framework/users";
 
 const gateway = createGateway({
@@ -132,7 +133,7 @@ travels after the commit.
 
 ###### tx
 
-[`Handle`](shared-agent-framework.md#handle)\<`TSchema`\>
+[`Handle`](shared-agent-framework.db.md#handle)\<`TSchema`\>
 
 ###### message
 
@@ -273,7 +274,17 @@ routes' default when omitted and is not capped, a cap being there to bound a res
 
 ###### options?
 
-`Partial`\<[`CursorWindow`](shared-agent-framework.md#cursorwindow)\>
+###### after?
+
+`number`
+
+###### before?
+
+`number`
+
+###### limit?
+
+`number`
 
 ###### Returns
 
@@ -336,7 +347,7 @@ transaction.
 
 ###### tx
 
-[`Handle`](shared-agent-framework.md#handle)\<`TSchema`\>
+[`Handle`](shared-agent-framework.db.md#handle)\<`TSchema`\>
 
 ###### userId
 
@@ -419,7 +430,7 @@ comes back from here because the caller cannot read its own uncommitted write ba
 
 ###### tx
 
-[`Handle`](shared-agent-framework.md#handle)\<`TSchema`\>
+[`Handle`](shared-agent-framework.db.md#handle)\<`TSchema`\>
 
 ###### userId
 
@@ -468,8 +479,7 @@ Where the agent sends a Message and reads a User's log, at `/messages`.
 There is no Public server option. What a User reaches is a Channel's, and a Channel that is not
 HTTP has no route anywhere.
 
-Structural: anything carrying a Fastify instance satisfies it, including what
-`serverComponent` returns.
+Structural: anything carrying a Fastify instance satisfies it.
 
 ###### fastify
 

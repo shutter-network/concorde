@@ -21,9 +21,9 @@
  */
 
 import type { FastifyInstance } from "fastify";
-import type { Component } from "../components.ts";
 import type { Db } from "../db/index.ts";
-import { defaultLogger, type Logger } from "../logging.ts";
+import type { Component } from "../gateway/components.ts";
+import { defaultLogger, type Logger } from "../logging/logging.ts";
 import type { SignalWorker } from "../signals/worker.ts";
 import { scheduleRoutes } from "./routes.ts";
 import {
@@ -102,8 +102,7 @@ export type SchedulerOptions = {
    * Worth switching off for two reasons. An agent that wakes itself can loop the one serial Signal
    * lane, and nothing scopes a Schedule by creator, so the same routes reach the Operator's own.
    *
-   * Structural, and asks for nothing but the Fastify instance, so what satisfies it is what
-   * `serverComponent` returns.
+   * Structural: anything carrying a Fastify instance satisfies it.
    */
   readonly agentServer?: {
     readonly fastify: FastifyInstance;

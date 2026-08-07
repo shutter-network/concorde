@@ -11,21 +11,23 @@
  * ([ADR-0046](../docs/adr/0046-the-operator-owns-migrations.md)). That is
  * a recorded cost of that ADR and not an oversight — we no longer author the bytes
  * applied to anybody's production database, so no check here can vouch for them.
- *  - **all ten** entry points resolve there, both to the type checker and to Node at
- *    runtime, and ten is the whole map: the root, `/signals`, `/pi`, `/users`,
- *    `/messenger`, `/http-channel`, `/nostr-channel`, `/signatures`, `/decisions` and
- *    `/scheduler`. A component is
+ *  - **all thirteen** entry points resolve there, both to the type checker and to Node at
+ *    runtime, and thirteen is the whole map: `/gateway`, `/logging`, `/db`, `/agent-container`,
+ *    `/signals`, `/pi`, `/users`, `/messenger`, `/http-channel`, `/nostr-channel`,
+ *    `/signatures`, `/decisions` and `/scheduler`. A component is
  *    one subpath, carrying its constructor, its types **and its tables**
  *    ([ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md)), so there is no `/schema`
  *    specifier to resolve any more. `/messenger` was reserved and unreachable until the log was
  *    taken out of the HTTP Messenger and the qualifier became a Channel's
  *    ([ADR-0048](../docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)); it
- *    is a real specifier now, `/http-channel` is the ninth, and `/nostr-channel` — the second
- *    Channel, and the one that owns tables — is the tenth
- *    ([ADR-0049](../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)). The root import below
- *    is what proves the Signal Worker moved: it names every value the root still has, so a
- *    symbol that stayed behind on both specifiers would go unnoticed, but one still *only* at
- *    the root fails on the `/signals` import instead.
+ *    is a real specifier now, and `/nostr-channel` is the second Channel and the one Channel
+ *    that owns tables
+ *    ([ADR-0049](../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)).
+ *  - **there is no `.` in that map, and the last step below reads Node saying so.** Every value
+ *    the root used to carry now sits on `/gateway`, `/logging`, `/db` or `/agent-container`, and
+ *    a bare `shared-agent-framework` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`. What that buys
+ *    is that nothing lands on the root by accident: a re-export written there resolves to
+ *    nowhere, so adding a root export back is a deliberate edit to `exports` and not a slip.
  *  - a component's tables arrive on that same specifier as **top-level named exports**.
  *    That shape is the whole contract
  *    ([ADR-0046](../docs/adr/0046-the-operator-owns-migrations.md)): `drizzle-kit`'s
@@ -64,10 +66,19 @@ import { fileURLToPath } from "node:url";
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 /**
- * The consumer's imports, spelled once: the type checker and Node see the same ten.
+ * The consumer's imports, spelled once: the type checker and Node see the same thirteen.
  *
- * **Ten lines, one per entry point, and a component's tables ride on the same line as its
- * constructor** — which is the whole of ADR-0047. The HTTP Channel's line carries a constructor
+ * **Thirteen lines, one per entry point, and a component's tables ride on the same line as its
+ * constructor** — which is the whole of ADR-0047. No line names the bare package, because there is
+ * no `.` export left: the four infrastructure specifiers at the top carry what the root used to,
+ * and the last step in this script is what proves the root itself resolves to nothing.
+ *
+ * The four infrastructure lines own no tables. `/gateway` carries the two assembly constructors
+ * and the server adapter, `/logging` the default Logger, `/db` the one call that opens a pool, and
+ * `/agent-container` what `docker run` takes: nothing under it has heard of an Agent
+ * Implementation, so a second one needs all of it unchanged (ADR-0033).
+ *
+ * The HTTP Channel's line carries a constructor
  * and nothing beside it, because it owns no tables at all: the log is the Messenger's, whichever
  * medium a Message travelled by (ADR-0048). The Nostr Channel's carries three tables, because the
  * three things only it can know — which public key is which User, which envelopes it has read, and
@@ -82,20 +93,24 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
  * schema object is named with its component prefix, because a bare `schema` on each component is
  * a barrel that exports none.
  *
- * `createSignalWorker` comes off `/signals` and not the root, which is what ADR-0047 moved
- * first: the Worker owns tables, so it is a component with a subpath of its own.
+ * `createSignalWorker` and `templateHandler` both come off `/signals`: the Worker owns tables, so
+ * it is a component with a subpath of its own (ADR-0047), and the template Handler is written in
+ * that component's vocabulary and belongs beside it.
  */
 const consumerImports = [
-  'import { createAgentContainerRuntime, createBareGateway, createGateway, defaultLogger, mountArguments, openDb, serverComponent, templateHandler } from "shared-agent-framework";',
-  'import { createSignalWorker, runs as runsTable, signals as signalsTable, workerSchema } from "shared-agent-framework/signals";',
+  'import { createAgentContainerRuntime, mountArguments } from "shared-agent-framework/agent-container";',
+  'import { openDb } from "shared-agent-framework/db";',
+  'import { createBareGateway, createGateway, serverComponent } from "shared-agent-framework/gateway";',
+  'import { defaultLogger } from "shared-agent-framework/logging";',
+  'import { createSignalWorker, runs as runsTable, runStates, signals as signalsTable, signalStates, templateHandler, workerSchema } from "shared-agent-framework/signals";',
   'import { createPiRuntime, interpretPiOutput, piRun } from "shared-agent-framework/pi";',
   'import { createUsers, tokens as tokensTable, users as usersTable, usersSchema } from "shared-agent-framework/users";',
-  'import { createMessenger, messageReceivedKind, messages as messagesTable, messengerSchema } from "shared-agent-framework/messenger";',
+  'import { createMessenger, messageDirections, messageReceivedKind, messages as messagesTable, messengerSchema } from "shared-agent-framework/messenger";',
   'import { createHttpChannel } from "shared-agent-framework/http-channel";',
   'import { createNostrChannel, MalformedPublicKeyError, MessageTooLargeError, NoSuchUserError, nostrChannelSchema, outbox as outboxTable, pubkeys as pubkeysTable, PublicKeyConflictError, received as receivedTable, UnrecordedPublicKeyError } from "shared-agent-framework/nostr-channel";',
   'import { createSignatures } from "shared-agent-framework/signatures";',
   'import { createDecisions, decisions as decisionsTable, decisionsSchema } from "shared-agent-framework/decisions";',
-  'import { createScheduler, scheduleFiredKind, ScheduleSpecError, schedulerSchema, schedules as schedulesTable } from "shared-agent-framework/scheduler";',
+  'import { createScheduler, scheduleFiredKind, scheduleKinds, ScheduleSpecError, schedulerSchema, schedules as schedulesTable } from "shared-agent-framework/scheduler";',
 ];
 
 function run(command: string, args: string[], cwd: string): string {
@@ -116,13 +131,17 @@ function run(command: string, args: string[], cwd: string): string {
   }
 }
 
-/** Like `run`, but reports the exit status instead of throwing, and stays quiet. */
-function exitsZero(command: string, args: string[], cwd: string): boolean {
+/**
+ * Like `run`, but for a command expected to **fail**: it answers with what the command wrote to
+ * stderr, and with the empty string if the command succeeded. The caller reads that text rather
+ * than only the exit status, so a refusal can be asserted by the code Node names for it.
+ */
+function refusalFrom(command: string, args: string[], cwd: string): string {
   try {
     execFileSync(command, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-    return true;
-  } catch {
-    return false;
+    return "";
+  } catch (error) {
+    return String((error as { stderr?: unknown }).stderr ?? "");
   }
 }
 
@@ -155,19 +174,25 @@ try {
   );
 
   for (const file of [
-    "dist/index.js",
-    "dist/index.d.ts",
-    // The one interface the framework defines, at the package root because every
-    // Gateway is assembled from it (ADR-0031). Named rather than left to the mirror
-    // check below, which only reads the other way: it catches a shipped module whose
-    // source is gone, not a public module that failed to ship.
-    "dist/components.js",
-    "dist/components.d.ts",
-    // The infrastructure constructor, also at the package root and also named rather than left to
-    // the mirror check: it is the canonical path an Operator's entry point takes, and it is the
-    // one shipped module that imports a value from `fastify` (ADR-0045).
-    "dist/gateway.js",
-    "dist/gateway.d.ts",
+    // The assembly subpath, and the one interface the framework defines: every Gateway is
+    // assembled from it (ADR-0031). Named rather than left to the mirror check below, which only
+    // reads the other way: it catches a shipped module whose source is gone, not a public module
+    // that failed to ship.
+    "dist/gateway/index.js",
+    "dist/gateway/index.d.ts",
+    "dist/gateway/components.js",
+    "dist/gateway/components.d.ts",
+    // The infrastructure constructor, beside it under the same specifier: it is the canonical
+    // path an Operator's entry point takes, and it is the one shipped module that imports a
+    // value from `fastify` (ADR-0045).
+    "dist/gateway/gateway.js",
+    "dist/gateway/gateway.d.ts",
+    // The logging seam and the default behind it, on a specifier of their own: a Logger is
+    // passed to nearly every part, so it is neither one part's nor an Operator's to re-declare.
+    "dist/logging/index.js",
+    "dist/logging/index.d.ts",
+    "dist/logging/logging.js",
+    "dist/logging/logging.d.ts",
     "dist/pi/index.js",
     "dist/pi/index.d.ts",
     // The `pi` Agent Implementation's own modules, which are now two. `dist/pi/`
@@ -178,29 +203,35 @@ try {
     "dist/pi/runtime.d.ts",
     "dist/pi/output.js",
     // The Agent Container and its Runtime, which belong to no Agent Implementation: they
-    // ship under their own directory and are reachable from the package root, because
+    // ship under their own directory and are reachable on `/agent-container`, because
     // nothing in them knows about one and the next one needs them unchanged (ADR-0028,
     // ADR-0033). `process.js` is here rather than under `dist/pi/` for the same reason,
     // and it moved rather than being rewritten.
-    "dist/container/index.js",
-    "dist/container/index.d.ts",
-    "dist/container/agent-container.js",
-    "dist/container/agent-container.d.ts",
-    "dist/container/mount-table.js",
-    "dist/container/mount-table.d.ts",
-    "dist/container/process.js",
-    "dist/container/process.d.ts",
+    "dist/agent-container/index.js",
+    "dist/agent-container/index.d.ts",
+    "dist/agent-container/agent-container.js",
+    "dist/agent-container/agent-container.d.ts",
+    "dist/agent-container/mount-table.js",
+    "dist/agent-container/mount-table.d.ts",
+    "dist/agent-container/process.js",
+    "dist/agent-container/process.d.ts",
     // `dist` mirrors `src`, so `src/db/db.ts` becomes `dist/db/db.js`. Nothing is
     // resolved from `import.meta.url` any more — that trick existed only to reach a
     // shipped migration folder, and there is none (ADR-0046).
+    "dist/db/index.js",
+    "dist/db/index.d.ts",
     "dist/db/db.js",
     "dist/db/db.d.ts",
     // The Signal Worker, under its own subpath: it owns tables, and a component that owns
-    // tables has a specifier (ADR-0047). It is no longer the odd one out with a constructor at
-    // the root and nothing but tables of its own.
+    // tables has a specifier (ADR-0047).
     "dist/signals/index.js",
     "dist/signals/index.d.ts",
     "dist/signals/worker.js",
+    // The template Handler, beside the Worker whose vocabulary it is written in, and the only
+    // module that reaches for `handlebars` — so a missing `dependencies` entry surfaces when the
+    // scratch project imports it below rather than at an Operator's first Signal.
+    "dist/signals/template-handler.js",
+    "dist/signals/template-handler.d.ts",
     // Every component's schema module, `.d.ts` beside `.js`. It has no subpath of its own any
     // more — the component's `index.js` re-exports it (ADR-0047) — so it ships because that
     // re-export has to resolve, for Node and for an Operator's type checker both (ADR-0046).
@@ -301,11 +332,6 @@ try {
     "dist/scheduler/routes.d.ts",
     "dist/scheduler/schema.js",
     "dist/scheduler/schema.d.ts",
-    // The template Handler is public surface of its own, and the only module that
-    // reaches for `handlebars` — so a missing `dependencies` entry surfaces when the
-    // scratch project imports it below rather than at an Operator's first Signal.
-    "dist/template-handler.js",
-    "dist/template-handler.d.ts",
   ]) {
     assert.ok(entries.has(file), `the tarball should ship ${file}`);
   }
@@ -317,6 +343,11 @@ try {
   // ADR-0028, ADR-0033).
   // Along with the process module's old home: it moved out of the adapter, and a copy
   // left behind under `dist/pi/` would be a second spawner an Operator could import.
+  // And the whole of the old package root, which is the other claim: there is no `.` export any
+  // more, so `dist/index.js` would be a file nothing can reach, and the modules that sat beside it
+  // moved into directories of their own rather than being copied there. The mirror check below
+  // catches `dist/index.js` on its own, there being no `src/index.ts` behind it. It catches none
+  // of the others, whose sources still exist one directory down, so they are named here.
   for (const gone of [
     "dist/pi/run-files.js",
     "dist/pi/run-files.d.ts",
@@ -327,6 +358,20 @@ try {
     "dist/pi/configuration.d.ts",
     "dist/pi/invocation.js",
     "dist/pi/invocation.d.ts",
+    "dist/index.js",
+    "dist/index.d.ts",
+    "dist/components.js",
+    "dist/components.d.ts",
+    "dist/gateway.js",
+    "dist/gateway.d.ts",
+    "dist/logging.js",
+    "dist/logging.d.ts",
+    "dist/template-handler.js",
+    "dist/template-handler.d.ts",
+    "dist/container/index.js",
+    "dist/container/agent-container.js",
+    "dist/container/mount-table.js",
+    "dist/container/process.js",
   ]) {
     assert.ok(!entries.has(gone), `the tarball should no longer ship ${gone}`);
   }
@@ -379,8 +424,8 @@ try {
   }
 
   // `fastify` is a peer dependency, and **one** shipped module runs an import of it. That
-  // module is `dist/gateway.js`, which constructs the two servers the infrastructure constructor
-  // builds and cannot do it any other way (ADR-0045); everywhere else the framework names
+  // module is `dist/gateway/gateway.js`, which constructs the two servers the infrastructure
+  // constructor builds and cannot do it any other way (ADR-0045); everywhere else the framework names
   // Fastify's types and never its runtime, which is what keeps `serverComponent`
   // structural and the peer dependency honest (ADR-0031). So the check is not dropped but
   // narrowed to an exact list: a `FastifyListenOptions` written without `import type` still
@@ -390,7 +435,7 @@ try {
   // Comment lines are skipped, because `tsc` emits doc comments and an `@example` that shows an
   // Operator building their own server has to say `import Fastify from "fastify"` to be copyable.
   // That is documentation and not an import, so a scan of the raw text fails on
-  // `dist/components.js` and `dist/users/users.js` and says nothing true. Skipped per line rather
+  // `dist/gateway/components.js` and `dist/users/users.js` and says nothing true. Skipped per line rather
   // than by stripping `/** */` blocks, so a string literal holding those four characters cannot
   // swallow the code after it and turn a real import invisible.
   step("checking only the infrastructure constructor imports a value from fastify");
@@ -399,7 +444,7 @@ try {
     !Object.hasOwn((manifest as { dependencies?: object }).dependencies ?? {}, "fastify"),
     "fastify should stay a peer dependency; a `dependencies` entry brings a second copy into every consumer's tree, and instances the framework built would then not be instances of the Fastify a consumer's own plugins were written against",
   );
-  const mayConstructAServer = new Set(["dist/gateway.js"]);
+  const mayConstructAServer = new Set(["dist/gateway/gateway.js"]);
   const importsFastify: string[] = [];
   for (const emitted of readdirSync(path.join(repoRoot, "dist"), {
     recursive: true,
@@ -502,40 +547,51 @@ try {
       // `skipLibCheck: false` here, so an export it does not mention is an export
       // nothing checks: a declaration that resolved to `any`, or went missing
       // altogether, would type-check in this project without it.
+      // The Agent Container's own types, on the specifier that carries what `docker run` takes.
+      // Nothing under it has heard of an Agent Implementation, so `/pi` names none of these and
+      // an author of a second Implementation reaches for exactly this set (ADR-0033).
       "import type {",
       "  AgentContainer,",
       "  AgentContainerRuntime,",
       "  AgentContainerRuntimeSpec,",
-      "  ChannelListener,",
-      "  Component,",
       "  ComposedCommand,",
-      // The shared cursor window, at the root because neither of the two components whose
-      // `history` takes it owns it (ADR-0047 puts a component's *own* types on the component).
-      // Named here and annotated in `useEverything` below, so a Developer's inability to name an
-      // argument the signature requires fails in this project rather than in theirs.
-      "  CursorWindow,",
-      "  Db,",
-      "  Gateway,",
-      "  GatewayExtension,",
-      "  GatewayOptions,",
-      "  Handle,",
-      "  InfraComponents,",
-      "  Listening,",
-      "  ListeningServer,",
-      "  LogFields,",
-      "  Logger,",
       "  Mount,",
       "  MountTable,",
       "  RunPlan,",
-      "  TemplateHandlerOptions,",
+      '} from "shared-agent-framework/agent-container";',
+      // The Db's own types: the handle, the transaction it hands a callback, the `LISTEN`
+      // registration and the listener it calls back. `pg` is nowhere among them, which is what
+      // keeps the pool out of the public API (ADR-0022).
+      "import type {",
+      "  ChannelListener,",
+      "  Db,",
+      "  Handle,",
+      "  Listening,",
       "  Transaction,",
-      '} from "shared-agent-framework";',
+      '} from "shared-agent-framework/db";',
+      // The assembly vocabulary, on its own specifier: the Component two methods, what a Gateway
+      // is, the structural server it listens through, and the options both constructors take
+      // (ADR-0031, ADR-0045).
+      "import type {",
+      "  Component,",
+      "  Gateway,",
+      "  GatewayExtension,",
+      "  GatewayOptions,",
+      "  InfraComponents,",
+      "  ListeningServer,",
+      '} from "shared-agent-framework/gateway";',
+      // The logging seam, on its own specifier: nearly every part takes one, so it belongs to no
+      // single part and an Operator satisfies it structurally.
+      "import type {",
+      "  LogFields,",
+      "  Logger,",
+      '} from "shared-agent-framework/logging";',
       // The Signal Worker's own types, from its own subpath: the Worker and its options, the
       // two record shapes the Agent server answers with and their states, the Prompt the
-      // Handler returns and the Run prompt the Runtime is given, the Runtime seam itself, and
-      // the Signal a Producer emits (ADR-0047). Every one of them was at the root until that
-      // decision, and the root import above no longer names any of them, so a symbol that
-      // failed to move fails on this block rather than passing on both.
+      // Handler returns and the Run prompt the Runtime is given, the Runtime seam itself, the
+      // Signal a Producer emits, and the template Handler's options (ADR-0047). Every one of
+      // them was at the root until that decision, and no block above names any of them, so a
+      // symbol that failed to move fails here rather than passing on two specifiers.
       "import type {",
       "  EmittedSignal,",
       "  PostOutcome,",
@@ -552,11 +608,12 @@ try {
       "  SignalState,",
       "  SignalWorker,",
       "  SignalWorkerOptions,",
+      "  TemplateHandlerOptions,",
       '} from "shared-agent-framework/signals";',
       // The `pi` subpath exports **no type at all**, which is the shape ADR-0033 leaves
       // it in: there is no configuration to name, and everything the Runtime it returns
       // is made of — the Agent Container, the Run plan, the composed command line — comes
-      // from the package root, because none of it is `pi`-shaped. The three values it
+      // from `/agent-container`, because none of it is `pi`-shaped. The three values it
       // does export are in `consumerImports` above.
       // The Users component's own types, from its own subpath, for the same reason:
       // a deployment with no identity in it imports nothing from there (ADR-0029).
@@ -576,6 +633,7 @@ try {
       // the only way an inbound Message can be written — is the second (ADR-0048).
       "import type {",
       "  Channel,",
+      "  MessageDirection,",
       "  MessageRecord,",
       "  Messenger,",
       "  MessengerHandle,",
@@ -620,6 +678,7 @@ try {
       "  ScheduleFiredRecord,",
       "  ScheduleInput,",
       "  ScheduleOutcome,",
+      "  ScheduleKind,",
       "  ScheduleRecord,",
       "  ScheduleSpec,",
       "  Scheduler,",
@@ -1061,7 +1120,7 @@ try {
       "// and the four opinionated parts built by hand in `extend` from that infrastructure — the",
       "// canonical path, with `createBareGateway` as the escape one layer down (ADR-0045). The",
       "// Runtime is an option rather than a spec, which is why the one declared at the top of this",
-      "// file goes straight in and the package root imports no Agent Implementation of its own. The",
+      "// file goes straight in and `/gateway` imports no Agent Implementation of its own. The",
       "// options are annotated separately, so a field that went missing from the declaration fails",
       "// here rather than being silently ignored.",
       "type Assembled = {",
@@ -1160,7 +1219,7 @@ try {
       "// There is no configuration type on the `/pi` subpath any more: no model, no",
       "// provider and no container path, because the agent reads all of those out of a",
       "// `settings.json` the Operator mounts and a `Dockerfile` they build (ADR-0033).",
-      "// The Mount Table comes from the package root, not from `/pi`: it knows nothing",
+      "// The Mount Table comes from `/agent-container`, not from `/pi`: it knows nothing",
       "// about an Agent Implementation, and an entry may name a directory or a single",
       "// file and may be read-only — which is how the `AGENTS.md` below, and the",
       "// `settings.json` beside it, are protected from the agent that reads them",
@@ -1184,7 +1243,7 @@ try {
       "// to `any` or went missing fails here (ADR-0028).",
       "export const piMountArguments: readonly string[] = mountArguments(mounts);",
       "",
-      "// The Agent Container and the generic Runtime built from it, from the package root",
+      "// The Agent Container and the generic Runtime built from it, from `/agent-container`",
       "// rather than from `/pi`, because nothing in either has heard of an Agent",
       "// Implementation and the next one needs both unchanged (ADR-0033). Only `image` is",
       "// required; everything else here is a field an Operator may leave out. What an Agent",
@@ -1326,12 +1385,12 @@ try {
       '    messenger.send(tx, admitted.id, "the deploy finished"),',
       "  );",
       "  // The window both logs are paged by, written once and handed to both methods that take",
-      "  // one. It comes off the **root** and not off either component, because it belongs to",
-      "  // neither of them: a component's own types are on the component (ADR-0047), and this is",
-      "  // the shared cursor convention two of them read through. Annotated, so a `CursorWindow`",
-      "  // that stopped being exported, or whose fields drifted, fails here rather than leaving a",
-      "  // Developer looking at `Partial<CursorWindow>` in a signature with nothing to import.",
-      "  const page: Partial<CursorWindow> = { after: 0, limit: 1000 };",
+      "  // one. There is **no type to import** for it: neither component owns the shape, and the",
+      "  // root that used to carry it is gone, so both `history` signatures spell the three fields",
+      "  // inline and a Developer writes an object literal. Declared here as one, and handed to two",
+      "  // components' methods, so a field renamed on either signature fails here rather than",
+      "  // leaving a caller unable to satisfy an argument they cannot name.",
+      "  const page: { after: number; limit: number } = { after: 0, limit: 1000 };",
       "  const whole: MessageRecord[] = await messenger.history(admitted.id, page);",
       "  const since: MessageRecord[] = await messenger.history(admitted.id, { after: answered.seq });",
       '  shipped.info({ said, answered, log: whole.length, since: since.length }, "a Message has one shape on every surface");',
@@ -1399,7 +1458,7 @@ try {
       "  // order and stops in the reverse of it. **Every** part is in it, Users, the",
       "  // Messenger and its HTTP Channel, Signatures and Decisions included, and those five come",
       "  // off subpaths of their own — so this",
-      "  // record is also what proves the installed `.d.ts` files agree with the root's",
+      "  // record is also what proves the installed `.d.ts` files agree with `/gateway`'s",
       "  // `Component` (ADR-0037). The order is the consumer's own and comes from one rule: the",
       "  // Signal Worker's `stop` is the only one that does work, so it is keyed after every part",
       "  // its drain uses (the Db, both servers, and the Messenger and Decisions its post phase",
@@ -1484,11 +1543,11 @@ try {
         // our own `node_modules` would hide a missing entry in every other check.
         //
         // The `/pi` subpath, actually run rather than only resolved: `createPiRuntime`
-        // reaches across to `../container/index.ts` for the generic half and down to
+        // reaches across to `../agent-container/index.ts` for the generic half and down to
         // `./output.ts` for the reader, so this is what proves a relative `.ts` import
         // *inside and out of* the subpath survives being compiled and installed — the
         // thing the deleted placeholder used to stand for.
-        // The Mount Table, constructed and resolved from the package root the way an
+        // The Mount Table, constructed and resolved from `/agent-container` the way an
         // Operator meets it: this is what proves `--mount type=bind` arguments come out
         // of an installed package rather than only out of this repository.
         "const mounts = { entries: [",
@@ -1497,8 +1556,8 @@ try {
         "  { agentPath: '/workspace/AGENTS.md', gatewayPath: '/srv/saf/AGENTS.md', readOnly: true },",
         "] };",
         "const mountArgs = mountArguments(mounts);",
-        // And the generic Runtime, constructed and asked for a command line from the
-        // package root. `commandFor` is pure, so this proves the whole of the argument
+        // And the generic Runtime, constructed and asked for a command line from
+        // `/agent-container`. `commandFor` is pure, so this proves the whole of the argument
         // assembly runs out of an installed package with no Docker anywhere near it —
         // the image, the mounts, the user, the networks, the entry point and the agent's
         // own arguments, in that order (ADR-0033).
@@ -1587,7 +1646,7 @@ try {
         // And the whole stack from one `createGateway` call, which is the path an Operator's
         // entry point takes: the infrastructure the framework builds, and the four parts built by
         // hand in `extend` from it (ADR-0045). This is the one place anything proves the **value**
-        // import of `fastify` survives installation: `dist/gateway.js` constructs the two servers
+        // import of `fastify` survives installation: `dist/gateway/gateway.js` constructs the two servers
         // itself, and a peer dependency that failed to resolve would throw right here rather than
         // at an Operator's first deploy. Nothing connects and nothing listens — `openDb` is lazy
         // and `Fastify()` binds nothing — so what comes back is the record, in the order the
@@ -1680,23 +1739,30 @@ try {
   assert.equal(
     imported,
     "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword,start,stop:saf_messenger:history,register,send,start,stop:channel http name,send,start,stop:channel nostr drain,name,publicKey,recordPublicKey,send,start,stop as 1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f in saf_nostr:message.received:saf_decisions:sign,start,stop:history,publish,start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,signatures,decisions,messenger,httpChannel,ownLoop,worker:Shared Agent Gateway: Agent server describes 10 paths:by hand /healthz:cron 2030-06-02T09:00:00.000Z zone true:scheduler cancel,list,schedule,start,stop,tick fires saf_schedule_fired in saf_scheduler:barrel saf_decisions.decisions saf_messenger.messages saf_nostr.outbox saf_nostr.pubkeys saf_nostr.received saf_scheduler.schedules saf_signals.runs saf_signals.signals saf_users.tokens saf_users.users in saf_decisions saf_messenger saf_nostr saf_scheduler saf_signals saf_users, wrappers seen 0:schemas 6 of 6 distinct, every one collected true",
-    "all ten subpaths should resolve at runtime, the Signal Worker's constructor arriving off `/signals` and not the root, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from the package root without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and Users should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the Messenger should construct into a schema of its own from all four of its required arguments and answer with an object carrying exactly its three trusted-code methods, because every other capability it has is a route it registered itself, and the HTTP Channel should construct off the ninth subpath, register itself with that Messenger and answer with a name fixed by its type and the three methods a Channel is and no trusted-code method at all, and the Nostr Channel should construct off the tenth from 32 raw bytes and a Relay address with no server anywhere, register itself with a second Messenger because one Channel per Messenger is refused at registration, derive the agent's public key from those bytes inside the installed package, and answer with the one trusted-code method that records a public key, the drain that is the half of a send a transaction cannot hold, and no route plugin beside them, and all of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the five parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone, and the Scheduler itself should construct from the installed `/scheduler` subpath and carry its management surface and its Component lifecycle, filing its table under a schema of its own, and an Operator's barrel — `export *` of all six **component** subpaths, which is the whole of what ADR-0046 asks them to write and where ADR-0047 puts the tables — should hand `drizzle-kit`'s own collection rule every one of the ten tables and all six schemas — the HTTP Channel absent from it because that Channel owns no log and no tables, and the Nostr Channel present because the two things only it can know are its own —, and none of the `*Tables` wrappers, because a table reachable only through a wrapper object is dropped in silence and generates an empty migration, and those six schema objects should be six distinct values that the barrel carries under six distinct prefixed names, because a bare `schema` on each component is a name `export *` drops for ambiguity and an Operator whose `schemaFilter` comes back empty gets a push that creates nothing and exits 0",
+    "all thirteen subpaths should resolve at runtime and none of them is the bare package, the Signal Worker's constructor and the template Handler both arriving off `/signals`, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from `/agent-container` without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and Users should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the Messenger should construct into a schema of its own from all four of its required arguments and answer with an object carrying exactly its three trusted-code methods, because every other capability it has is a route it registered itself, and the HTTP Channel should construct off the ninth subpath, register itself with that Messenger and answer with a name fixed by its type and the three methods a Channel is and no trusted-code method at all, and the Nostr Channel should construct off the tenth from 32 raw bytes and a Relay address with no server anywhere, register itself with a second Messenger because one Channel per Messenger is refused at registration, derive the agent's public key from those bytes inside the installed package, and answer with the one trusted-code method that records a public key, the drain that is the half of a send a transaction cannot hold, and no route plugin beside them, and all of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the five parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone, and the Scheduler itself should construct from the installed `/scheduler` subpath and carry its management surface and its Component lifecycle, filing its table under a schema of its own, and an Operator's barrel — `export *` of all six **component** subpaths, which is the whole of what ADR-0046 asks them to write and where ADR-0047 puts the tables — should hand `drizzle-kit`'s own collection rule every one of the ten tables and all six schemas — the HTTP Channel absent from it because that Channel owns no log and no tables, and the Nostr Channel present because the two things only it can know are its own —, and none of the `*Tables` wrappers, because a table reachable only through a wrapper object is dropped in silence and generates an empty migration, and those six schema objects should be six distinct values that the barrel carries under six distinct prefixed names, because a bare `schema` on each component is a name `export *` drops for ambiguity and an Operator whose `schemaFilter` comes back empty gets a push that creates nothing and exits 0",
   );
 
-  // The other half of ADR-0047's first move, which nothing above can see: `main.ts` imports the
-  // Worker off `/signals` and would type-check just as happily if the root still exported it too.
-  // A named import of an absent export is a link-time error in ESM, so this is the one thing that
-  // notices a root re-export creeping back and leaving two doors onto one component.
-  step("checking the Signal Worker is no longer reachable from the root");
-  const workerAtRoot = exitsZero(
+  // And the claim nothing above can see, because everything above imports a subpath: **the bare
+  // specifier resolves to nothing.** `exports` has thirteen entries and no `.`, so Node refuses
+  // `import "shared-agent-framework"` before it reads a byte of any module, and names the refusal
+  // `ERR_PACKAGE_PATH_NOT_EXPORTED`. The code is read rather than the exit status, because a
+  // module that threw on load would also exit non-zero and would prove the opposite of this.
+  //
+  // What it buys: nothing lands on the root by accident. A re-export written into a new `index.ts`
+  // is unreachable, a second door onto a component cannot open there, and the only way anything
+  // gets a root again is an edit to `exports` in `package.json` that a reviewer sees. That is a
+  // stronger claim than the one this step used to make, which was about one constructor
+  // (ADR-0047) and left every other root name unchecked.
+  step("checking the bare specifier resolves to nothing");
+  const rootRefusal = refusalFrom(
     process.execPath,
-    ["--input-type=module", "-e", 'import { createSignalWorker } from "shared-agent-framework";'],
+    ["--input-type=module", "-e", 'import "shared-agent-framework";'],
     consumer,
   );
-  assert.equal(
-    workerAtRoot,
-    false,
-    "the Signal Worker belongs to `/signals` alone; a component with two specifiers is the split ADR-0047 closed",
+  assert.match(
+    rootRefusal,
+    /ERR_PACKAGE_PATH_NOT_EXPORTED/,
+    "the package has no `.` export and Node should say so; a root that resolves is a door onto the framework that nobody declared",
   );
 
   // The reserved `/messenger` specifier is gone from the manifest and there is no check where

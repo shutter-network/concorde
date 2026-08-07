@@ -31,8 +31,8 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance, type FastifyPluginAsync } from "fastify";
-import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
+import { type Component, serverComponent } from "../gateway/components.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import type { UserRecord } from "./routes.ts";

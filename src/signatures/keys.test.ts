@@ -49,8 +49,8 @@ import {
 } from "node:crypto";
 import { after, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
-import { type Component, serverComponent } from "../components.ts";
-import type { Logger } from "../logging.ts";
+import { type Component, serverComponent } from "../gateway/components.ts";
+import type { Logger } from "../logging/logging.ts";
 import { createSignatures, type Signatures } from "./signatures.ts";
 
 /** A server that is only ever injected into, and the pair a Signatures is constructed on. */

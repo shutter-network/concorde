@@ -14,20 +14,24 @@ with [Prompt](#prompt)s, and [SignalHandlers](#signalhandlers) is the map from a
 [createSignalWorker](#createsignalworker) builds the Worker itself, and [SignalWorker](#signalworker) is what comes back.
 Its programmatic API is `emit`, which a Producer writes a Signal through.
 
-`createGateway` builds a Worker already, so reach for the constructor only when you assemble a
-Gateway by hand. Either way the Handler map is a construction option, so a Handler that emits back
-into the same Worker is built after the Worker and assigned in.
+[templateHandler](#templatehandler) is a Handler most deployments start from rather than writing
+[SignalHandler](#signalhandler) by hand: it renders one Prompt per Signal from a Handlebars file, and
+[TemplateHandlerOptions](#templatehandleroptions) is where the file, the Session and the values it substitutes are
+stated. It is an ordinary Handler built by an ordinary function, so a deployment that outgrows it
+returns one of its own from the same place and unwires nothing.
 
-None of this is on the package root. The Worker, its options and the whole Handler vocabulary are
-reachable through `shared-agent-framework/signals` and nowhere else. The two tables are here too,
-for the schema an Operator generates their migrations from. They reference no other component's
-table, so that schema can carry them alone.
+`createGateway` builds a Worker already, so reach for the constructor only when you assemble a
+Gateway by hand. Either way the Handler map is a construction option, so a Handler that emits
+back into the same Worker is built after the Worker and assigned in.
+
+The two tables are here beside the constructor, for the schema an Operator generates their
+migrations from. They reference no other component's table, so that schema can carry them alone.
 
 ## Example
 
 A Signal Handler, and a Producer that emits into it.
 ```ts
-import type { Db } from "shared-agent-framework";
+import type { Db } from "shared-agent-framework/db";
 import type { Signal, SignalHandler, SignalWorker } from "shared-agent-framework/signals";
 
 const greet: SignalHandler<{ name: string }> = {
@@ -615,7 +619,7 @@ reading the outcome back later rather than for awaiting it.
 
 ###### tx
 
-[`Handle`](shared-agent-framework.md#handle)\<`TSchema`\>
+[`Handle`](shared-agent-framework.db.md#handle)\<`TSchema`\>
 
 ###### signal
 
@@ -698,8 +702,8 @@ Given one, the constructor registers `agentRoutes` on its Fastify instance at no
 `/signals`, `/signals/:id`, `/runs` and `/runs/:id`. Omit it and nothing is registered
 anywhere, which is how the group is switched off.
 
-Structural, and it asks for nothing but the Fastify instance, so what `serverComponent` returns
-satisfies it. A server built on http2 does not, and takes the `agentRoutes` plugin instead.
+Structural: anything carrying a Fastify instance satisfies it. A server built on http2 does
+not, and takes the `agentRoutes` plugin instead.
 
 ###### fastify
 
@@ -765,6 +769,109 @@ Not the latency of a Signal: emitting one wakes the worker at once. This is the 
 a notification sent while the listening connection was down, so what the number bounds is how
 long a Signal can sit unnoticed after a database restart. There is no correctness in it, and
 the cost of lowering it is a query per interval forever.
+
+***
+
+### TemplateHandlerOptions
+
+```ts
+type TemplateHandlerOptions<TPayload> = {
+  data: (signal) => unknown;
+  helpers?: Readonly<Record<string, Handlebars.HelperDelegate>>;
+  partials?: Readonly<Record<string, string>>;
+  session: (signal) => string | null | Promise<string | null>;
+  template: string | URL;
+};
+```
+
+#### Type Parameters
+
+##### TPayload
+
+`TPayload` = `unknown`
+
+#### Properties
+
+##### data
+
+```ts
+readonly data: (signal) => unknown;
+```
+
+The values the template substitutes. A name the template references and this does not supply
+fails the Signal rather than rendering as nothing.
+
+A returned Promise is awaited, so this can be `async`, and it is where a Handler reads what the
+Prompt needs: the Message log, the Workspace, or tables of your own.
+
+###### Parameters
+
+###### signal
+
+[`Signal`](#signal)\<`TPayload`\>
+
+###### Returns
+
+`unknown`
+
+##### helpers?
+
+```ts
+readonly optional helpers?: Readonly<Record<string, Handlebars.HelperDelegate>>;
+```
+
+Handlebars helpers, registered on an environment belonging to this Handler alone. Another
+Handler built by another call cannot see them, and neither can the shared `Handlebars`
+instance. What a helper returns is substituted unescaped, like everything else.
+
+##### partials?
+
+```ts
+readonly optional partials?: Readonly<Record<string, string>>;
+```
+
+Handlebars partials, as template source rather than as templates already compiled.
+
+They are compiled here with the same options as the template itself, so `noEscape` and `strict`
+hold inside them too.
+
+##### session
+
+```ts
+readonly session: (signal) => string | null | Promise<string | null>;
+```
+
+Which Session this Signal's Prompt continues, or `null` to ask for a fresh one.
+
+The topology is yours: one Session per User, one per Run, or one for the whole agent. A
+returned Promise is awaited.
+
+###### Parameters
+
+###### signal
+
+[`Signal`](#signal)\<`TPayload`\>
+
+###### Returns
+
+`string` \| `null` \| `Promise`\<`string` \| `null`\>
+
+##### template
+
+```ts
+readonly template: string | URL;
+```
+
+The Handlebars file, as a path or a `file:` URL, read and compiled again for every Prompt.
+Edit the wording and the next Signal renders through it, with no restart.
+
+A relative path resolves against the process's working directory. For a template beside the
+module that names it, write `new URL("./prompt.hbs", import.meta.url)`.
+
+It is compiled with `noEscape`, so nothing substituted is HTML-escaped, and with `strict`,
+which fails the Signal on a variable `data` did not supply. `strict` also disables inverse
+sections: a caret block such as `^absent` throws, and the `unless` helper is what to write in
+its place. The `if`, `each` and `else` helpers behave as usual.
 
 ## Variables
 
@@ -897,3 +1004,37 @@ with `createBareGateway`.
 #### Returns
 
 [`SignalWorker`](#signalworker)
+
+***
+
+### templateHandler()
+
+```ts
+function templateHandler<TPayload>(options): SignalHandler<TPayload>;
+```
+
+Builds a Signal Handler that renders one Prompt per Signal from a Handlebars template.
+
+One Prompt, always. It never fans a Signal out across several Sessions and never declines one,
+although the Handler contract allows both. It has no post phase either, and gains one by being
+spread: `{ ...templateHandler(options), post }` is a Handler.
+
+A template that cannot be read, and one that does not render, each fail the Signal with a message
+naming the file. Handlebars names the variable, the line and the column, and never the file,
+which is the one thing an Operator running several templates needs.
+
+#### Type Parameters
+
+##### TPayload
+
+`TPayload` = `unknown`
+
+#### Parameters
+
+##### options
+
+[`TemplateHandlerOptions`](#templatehandleroptions)\<`TPayload`\>
+
+#### Returns
+
+[`SignalHandler`](#signalhandler)\<`TPayload`\>

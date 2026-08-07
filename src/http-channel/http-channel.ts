@@ -64,8 +64,7 @@ export type HttpChannelOptions = {
    * Where Users submit and poll, at `/messages`.
    *
    * A Channel nobody can reach is broken rather than smaller, so there is no assembly of this
-   * component that omits it. Structural: anything carrying a Fastify instance satisfies it,
-   * including what `serverComponent` returns.
+   * component that omits it. Structural: anything carrying a Fastify instance satisfies it.
    */
   readonly publicServer: {
     readonly fastify: FastifyInstance;

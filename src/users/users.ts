@@ -29,8 +29,8 @@
 
 import { and, desc, eq, gt, sql } from "drizzle-orm";
 import type { FastifyInstance, FastifyPluginAsync, preHandlerAsyncHookHandler } from "fastify";
-import type { Component } from "../components.ts";
 import type { Db, Handle } from "../db/index.ts";
+import type { Component } from "../gateway/components.ts";
 import { limitSchema } from "../route-conventions.ts";
 import {
   agentUserRoutes,
@@ -73,8 +73,8 @@ export type UsersOptions = {
    * `GET /users` and `GET /users/:id`. Omit it and nothing is registered anywhere, which is how
    * the agent's ability to create a User is denied. There is no flag and no route to guard.
    *
-   * Structural, and asks for nothing but the Fastify instance. What `serverComponent` returns
-   * satisfies it. A server built on http2 does not, and takes `agentRoutes` instead.
+   * Structural: anything carrying a Fastify instance satisfies it. A server built on http2 does
+   * not, and takes `agentRoutes` instead.
    */
   readonly agentServer?: {
     readonly fastify: FastifyInstance;

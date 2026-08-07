@@ -29,7 +29,7 @@ import { NRelay1 } from "@nostrify/nostrify";
 import type { NostrEvent } from "nostr-tools/core";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import type { Db, Handle, Listening } from "../db/index.ts";
-import { defaultLogger, type Logger } from "../logging.ts";
+import { defaultLogger, type Logger } from "../logging/logging.ts";
 import type { MessageRecord } from "../messenger/messages.ts";
 import type { Channel, Messenger } from "../messenger/messenger.ts";
 import type { Users } from "../users/users.ts";

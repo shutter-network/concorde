@@ -38,10 +38,10 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
-import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
+import { type Component, serverComponent } from "../gateway/components.ts";
 import { createHttpChannel } from "../http-channel/http-channel.ts";
-import type { Logger } from "../logging.ts";
+import type { Logger } from "../logging/logging.ts";
 import type { SignalRecord } from "../signals/routes.ts";
 import * as signalsSchema from "../signals/schema.ts";
 import { createSignalWorker, type SignalWorker } from "../signals/worker.ts";

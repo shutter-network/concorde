@@ -25,7 +25,7 @@ A Gateway with Decisions, and a Statement committed to from the Operator's own c
 ```ts
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { createGateway } from "shared-agent-framework";
+import { createGateway } from "shared-agent-framework/gateway";
 import { createDecisions } from "shared-agent-framework/decisions";
 import { createPiRuntime } from "shared-agent-framework/pi";
 import { createSignatures } from "shared-agent-framework/signatures";
@@ -160,7 +160,17 @@ response body.
 
 ###### options?
 
-`Partial`\<[`CursorWindow`](shared-agent-framework.md#cursorwindow)\>
+###### after?
+
+`number`
+
+###### before?
+
+`number`
+
+###### limit?
+
+`number`
 
 ###### Returns
 
@@ -195,7 +205,7 @@ log are expected and mean nothing.
 
 ###### tx
 
-[`Handle`](shared-agent-framework.md#handle)\<`TSchema`\>
+[`Handle`](shared-agent-framework.db.md#handle)\<`TSchema`\>
 
 ###### statement
 
@@ -255,8 +265,7 @@ readonly agentServer: {
 
 Where the agent publishes and reads, at `/decisions`.
 
-Structural: anything carrying a Fastify instance satisfies it, including what
-`serverComponent` returns.
+Structural: anything carrying a Fastify instance satisfies it.
 
 ###### fastify
 

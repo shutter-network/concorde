@@ -13,19 +13,23 @@
  * {@link createSignalWorker} builds the Worker itself, and {@link SignalWorker} is what comes back.
  * Its programmatic API is `emit`, which a Producer writes a Signal through.
  *
- * `createGateway` builds a Worker already, so reach for the constructor only when you assemble a
- * Gateway by hand. Either way the Handler map is a construction option, so a Handler that emits back
- * into the same Worker is built after the Worker and assigned in.
+ * {@link templateHandler} is a Handler most deployments start from rather than writing
+ * {@link SignalHandler} by hand: it renders one Prompt per Signal from a Handlebars file, and
+ * {@link TemplateHandlerOptions} is where the file, the Session and the values it substitutes are
+ * stated. It is an ordinary Handler built by an ordinary function, so a deployment that outgrows it
+ * returns one of its own from the same place and unwires nothing.
  *
- * None of this is on the package root. The Worker, its options and the whole Handler vocabulary are
- * reachable through `shared-agent-framework/signals` and nowhere else. The two tables are here too,
- * for the schema an Operator generates their migrations from. They reference no other component's
- * table, so that schema can carry them alone.
+ * `createGateway` builds a Worker already, so reach for the constructor only when you assemble a
+ * Gateway by hand. Either way the Handler map is a construction option, so a Handler that emits
+ * back into the same Worker is built after the Worker and assigned in.
+ *
+ * The two tables are here beside the constructor, for the schema an Operator generates their
+ * migrations from. They reference no other component's table, so that schema can carry them alone.
  *
  * @example
  * A Signal Handler, and a Producer that emits into it.
  * ```ts
- * import type { Db } from "shared-agent-framework";
+ * import type { Db } from "shared-agent-framework/db";
  * import type { Signal, SignalHandler, SignalWorker } from "shared-agent-framework/signals";
  *
  * const greet: SignalHandler<{ name: string }> = {
@@ -60,5 +64,7 @@ export type { RunOutcome, RunPrompt, Runtime } from "./runtime.ts";
 // can see. It never looks inside a wrapper object. `SignalRecord.state` and `RunRecord.state`
 // take their two unions from here, and both are on the wire.
 export * from "./schema.ts";
+export type { TemplateHandlerOptions } from "./template-handler.ts";
+export { templateHandler } from "./template-handler.ts";
 export type { EmittedSignal, SignalWorker, SignalWorkerOptions } from "./worker.ts";
 export { createSignalWorker } from "./worker.ts";

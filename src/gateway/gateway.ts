@@ -16,11 +16,11 @@ import fastifySwagger from "@fastify/swagger";
 import fastifySwaggerUi from "@fastify/swagger-ui";
 import type { FastifyInstance, FastifyListenOptions } from "fastify";
 import Fastify from "fastify";
+import { type Db, openDb } from "../db/index.ts";
+import type { Logger } from "../logging/logging.ts";
+import type { Runtime, SignalHandler, SignalHandlers, SignalWorker } from "../signals/index.ts";
+import { createSignalWorker } from "../signals/index.ts";
 import { type Component, createBareGateway, type Gateway, serverComponent } from "./components.ts";
-import { type Db, openDb } from "./db/index.ts";
-import type { Logger } from "./logging.ts";
-import type { Runtime, SignalHandler, SignalHandlers, SignalWorker } from "./signals/index.ts";
-import { createSignalWorker } from "./signals/index.ts";
 
 /**
  * The four parts every deployment has, under the keys they are filed under.
@@ -59,7 +59,8 @@ export type GatewayOptions<E extends GatewayExtension> = {
    * What a Prompt is handed to, and what an outcome comes back from.
    *
    * `createPiRuntime` on `shared-agent-framework/pi` returns one for `pi`, and
-   * `createAgentContainerRuntime` builds one for any other agent program.
+   * `createAgentContainerRuntime` on `shared-agent-framework/agent-container` builds one for any
+   * other agent program.
    */
   readonly runtime: Runtime;
   /**

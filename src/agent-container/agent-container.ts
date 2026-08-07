@@ -1,7 +1,9 @@
 /**
- * Nothing in this file may learn what an Agent Implementation is. Every field below is one
- * `docker run` takes, and the whole bet of ADR-0033 is that the next agent program needs all of
- * them unchanged and contributes only a `run` function.
+ * Nothing in this file may learn what an Agent Implementation is, and the same holds for every
+ * other file in this directory. Every field below is one `docker run` takes, and the whole bet of
+ * ADR-0033 is that the next agent program needs all of them unchanged and contributes only a `run`
+ * function. `src/pi/` is the other half and imports from here. Nothing here may import back, and an
+ * import of `../pi/` is the thing to refuse in review; no lint rule enforces it.
  *
  * `composeArgv` is the one place argument order is decided, and it is called twice for two
  * different reasons: once at construction for its throwing alone, with the result dropped, and
@@ -14,7 +16,7 @@
  * module that must not know them.
  */
 
-import { defaultLogger, type Logger } from "../logging.ts";
+import { defaultLogger, type Logger } from "../logging/logging.ts";
 import type { RunOutcome, RunPrompt, Runtime } from "../signals/runtime.ts";
 import { type MountTable, mountArguments } from "./mount-table.ts";
 import { runContainer } from "./process.ts";

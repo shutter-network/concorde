@@ -23,11 +23,12 @@ the next poll carries it.
 A Gateway a browser can talk to: the Messenger, this Channel registered with it, and a Handler
 for the Signal a submission emits.
 ```ts
-import { createGateway, templateHandler } from "shared-agent-framework";
+import { createGateway } from "shared-agent-framework/gateway";
 import { createHttpChannel } from "shared-agent-framework/http-channel";
 import type { MessageRecord } from "shared-agent-framework/messenger";
 import { createMessenger, messageReceivedKind } from "shared-agent-framework/messenger";
 import { createPiRuntime } from "shared-agent-framework/pi";
+import { templateHandler } from "shared-agent-framework/signals";
 import { createUsers } from "shared-agent-framework/users";
 
 const gateway = createGateway({
@@ -135,8 +136,7 @@ readonly publicServer: {
 Where Users submit and poll, at `/messages`.
 
 A Channel nobody can reach is broken rather than smaller, so there is no assembly of this
-component that omits it. Structural: anything carrying a Fastify instance satisfies it,
-including what `serverComponent` returns.
+component that omits it. Structural: anything carrying a Fastify instance satisfies it.
 
 ###### fastify
 

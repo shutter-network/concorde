@@ -12,7 +12,7 @@
  * are simply absent, felt as a PostgreSQL "relation does not exist" on the first query
  * that needs them. So the five below are the parts with tables that `createGateway` builds
  * and `extend` returns — the Signal Worker, which the framework builds for every deployment,
- * and four of the six opinionated parts. Signatures and the HTTP Channel are not here and
+ * and four of the six components. Signatures and the HTTP Channel are not here and
  * have no schema: neither stores anything, and the log a Channel's Messages land in is the
  * Messenger's ([ADR-0042](../docs/adr/0042-a-signature-is-a-compact-jws.md),
  * [ADR-0048](../docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)). A
@@ -32,8 +32,11 @@
  * record would push nothing at all, in silence.
  *
  * **Five component specifiers and no aliases**, because a component is one subpath: the tables
- * arrive from the same specifier `main.ts` takes the constructor from
- * ([ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md)). Each one carries its
+ * arrive from the same five specifiers `main.ts` imports from
+ * ([ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md)). `main.ts` names four more,
+ * `/gateway`, `/pi`, `/http-channel` and `/signatures`, and none of those four owns a table.
+ * There is no bare `shared-agent-framework` in either file, the package having no root export
+ * ([ADR-0051](../docs/adr/0051-the-package-root-exports-nothing.md)). Each one carries its
  * constructor and its routes along with its tables, which costs this one-shot container a few
  * milliseconds and buys one specifier per component instead of two. No alias is needed because
  * every schema object keeps its component prefix — `usersSchema` beside `messengerSchema` and

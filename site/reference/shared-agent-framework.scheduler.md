@@ -27,10 +27,11 @@ its own.
 
 A Gateway that wakes itself every morning, and the Handler each fire reaches.
 ```ts
-import { createGateway, templateHandler } from "shared-agent-framework";
+import { createGateway } from "shared-agent-framework/gateway";
 import { createPiRuntime } from "shared-agent-framework/pi";
 import type { ScheduleFiredRecord } from "shared-agent-framework/scheduler";
 import { createScheduler, scheduleFiredKind } from "shared-agent-framework/scheduler";
+import { templateHandler } from "shared-agent-framework/signals";
 
 const gateway = createGateway({
   databaseUrl: process.env.DATABASE_URL ?? "",
@@ -494,8 +495,7 @@ Gateway minted, which is why the create is a `PUT`.
 Worth switching off for two reasons. An agent that wakes itself can loop the one serial Signal
 lane, and nothing scopes a Schedule by creator, so the same routes reach the Operator's own.
 
-Structural, and asks for nothing but the Fastify instance, so what satisfies it is what
-`serverComponent` returns.
+Structural: anything carrying a Fastify instance satisfies it.
 
 ###### fastify
 

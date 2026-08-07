@@ -24,7 +24,7 @@
  * @example
  * A Gateway with Users, and a User admitted from the Operator's own code.
  * ```ts
- * import { createGateway } from "shared-agent-framework";
+ * import { createGateway } from "shared-agent-framework/gateway";
  * import { createPiRuntime } from "shared-agent-framework/pi";
  * import { createUsers } from "shared-agent-framework/users";
  *

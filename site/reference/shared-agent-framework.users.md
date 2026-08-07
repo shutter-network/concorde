@@ -26,7 +26,7 @@ whether or not the program constructs this component.
 
 A Gateway with Users, and a User admitted from the Operator's own code.
 ```ts
-import { createGateway } from "shared-agent-framework";
+import { createGateway } from "shared-agent-framework/gateway";
 import { createPiRuntime } from "shared-agent-framework/pi";
 import { createUsers } from "shared-agent-framework/users";
 
@@ -292,7 +292,7 @@ expressible and seeding the first one is the Operator's own job, out of band and
 
 ###### tx
 
-[`Handle`](shared-agent-framework.md#handle)\<`TSchema`\>
+[`Handle`](shared-agent-framework.db.md#handle)\<`TSchema`\>
 
 ###### Returns
 
@@ -345,7 +345,7 @@ User has that id.
 
 ###### tx
 
-[`Handle`](shared-agent-framework.md#handle)\<`TSchema`\>
+[`Handle`](shared-agent-framework.db.md#handle)\<`TSchema`\>
 
 ###### user
 
@@ -404,7 +404,7 @@ which is the only compaction that table gets.
 
 ###### tx
 
-[`Handle`](shared-agent-framework.md#handle)\<`TSchema`\>
+[`Handle`](shared-agent-framework.db.md#handle)\<`TSchema`\>
 
 ###### user
 
@@ -441,7 +441,7 @@ top of this: read, spread, set.
 
 ###### tx
 
-[`Handle`](shared-agent-framework.md#handle)\<`TSchema`\>
+[`Handle`](shared-agent-framework.db.md#handle)\<`TSchema`\>
 
 ###### user
 
@@ -484,7 +484,7 @@ leaves a User who cannot log in. It throws when no User has that id.
 
 ###### tx
 
-[`Handle`](shared-agent-framework.md#handle)\<`TSchema`\>
+[`Handle`](shared-agent-framework.db.md#handle)\<`TSchema`\>
 
 ###### user
 
@@ -552,8 +552,8 @@ Given one, the constructor registers `agentRoutes` on it under `/users`: `POST /
 `GET /users` and `GET /users/:id`. Omit it and nothing is registered anywhere, which is how
 the agent's ability to create a User is denied. There is no flag and no route to guard.
 
-Structural, and asks for nothing but the Fastify instance. What `serverComponent` returns
-satisfies it. A server built on http2 does not, and takes `agentRoutes` instead.
+Structural: anything carrying a Fastify instance satisfies it. A server built on http2 does
+not, and takes `agentRoutes` instead.
 
 ###### fastify
 

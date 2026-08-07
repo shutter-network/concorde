@@ -20,9 +20,9 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
-import type { Component } from "../components.ts";
 import type { Db, Handle, Listening } from "../db/index.ts";
-import { defaultLogger, type Logger } from "../logging.ts";
+import type { Component } from "../gateway/components.ts";
+import { defaultLogger, type Logger } from "../logging/logging.ts";
 import type { Prompt, Signal, SignalHandlers } from "./handlers.ts";
 import { agentReadRoutes } from "./routes.ts";
 import type { RunOutcome, RunPrompt, Runtime } from "./runtime.ts";
@@ -73,8 +73,8 @@ export type SignalWorkerOptions = {
    * `/signals`, `/signals/:id`, `/runs` and `/runs/:id`. Omit it and nothing is registered
    * anywhere, which is how the group is switched off.
    *
-   * Structural, and it asks for nothing but the Fastify instance, so what `serverComponent` returns
-   * satisfies it. A server built on http2 does not, and takes the `agentRoutes` plugin instead.
+   * Structural: anything carrying a Fastify instance satisfies it. A server built on http2 does
+   * not, and takes the `agentRoutes` plugin instead.
    */
   readonly agentServer?: {
     readonly fastify: FastifyInstance;

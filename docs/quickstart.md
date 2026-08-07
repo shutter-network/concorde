@@ -734,7 +734,7 @@ beside ours, and there is nothing left to compare against this page when you upg
 agent fetches it each Run and gets what the Gateway it is talking to actually serves.
 
 The hazard that replaces it is ours rather than yours, and it is why the round-trip
-assertions in `src/gateway.test.ts` exist: a response schema is both what the
+assertions in `src/gateway/gateway.test.ts` exist: a response schema is both what the
 document describes a route with **and** what Fastify serialises the answer through, so a
 record that gains a field its schema does not declare loses that field on the wire,
 silently, in the answer and in the description alike
@@ -745,9 +745,16 @@ silently, in the answer and in the description alike
 Read [`../example/main.ts`](../example/main.ts) — two hundred lines including the comments,
 and the best documentation this project has. Most of it is the Agent Container above; the
 deployment itself is three calls, two Signal Handlers, and the loop at the bottom the
-framework does not ship. It builds the six opinionated parts by hand in `extend` and is
+framework does not ship. It builds the six components by hand in `extend` and is
 otherwise a thin consumer of `createGateway`, which is why there is so little of it even
 with the wiring on display.
+
+**Read its import block first.** Every name comes off a subpath, `createGateway` from
+`shared-agent-framework/gateway` and each component's constructor from the component's own
+specifier, so the imports say which parts this deployment runs. The bare
+`shared-agent-framework` resolves to nothing at all: the package has thirteen subpaths and no
+root export ([ADR-0051](./adr/0051-the-package-root-exports-nothing.md),
+[ADR-0047](./adr/0047-a-component-is-one-subpath.md)).
 
 Three things in it are the framework's to describe and **yours to do**, and all three are
 near the top. It reads `BASE_DIR_GATEWAY` and `BASE_DIR_HOST` and refuses to start without
@@ -768,7 +775,7 @@ nothing defaults it, which is a trade the framework will not make for a deployme
 ([ADR-0045](./adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md),
 [ADR-0030](./adr/0030-passwords-are-traded-for-bearer-tokens.md)).
 
-The construct call is the whole of the wiring, and `extend` is where the six opinionated
+The construct call is the whole of the wiring, and `extend` is where the six
 parts are built by hand from the infrastructure `createGateway` handed back, each a one-line
 `create*` call and only the ones this deployment wants:
 
@@ -954,7 +961,8 @@ fills each side from `compose.yml` rather than a literal: `PUBLIC_HOST`/`PUBLIC_
 with, because the framework defaults neither address. `Fastify()` is called with no
 options at all and there is no bring-your-own-instance escape, which is a real limit rather
 than an oversight: a Public server behind a reverse proxy wants `trustProxy`, and getting it
-means leaving this constructor for `createBareGateway` and `serverComponent`
+means leaving this constructor for `createBareGateway` and `serverComponent`, which sit beside
+`createGateway` on `shared-agent-framework/gateway`
 ([ADR-0045](./adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md)). Nothing *after*
 construction is out of reach — the instances are at `gateway.components.publicServer.fastify`
 and `.agentServer.fastify`, so routes, plugins and hooks go on the same servers ours do.
@@ -1110,7 +1118,10 @@ it.
 Supply your own logger to get it. The Runtime takes one, and so does `createGateway`, which
 forwards it to the Signal Worker. The seam is structural — four methods,
 `debug`/`info`/`warn`/`error`, each taking fields then a message — so anything your system
-already logs through satisfies it without wrapping:
+already logs through satisfies it without wrapping. `Logger` and the `defaultLogger` behind it
+are on `shared-agent-framework/logging`, a subpath of their own because every component takes
+this option and none of them is the Gateway
+([ADR-0051](./adr/0051-the-package-root-exports-nothing.md)):
 
 ```ts
 const logger = pino({ level: "debug" });          // or your own object with those four
@@ -1333,8 +1344,8 @@ export * from "shared-agent-framework/signals";
 export * from "shared-agent-framework/users";
 ```
 
-and a `drizzle.config.ts` pointing `schema` at it. Those are five of the six specifiers
-`main.ts` takes the constructors from, because a component is one subpath and its tables
+and a `drizzle.config.ts` pointing `schema` at it. Every one of those five is a specifier
+`main.ts` imports from as well, because a component is one subpath and its tables
 arrive on it beside `createUsers` and the rest
 ([ADR-0047](./adr/0047-a-component-is-one-subpath.md)). Each exports its tables as top-level
 names because that is the
@@ -1548,8 +1559,9 @@ stop after it, once the Worker has finished waiting for the Run in flight. That 
 **anything the drain uses**: an outbound client your Handlers call in their `post`
 phase, a cache they read, a connection to something of your own. It is **wrong for a
 Producer**, which should stop producing before the drain rather than after it. That position
-is the one `extend` cannot express, and the answer is not a flag: it is `createBareGateway`
-with the whole record written out by hand and yours where it belongs
+is the one `extend` cannot express, and the answer is not a flag: it is `createBareGateway`,
+on the same `shared-agent-framework/gateway` specifier, with the whole record written out by
+hand and yours where it belongs
 ([ADR-0045](./adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md)).
 
 One thing about the keys. The four infrastructure keys (`db`, `agentServer`,
@@ -1663,7 +1675,7 @@ Implementation** adds is one function — given a Prompt, what to put after the 
 what to write on stdin, and how to read what comes back:
 
 ```ts
-import { createAgentContainerRuntime, type RunPlan } from "shared-agent-framework";
+import { createAgentContainerRuntime, type RunPlan } from "shared-agent-framework/agent-container";
 import type { RunPrompt } from "shared-agent-framework/signals";
 
 function clawRun(prompt: RunPrompt): RunPlan {
@@ -1835,8 +1847,10 @@ diagnose:
    dies on its first import. Copying the whole tree keeps every version stated once.
 3. **`package.json`.** `main.ts` imports the framework **by name**, which Node resolves by
    self-reference through the `exports` map, so the manifest is what makes
-   `shared-agent-framework` resolvable from inside the package with no `node_modules` entry
-   of its own.
+   `shared-agent-framework/gateway` and its twelve peers resolvable from inside the package
+   with no `node_modules` entry of its own. Every import names a subpath, because the map has
+   no `.` entry and the bare name resolves to nothing
+   ([ADR-0051](./adr/0051-the-package-root-exports-nothing.md)).
 4. **The entry point as PID 1.** `CMD ["node", "example/main.ts"]` puts Node at PID 1, so
    the SIGTERM from `docker compose down` reaches the handler at the bottom of the file
    directly, with no shell in between to swallow it.

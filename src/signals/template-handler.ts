@@ -15,7 +15,7 @@
 
 import { readFile } from "node:fs/promises";
 import Handlebars from "handlebars";
-import type { Prompt, Signal, SignalHandler } from "./signals/handlers.ts";
+import type { Prompt, Signal, SignalHandler } from "./handlers.ts";
 
 export type TemplateHandlerOptions<TPayload = unknown> = {
   /**

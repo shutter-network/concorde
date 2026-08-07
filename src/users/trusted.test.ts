@@ -40,9 +40,9 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance, type FastifyPluginAsync } from "fastify";
-import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
-import type { Logger } from "../logging.ts";
+import { type Component, serverComponent } from "../gateway/components.ts";
+import type { Logger } from "../logging/logging.ts";
 import { createSignalWorker, type SignalWorker } from "../signals/index.ts";
 import * as signalsSchema from "../signals/schema.ts";
 import { applySchema } from "../test-support/apply-schema.ts";

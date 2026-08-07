@@ -13,8 +13,8 @@
 
 import { and, asc, desc, getTableName, gt, lt, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import type { Component } from "../components.ts";
 import type { Db, Handle } from "../db/index.ts";
+import type { Component } from "../gateway/components.ts";
 import { type CursorWindow, limitSchema } from "../route-conventions.ts";
 import type { Signatures } from "../signatures/index.ts";
 import type { Users } from "../users/users.ts";
@@ -72,8 +72,7 @@ export type DecisionsOptions = {
   /**
    * Where the agent publishes and reads, at `/decisions`.
    *
-   * Structural: anything carrying a Fastify instance satisfies it, including what
-   * `serverComponent` returns.
+   * Structural: anything carrying a Fastify instance satisfies it.
    */
   readonly agentServer: {
     readonly fastify: FastifyInstance;
@@ -137,7 +136,11 @@ export type Decisions = Component & {
    * takes the routes' default when omitted and is not capped here, a cap being there to bound a
    * response body.
    */
-  history(options?: Partial<DecisionWindow>): Promise<DecisionRecord[]>;
+  history(options?: {
+    readonly after?: number;
+    readonly before?: number;
+    readonly limit?: number;
+  }): Promise<DecisionRecord[]>;
 
   start(): Promise<void>;
 

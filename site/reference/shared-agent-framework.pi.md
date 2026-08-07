@@ -11,9 +11,10 @@ specific to `pi` and nothing else does, so it is the entire size of the job for 
 a second Agent Implementation.
 
 Nothing about a container is here. The Agent Container, the Mount Table, the argument assembly,
-the confinement flags, the process handling and the diagnosis appended to a failure all come from
-the package root, generic over which agent runs, so a second Agent Implementation takes them
-unchanged.
+the confinement flags, the process handling and the diagnosis appended to a failure are all on
+`shared-agent-framework/agent-container`, generic over which agent runs, so a second Agent
+Implementation takes them unchanged. Read that subpath for what an Agent Container declares:
+`createPiRuntime` takes one written exactly as it is written there.
 
 Nothing `pi`-shaped is here either, and there is no configuration type at all. The model and the
 provider are `defaultModel` and `defaultProvider` in a `settings.json` the Operator mounts. The
@@ -27,8 +28,9 @@ Run permanently.
 
 A Gateway whose Runtime is `pi`, in a container the Operator declared.
 ```ts
-import { createGateway, templateHandler } from "shared-agent-framework";
+import { createGateway } from "shared-agent-framework/gateway";
 import { createPiRuntime } from "shared-agent-framework/pi";
+import { templateHandler } from "shared-agent-framework/signals";
 
 const runtime = createPiRuntime({
   image: "my-agent:1",
@@ -84,11 +86,11 @@ no use for `pi`'s version check and its update telemetry, and a Run must not dep
 
 ##### container
 
-[`AgentContainer`](shared-agent-framework.md#agentcontainer)
+[`AgentContainer`](shared-agent-framework.agent-container.md#agentcontainer)
 
 #### Returns
 
-[`AgentContainerRuntime`](shared-agent-framework.md#agentcontainerruntime)
+[`AgentContainerRuntime`](shared-agent-framework.agent-container.md#agentcontainerruntime)
 
 #### Throws
 
@@ -167,7 +169,7 @@ was.
 
 #### Returns
 
-[`RunPlan`](shared-agent-framework.md#runplan)
+[`RunPlan`](shared-agent-framework.agent-container.md#runplan)
 
 #### Throws
 

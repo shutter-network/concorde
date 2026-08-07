@@ -11,9 +11,21 @@
     "node": ">=24"
   },
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+    "./gateway": {
+      "types": "./dist/gateway/index.d.ts",
+      "default": "./dist/gateway/index.js"
+    },
+    "./logging": {
+      "types": "./dist/logging/index.d.ts",
+      "default": "./dist/logging/index.js"
+    },
+    "./db": {
+      "types": "./dist/db/index.d.ts",
+      "default": "./dist/db/index.js"
+    },
+    "./agent-container": {
+      "types": "./dist/agent-container/index.d.ts",
+      "default": "./dist/agent-container/index.js"
     },
     "./signals": {
       "types": "./dist/signals/index.d.ts",

@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { asc, eq, sql } from "drizzle-orm";
 import type { Db, Listening } from "../db/index.ts";
-import type { LogFields, Logger } from "../logging.ts";
+import type { LogFields, Logger } from "../logging/logging.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
 import { cutListeningBackends } from "../test-support/backends.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";

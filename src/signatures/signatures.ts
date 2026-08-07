@@ -26,8 +26,8 @@
 import { createHash, createPublicKey, type JsonWebKey, type KeyObject } from "node:crypto";
 import type { FastifyInstance, preHandlerAsyncHookHandler } from "fastify";
 import { CompactSign, compactVerify } from "jose";
-import type { Component } from "../components.ts";
-import { defaultLogger, type Logger } from "../logging.ts";
+import type { Component } from "../gateway/components.ts";
+import { defaultLogger, type Logger } from "../logging/logging.ts";
 import {
   agentSignatureRoutes,
   type KeySet,
@@ -78,8 +78,7 @@ export type SignaturesOptions = {
    * The key stays in this process, and the agent reaches it only over that route, so a compromised
    * Agent Container mints nothing once the Gateway is stopped.
    *
-   * Structural: anything carrying a Fastify instance satisfies it, including what
-   * `serverComponent` returns.
+   * Structural: anything carrying a Fastify instance satisfies it.
    */
   readonly agentServer: {
     readonly fastify: FastifyInstance;

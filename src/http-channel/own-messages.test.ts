@@ -27,8 +27,8 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
-import { type Component, serverComponent } from "../components.ts";
 import type { Db } from "../db/index.ts";
+import { type Component, serverComponent } from "../gateway/components.ts";
 import type { MessageRecord } from "../messenger/messages.ts";
 import { createMessenger } from "../messenger/messenger.ts";
 import * as messengerSchema from "../messenger/schema.ts";

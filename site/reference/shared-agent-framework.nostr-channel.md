@@ -33,7 +33,7 @@ schema without it generates a foreign key onto a table nothing creates.
 A Gateway a User reaches over Nostr, with their public key recorded out of band.
 ```ts
 import { readFileSync } from "node:fs";
-import { createGateway } from "shared-agent-framework";
+import { createGateway } from "shared-agent-framework/gateway";
 import { createMessenger } from "shared-agent-framework/messenger";
 import { createNostrChannel } from "shared-agent-framework/nostr-channel";
 import { createPiRuntime } from "shared-agent-framework/pi";
@@ -404,7 +404,7 @@ identity.
 
 ###### tx
 
-[`Handle`](shared-agent-framework.md#handle)\<`TSchema`\>
+[`Handle`](shared-agent-framework.db.md#handle)\<`TSchema`\>
 
 ###### userId
 
@@ -460,7 +460,7 @@ log denies.
 
 ###### tx
 
-[`Handle`](shared-agent-framework.md#handle)\<`TSchema`\>
+[`Handle`](shared-agent-framework.db.md#handle)\<`TSchema`\>
 
 ###### message
 

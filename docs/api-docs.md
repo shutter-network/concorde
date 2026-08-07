@@ -97,7 +97,9 @@ again is one fact maintained in two places.
 Three jobs, and nothing else.
 
 1. **What this subpath is.** A sentence or two. Define any domain term it owns that no exported
-   type carries, because there is no glossary and `CONTEXT.md` is not published. Name a component
+   type carries, because there is no glossary and `CONTEXT.md` is not published. Operator and
+   Shared Agent are the exception: they belong to no subpath, and the reference assumes them
+   rather than defining them on whichever page seemed closest. Name a component
    as "the Users component", and make it the grammatical subject of the first sentence: "The
    Decisions component owns the one global log of Decisions." Not "Decisions, the component that
    owns the one global log of Decisions." The apposition puts the same noun twice in a row and
@@ -247,9 +249,13 @@ Recorded rather than solved.
 - **The reference cannot point a reader at the argument.** Diátaxis prescribes a link out to
   explanation rather than silence, and there is nowhere to link: `docs/` is not published. So a
   reader who wants to know why a key is a `KeyObject` has no route to the answer.
-- **Two terms have no owning component.** Operator and Shared Agent are used throughout and
-  belong to no subpath, so the root module comment is the only place they can be defined. Every
-  other domain term is either an exported type or owned by one component.
+- **Two terms are used everywhere and defined nowhere.** Operator and Shared Agent belong to no
+  subpath, and with no root page there is no arbitrary-but-central place to put them. The
+  reference assumes both, and a reader who does not know them learns them somewhere else. That is
+  a real hole, and it is left open deliberately: handwritten documentation is the thing that will
+  close it, and defining them at the top of whichever page happened to be handy would make the
+  reference the wrong owner of prose it cannot maintain. Every other domain term is either an
+  exported type or owned by one component, and job 1 still requires those to be defined.
 - **A bare symbol and a forgotten symbol look the same.** The page renders a heading and a
   signature in both cases, so a reader cannot tell that somebody decided there was nothing to say.
   We take that, because a comment written to fill the space is paid for by every reader, and the

@@ -20,7 +20,7 @@
  * ```ts
  * import { createPrivateKey } from "node:crypto";
  * import { readFileSync } from "node:fs";
- * import { createGateway } from "shared-agent-framework";
+ * import { createGateway } from "shared-agent-framework/gateway";
  * import { createPiRuntime } from "shared-agent-framework/pi";
  * import { createSignatures } from "shared-agent-framework/signatures";
  * import { createUsers } from "shared-agent-framework/users";

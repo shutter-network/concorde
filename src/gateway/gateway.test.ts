@@ -75,37 +75,37 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
-import type { Component, Gateway } from "./components.ts";
-import type { Db } from "./db/index.ts";
-import { createDecisions, type DecisionRecord, type Decisions } from "./decisions/index.ts";
-import * as decisionsSchema from "./decisions/schema.ts";
-import { createGateway, describedVersion, type InfraComponents } from "./gateway.ts";
-import { createHttpChannel, type HttpChannel } from "./http-channel/index.ts";
-import type { Logger } from "./logging.ts";
+import type { Db } from "../db/index.ts";
+import { createDecisions, type DecisionRecord, type Decisions } from "../decisions/index.ts";
+import * as decisionsSchema from "../decisions/schema.ts";
+import { createHttpChannel, type HttpChannel } from "../http-channel/index.ts";
+import type { Logger } from "../logging/logging.ts";
 import {
   createMessenger,
   type MessageRecord,
   type Messenger,
   messageReceivedKind,
-} from "./messenger/index.ts";
-import * as messengerSchema from "./messenger/schema.ts";
+} from "../messenger/index.ts";
+import * as messengerSchema from "../messenger/schema.ts";
 import {
   createScheduler,
   type ScheduleFiredRecord,
   type ScheduleRecord,
   type Scheduler,
   scheduleFiredKind,
-} from "./scheduler/index.ts";
-import * as schedulerSchema from "./scheduler/schema.ts";
-import type { RunRecord, SignalHandler, SignalRecord } from "./signals/index.ts";
-import * as signalsSchema from "./signals/schema.ts";
-import { createSignatures, type Signatures } from "./signatures/index.ts";
-import { applySchema } from "./test-support/apply-schema.ts";
-import { createTestDatabase, type TestDatabase } from "./test-support/database.ts";
-import { fakeRuntime } from "./test-support/fake-runtime.ts";
-import { waitUntil } from "./test-support/wait.ts";
-import { createUsers, type IssuedToken, type UserRecord, type Users } from "./users/index.ts";
-import * as usersSchema from "./users/schema.ts";
+} from "../scheduler/index.ts";
+import * as schedulerSchema from "../scheduler/schema.ts";
+import type { RunRecord, SignalHandler, SignalRecord } from "../signals/index.ts";
+import * as signalsSchema from "../signals/schema.ts";
+import { createSignatures, type Signatures } from "../signatures/index.ts";
+import { applySchema } from "../test-support/apply-schema.ts";
+import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
+import { fakeRuntime } from "../test-support/fake-runtime.ts";
+import { waitUntil } from "../test-support/wait.ts";
+import { createUsers, type IssuedToken, type UserRecord, type Users } from "../users/index.ts";
+import * as usersSchema from "../users/schema.ts";
+import type { Component, Gateway } from "./components.ts";
+import { createGateway, describedVersion, type InfraComponents } from "./gateway.ts";
 
 const hour = 60 * 60 * 1000;
 
@@ -2079,7 +2079,7 @@ describe("the description both servers serve", () => {
     // trade ADR-0040 makes: the cost of the constant is paid by a test rather than by a
     // file read inside a constructor documented as doing no I/O.
     const manifest: unknown = JSON.parse(
-      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+      readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
     );
     assert.equal(describedVersion, (manifest as { version?: string }).version);
   });
@@ -2155,14 +2155,13 @@ describe("the description both servers serve", () => {
 
 describe("the package root", () => {
   it("reaches no Agent Implementation and none of the four parts, however far the imports go", () => {
-    // `createGateway` reaches the Db, the servers and the Signal Worker and nothing about the
-    // four opinionated parts: they are the Operator's now, built in `extend` and reached through
+    // `createGateway` reaches the Db, the servers and the Signal Worker and     // components an Operator builds in `extend`: they are the Operator's now, built in `extend` and reached through
     // their own subpath exports, so constructing none of them loads none of them (ADR-0045). The
     // edge that stays absent is the one worth keeping absent — an Agent Implementation — since
     // the Runtime is an option rather than a spec, so swapping `pi` for another stays "this
     // import and this function name, and nothing below" (ADR-0033).
-    const src = fileURLToPath(new URL(".", import.meta.url));
-    const reached = reachableFrom(path.join(src, "index.ts"));
+    const src = fileURLToPath(new URL("..", import.meta.url));
+    const reached = reachableFrom(path.join(src, "gateway", "index.ts"));
 
     // No Agent Implementation, the one import edge worth keeping absent.
     assert.deepEqual(
@@ -2170,7 +2169,7 @@ describe("the package root", () => {
       [],
     );
 
-    // And none of the four parts, which is ADR-0038's assertion inverted: the root used to reach
+    // And none of the components built in `extend`, which is ADR-0038's assertion inverted: the root used to reach
     // `./users` and `./http-messenger` because the assembly built them, and now reaches neither,
     // nor Signatures nor Decisions (ADR-0045).
     for (const part of [

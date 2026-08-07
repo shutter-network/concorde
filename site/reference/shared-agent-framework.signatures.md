@@ -22,7 +22,7 @@ A Gateway with Signatures, and a Statement signed from the Operator's own code.
 ```ts
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { createGateway } from "shared-agent-framework";
+import { createGateway } from "shared-agent-framework/gateway";
 import { createPiRuntime } from "shared-agent-framework/pi";
 import { createSignatures } from "shared-agent-framework/signatures";
 import { createUsers } from "shared-agent-framework/users";
@@ -174,8 +174,7 @@ Where `POST /sign` is registered.
 The key stays in this process, and the agent reaches it only over that route, so a compromised
 Agent Container mints nothing once the Gateway is stopped.
 
-Structural: anything carrying a Fastify instance satisfies it, including what
-`serverComponent` returns.
+Structural: anything carrying a Fastify instance satisfies it.
 
 ###### fastify
 

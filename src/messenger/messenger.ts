@@ -22,8 +22,8 @@
  */
 
 import type { FastifyInstance } from "fastify";
-import type { Component } from "../components.ts";
 import type { Db, Handle } from "../db/index.ts";
+import type { Component } from "../gateway/components.ts";
 import { limitSchema } from "../route-conventions.ts";
 import type { SignalWorker } from "../signals/worker.ts";
 import type { Users } from "../users/users.ts";
@@ -174,8 +174,7 @@ export type MessengerOptions = {
    * There is no Public server option. What a User reaches is a Channel's, and a Channel that is not
    * HTTP has no route anywhere.
    *
-   * Structural: anything carrying a Fastify instance satisfies it, including what
-   * `serverComponent` returns.
+   * Structural: anything carrying a Fastify instance satisfies it.
    */
   readonly agentServer: {
     readonly fastify: FastifyInstance;
@@ -246,7 +245,14 @@ export type Messenger = Component & {
    * together answer the stretch between them here, where a route refuses them. `limit` takes the
    * routes' default when omitted and is not capped, a cap being there to bound a response body.
    */
-  history(userId: string, options?: Partial<MessageWindow>): Promise<MessageRecord[]>;
+  history(
+    userId: string,
+    options?: {
+      readonly after?: number;
+      readonly before?: number;
+      readonly limit?: number;
+    },
+  ): Promise<MessageRecord[]>;
 
   start(): Promise<void>;
 

@@ -20,7 +20,7 @@ import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import type { PgDatabase, PgQueryResultHKT, PgTransaction } from "drizzle-orm/pg-core";
 import { Client, Pool } from "pg";
-import type { Component } from "../components.ts";
+import type { Component } from "../gateway/components.ts";
 
 export type Handle<TSchema extends Record<string, unknown> = Record<string, never>> = PgDatabase<
   PgQueryResultHKT,
