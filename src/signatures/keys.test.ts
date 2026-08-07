@@ -4,7 +4,7 @@
  * `signatures.test.ts` is the artifact and the routes, all of it on the one key ADR-0041
  * describes. This file is the other axis: **one row of the derivation table per test**, plus
  * the keys that earn a refusal instead of an algorithm (ADR-0042). Nothing here is a database
- * and nothing is mocked but the User Manager's hook, which none of these tests reach.
+ * and nothing is mocked but the Users component's hook, which none of these tests reach.
  *
  * The claim under every derivation row is the same one, and it is deliberately not "the
  * function returned the right string": a derived algorithm is only worth anything if an

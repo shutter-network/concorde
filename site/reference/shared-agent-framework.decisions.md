@@ -10,15 +10,15 @@ with, and `jws` is the field that matters: the artifact is the Decision, and the
 fields can be read back out of it by anybody holding the public key.
 
 Build Signatures first, which this signs through. A Decision that was not signed is not a
-Decision, so there is no degraded mode where rows arrive without artifacts. Build the User
-Manager first too, for the hook the Public read runs. Key it ahead of the Signal Worker in the
+Decision, so there is no degraded mode where rows arrive without artifacts. Build Users
+first too, for the hook the Public read runs. Key it ahead of the Signal Worker in the
 Gateway's record: the Worker is keyed last so it drains first, and a Signal Handler's post phase
 may still publish.
 
 Nothing is notified when a Decision is published. There is no Signal and no Handler to wake, so a
 User discovers a Decision by polling, and the largest `seq` they hold is the whole resume
 mechanism. The subpath also carries the one table, which references no other component's, so a
-barrel carrying it without the User Manager's generates cleanly.
+barrel carrying it without the tables of Users generates cleanly.
 
 ## Example
 
@@ -311,7 +311,7 @@ Supplies the `requireUser` hook that the Public read runs, so this component hol
 authenticates nobody.
 
 Not a schema-level dependency, unlike the Messenger's: nothing here references a User, so a
-barrel may carry this component's tables without the User Manager's.
+barrel may carry this component's tables without the tables of Users.
 
 ## Variables
 

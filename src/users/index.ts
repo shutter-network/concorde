@@ -1,5 +1,5 @@
 /**
- * The User Manager, the component that holds the identities a Gateway authenticates. A User is an
+ * Users, the component that holds the identities a Gateway authenticates. A User is an
  * opaque Gateway-issued id, a set of Attributes the Operator writes, and a set of Tokens. There is
  * no email and no username anywhere, so the id is the only handle a User has. Attributes are
  * arbitrary JSON that nothing in the framework interprets, and they are where a deployment's

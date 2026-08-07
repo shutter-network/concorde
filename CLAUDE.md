@@ -306,10 +306,10 @@ Conventions the build depends on:
   ADR-0046), and `src/nostr-channel/schema.ts` declares `pubkeys.user_id` onto the same
   column (ADR-0049). `outbox.user_id` is a third reference onto it, so the Nostr Channel
   makes two of the three. It was forbidden while each part generated a folder of its own,
-  because the generator would emit the User Manager's `CREATE TABLE` into the
+  because the generator would emit the Users component's `CREATE TABLE` into the
   importing part's folder; with one generation graph it is the whole mechanism, and the
   constraint is free. What it costs a deployment is that a barrel carrying **either** the
-  Messenger or the Nostr Channel without the User Manager generates a foreign key onto a
+  Messenger or the Nostr Channel without Users generates a foreign key onto a
   table it never creates. `src/schemas.test.ts` pushes all six parts' schemas together,
   which is what keeps the assembled set honest.
 - **Three libraries are confined to the one component that owns each, and the rule is

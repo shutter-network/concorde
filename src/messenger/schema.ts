@@ -5,7 +5,7 @@
  * The one import of another component's schema in here is deliberate and is the mechanism rather
  * than an accident: `user_id` references `saf_users.users.id`
  * ([ADR-0036](../../docs/adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)), and one
- * generation graph is what makes that legal. Nothing of the User Manager's is re-exported. What it
+ * generation graph is what makes that legal. Nothing of the Users component's is re-exported. What
  * costs an Operator is stated on the table below, where they can act on it.
  *
  * One table for both directions, whichever medium a Message travelled by, is the whole of
@@ -66,7 +66,7 @@ function directionIsKnown(column: PgColumn, directions: readonly string[]): SQL 
  * no column saying which Channel it travelled by. Nothing removes a row and no column is ever
  * updated, so it grows forever.
  *
- * `user_id` is a foreign key onto the User Manager's `users` table. A barrel carrying this
+ * `user_id` is a foreign key onto the `users` table of Users. A barrel carrying this
  * component without `shared-agent-framework/users` generates a reference to a table nothing
  * creates, and dies on `schema "saf_users" does not exist`.
  */

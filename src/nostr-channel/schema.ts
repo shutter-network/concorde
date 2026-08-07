@@ -7,10 +7,10 @@
  * this Channel keeps is the three things only it can know
  * ([ADR-0049](../../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)).
  *
- * The import of the User Manager's schema is what lets two columns below reference
+ * The import of the schema of Users is what lets two columns below reference
  * `saf_users.users.id`, and it re-exports nothing of it. That is the second such import in the
  * framework, after the Messenger's, and it costs the same thing: a barrel carrying this component
- * without the User Manager's generates a reference to a table nothing creates.
+ * without that one generates a reference to a table nothing creates.
  */
 
 import { sql } from "drizzle-orm";

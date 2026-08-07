@@ -16,13 +16,13 @@ ship. Construct one with this Messenger and it registers itself, so an entry poi
 further. One Channel per Messenger, refused at registration, so a deployment runs one medium and
 a `send` before any Channel exists throws rather than recording something nothing will deliver.
 
-Build the User Manager before this, which it takes beside the Signal Worker the Gateway hands to
+Build Users before this, which it takes beside the Signal Worker the Gateway hands to
 `extend`. Key this component and its Channel ahead of that Worker in the Gateway's record: the
 Worker is keyed last so it drains first, and a Signal Handler's post phase is where a person is
 told that their Run failed.
 
 The subpath also carries the one table. Barrel `shared-agent-framework/users` beside it, because
-`messages.user_id` references the User Manager's table and a barrel without it generates a
+`messages.user_id` references the Users component's table and a barrel without it generates a
 foreign key onto a table nothing creates.
 
 ## Example
@@ -487,7 +487,7 @@ readonly db: Db;
 readonly users: Users;
 ```
 
-The User Manager whose Users these Messages belong to. Build it first.
+The Users component whose Users these Messages belong to. Build it first.
 
 Nothing is called on it. `messages.user_id` is a foreign key onto `saf_users.users.id`, so the
 dependency is at the schema level, and authentication belongs to the Channel, which serves the
@@ -555,7 +555,7 @@ One table for both directions, which is what makes a User's log a single numbere
 no column saying which Channel it travelled by. Nothing removes a row and no column is ever
 updated, so it grows forever.
 
-`user_id` is a foreign key onto the User Manager's `users` table. A barrel carrying this
+`user_id` is a foreign key onto the `users` table of Users. A barrel carrying this
 component without `shared-agent-framework/users` generates a reference to a table nothing
 creates, and dies on `schema "saf_users" does not exist`.
 
@@ -603,7 +603,7 @@ One table for both directions, which is what makes a User's log a single numbere
 no column saying which Channel it travelled by. Nothing removes a row and no column is ever
 updated, so it grows forever.
 
-`user_id` is a foreign key onto the User Manager's `users` table. A barrel carrying this
+`user_id` is a foreign key onto the `users` table of Users. A barrel carrying this
 component without `shared-agent-framework/users` generates a reference to a table nothing
 creates, and dies on `schema "saf_users" does not exist`.
 

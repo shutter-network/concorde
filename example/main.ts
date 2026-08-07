@@ -140,11 +140,11 @@ const gateway = createGateway({
   // opinion can see them. A deployment that publishes no Decision builds neither Signatures nor
   // Decisions and reads no signing key at all.
   extend: ({ db, agentServer, publicServer, worker }) => {
-    // The User Manager **before** the Messenger and the HTTP Channel, both of which need it as a
+    // Users **before** the Messenger and the HTTP Channel, both of which need it as a
     // value. The tables' order is no longer this line's business — `messages.user_id` is still a
     // foreign key onto `saf_users.users.id`, but it is declared in the Messenger's schema and
     // ordered by the single generation the migrate service pushes from `schema.ts` (ADR-0036,
-    // ADR-0046). What that barrel does require is that the User Manager be *in* it, and it is.
+    // ADR-0046). What that barrel does require is that Users be *in* it, and it is.
     const users = createUsers({ db, tokenTtl, agentServer, publicServer });
     const signatures = createSignatures({ signingKey, agentServer, publicServer, users });
     const decisions = createDecisions({ db, signatures, users, agentServer, publicServer });

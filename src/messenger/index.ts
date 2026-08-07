@@ -15,13 +15,13 @@
  * further. One Channel per Messenger, refused at registration, so a deployment runs one medium and
  * a `send` before any Channel exists throws rather than recording something nothing will deliver.
  *
- * Build the User Manager before this, which it takes beside the Signal Worker the Gateway hands to
+ * Build Users before this, which it takes beside the Signal Worker the Gateway hands to
  * `extend`. Key this component and its Channel ahead of that Worker in the Gateway's record: the
  * Worker is keyed last so it drains first, and a Signal Handler's post phase is where a person is
  * told that their Run failed.
  *
  * The subpath also carries the one table. Barrel `shared-agent-framework/users` beside it, because
- * `messages.user_id` references the User Manager's table and a barrel without it generates a
+ * `messages.user_id` references the Users component's table and a barrel without it generates a
  * foreign key onto a table nothing creates.
  *
  * @example
@@ -76,6 +76,6 @@ export type { MessageRecord } from "./messages.ts";
 export type { Channel, Messenger, MessengerHandle, MessengerOptions } from "./messenger.ts";
 export { createMessenger, messageReceivedKind } from "./messenger.ts";
 // A star and not a list, so every table stays a top-level name an Operator's `drizzle-kit` can
-// see. It never looks inside a wrapper object. What it does not carry is the User Manager's
+// see. It never looks inside a wrapper object. What it does not carry is the Users component's
 // tables. `schema.ts` imports them to declare the foreign key, and re-exports nothing.
 export * from "./schema.ts";

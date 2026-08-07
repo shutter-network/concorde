@@ -20,7 +20,7 @@
  * place of the HTTP one adds `shared-agent-framework/nostr-channel` here for its three tables
  * ([ADR-0049](../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)).
  *
- * **The User Manager is not optional while the Messenger is here.** `messages.user_id`
+ * **The Users component is not optional while the Messenger is here.** `messages.user_id`
  * references `saf_users.users.id` in code (ADR-0036, ADR-0046), so a barrel carrying one
  * without the other generates a foreign key onto a table it never creates and the push
  * dies with `schema "saf_users" does not exist`. The Nostr Channel's `pubkeys.user_id` and

@@ -82,10 +82,10 @@ export type NostrChannelOptions = {
    */
   readonly messenger: Messenger;
   /**
-   * The User Manager whose Users these public keys belong to.
+   * The Users component whose Users these public keys belong to.
    *
    * Nothing is called on it. It is named because `pubkeys.user_id` is a foreign key onto that
-   * Manager's table, so this component needs the real one rather than something shaped like it:
+   * table of Users, so this component needs the real one rather than something shaped like it:
    * there is no route here to authenticate, and a Nostr public key is not a credential the Gateway
    * issued.
    */

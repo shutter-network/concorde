@@ -13,7 +13,7 @@
  * | `POST /verify` | 200, the verdict; 400; 401 |
  * | `GET /jwks.json` | 200, the JWK Set. **No Token**; 400 |
  *
- * `GET /jwks.json` is the stated exception to the User Manager's single 401 on the Public server,
+ * `GET /jwks.json` is the stated exception to the single 401 of Users on the Public server,
  * and the exception is the point: the whole audience for this identity is a third party with no
  * Token to present. Signing has no public route at all, because only the Shared Agent may make an
  * artifact. Checking one is open to any Token holder, since asking reveals nothing they could not
@@ -200,7 +200,7 @@ const verdictSchema = {
 
 // The imported sentence is the whole of what the refusal says; what this adds is where it comes
 // from, so a client reading this route need not discover that the hook belongs elsewhere.
-const notAuthenticated = `${authenticationFailed} This part authenticates nobody: the refusal is the User Manager's \`requireUser\`, taken as one option on the route, so it is the same 401 the routes under \`/auth\` answer.`;
+const notAuthenticated = `${authenticationFailed} This part authenticates nobody: the refusal is the \`requireUser\` of the Users component, taken as one option on the route, so it is the same 401 the routes under \`/auth\` answer.`;
 
 // Both halves are load-bearing. The first is the mechanics: this is the URL a JOSE library
 // consumes. The second says plainly what a signature proves, because a verifier who mistakes a
@@ -258,7 +258,7 @@ export function agentSignatureRoutes(signing: StatementSigning): FastifyPluginAs
 
 /**
  * `presentedUser` is `requireUser`, taken as one option and not wrapped, extended or
- * re-implemented, so an unauthenticated check is the Manager's single 401.
+ * re-implemented, so an unauthenticated check is the single 401 of Users.
  *
  * The Token is required and the User it names is then unused: it gates the surface rather than
  * scoping the answer, the Gateway not being a free signature oracle for whoever finds the port. The

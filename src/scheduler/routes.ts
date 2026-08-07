@@ -187,7 +187,7 @@ const scheduleListSchema = {
 
 // `type: "null"` and not an empty object: that is the spelling Fastify's serializer answers an empty
 // 204 against without a 500, and the one `@fastify/swagger` documents with no `content`. The same
-// spelling and the same reason as the User Manager's.
+// spelling and the same reason as the Users component's.
 function noBody(why: string) {
   return { type: "null", description: why } as const;
 }

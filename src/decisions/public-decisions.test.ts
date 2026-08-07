@@ -5,7 +5,7 @@
  *
  * The subject is what a person's own client sees: every assertion here is made over HTTP
  * against two real Fastify instances and real PostgreSQL, **nothing inserts a row directly**,
- * and every Token is bought with a real password at the User Manager's own login route,
+ * and every Token is bought with a real password at the Users component's own login route,
  * because a Token minted any other way would be testing a shortcut this surface does not have.
  *
  * The last suite is the demoable one and it is written as the third party would: it holds the
@@ -40,7 +40,7 @@ let db: Db;
 let agentServer: Component & { readonly fastify: FastifyInstance };
 let publicServer: Component & { readonly fastify: FastifyInstance };
 
-/** Where the constructor put both route groups, and the User Manager's login. */
+/** Where the constructor put both route groups, and the login route of Users. */
 const prefix = "/decisions";
 const auth = "/auth";
 
@@ -130,8 +130,8 @@ describe("a User reading the log", () => {
     assert.deepEqual(agentRead.json<{ decisions: DecisionRecord[] }>().decisions, read);
   });
 
-  it("is refused without a Token, in the User Manager's single 401", async () => {
-    // This part authenticates nobody: the hook is the Manager's, taken as one option on the
+  it("is refused without a Token, in the single 401 of Users", async () => {
+    // This part authenticates nobody: the hook belongs to Users, taken as one option on the
     // route, so a missing header, a header in another scheme, an unknown Token and an expired
     // one are one status and one message (ADR-0030).
     for (const headers of [{}, { authorization: "Basic nope" }, { authorization: "Bearer nope" }]) {
@@ -172,7 +172,7 @@ describe("a User citing a Decision by number", () => {
 
     // The Gateway is not a public bulletin board: a Decision is public because a *User* takes
     // one away and hands it on, not because a stranger can fetch one (ADR-0043). The refusal is
-    // the User Manager's, so it is byte for byte the one the log read answers with.
+    // the Users component's, so it is byte for byte the one the log read answers with.
     const refused = await publicServer.fastify.inject({ url: `${prefix}/${published.seq}` });
     assert.equal(refused.statusCode, 401, refused.body);
     const log = await publicServer.fastify.inject({ url: prefix });
@@ -191,7 +191,7 @@ describe("a User citing a Decision by number", () => {
     });
 
     // A word rather than a number, which is a 400 and not a 500, and which is answered before
-    // the Token is looked at: validation runs at `preValidation` and the Manager's hook at
+    // the Token is looked at: validation runs at `preValidation` and `requireUser` at
     // `preHandler`, the order every other Public route already answers in. That leaks nothing,
     // a refusal about a path naming no User.
     const word = await publicServer.fastify.inject({ url: `${prefix}/seven` });

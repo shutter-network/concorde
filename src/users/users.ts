@@ -105,7 +105,7 @@ export type UsersOptions = {
 };
 
 /**
- * The User Manager as a Component: two route plugins, one hook, and the methods no route has.
+ * The Users component as a Component: two route plugins, one hook, and the methods no route has.
  *
  * It keeps a User's Attributes and a scrypt digest of their password, and one row per issued
  * Token. A Token's plaintext exists once, in the response that issued it, so nothing here answers
@@ -258,7 +258,7 @@ export type Users = Component & {
 };
 
 /**
- * Builds the User Manager and registers its route groups on whichever servers it is given.
+ * Builds the Users component and registers its route groups on whichever servers it is given.
  *
  * Nothing here connects, listens or applies DDL.
  *

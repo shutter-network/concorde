@@ -1,6 +1,6 @@
 # shared-agent-framework/users
 
-The User Manager, the component that holds the identities a Gateway authenticates. A User is an
+Users, the component that holds the identities a Gateway authenticates. A User is an
 opaque Gateway-issued id, a set of Attributes the Operator writes, and a set of Tokens. There is
 no email and no username anywhere, so the id is the only handle a User has. Attributes are
 arbitrary JSON that nothing in the framework interprets, and they are where a deployment's
@@ -196,7 +196,7 @@ type Users = Component & {
 };
 ```
 
-The User Manager as a Component: two route plugins, one hook, and the methods no route has.
+The Users component as a Component: two route plugins, one hook, and the methods no route has.
 
 It keeps a User's Attributes and a scrypt digest of their password, and one row per issued
 Token. A Token's plaintext exists once, in the response that issued it, so nothing here answers
@@ -704,7 +704,7 @@ reference to a User from another component's table cannot come to dangle.
 function createUsers(options): Users;
 ```
 
-Builds the User Manager and registers its route groups on whichever servers it is given.
+Builds the Users component and registers its route groups on whichever servers it is given.
 
 Nothing here connects, listens or applies DDL.
 

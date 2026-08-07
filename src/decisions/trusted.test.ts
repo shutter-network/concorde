@@ -75,7 +75,7 @@ let worker: SignalWorker;
 let agentServer: Component & { readonly fastify: FastifyInstance };
 let publicServer: Component & { readonly fastify: FastifyInstance };
 
-/** Where the constructor put both route groups, and the User Manager's login. */
+/** Where the constructor put both route groups, and the login route of Users. */
 const prefix = "/decisions";
 const auth = "/auth";
 

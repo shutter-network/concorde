@@ -13,7 +13,7 @@
  * **A cross-schema foreign key names a part outside the set** is the loud one.
  * `messages.user_id` and `pubkeys.user_id` both reference `saf_users.users.id` in code
  * (ADR-0036, ADR-0046, ADR-0049), so
- * the set is coherent only while the User Manager is in it, and a set without it throws
+ * the set is coherent only while Users is in it, and a set without it throws
  * on the `ADD CONSTRAINT` — `schema "saf_users" does not exist`. Pushing is enough to
  * catch that, and the first test pushes. What that test cannot do by itself is keep
  * "the set" equal to "every part", which is the last test's job.

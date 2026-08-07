@@ -154,7 +154,7 @@ export class NoChannelError extends Error {
 export type MessengerOptions = {
   readonly db: Db;
   /**
-   * The User Manager whose Users these Messages belong to. Build it first.
+   * The Users component whose Users these Messages belong to. Build it first.
    *
    * Nothing is called on it. `messages.user_id` is a foreign key onto `saf_users.users.id`, so the
    * dependency is at the schema level, and authentication belongs to the Channel, which serves the

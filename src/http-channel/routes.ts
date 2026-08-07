@@ -16,13 +16,12 @@
  * self-contained is exactly the copy that could lose a field here and nowhere else. Do not inline
  * one.
  *
- * Nothing here authenticates anybody. Both routes take the User Manager's `requireUser` as one
+ * Nothing here authenticates anybody. Both routes take the `requireUser` of Users as one
  * option and read the User off `request.safUser`, and neither has a parameter naming a User at all,
  * so no User can read another's log.
  *
- * Each route's own `description` is what `/openapi.json` serves, so those sentences are the API
- * documentation rather than commentary. The 401 and the Token are described in the User Manager's
- * words, imported rather than restated.
+ * The 401 and the Token are described in the words of the Users component, imported from its route
+ * module rather than restated here.
  */
 
 import type { FastifyPluginAsync, preHandlerAsyncHookHandler } from "fastify";
@@ -65,12 +64,12 @@ export type OwnMessageOperations = MessageHistory & {
 };
 
 /**
- * The 401, which is the User Manager's and is described in its words.
+ * The 401, which is the Users component's and is described in its words.
  *
  * The imported sentence is the whole of the refusal. What this adds is where it comes from, so a
  * client reading a Message route need not discover that the hook belongs elsewhere.
  */
-const notAuthenticated = `${authenticationFailed} This part authenticates nobody: the refusal is the User Manager's \`requireUser\`, taken as one option on the route, so it is the same 401 the routes under \`/auth\` answer.`;
+const notAuthenticated = `${authenticationFailed} This part authenticates nobody: the refusal is the \`requireUser\` of the Users component, taken as one option on the route, so it is the same 401 the routes under \`/auth\` answer.`;
 
 /**
  * The body of `POST /`: what the User said, and nothing else.
@@ -104,7 +103,7 @@ const ownHistorySchema = {
  * The Public server's Message routes: a User's own log, and the one way into it from outside.
  *
  * `presentedUser` is `requireUser`, taken as one option on each route and not wrapped, extended or
- * re-implemented. So an unauthenticated read or submission is the Manager's single 401.
+ * re-implemented. So an unauthenticated read or submission is the single 401 of Users.
  *
  * The hook runs at `preHandler`, after validation, so a malformed window, an unknown query
  * parameter and an empty `text` are answered before a Token is read. That leaks nothing: such a

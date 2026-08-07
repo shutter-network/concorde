@@ -8,7 +8,7 @@
  * across, which a catalogue count would not.
  *
  * The parts here are the two that stand alone. The Messenger's schema
- * references the User Manager's, so pushing that one is the whole-set question and
+ * references the tables of Users, so pushing that one is the whole-set question and
  * belongs to the test that asks it, not to this one.
  *
  * A database per test rather than per file, because `applySchema` is for a fresh

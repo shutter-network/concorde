@@ -19,7 +19,7 @@
  *
  * Publishing is the Agent server's alone. A Decision is the Shared Agent's commitment, and a User
  * with a Token is not the Shared Agent. Nothing here authenticates anybody: the Public read takes
- * the User Manager's `requireUser` as one option, so every refusal is the Manager's single 401.
+ * the `requireUser` of Users as one option, so every refusal is that component's single 401.
  */
 
 import type { FastifyPluginAsync, FastifyReply, preHandlerAsyncHookHandler } from "fastify";
@@ -113,12 +113,12 @@ const whatTheArtifactIs =
   "Each record carries `jws`, a **compact JWS** (RFC 7515) over `{ seq, createdAt, statement }`. It is one URL-safe string, and any off-the-shelf JOSE library in any language verifies it. Take it away and check it against the public key at `GET /jwks.json` on the Public server. That check is offline and asks this Gateway nothing. It is the only verification worth something to somebody who does not trust the Operator. What it proves is narrow. **The Operator committed to this Statement on the Shared Agent's behalf.** It says nothing whatever about how the agent behaved.";
 
 /**
- * The 401, which is the User Manager's and is described in its words.
+ * The 401, which is the Users component's and is described in its words.
  *
  * The imported sentence is the whole of what the refusal says. What this Component adds is where it
  * comes from. A client reading a Decision route need not discover that the hook belongs elsewhere.
  */
-const notAuthenticated = `${authenticationFailed} This part authenticates nobody: the refusal is the User Manager's \`requireUser\`, taken as one option on the route, so it is the same 401 the routes under \`/auth\` answer.`;
+const notAuthenticated = `${authenticationFailed} This part authenticates nobody: the refusal is the \`requireUser\` of the Users component, taken as one option on the route, so it is the same 401 the routes under \`/auth\` answer.`;
 
 /**
  * The Statement of a Decision: non-empty, and with no upper bound.
@@ -326,10 +326,10 @@ export function agentDecisionRoutes(log: DecisionOperations): FastifyPluginAsync
 }
 
 /**
- * The Public server's Decision routes: the same two reads, behind the Manager's single 401.
+ * The Public server's Decision routes: the same two reads, behind the single 401 of Users.
  *
  * `presentedUser` is `requireUser`, taken as one option and not wrapped, extended or
- * re-implemented. So an unauthenticated read is the Manager's single 401, and this Component
+ * re-implemented. So an unauthenticated read is the single 401 of Users, and this Component
  * authenticates nobody.
  *
  * The Token is required and the User it names is then unused. It gates the surface rather than

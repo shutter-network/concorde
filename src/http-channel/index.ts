@@ -9,7 +9,7 @@
  * Answering a User is `messenger.send` and reading their log is `messenger.history`, and both are
  * the same call whichever Channel a deployment built.
  *
- * Build the Messenger first, since the constructor registers with it, and build the User Manager
+ * Build the Messenger first, since the constructor registers with it, and build Users
  * first too, for the `requireUser` hook both routes run. A Messenger takes one Channel and refuses
  * the second, so this is where a deployment settles on one medium and gives up the other. Key this
  * in the Gateway's record ahead of the Signal Worker, beside the Messenger: the Worker is keyed

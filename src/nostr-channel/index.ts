@@ -16,7 +16,7 @@
  * publishes one thing about itself and no profile, a relay list naming that Relay, so the agent
  * appears in a client as a bare public key.
  *
- * Build the Messenger first, which the constructor registers with, and the User Manager first,
+ * Build the Messenger first, which the constructor registers with, and Users first,
  * whose Users these public keys belong to. Key the result ahead of the Signal Worker in the
  * Gateway's record: the Worker is keyed last so it drains first, and a Signal Handler's post phase
  * may still send. One Channel per Messenger, refused at registration, so a deployment runs Nostr or
@@ -24,7 +24,7 @@
  *
  * The subpath also carries the three tables, `pubkeys`, `received` and `outbox`, for the barrel an
  * Operator's `drizzle-kit` reads. Barrel `shared-agent-framework/users` beside
- * it: two of those tables reference the User Manager's, and a barrel without it generates a foreign
+ * it: two of those tables reference the tables of Users, and a barrel without them generates a
  * key onto a table nothing creates.
  *
  * @example
@@ -88,6 +88,6 @@ export type { NostrChannel, NostrChannelOptions } from "./nostr-channel.ts";
 export { createNostrChannel } from "./nostr-channel.ts";
 export { MessageTooLargeError, UnrecordedPublicKeyError } from "./outbound.ts";
 // A star and not a list, so every table stays a top-level name an Operator's `drizzle-kit` can
-// see. It never looks inside a wrapper object. What it does not carry is the User Manager's
+// see. It never looks inside a wrapper object. What it does not carry is the Users component's
 // tables. `schema.ts` imports them to declare the foreign key, and re-exports nothing.
 export * from "./schema.ts";

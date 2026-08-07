@@ -277,7 +277,7 @@ Seven things about that surface, and most of them are refusals:
   Message log is read by cursor and cannot be searched or filtered."* There is no text
   matching, no field matching, and no `direction` parameter either. A client that wants one
   side of the conversation filters the page it already has.
-- **No Token is a 401**, and it is the User Manager's own single refusal rather than
+- **No Token is a 401**, and it is the Users component's own single refusal rather than
   anything of messaging's: both Public routes are the HTTP Channel's and take
   `users.requireUser` as one option, and neither that Channel nor the Messenger behind it
   authenticates anybody.
@@ -360,7 +360,7 @@ curl -s "localhost:8080/decisions/1" -H "authorization: Bearer $TOKEN"
 
 The same record comes back. `GET /decisions` returns the whole log, ascending by `seq`, paged by the
 same cursor the Message log uses; `GET /decisions/1` is the one numbered 1. With no Token the answer
-is the User Manager's single **401**, the same refusal every Public read behind it gives.
+is the Users component's single **401**, the same refusal every Public read behind it gives.
 
 ## Verifying it without us
 
@@ -676,7 +676,7 @@ for a Run that never finishes.
 
 All JSON, all on the Agent server, and **all unscoped**. Which of them exist is a
 consequence of which parts were handed that server: four are the Signal Worker's, three the
-User Manager's, two the **Messenger's**, three Decisions', one Signatures' and four the
+Users', two the **Messenger's**, three Decisions', one Signatures' and four the
 Scheduler's. The Signal Worker is handed it by `createGateway`, and the reference deployment
 hands it to the other five in `extend`, so an agent talking to that Gateway gets the whole of
 that. The **HTTP Channel** is not among them and contributes nothing here: it was handed the
@@ -763,7 +763,7 @@ the agent which model to use. The framework creates no directory and writes no f
 Two more things it reads for itself, because the framework reads no environment and defaults
 no policy. It reads `DATABASE_URL` and passes it as the required `databaseUrl`, since
 `createGateway` has no environment fallback and where the Db connects is stated at the call
-site. And it sets `tokenTtl` to thirty days when it builds the User Manager in `extend`, since
+site. And it sets `tokenTtl` to thirty days when it builds Users in `extend`, since
 nothing defaults it, which is a trade the framework will not make for a deployment
 ([ADR-0045](./adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md),
 [ADR-0030](./adr/0030-passwords-are-traded-for-bearer-tokens.md)).
@@ -779,7 +779,7 @@ const gateway = createGateway({
   publicListen: { port: publicPort, host: publicHost },
   agentListen: { port: agentPort, host: agentHost },
   extend: ({ db, agentServer, publicServer, worker }) => {
-    // The User Manager before the Messenger and the Channel, both of which take it as an
+    // Users before the Messenger and the Channel, both of which take it as an
     // argument, and the Messenger before the Channel that registers itself with it.
     const users = createUsers({ db, tokenTtl, agentServer, publicServer });
     const signatures = createSignatures({ signingKey, agentServer, publicServer, users });
@@ -798,7 +798,7 @@ migration step somewhere before the second one.
 
 1. **Construct.** `createGateway({ … })` builds the Db, two `Fastify()`
    instances and the Signal Worker, and calls your `extend`, where the reference deployment
-   builds the User Manager, Signatures, Decisions, the Messenger, its HTTP Channel and the
+   builds Users, Signatures, Decisions, the Messenger, its HTTP Channel and the
    Scheduler by hand and returns them. It hands each part what it needs and keys them in an order. Construction is also the whole of the
    wiring: a part handed a server registers its routes on that server, so there is no second
    item on a checklist for you to forget
@@ -835,7 +835,7 @@ this, and all of it before you write a Component of your own.
 One word, since it is the only thing the framework asks a part to be. A **Component** is a
 `start` and a `stop` and nothing else: no name, no routes field, no declared dependency and
 nothing resolved. All ten above are Components, the five whose methods do nothing
-included — the User Manager, Signatures, Decisions, the Messenger and the HTTP Channel —
+included — Users, Signatures, Decisions, the Messenger and the HTTP Channel —
 because membership in the record is what gives a part a key and a position, rather than owning
 a timer ([ADR-0037](./adr/0037-the-gateway-is-a-record-of-components.md)). A Channel is that
 same two-method shape with two more members on it, a `name` and a `send`, and nothing else: no
@@ -871,7 +871,7 @@ written against the old part keeps working, and so does a Signal Handler, since
 You write both lines yourself, in `extend`, and the Gateway hands each back under the key you
 filed it under. Four things about them are not yours to get wrong.
 
-- **The order cannot be written wrongly.** The User Manager is an argument to both calls, and
+- **The order cannot be written wrongly.** Users is an argument to both calls, and
   the Messenger is an argument to the Channel, so `users` exists before either and `messenger`
   before `httpChannel` — the type checker settles it, not a comment.
 - **The Channel wires itself.** `createHttpChannel` calls `messenger.register(...)` inside its
@@ -887,7 +887,7 @@ filed it under. Four things about them are not yours to get wrong.
 
 What *is* still expressible wrongly is [your migration barrel](#migrations-as-a-separate-step).
 The Messenger's `messages.user_id` is a foreign key onto `saf_users.users.id`, so a barrel
-carrying the Messenger without the User Manager generates a constraint onto a table it never
+carrying the Messenger without Users generates a constraint onto a table it never
 creates. The HTTP Channel is the opposite case and needs nothing from you: **it owns no tables
 at all**, so there is no `shared-agent-framework/http-channel` line in a barrel and leaving it
 out is correct rather than a mistake.
@@ -1271,8 +1271,8 @@ notification and cleanup go.
 ### The Agent server is unauthenticated
 
 There is no credential on it. **Reaching the port is access**, and what it exposes is
-every Signal, every Run and — in the reference deployment, which hands it to the User
-Manager too — every User, unscoped by Session or by User.
+every Signal, every Run and — in the reference deployment, which hands it to Users
+too — every User, unscoped by Session or by User.
 
 That is deliberate: a credential is no boundary against the agent, which is the only
 party meant to reach it at all. What follows is that keeping the port unreachable is
@@ -1348,7 +1348,7 @@ the log it used to own belongs to the Messenger now, and HTTP delivery is the Us
 there is nothing to queue ([ADR-0048](./adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)).
 A Channel is not a tableless kind of thing, though — a deployment running the **Nostr
 Channel** instead barrels `shared-agent-framework/nostr-channel` for its three tables, and
-needs the User Manager in the barrel for that Channel's own foreign key exactly as it does for
+needs Users in the barrel for that Channel's own foreign key exactly as it does for
 the Messenger's ([ADR-0049](./adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)).
 
 **Set `schemaFilter` in that config, and derive it rather than typing it.** `drizzle-kit`
@@ -1367,7 +1367,7 @@ an `ANTHROPIC_API_KEY` is a broken migration job
 ([ADR-0032](./adr/0032-components-wire-themselves-at-construction.md)).
 
 **What goes in the barrel is the one thing here that nothing checks**, and the two ways to
-get it wrong fail very differently. Leave the User Manager out while the Messenger is
+get it wrong fail very differently. Leave Users out while the Messenger is
 in, and generation dies loudly with `schema "saf_users" does not exist`, before it has
 touched anything: `messages.user_id` is a foreign key onto `saf_users.users.id` and there is
 no table for it to point at
@@ -1439,7 +1439,7 @@ and the plugin adding that hook has not run yet. The route works either way; onl
 description differs, and wrapping it in a `register` call is the whole fix.
 
 **Users and authentication.** The reference deployment does this itself, in `extend`: it
-constructs the **User Manager** and hands it both servers, which is the whole of the wiring,
+constructs **Users** and hands it both servers, which is the whole of the wiring,
 and returns it so it comes back at
 `gateway.components.users`. There is no separate registration call and no descriptor to
 remember, because handing a part a server *is* how its routes get registered. The call the
@@ -1539,7 +1539,7 @@ Both methods are required, and the reason is structural typing rather than cerem
 `name` on the interface, a Component whose methods were both optional would be the *empty*
 type — satisfied by an options bag, a Mount Table, a string — and a wrong entry in
 an order-bearing record is silent by construction. So a part with nothing to run says so
-with two methods that do nothing, which is exactly what the User Manager and the HTTP
+with two methods that do nothing, which is exactly what Users and the HTTP
 Messenger do ([ADR-0037](./adr/0037-the-gateway-is-a-record-of-components.md)).
 
 **The one thing about `extend` worth knowing: your Components stop *after* the drain.** What

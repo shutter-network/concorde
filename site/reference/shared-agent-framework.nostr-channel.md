@@ -17,7 +17,7 @@ deployment running this and nothing else has a Public server carrying only the l
 publishes one thing about itself and no profile, a relay list naming that Relay, so the agent
 appears in a client as a bare public key.
 
-Build the Messenger first, which the constructor registers with, and the User Manager first,
+Build the Messenger first, which the constructor registers with, and Users first,
 whose Users these public keys belong to. Key the result ahead of the Signal Worker in the
 Gateway's record: the Worker is keyed last so it drains first, and a Signal Handler's post phase
 may still send. One Channel per Messenger, refused at registration, so a deployment runs Nostr or
@@ -25,7 +25,7 @@ HTTP and not both.
 
 The subpath also carries the three tables, `pubkeys`, `received` and `outbox`, for the barrel an
 Operator's `drizzle-kit` reads. Barrel `shared-agent-framework/users` beside
-it: two of those tables reference the User Manager's, and a barrel without it generates a foreign
+it: two of those tables reference the tables of Users, and a barrel without them generates a
 key onto a table nothing creates.
 
 ## Example
@@ -614,10 +614,10 @@ its commitments.
 readonly users: Users;
 ```
 
-The User Manager whose Users these public keys belong to.
+The Users component whose Users these public keys belong to.
 
 Nothing is called on it. It is named because `pubkeys.user_id` is a foreign key onto that
-Manager's table, so this component needs the real one rather than something shaped like it:
+table of Users, so this component needs the real one rather than something shaped like it:
 there is no route here to authenticate, and a Nostr public key is not a credential the Gateway
 issued.
 

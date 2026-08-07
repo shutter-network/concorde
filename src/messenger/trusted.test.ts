@@ -10,7 +10,7 @@
  *
  * The subject is still what a client can observe. There is no second seam for these methods
  * and deliberately no route of their own, so they are reached the way an Operator reaches
- * them, in a transaction of this file's own, and confirmed the way the User Manager
+ * them, in a transaction of this file's own, and confirmed the way the Users component
  * confirms its trusted surface: over HTTP, on the User's own route and the agent's, against
  * real Fastify instances and real PostgreSQL. **The two methods are the only path to a row
  * anywhere in this file**: nothing here writes SQL of its own, holds a handle, or names a
@@ -65,7 +65,7 @@ let worker: SignalWorker;
 let agentServer: Component & { readonly fastify: FastifyInstance };
 let publicServer: Component & { readonly fastify: FastifyInstance };
 
-/** Where the two constructors put their plugins, and where the User Manager's login is. */
+/** Where the two constructors put their plugins, and where the login route of Users is. */
 const prefix = "/messages";
 const auth = "/auth";
 
@@ -110,14 +110,14 @@ before(async () => {
     logger: silent,
   });
   // Both servers, so that `POST /users` and the login under `/auth` exist: a Token here is
-  // bought with a password at the Manager's own route. Both parts take it, so it is
+  // bought with a password at the login route of Users. Both parts take it, so it is
   // constructed first; the foreign key's ordering is the push's to arrange (ADR-0046).
   const users = createUsers({ db, tokenTtl: hour, scrypt: cheap, agentServer, publicServer });
   // And held, which this file is the first to have a reason to do.
   messenger = createMessenger({ db, users, worker, agentServer });
   createHttpChannel({ db, messenger, users, publicServer });
 
-  // The Manager's schema alongside the Messenger's, because `messages.user_id` references
+  // The schema of Users alongside the Messenger's, because `messages.user_id` references
   // `saf_users.users.id` and one push has to see both (ADR-0036, ADR-0046).
   await applySchema(db, signalsSchema, usersSchema, messengerSchema);
 });

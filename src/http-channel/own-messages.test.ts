@@ -3,8 +3,8 @@
  *
  * The subject is what a client sees, never how a Message is stored: every assertion here is
  * made over HTTP against two real Fastify instances and real PostgreSQL, and **nothing
- * inserts a row directly**. Every Token is bought with a real password at the User
- * Manager's own login route, because a Token minted any other way would be testing a
+ * inserts a row directly**. Every Token is bought with a real password at the Users
+ * component's own login route, because a Token minted any other way would be testing a
  * shortcut this surface does not have.
  *
  * Both directions are here, each written the way it arrives: the agent's send on the Agent
@@ -49,7 +49,7 @@ let db: Db;
 let agentServer: Component & { readonly fastify: FastifyInstance };
 let publicServer: Component & { readonly fastify: FastifyInstance };
 
-/** Where the two constructors put their plugins, and where the User Manager's login is. */
+/** Where the two constructors put their plugins, and where the login route of Users is. */
 const prefix = "/messages";
 const auth = "/auth";
 
@@ -87,11 +87,11 @@ before(async () => {
   // test wants, since the row is what it reads and the Run is not its subject.
   const worker = createSignalWorker({ db, runtime: fakeRuntime(), handlers: {} });
   // Both servers, so that `POST /users` and the login under `/auth` exist: a Token here is
-  // bought with a password at the Manager's own route. Both parts take it, so it is
+  // bought with a password at the login route of Users. Both parts take it, so it is
   // constructed first; the foreign key's ordering is the push's to arrange (ADR-0046).
   const users = createUsers({ db, tokenTtl: hour, scrypt: cheap, agentServer, publicServer });
   // Nothing is held: the read under test is a route, and the Channel's constructor registered
-  // it itself, behind the Manager's own hook (ADR-0032). The Messenger is built inline because
+  // it itself, behind that component's own hook (ADR-0032). The Messenger is built inline because
   // this file holds neither — the log it owns is reached only over HTTP here.
   createHttpChannel({
     db,
@@ -100,7 +100,7 @@ before(async () => {
     publicServer,
   });
 
-  // The Manager's schema alongside the Messenger's, because `messages.user_id` references
+  // The schema of Users alongside the Messenger's, because `messages.user_id` references
   // `saf_users.users.id` and one push has to see both (ADR-0036, ADR-0046).
   await applySchema(db, signalsSchema, usersSchema, messengerSchema);
 });
@@ -123,7 +123,7 @@ async function admitted(): Promise<Client> {
   return { id, token: await tokenFor(id) };
 }
 
-/** One real login, at the Manager's own route, on whichever Public server carries it. */
+/** One real login, at the route of Users, on whichever Public server carries it. */
 async function tokenFor(id: string, server = () => publicServer.fastify): Promise<string> {
   const issued = await server().inject({
     method: "POST",
@@ -324,11 +324,11 @@ describe("a User reading their own Messages", () => {
 });
 
 describe("an unauthenticated read", () => {
-  it("is the User Manager's single 401, however the Token is missing or refused", async () => {
+  it("is the single 401 of Users, however the Token is missing or refused", async () => {
     const client = await admitted();
     await sent(client.id, "not for a stranger");
 
-    // A Token from a Manager whose Tokens last a millisecond, over the same Db: the row
+    // A Token from a Users component whose Tokens last a millisecond, over the same Db: the row
     // is there and only its `expires_at` is in the past, so an expired Token is reachable
     // without a test waiting for anything.
     const briefly = serverComponent(Fastify(), nowhere);
@@ -364,7 +364,7 @@ describe("an unauthenticated read", () => {
     }
 
     // Byte for byte, not merely equivalent: the Channel authenticates nobody, so this is
-    // the Manager's one refusal reaching a route in another part unchanged (ADR-0030).
+    // the one refusal of Users reaching a route in another part unchanged (ADR-0030).
     const [first, ...rest] = refusals;
     assert.ok(first !== undefined);
     for (const refused of rest) {
@@ -378,7 +378,7 @@ describe("an unauthenticated read", () => {
 
   it("answers a malformed request before it looks at a Token, as GET /auth/me does", async () => {
     // The documented consequence of the query refusal being a `preValidation` hook and the
-    // Manager's being a `preHandler`: a stranger asking for something this route does not
+    // `requireUser` being a `preHandler`: a stranger asking for something this route does not
     // have is told so, and never gets as far as the 401. Pinned rather than guarded, because
     // a refusal names a parameter of the route and never a User.
     assert.equal((await presenting(undefined, "?text=hello")).statusCode, 400);

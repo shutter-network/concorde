@@ -10,11 +10,11 @@
  * started and never emits: the agent's send wakes nobody, and nothing in this file posts.
  * An HTTP Channel is constructed too, because a Messenger with no Channel registered refuses
  * to send at all, and it is what puts the Public routes up: what they answer from here — the
- * Manager's 401 on both of them, since this Db's own agent presents no Token — is the
+ * 401 of Users on both of them, since this Db's own agent presents no Token — is the
  * last test in this file. What that 401 is made of is `own-messages.test.ts`'s subject, and
  * what a post does when one is presented is `posted-messages.test.ts`'s.
  *
- * Users are admitted over the User Manager's own Agent route, and each test admits its
+ * Users are admitted over the Users component's own Agent route, and each test admits its
  * own, so that a numbering assertion is about one User's log and not about what an earlier
  * test left behind.
  */
@@ -87,7 +87,7 @@ after(async () => {
   await database.drop();
 });
 
-/** A User, admitted over the User Manager's own Agent route. */
+/** A User, admitted over the Users component's own Agent route. */
 async function admitted(): Promise<string> {
   const response = await agentServer.fastify.inject({ method: "POST", url: "/users" });
   assert.equal(response.statusCode, 201, `admitting a User should have answered: ${response.body}`);
@@ -301,7 +301,7 @@ describe("the Public server's plugin", () => {
   it("needs a Token to read and to post", async () => {
     // Both routes exist and both refuse this Db's own agent, because the Agent server's
     // freedom from authentication is that server's and not the Messenger's: a Public route is
-    // behind the Manager's hook wherever the request came from. What that refusal is made
+    // behind `requireUser` wherever the request came from. What that refusal is made
     // of is `own-messages.test.ts`'s subject.
     const read = await publicServer.fastify.inject({ method: "GET", url: prefix });
     assert.equal(read.statusCode, 401, read.body);

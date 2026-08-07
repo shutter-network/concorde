@@ -28,7 +28,7 @@
  * one: a string another identity really signed is the case `POST /verify` most has to get
  * right, and a hand-assembled forgery would be testing our own idea of what one looks like.
  *
- * The one thing stood in for is the User Manager's hook, and what that costs is recorded on
+ * The one thing stood in for is the Users component's hook, and what that costs is recorded on
  * `presentedUser` below.
  */
 
@@ -56,14 +56,14 @@ const statement = "we will ship on Friday";
 const withAToken = { authorization: "Bearer whatever this file's hook accepts" } as const;
 
 /**
- * A stand-in for the User Manager's `requireUser`, and the whole of the authentication here.
+ * A stand-in for the `requireUser` of Users, and the whole of the authentication here.
  *
  * The real one needs a Db and a Token bought with a real password, and this suite has neither
  * by design — its subject is an artifact and a key, and nothing about either is a row. So what
  * is asserted below is what belongs to *this* part: the check route runs the hook it was handed
  * and runs it **before** its own handler, so a caller who does not get past it gets no verdict.
  *
- * What that cannot say is that the hook is the Manager's own and that the refusal is therefore
+ * What that cannot say is that the hook is the real one and that the refusal is therefore
  * the same single 401 the routes under `/auth` answer. That claim is about the assembly, and it
  * is made in `gateway.test.ts` against the real one (ADR-0030).
  */
@@ -141,7 +141,7 @@ after(async () => {
 
 describe("the key set", () => {
   it("is served to somebody holding no Token at all", async () => {
-    // Every other read on this server is behind the User Manager's single 401, and this is
+    // Every other read on this server is behind the single 401 of Users, and this is
     // the stated exception: a public key is public, and the whole audience for it is a third
     // party who has no Token and never touches the rest of the Gateway (ADR-0042).
     const answered = await publicServer.fastify.inject({ method: "GET", url: "/jwks.json" });
@@ -401,7 +401,7 @@ describe("the check it will do for a User", () => {
 
     assert.equal(answered.statusCode, 401, answered.body);
     // The artifact is genuinely ours, so a `true` here would be the handler having run behind
-    // the refusal. That the 401 is the User Manager's own is the assembly's claim and is
+    // the refusal. That the 401 is the Users component's own is the assembly's claim and is
     // asserted in `gateway.test.ts`, this file's hook being a stand-in.
     assert.equal(answered.body.includes("verified"), false, answered.body);
   });

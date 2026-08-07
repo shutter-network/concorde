@@ -97,8 +97,8 @@ export const tokens = usersSchema.table(
     /**
      * When the Token stops working. Not nullable, so "never expires" is unrepresentable.
      *
-     * Written from the Manager's construction-time lifetime against the database's clock, which is
-     * the clock the comparison that refuses an expired Token reads too.
+     * Written from the component's construction-time lifetime against the database's clock, which
+     * is the clock the comparison that refuses an expired Token reads too.
      */
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   },

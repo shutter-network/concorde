@@ -100,7 +100,7 @@ export const capped = `${cappedLimit} The Messages past the cap are reachable by
  * write, so this status is a constraint refusing rather than a check failing.
  */
 const noSuchUser =
-  "No User has that id, and nothing was stored. There is deliberately no lookup in front of the write: `userId` is a foreign key onto the User Manager's table, so a well-formed uuid naming nobody reaches the insert and the constraint is what refuses it. A malformed one never gets that far: the pattern on `userId` refuses it as a 400 first, which is what keeps a typo from being a 500 out of PostgreSQL.";
+  "No User has that id, and nothing was stored. There is deliberately no lookup in front of the write: `userId` is a foreign key onto the Users component's table, so a well-formed uuid naming nobody reaches the insert and the constraint is what refuses it. A malformed one never gets that far: the pattern on `userId` refuses it as a 400 first, which is what keeps a typo from being a 500 out of PostgreSQL.";
 
 /**
  * The 503, which is this component's other failure and the one a caller acts on.
@@ -289,7 +289,7 @@ export async function answerHistory(
  * branch, the foreign key being the only enforcement and there being no lookup in front of it.
  *
  * Both surfaces refuse through this one function, and only the agent can meet the 404: a User's own
- * post carries the id the Manager's hook just read a User by. So the Public route describes no 404,
+ * post carries the id `requireUser` just read a User by. So the Public route describes no 404,
  * and both submissions describe the 503.
  */
 export function refuseSend(reply: FastifyReply, error: unknown, userId: string): FastifyReply {

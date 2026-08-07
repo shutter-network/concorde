@@ -18,7 +18,7 @@
  * brings its own: two started workers on one database would break the serial guarantee
  * (ADR-0012), so each is constructed, started, and stopped again before the next. The
  * schemas are pushed once up front, the way an Operator applies theirs — every part's
- * together, the User Manager's among them because the foreign key needs it (ADR-0036,
+ * together, the tables of Users among them because the foreign key needs it (ADR-0036,
  * ADR-0046).
  *
  * The Runtime is the one thing faked (ADR-0022): what it records is that a Run happened,
@@ -51,7 +51,7 @@ import { createHttpChannel } from "./http-channel.ts";
 let database: TestDatabase;
 let db: Db;
 
-/** Where the two constructors put their plugins, and where the User Manager's login is. */
+/** Where the two constructors put their plugins, and where the login route of Users is. */
 const prefix = "/messages";
 const auth = "/auth";
 
@@ -84,7 +84,7 @@ type Client = {
 
 /** One whole Gateway, as a test drives it. */
 type Gateway = {
-  /** Where a User posts and reads, behind the User Manager's own hook. */
+  /** Where a User posts and reads, behind the Users component's own hook. */
   readonly publicServer: FastifyInstance;
   /** Where a User is admitted, the agent sends, and prior Signals are read. */
   readonly agentServer: FastifyInstance;
@@ -105,11 +105,11 @@ before(async () => {
 after(() => database.drop());
 
 /**
- * A whole Gateway with these Handlers: two servers, a started Signal Worker, a User
- * Manager, a Messenger and an HTTP Channel, stopped again afterwards.
+ * A whole Gateway with these Handlers: two servers, a started Signal Worker, a Users
+ * component, a Messenger and an HTTP Channel, stopped again afterwards.
  *
  * Everything is constructed in the order an Operator constructs it, and the Messenger after
- * the Manager — which here is narrative rather than load-bearing, since the migrations are
+ * Users — which here is narrative rather than load-bearing, since the migrations are
  * already applied, and is written that way anyway so this file is not the one place the
  * order looks optional.
  */
@@ -329,7 +329,7 @@ describe("a User posting a Message", () => {
 
       await waitUntil("the Handler for message.received has run", async () => seen.length === 1);
       // The load-bearing assertion of this file: the id a Handler acts on is the one the
-      // User Manager authenticated, read off the request and never out of the body.
+      // Users component authenticated, read off the request and never out of the body.
       assert.equal(seen[0]?.payload.userId, client.id);
       assert.deepEqual(seen[0]?.payload, message);
 
@@ -410,7 +410,7 @@ describe("a User posting a Message", () => {
     });
   });
 
-  it("is the User Manager's single 401 when nobody is behind it", async () => {
+  it("is the single 401 of Users when nobody is behind it", async () => {
     await withGateway({}, async (gateway) => {
       const client = await admitted(gateway);
       const said = { text: "let me in" };
@@ -438,7 +438,7 @@ describe("a User posting a Message", () => {
       }
 
       // Byte for byte, not merely equivalent: this part authenticates nobody, so every
-      // refusal is the Manager's one 401 reaching a route in another part (ADR-0030).
+      // refusal is the one 401 of Users reaching a route in another part (ADR-0030).
       const [first, ...rest] = refusals;
       assert.ok(first !== undefined);
       for (const refused of rest) assert.equal(refused.body, first.body);

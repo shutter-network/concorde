@@ -122,7 +122,7 @@ export function createHttpChannel(options: HttpChannelOptions): HttpChannel {
       // and the only User who can cause one is the User the Token named.
       submit: (userId, text) => options.db.tx((tx) => inbound.receive(tx, userId, text)),
     },
-    // The Manager's own hook, passed through and not wrapped. This component authenticates nobody.
+    // The hook of Users, passed through and not wrapped. This component authenticates nobody.
     options.users.requireUser,
   );
 

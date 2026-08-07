@@ -66,7 +66,7 @@ export type DecisionsOptions = {
    * authenticates nobody.
    *
    * Not a schema-level dependency, unlike the Messenger's: nothing here references a User, so a
-   * barrel may carry this component's tables without the User Manager's.
+   * barrel may carry this component's tables without the tables of Users.
    */
   readonly users: Users;
   /**
@@ -189,7 +189,7 @@ export function createDecisions(options: DecisionsOptions): Decisions {
   });
   const publicRoutes = publicDecisionRoutes(
     { history: readHistory, numbered: readNumbered },
-    // The Manager's own hook, passed through and not wrapped. This Component authenticates nobody.
+    // The hook of Users, passed through and not wrapped. This Component authenticates nobody.
     options.users.requireUser,
   );
 

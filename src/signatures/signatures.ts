@@ -10,8 +10,8 @@
  * and cannot stringify into a log line by accident. The public half is derived rather than taken
  * as a second option, because a second option is a second answer to which key this is. The
  * `users` option is the bare hook rather than a `Users`, unlike Decisions': nothing here reads a
- * User, and there is no second thing this could want off the Manager. What that costs is that the
- * assembly rather than the type makes it the real Manager's hook, which is why `gateway.test.ts`
+ * User, and there is no second thing this could want off the Users component. What that costs is
+ * that the assembly rather than the type makes it the real hook, which is why `gateway.test.ts`
  * proves the 401 is the same one.
  *
  * `algorithmForCurve` is deliberately narrower than JOSE. Ed448 and secp256k1 determine `EdDSA`
@@ -218,7 +218,8 @@ export function createSignatures(options: SignaturesOptions): Signatures {
   // construction and loaded at `listen`.
   options.agentServer.fastify.register(agentSignatureRoutes({ sign: signStatement }));
   options.publicServer.fastify.register(
-    // The Manager's own hook, passed through and not wrapped. This Component authenticates nobody.
+    // The Users component's own hook, passed through and not wrapped. This Component
+    // authenticates nobody.
     publicSignatureRoutes(keySet, { verify: verifyArtifact }, options.users.requireUser),
   );
 

@@ -20,8 +20,8 @@
  * ([ADR-0035](../../docs/adr/0035-a-users-messages-are-one-log-read-by-cursor.md)).
  *
  * Every read below is made over HTTP against two real Fastify instances and real PostgreSQL,
- * nothing inserts a row directly, and the Token is bought with a real password at the User
- * Manager's own login route.
+ * nothing inserts a row directly, and the Token is bought with a real password at the
+ * Users component's own login route.
  */
 
 import assert from "node:assert/strict";
@@ -46,7 +46,7 @@ let db: Db;
 let agentServer: Component & { readonly fastify: FastifyInstance };
 let publicServer: Component & { readonly fastify: FastifyInstance };
 
-/** Where the constructor put both route groups, and the User Manager's login. */
+/** Where the constructor put both route groups, and the login route of Users. */
 const prefix = "/decisions";
 const auth = "/auth";
 

@@ -9,7 +9,7 @@
  * The deployment brings the key. Nothing here parses a PEM, reads an environment variable or
  * generates a keypair, so construction without one throws rather than inventing an identity.
  *
- * Build the User Manager first, whose `requireUser` this takes, and build this before Decisions,
+ * Build Users first, whose `requireUser` this takes, and build this before Decisions,
  * which signs through it. Key it ahead of the Signal Worker in the Gateway's record: the Worker is
  * keyed last so it drains first, and a Signal Handler's post phase may still need to sign.
  *
