@@ -99,7 +99,12 @@ Error.constructor
 ### ScheduleFiredRecord
 
 ```ts
-type ScheduleFiredRecord = object;
+type ScheduleFiredRecord = {
+  data: unknown;
+  firedAt: string;
+  scheduledFor: string;
+  scheduleName: string;
+};
 ```
 
 The Signal a matured Schedule emits, and half of the Signal contract.
@@ -150,7 +155,12 @@ The Schedule this fire came from, its sole identifier and the reference to corre
 ### ScheduleInput
 
 ```ts
-type ScheduleInput = object;
+type ScheduleInput = {
+  data?: unknown;
+  name: string;
+  spec: ScheduleSpec;
+  until?: string;
+};
 ```
 
 What a create-or-update takes: the name, the recurrence, the opaque data, and a cron's bound.
@@ -200,7 +210,10 @@ Which of the two shapes a stored Schedule is, as the `kind` column's type.
 ### ScheduleOutcome
 
 ```ts
-type ScheduleOutcome = object;
+type ScheduleOutcome = {
+  created: boolean;
+  schedule: ScheduleRecord;
+};
 ```
 
 What `schedule` answers with: whether the name was newly created, and the resulting record.
@@ -230,7 +243,14 @@ readonly schedule: ScheduleRecord;
 ### Scheduler
 
 ```ts
-type Scheduler = Component & object;
+type Scheduler = Component & {
+  cancel: (name) => Promise<boolean>;
+  list: () => Promise<ScheduleRecord[]>;
+  schedule: (input) => Promise<ScheduleOutcome>;
+  start: () => Promise<void>;
+  stop: () => Promise<void>;
+  tick: () => Promise<void>;
+};
 ```
 
 What the constructor answers with: the interface the Operator always has.
@@ -360,7 +380,13 @@ awaitable seam the timer calls and the tests drive directly. Drive it serially: 
 ### ScheduleRecord
 
 ```ts
-type ScheduleRecord = object;
+type ScheduleRecord = {
+  data: unknown;
+  name: string;
+  nextFireAt: string | null;
+  spec: ScheduleSpec;
+  until: string | null;
+};
 ```
 
 A Schedule as every surface answers with it: the upsert response and the list.
@@ -409,7 +435,16 @@ readonly until: string | null;
 ### SchedulerOptions
 
 ```ts
-type SchedulerOptions = object;
+type SchedulerOptions = {
+  agentServer?: {
+     fastify: FastifyInstance;
+  };
+  db: Db;
+  logger?: Logger;
+  maxSleepMs?: number;
+  now?: () => Date;
+  worker: SignalWorker;
+};
 ```
 
 Everything `createScheduler` needs: the Db, the Signal Worker, and four defaults.
@@ -419,7 +454,9 @@ Everything `createScheduler` needs: the Db, the Signal Worker, and four defaults
 ##### agentServer?
 
 ```ts
-readonly optional agentServer?: object;
+readonly optional agentServer?: {
+  fastify: FastifyInstance;
+};
 ```
 
 The Agent server, if the agent is to create, list, read and cancel Schedules over HTTP.
@@ -567,7 +604,10 @@ theirs to change: the table below is compiled against it, and their generation r
 ### schedulerTables
 
 ```ts
-const schedulerTables: object;
+const schedulerTables: {
+  schedules: PgTableWithColumns<{
+  }>;
+};
 ```
 
 Everything the Scheduler keeps, as `db.handle` wants it.

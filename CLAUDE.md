@@ -137,6 +137,41 @@ Developer reads a name they cannot type into an import. What the strictness cost
 export map is now something a CI step can force, at whatever moment a doc comment reaches for a
 symbol that is on no subpath.
 
+**`expandObjects` and `site/expanded-object-methods.mjs` are one change and have to stay one.**
+The setting makes the block above an object type print its members instead of the word `object`.
+That block is the first thing on a page and it is what a reader takes the shape from, and most of
+this public API is object literals, so collapsed it left the shape to be assembled by hand out of
+the sections below on every one of the eight pages. Set on its own, though, it is worse than
+leaving it off: `typedoc-plugin-markdown` renders each member as `name: <type>` and takes that
+type from `helpers.getDeclarationType`, which answers a member carrying signatures with the
+**return type of its first signature**, so roughly forty methods across `Db`, `Component`,
+`Runtime`, `Users`, `Decisions`, `Scheduler` and `HttpMessenger` print as properties holding their
+own return value, and `tx: Promise<T>` binds `T` to nothing at all. The word `object` said nothing
+and misled nobody; that block would mislead. So the plugin travels with the setting. It defines a
+theme, named on `typedoc.jsonc`'s `theme` line because defining one is how a render-context
+override is installed, and it widens that one helper for members reached from inside an expanded
+object, handing the renderer the member's own function type. It counts the nesting rather than
+flipping a flag, because an expanded object can hold another one and a flag would switch the
+widening back off for the outer object's remaining members. It leaves the helper alone everywhere
+else, because the Properties and Methods sections below the block call it for the part after the
+colon and print the name and the parameters themselves, so a widening applied there would print
+the parameters twice.
+
+Three costs, recorded rather than solved. **`readonly` is dropped from an expanded member** and
+stays visible in the section a few lines below it; restoring it means reimplementing the whole
+declaration partial instead of wrapping one helper, which is a much larger patch surface bought
+for one modifier. **A `*Tables` variable prints as
+`{ runs: PgTableWithColumns<{ }>; signals: PgTableWithColumns<{ }> }`**, where naming the two
+tables is the gain and the empty braces are drizzle's own type under `excludeExternals`. And
+**`SignalHandler.handle` wraps its return union raggedly** across two lines of one page. The
+plugin reads two names out of the render context, `partials.declarationType` and
+`helpers.getDeclarationType`, and a future `typedoc-plugin-markdown` that renamed either one, or
+that stopped asking the helper for a member's type, would leave the widening wired to nothing and
+the methods quietly printing return types again. Nothing here guards against that on purpose:
+`check:docs` regenerates and diffs against the committed reference on every CI run, so a
+generation that moved fails and names the pages, which is the second thing committing the
+reference buys.
+
 **The one command must stay ignorant of the second compiler.** `npm run check` installs none of
 `site/` and **must keep passing on a checkout where `site/node_modules` was never created** —
 that is the test, and it is run by moving that directory aside, not by reading the

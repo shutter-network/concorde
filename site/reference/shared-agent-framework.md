@@ -46,7 +46,16 @@ process.once("SIGTERM", () => void gateway.stop());
 ### AgentContainer
 
 ```ts
-type AgentContainer = object;
+type AgentContainer = {
+  containerCommand?: readonly string[];
+  entrypoint?: readonly string[];
+  env?: Readonly<Record<string, string>>;
+  extraArgs?: readonly string[];
+  image: string;
+  logger?: Logger;
+  mounts?: MountTable;
+  networks?: readonly string[];
+};
 ```
 
 The container one Run happens in, as an Operator declares it.
@@ -145,7 +154,9 @@ model and the Agent server.
 ### AgentContainerRuntime
 
 ```ts
-type AgentContainerRuntime = Runtime & object;
+type AgentContainerRuntime = Runtime & {
+  commandFor: (prompt) => ComposedCommand;
+};
 ```
 
 A Runtime, plus one pure method the seam itself does not need.
@@ -176,7 +187,10 @@ commandFor(prompt): ComposedCommand;
 ### AgentContainerRuntimeSpec
 
 ```ts
-type AgentContainerRuntimeSpec = object;
+type AgentContainerRuntimeSpec = {
+  container: AgentContainer;
+  run: (prompt) => RunPlan;
+};
 ```
 
 What one containerised agent is: a box, and how to drive an agent inside it.
@@ -225,7 +239,11 @@ the fresh-Session case before the Runtime was called.
 ### ChannelListener
 
 ```ts
-type ChannelListener = object;
+type ChannelListener = {
+  connected?: () => void;
+  lost?: (error) => void;
+  notified: (payload) => void;
+};
 ```
 
 What `db.listen` reports.
@@ -292,7 +310,10 @@ A notification arrived. `payload` is `NOTIFY`'s, empty when it carried none.
 ### Component
 
 ```ts
-type Component = object;
+type Component = {
+  start: () => Promise<void>;
+  stop: () => Promise<void>;
+};
 ```
 
 One part of a Gateway. It starts, and it stops.
@@ -329,7 +350,12 @@ stop(): Promise<void>;
 ### ComposedCommand
 
 ```ts
-type ComposedCommand = object;
+type ComposedCommand = {
+  args: readonly string[];
+  command: string;
+  redactedArgs: readonly string[];
+  stdin: string;
+};
 ```
 
 One Run's command line, and what to feed it.
@@ -376,7 +402,11 @@ The Prompt, or whatever else the agent's function asked to have written to stdin
 ### CursorWindow
 
 ```ts
-type CursorWindow = object;
+type CursorWindow = {
+  after?: number;
+  before?: number;
+  limit: number;
+};
 ```
 
 Which stretch of a log a read asks for: one cursor, or the other, or neither, and a limit.
@@ -418,7 +448,13 @@ readonly limit: number;
 ### Db
 
 ```ts
-type Db = Component & object;
+type Db = Component & {
+  handle: <TSchema>(schema) => Handle<TSchema>;
+  listen: (channel, listener) => Listening;
+  start: () => Promise<void>;
+  stop: () => Promise<void>;
+  tx: <T>(body) => Promise<T>;
+};
 ```
 
 The Gateway's PostgreSQL client: the pool, a schema-typed handle per component, transactions
@@ -548,7 +584,9 @@ Runs `body` in a transaction: commits on return, rolls back on throw.
 ### Gateway
 
 ```ts
-type Gateway<C> = Component & object;
+type Gateway<C> = Component & {
+  components: C;
+};
 ```
 
 Every Component a deployment has, under the Operator's own keys.
@@ -590,7 +628,16 @@ a Signal Worker of your own, call `createBareGateway` instead.
 ### GatewayOptions
 
 ```ts
-type GatewayOptions<E> = object;
+type GatewayOptions<E> = {
+  agentListen: FastifyListenOptions;
+  databaseUrl: string;
+  extend?: (components) => E;
+  handlers: (components) => SignalHandlers;
+  logger?: Logger;
+  publicListen: FastifyListenOptions;
+  runtime: Runtime;
+  sweepIntervalMs?: number;
+};
 ```
 
 Everything `createGateway` needs. Four required values, and four with defaults.
@@ -729,7 +776,16 @@ component's schema. A transaction carries the schema of the handle it started on
 ### InfraComponents
 
 ```ts
-type InfraComponents = object;
+type InfraComponents = {
+  agentServer: Component & {
+     fastify: FastifyInstance;
+  };
+  db: Db;
+  publicServer: Component & {
+     fastify: FastifyInstance;
+  };
+  worker: SignalWorker;
+};
 ```
 
 The infrastructure every deployment has, under the keys it is filed under.
@@ -745,7 +801,9 @@ it drains while everything else is still live.
 ##### agentServer
 
 ```ts
-agentServer: Component & object;
+agentServer: Component & {
+  fastify: FastifyInstance;
+};
 ```
 
 ###### Type Declaration
@@ -765,7 +823,9 @@ db: Db;
 ##### publicServer
 
 ```ts
-publicServer: Component & object;
+publicServer: Component & {
+  fastify: FastifyInstance;
+};
 ```
 
 ###### Type Declaration
@@ -787,7 +847,9 @@ worker: SignalWorker;
 ### Listening
 
 ```ts
-type Listening = object;
+type Listening = {
+  close: () => Promise<void>;
+};
 ```
 
 A registration made by `db.listen`.
@@ -812,7 +874,10 @@ reconnection is pending.
 ### ListeningServer
 
 ```ts
-type ListeningServer = object;
+type ListeningServer = {
+  close: () => Promise<unknown>;
+  listen: (options) => Promise<unknown>;
+};
 ```
 
 The whole of what the framework asks of a server: somewhere to listen, and a way to close.
@@ -863,7 +928,12 @@ Structured context on one log line.
 ### Logger
 
 ```ts
-type Logger = object;
+type Logger = {
+  debug: (fields, message) => void;
+  error: (fields, message) => void;
+  info: (fields, message) => void;
+  warn: (fields, message) => void;
+};
 ```
 
 What every part of the Gateway accepts. Four levels and no more.
@@ -958,7 +1028,11 @@ warn(fields, message): void;
 ### Mount
 
 ```ts
-type Mount = object;
+type Mount = {
+  agentPath: string;
+  gatewayPath: string;
+  readOnly?: boolean;
+};
 ```
 
 One entry: a directory or a single file the agent's container can reach.
@@ -1002,7 +1076,13 @@ sibling operation still succeeds.
 ### MountTable
 
 ```ts
-type MountTable = object;
+type MountTable = {
+  entries: readonly Mount[];
+  hostRoot?: {
+     gatewayPath: string;
+     hostPath: string;
+  };
+};
 ```
 
 The whole of the agent container's filesystem.
@@ -1030,7 +1110,10 @@ An empty list is a deployment too, and is not refused. Nothing the agent writes 
 ##### hostRoot?
 
 ```ts
-readonly optional hostRoot?: object;
+readonly optional hostRoot?: {
+  gatewayPath: string;
+  hostPath: string;
+};
 ```
 
 How this Gateway's own filesystem maps to the host's, for a Gateway in a container.
@@ -1066,7 +1149,11 @@ Where the daemon finds that same tree on the host. Absolute, and handed over unr
 ### RunPlan
 
 ```ts
-type RunPlan = object;
+type RunPlan = {
+  args: readonly string[];
+  stdin: string;
+  outcome: (stdout) => Promise<RunOutcome>;
+};
 ```
 
 How to perform one Run: the agent's arguments, its stdin, and how to read what comes back.
@@ -1117,7 +1204,13 @@ reader's to reassemble. Report a bad stream as a failed Run rather than throwing
 ### TemplateHandlerOptions
 
 ```ts
-type TemplateHandlerOptions<TPayload> = object;
+type TemplateHandlerOptions<TPayload> = {
+  data: (signal) => unknown;
+  helpers?: Readonly<Record<string, Handlebars.HelperDelegate>>;
+  partials?: Readonly<Record<string, string>>;
+  session: (signal) => string | null | Promise<string | null>;
+  template: string | URL;
+};
 ```
 
 What `templateHandler` needs. Every dependency is named here rather than in a context.
@@ -1514,7 +1607,9 @@ await db.stop();
 ### serverComponent()
 
 ```ts
-function serverComponent<S>(server, listen): Component & object;
+function serverComponent<S>(server, listen): Component & {
+  fastify: S;
+};
 ```
 
 Gives a server a place in the Gateway's start order.
@@ -1546,7 +1641,9 @@ Where to bind. There is no default address.
 
 #### Returns
 
-[`Component`](#component) & `object`
+[`Component`](#component) & \{
+  `fastify`: `S`;
+\}
 
 #### Example
 

@@ -50,7 +50,8 @@ tree holds only the documentation toolchain.
 ## The exit condition
 
 **When TypeDoc supports the compiler this repository pins, delete this package.** Move
-`typedoc.jsonc`, `.vitepress/config.ts` and `specifier-titles.mjs` to the root, fold the
+`typedoc.jsonc`, `.vitepress/config.ts`, `specifier-titles.mjs` and
+`expanded-object-methods.mjs` to the root, fold the
 devDependencies into the root ones minus `typescript`, and let `npm run docs:*` call the tools
 directly. Nothing else here is load-bearing.
 

@@ -54,7 +54,12 @@ await gateway.start();
 ### HttpMessenger
 
 ```ts
-type HttpMessenger = Component & object;
+type HttpMessenger = Component & {
+  history: (userId, options?) => Promise<MessageRecord[]>;
+  send: <TSchema>(tx, userId, text) => Promise<MessageRecord>;
+  start: () => Promise<void>;
+  stop: () => Promise<void>;
+};
 ```
 
 The HTTP Messenger as a Component: the two things trusted code needs and no request can express.
@@ -177,7 +182,17 @@ shutdown is stored, and its Signal commits with it and stays `pending`.
 ### HttpMessengerOptions
 
 ```ts
-type HttpMessengerOptions = object;
+type HttpMessengerOptions = {
+  agentServer: {
+     fastify: FastifyInstance;
+  };
+  db: Db;
+  publicServer: {
+     fastify: FastifyInstance;
+  };
+  users: Users;
+  worker: SignalWorker;
+};
 ```
 
 Everything `createHttpMessenger` needs: the Db, two Components, and both servers.
@@ -187,7 +202,9 @@ Everything `createHttpMessenger` needs: the Db, two Components, and both servers
 ##### agentServer
 
 ```ts
-readonly agentServer: object;
+readonly agentServer: {
+  fastify: FastifyInstance;
+};
 ```
 
 The Agent server, where the agent sends a Message and reads a User's log, at `/messages`.
@@ -212,7 +229,9 @@ The Db this component queries through. It takes a handle to its own one table.
 ##### publicServer
 
 ```ts
-readonly publicServer: object;
+readonly publicServer: {
+  fastify: FastifyInstance;
+};
 ```
 
 The Public server, where Users reach their own Messages, at `/messages`.
@@ -266,7 +285,14 @@ Which way one Message travelled. One of `messageDirections`.
 ### MessageRecord
 
 ```ts
-type MessageRecord = object;
+type MessageRecord = {
+  createdAt: string;
+  direction: MessageDirection;
+  id: string;
+  seq: number;
+  text: string;
+  userId: string;
+};
 ```
 
 A Message, as every surface answers with it.
@@ -337,7 +363,10 @@ a schema of its own rather than a rename of this one.
 ### httpMessagesTables
 
 ```ts
-const httpMessagesTables: object;
+const httpMessagesTables: {
+  messages: PgTableWithColumns<{
+  }>;
+};
 ```
 
 Everything the HTTP Messenger keeps, as `db.handle` wants it.

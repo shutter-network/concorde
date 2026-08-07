@@ -62,7 +62,12 @@ console.log(published.seq, published.jws);
 ### DecisionRecord
 
 ```ts
-type DecisionRecord = object;
+type DecisionRecord = {
+  createdAt: string;
+  jws: string;
+  seq: number;
+  statement: string;
+};
 ```
 
 A Decision as every surface answers with it: the POST response and both reads.
@@ -105,7 +110,12 @@ readonly statement: string;
 ### Decisions
 
 ```ts
-type Decisions = Component & object;
+type Decisions = Component & {
+  history: (options?) => Promise<DecisionRecord[]>;
+  publish: <TSchema>(tx, statement) => Promise<DecisionRecord>;
+  start: () => Promise<void>;
+  stop: () => Promise<void>;
+};
 ```
 
 What the constructor answers with: the two things trusted code needs and no request can express.
@@ -231,7 +241,17 @@ process, and the artifact outlives the deployment.
 ### DecisionsOptions
 
 ```ts
-type DecisionsOptions = object;
+type DecisionsOptions = {
+  agentServer: {
+     fastify: FastifyInstance;
+  };
+  db: Db;
+  publicServer: {
+     fastify: FastifyInstance;
+  };
+  signatures: Signatures;
+  users: Users;
+};
 ```
 
 Everything `createDecisions` needs: the Db, two Components, and both servers.
@@ -241,7 +261,9 @@ Everything `createDecisions` needs: the Db, two Components, and both servers.
 ##### agentServer
 
 ```ts
-readonly agentServer: object;
+readonly agentServer: {
+  fastify: FastifyInstance;
+};
 ```
 
 The Agent server, where the agent publishes and reads, at `/decisions`.
@@ -264,7 +286,9 @@ readonly db: Db;
 ##### publicServer
 
 ```ts
-readonly publicServer: object;
+readonly publicServer: {
+  fastify: FastifyInstance;
+};
 ```
 
 The Public server, where any authenticated User reads the log, at `/decisions`.
@@ -337,7 +361,10 @@ theirs to change: the table below is compiled against it, and their generation r
 ### decisionsTables
 
 ```ts
-const decisionsTables: object;
+const decisionsTables: {
+  decisions: PgTableWithColumns<{
+  }>;
+};
 ```
 
 Everything Decisions keeps, as `db.handle` wants it.

@@ -3,9 +3,16 @@
 
   "name": "shared-agent-framework",
 
-  // `specifier-titles.mjs` is local and it is what makes a page name the specifier it is
+  // Two local plugins. `specifier-titles.mjs` is what makes a page name the specifier it is
   // reached through; see the file for why TypeDoc's own module names will not do.
-  "plugin": ["typedoc-plugin-markdown", "typedoc-vitepress-theme", "./specifier-titles.mjs"],
+  // `expanded-object-methods.mjs` defines the theme named below, and it is what `expandObjects`
+  // needs to be honest; see the file, and the `theme` line at the bottom.
+  "plugin": [
+    "typedoc-plugin-markdown",
+    "typedoc-vitepress-theme",
+    "./specifier-titles.mjs",
+    "./expanded-object-methods.mjs"
+  ],
 
   // The eight entry points of the export map, in the order `package.json` lists them
   // ([ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md)). `example/` is not among
@@ -71,5 +78,19 @@
   // already the specifier and there are only eight pages to be lost among.
   "hidePageHeader": true,
   "hideBreadcrumbs": true,
-  "useCodeBlocks": true
+  "useCodeBlocks": true,
+
+  // The block above an object type prints its members rather than the word `object`. It is the
+  // first thing on a page and it is what a reader takes the shape from, and most of this public
+  // API is object literals, so collapsed it left the shape to be assembled by hand out of the
+  // sections below on all eight pages.
+  //
+  // **It cannot be set without the theme on the next line.** The plugin renders each member from
+  // `getDeclarationType`, which answers a method with the return type of its first signature, so
+  // `expandObjects` alone prints about forty methods as properties holding their own return
+  // value. `expanded-object-methods.mjs` widens that one helper inside an expanded object and
+  // says why at length; setting this and dropping that plugin ships a block a reader is wrong to
+  // trust.
+  "expandObjects": true,
+  "theme": "expanded-objects"
 }

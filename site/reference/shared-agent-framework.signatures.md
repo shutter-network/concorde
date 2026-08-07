@@ -65,7 +65,11 @@ console.log(jws);
 ### Signatures
 
 ```ts
-type Signatures = Component & object;
+type Signatures = Component & {
+  sign: (typ, claims) => Promise<string>;
+  start: () => Promise<void>;
+  stop: () => Promise<void>;
+};
 ```
 
 What the constructor answers with: the one thing trusted code needs and no request can express.
@@ -150,7 +154,20 @@ nothing to revoke. A key held by a process that is not running signs nothing.
 ### SignaturesOptions
 
 ```ts
-type SignaturesOptions = object;
+type SignaturesOptions = {
+  agentServer: {
+     fastify: FastifyInstance;
+  };
+  logger?: Logger;
+  publicServer: {
+     fastify: FastifyInstance;
+  };
+  signingAlg?: string;
+  signingKey: KeyObject;
+  users: {
+     requireUser: preHandlerAsyncHookHandler;
+  };
+};
 ```
 
 Everything `createSignatures` needs: the signing key, both servers, and the Manager's hook.
@@ -160,7 +177,9 @@ Everything `createSignatures` needs: the signing key, both servers, and the Mana
 ##### agentServer
 
 ```ts
-readonly agentServer: object;
+readonly agentServer: {
+  fastify: FastifyInstance;
+};
 ```
 
 The Agent server, where the Shared Agent signs, at `POST /sign`.
@@ -189,7 +208,9 @@ Defaults to a `pino` instance on stdout, and is what the signing line is written
 ##### publicServer
 
 ```ts
-readonly publicServer: object;
+readonly publicServer: {
+  fastify: FastifyInstance;
+};
 ```
 
 The Public server, where the key set is served at `/jwks.json`.
@@ -243,7 +264,9 @@ the deployment inside what is signed.
 ##### users
 
 ```ts
-readonly users: object;
+readonly users: {
+  requireUser: preHandlerAsyncHookHandler;
+};
 ```
 
 Where `POST /verify`'s authentication comes from: the User Manager's own hook.
@@ -267,7 +290,9 @@ readonly requireUser: preHandlerAsyncHookHandler;
 ### SignedClaims
 
 ```ts
-type SignedClaims = object & Readonly<Record<string, unknown>>;
+type SignedClaims = {
+  statement: string;
+} & Readonly<Record<string, unknown>>;
 ```
 
 What a signature commits to: the Statement, and whatever else the caller is binding to it.

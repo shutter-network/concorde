@@ -45,7 +45,11 @@ console.log(`admitted ${admitted.id}, and that id is what they log in with`);
 ### IssuedToken
 
 ```ts
-type IssuedToken = object;
+type IssuedToken = {
+  expiresAt: string;
+  token: string;
+  user: UserRecord;
+};
 ```
 
 What a login answers with: the Token, when it expires, and the User it belongs to.
@@ -83,7 +87,11 @@ The User it belongs to, including the Attributes governing their authorization.
 ### ScryptParameters
 
 ```ts
-type ScryptParameters = object;
+type ScryptParameters = {
+  blockSize: number;
+  logN: number;
+  parallelism: number;
+};
 ```
 
 What a scrypt derivation costs, as the Operator states it and as each digest records it.
@@ -122,7 +130,11 @@ scrypt's `p`. Node runs the passes serially, so this multiplies the time.
 ### UserRecord
 
 ```ts
-type UserRecord = object;
+type UserRecord = {
+  attributes: unknown;
+  createdAt: string;
+  id: string;
+};
 ```
 
 A User as the agent reads it, and the JSON these routes answer with.
@@ -158,7 +170,20 @@ readonly id: string;
 ### Users
 
 ```ts
-type Users = Component & object;
+type Users = Component & {
+  agentRoutes: FastifyPluginAsync;
+  publicRoutes: FastifyPluginAsync;
+  requireUser: preHandlerAsyncHookHandler;
+  create: <TSchema>(tx) => Promise<UserRecord>;
+  get: (id) => Promise<UserRecord | undefined>;
+  issueToken: <TSchema>(tx, user) => Promise<IssuedToken>;
+  list: (options?) => Promise<UserRecord[]>;
+  revoke: <TSchema>(tx, user) => Promise<void>;
+  setAttributes: <TSchema>(tx, user, attributes) => Promise<void>;
+  setPassword: <TSchema>(tx, user, password) => Promise<void>;
+  start: () => Promise<void>;
+  stop: () => Promise<void>;
+};
 ```
 
 The User Manager as a Component: two route plugins, one hook, and the methods no route has.
@@ -476,7 +501,17 @@ nothing reaps the expired rows.
 ### UsersOptions
 
 ```ts
-type UsersOptions = object;
+type UsersOptions = {
+  agentServer?: {
+     fastify: FastifyInstance;
+  };
+  db: Db;
+  publicServer?: {
+     fastify: FastifyInstance;
+  };
+  scrypt?: ScryptParameters;
+  tokenTtl: number;
+};
 ```
 
 Everything `createUsers` needs: the Db, a Token lifetime, and the servers its routes go on.
@@ -486,7 +521,9 @@ Everything `createUsers` needs: the Db, a Token lifetime, and the servers its ro
 ##### agentServer?
 
 ```ts
-readonly optional agentServer?: object;
+readonly optional agentServer?: {
+  fastify: FastifyInstance;
+};
 ```
 
 The Agent server, if the agent is to create and read Users.
@@ -515,7 +552,9 @@ The Db this component queries through. It takes a handle to its own two tables.
 ##### publicServer?
 
 ```ts
-readonly optional publicServer?: object;
+readonly optional publicServer?: {
+  fastify: FastifyInstance;
+};
 ```
 
 The Public server, if Users are to trade a password for a Token.
@@ -605,7 +644,12 @@ change: the tables below are compiled against it, and their generation reads the
 ### usersTables
 
 ```ts
-const usersTables: object;
+const usersTables: {
+  tokens: PgTableWithColumns<{
+  }>;
+  users: PgTableWithColumns<{
+  }>;
+};
 ```
 
 Everything the User Manager keeps, as `db.handle` wants it.

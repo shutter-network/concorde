@@ -34,7 +34,10 @@ async function greetSomebody(db: Db, worker: SignalWorker, name: string): Promis
 ### EmittedSignal
 
 ```ts
-type EmittedSignal = object;
+type EmittedSignal = {
+  kind: string;
+  payload: unknown;
+};
 ```
 
 What a Producer hands to `worker.emit`.
@@ -65,7 +68,9 @@ Signal came from. That is why Producers are parts of the Gateway rather than pee
 ### PostOutcome
 
 ```ts
-type PostOutcome = object;
+type PostOutcome = {
+  failed: boolean;
+};
 ```
 
 What the post phase is told. `failed` is true if any Run from the Signal failed.
@@ -83,7 +88,10 @@ readonly failed: boolean;
 ### Prompt
 
 ```ts
-type Prompt = object;
+type Prompt = {
+  session: string | null;
+  text: string;
+};
 ```
 
 What a Handler produces, and the only form in which anything reaches the agent.
@@ -137,7 +145,9 @@ A failure carries a message, because that message is the Run's `error` column.
 ### RunPrompt
 
 ```ts
-type RunPrompt = Omit<Prompt, "session"> & object;
+type RunPrompt = Omit<Prompt, "session"> & {
+  session: string;
+};
 ```
 
 The Prompt as a Runtime receives it: the Prompt a Handler wrote, with its Session **resolved**.
@@ -161,7 +171,16 @@ The Session this Run happens in. Always a name, never a request for one.
 ### RunRecord
 
 ```ts
-type RunRecord = object;
+type RunRecord = {
+  endedAt: string | null;
+  error: string | null;
+  id: string;
+  prompt: string;
+  session: string | null;
+  signalId: string;
+  startedAt: string | null;
+  state: RunState;
+};
 ```
 
 A Run as the agent reads it.
@@ -238,7 +257,9 @@ How a Run ended, or that it has not. One of `runStates`.
 ### Runtime
 
 ```ts
-type Runtime = object;
+type Runtime = {
+  run: (prompt) => Promise<RunOutcome>;
+};
 ```
 
 Starts one Run and reports how it ended.
@@ -272,7 +293,12 @@ run(prompt): Promise<RunOutcome>;
 ### Signal
 
 ```ts
-type Signal<TPayload> = object;
+type Signal<TPayload> = {
+  emittedAt: Date;
+  id: string;
+  kind: string;
+  payload: TPayload;
+};
 ```
 
 What a Handler is given.
@@ -320,7 +346,12 @@ readonly payload: TPayload;
 ### SignalHandler
 
 ```ts
-type SignalHandler<TPayload> = object;
+type SignalHandler<TPayload> = {
+  handle: (signal) => 
+     | readonly Prompt[]
+    | Promise<readonly Prompt[]>;
+  post?: (signal, outcome) => void | Promise<void>;
+};
 ```
 
 A Signal Handler: `handle`, and optionally `post`.
@@ -396,7 +427,14 @@ A Signal whose `kind` is absent from the map fails permanently.
 ### SignalRecord
 
 ```ts
-type SignalRecord = object;
+type SignalRecord = {
+  emittedAt: string;
+  error: string | null;
+  id: string;
+  kind: string;
+  payload: unknown;
+  state: SignalState;
+};
 ```
 
 A Signal as the agent reads it, and the JSON one route answers with.
@@ -460,7 +498,12 @@ How far a Signal got. One of `signalStates`.
 ### SignalWorker
 
 ```ts
-type SignalWorker = Component & object;
+type SignalWorker = Component & {
+  agentRoutes: FastifyPluginAsync;
+  emit: <TSchema>(tx, signal) => Promise<string>;
+  start: () => Promise<void>;
+  stop: () => Promise<void>;
+};
 ```
 
 The one Signal Worker a Gateway runs: a queue to emit into, and a Component to start and stop.
@@ -556,7 +599,16 @@ it would leave partial effects nothing retries.
 ### SignalWorkerOptions
 
 ```ts
-type SignalWorkerOptions = object;
+type SignalWorkerOptions = {
+  agentServer?: {
+     fastify: FastifyInstance;
+  };
+  db: Db;
+  handlers: SignalHandlers;
+  logger?: Logger;
+  runtime: Runtime;
+  sweepIntervalMs?: number;
+};
 ```
 
 Everything `createSignalWorker` needs. Three required values, and three with defaults.
@@ -566,7 +618,9 @@ Everything `createSignalWorker` needs. Three required values, and three with def
 ##### agentServer?
 
 ```ts
-readonly optional agentServer?: object;
+readonly optional agentServer?: {
+  fastify: FastifyInstance;
+};
 ```
 
 The Agent server, if the agent is to read prior Signals and Runs.
@@ -706,7 +760,12 @@ change. The tables below are compiled against it, and their generation reads the
 ### workerTables
 
 ```ts
-const workerTables: object;
+const workerTables: {
+  runs: PgTableWithColumns<{
+  }>;
+  signals: PgTableWithColumns<{
+  }>;
+};
 ```
 
 Everything the Signal Worker keeps, as `db.handle` wants it.
