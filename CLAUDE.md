@@ -105,6 +105,11 @@ them. The pages are the eight subpaths of the export map
 ([ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md)), titled with the specifier a
 Developer imports from, and `example/` is not among them.
 
+**[`docs/api-docs.md`](./docs/api-docs.md) is what those comments are written against**: which
+fact goes in a module comment, which in a constructor, which in a method, and which belongs in a
+comment that never renders. It governs the OpenAPI `description` strings too, since those are
+the other thing an Operator reads. Prose style is `/simple-english` and is not its subject.
+
 **`site/` is an npm package of its own, with its own lockfile and its own `node_modules`**, and
 it buys exactly one thing: a second TypeScript, because TypeDoc peers a compiler up to `6.0.x`
 and this package pins 7. `site/README.md` argues that and states the **exit condition** — when
