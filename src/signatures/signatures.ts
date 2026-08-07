@@ -117,12 +117,12 @@ export type SignaturesOptions = {
 /**
  * The signing identity as a Component: one in-process method, and nothing kept.
  *
- * Nothing is stored. No tables, no route that lists what has been signed, and no record anywhere
- * that a signing happened beyond the one log line. The artifact `sign` answers with is the whole
- * of what happened, and losing it means signing again.
+ * Nothing is stored. No route lists what has been signed, and no record anywhere says that a
+ * signing happened beyond the one log line. The artifact `sign` answers with is the whole of what
+ * happened, and losing it means signing again.
  *
- * Verifying and handing out the public key are routes rather than methods here. Both answer
- * somebody outside, and a caller in this process holds the key already.
+ * Checking an artifact and serving the public key are routes rather than part of the programmatic
+ * API. Both answer somebody outside, and a caller in this process holds the key already.
  *
  * Stopping the Gateway is what stops all signing. The key lives in this process and nothing about
  * it can be revoked, so a key that outlived the process would sign forever.

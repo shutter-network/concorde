@@ -1,28 +1,27 @@
 # shared-agent-framework/signals
 
-The Signal Worker, the Component that owns the Signal queue, Signal Handler dispatch and Run
-execution. A Signal is something that arrived and may make the agent act, emitted by a Producer,
-which is anything inside the Gateway trusted to write one. A Run is one execution of the agent
-over one Prompt. The Worker takes Signals in the order they arrived and runs one Run at a time,
-whatever Session that Run is in.
+The Signal Worker owns the Signal queue, Signal Handler dispatch and Run execution. A Signal is
+something that arrived and may make the agent act, emitted by a Producer, which is anything
+inside the Gateway trusted to write one. A Run is one execution of the agent over one Prompt. The
+Worker claims Signals in the order they arrived and runs one Run at a time, whatever Session that
+Run is in.
 
 Most deployments meet this subpath as a vocabulary rather than as a constructor.
 [SignalHandler](#signalhandler) is what an Operator writes, and it is the framework's primary extension
 point in the way an endpoint handler is a web framework's: it takes a [Signal](#signal) and answers
 with [Prompt](#prompt)s, and [SignalHandlers](#signalhandlers) is the map from a `kind` to one of them.
 [Runtime](#runtime) is the other seam, the single method an Agent Implementation is driven through.
-[createSignalWorker](#createsignalworker) builds the Worker itself, and [SignalWorker](#signalworker) is what comes back,
-carrying the `emit` a Producer writes through.
+[createSignalWorker](#createsignalworker) builds the Worker itself, and [SignalWorker](#signalworker) is what comes back.
+Its programmatic API is `emit`, which a Producer writes a Signal through.
 
-`createGateway` builds a Worker already and keys it last, so it drains while every other
-Component is still live, which is when a Handler's post phase sends its failure notice. Build one
-yourself only when you assemble a Gateway by hand. Either way the Handler map is a construction
-option, so a Handler that emits back into the same Worker is built after it and assigned in.
+`createGateway` builds a Worker already, so reach for the constructor only when you assemble a
+Gateway by hand. Either way the Handler map is a construction option, so a Handler that emits back
+into the same Worker is built after the Worker and assigned in.
 
 None of this is on the package root. The Worker, its options and the whole Handler vocabulary are
 reachable through `shared-agent-framework/signals` and nowhere else. The two tables are here too,
-for the barrel an Operator generates their DDL from; they reference no other component's, so a
-barrel may carry them alone.
+for the schema an Operator generates their migrations from. They reference no other component's
+table, so that schema can carry them alone.
 
 ## Example
 
@@ -655,10 +654,10 @@ stop(): Promise<void>;
 
 Stops looking for Signals and waits for the Run in flight to finish.
 
-Not a shutdown protocol. The order Components stop in is the Operator's, and the framework
-installs no `SIGTERM` handling of its own. There is no cancellation either: the Run in flight
-runs to completion, because abandoning it would leave partial effects nothing retries. So this
-takes as long as the slowest Run the agent can have started.
+Not a shutdown protocol: the framework installs no `SIGTERM` handling of its own. There is no
+cancellation either. The Run in flight runs to completion, because abandoning it would leave
+partial effects nothing retries, so this takes as long as the slowest Run the agent can have
+started.
 
 Whatever is still pending stays pending, for the next worker over this database to drain.
 
@@ -886,9 +885,8 @@ function createSignalWorker(options): SignalWorker;
 Builds a Signal Worker over a Db, a Runtime and a map of Signal Handlers, and registers the read
 routes on the Agent server if one was passed.
 
-`createGateway` builds a Worker already and keys it last, so it drains while every other
-Component is still live. Reach for this only when assembling a Gateway by hand with
-`createBareGateway`.
+`createGateway` builds a Worker already. Reach for this only when assembling a Gateway by hand
+with `createBareGateway`.
 
 #### Parameters
 

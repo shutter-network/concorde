@@ -10,10 +10,6 @@
  * end. That is what breaks the cycle between the worker, the Signal Handlers and a component a
  * post phase calls. The worker keeps that exact object and reads it at dispatch, and nothing can
  * dispatch before `start`.
- *
- * Key order in the returned record is not the construction order above it: the Worker is
- * constructed early and keyed last, so its drain runs while the Db, both servers and the
- * Operator's own parts are all still live (ADR-0037, ADR-0045).
  */
 
 import fastifySwagger from "@fastify/swagger";
@@ -31,9 +27,6 @@ import { createSignalWorker } from "./signals/index.ts";
  *
  * This is what `extend` is handed, and the four keys `handlers` is handed beside whatever `extend`
  * returned. The same four keys are on `gateway.components` afterwards.
- *
- * It is not the start order. The Worker is keyed last in the Gateway's record, so that it drains
- * while everything else is still live.
  */
 export type InfraComponents = {
   db: Db;
@@ -46,9 +39,8 @@ export type InfraComponents = {
  * What `extend` may return: Components under keys of your own, and none of the four infrastructure
  * keys.
  *
- * Those four are a type error rather than a substitution, because a spread would overwrite one and
- * keep its position, in silence. Call {@link createBareGateway} to run a Db, a server or a Signal
- * Worker of your own.
+ * Those four are a type error rather than a substitution, because a spread would overwrite one in
+ * silence. Call {@link createBareGateway} to run a Db, a server or a Signal Worker of your own.
  */
 export type GatewayExtension = Record<string, Component> & {
   [K in keyof InfraComponents]?: never;
@@ -87,11 +79,9 @@ export type GatewayOptions<E extends GatewayExtension> = {
    * Builds Components of your own out of the four this call constructed, and returns them under
    * keys of your own.
    *
-   * The opinionated components go here, each one `create*` call: Users, Signatures, Decisions, the
-   * Messenger with the single Channel that reaches people, and the Scheduler. A deployment that
-   * wants none of them omits this callback. What it returns is keyed ahead of the Worker, so those
-   * Components are still live through the drain and stop after it, which is what a Signal
-   * Handler's post phase needs.
+   * Every component this call does not build is constructed here, one `create*` each: Users,
+   * Signatures, Decisions, the Messenger with the single Channel that reaches people, and the
+   * Scheduler. A deployment that wants none of them omits this callback.
    */
   readonly extend?: (components: InfraComponents) => E;
   /**
@@ -146,8 +136,8 @@ function describeSurface(fastify: FastifyInstance, title: string, description: s
 
 /**
  * Builds the Db, both self-describing servers and the Signal Worker, runs `extend` and then
- * `handlers`, and answers with a Gateway keyed `db`, `agentServer`, `publicServer`, whatever
- * `extend` returned, and `worker` last.
+ * `handlers`, and answers with a Gateway holding those four under `db`, `agentServer`,
+ * `publicServer` and `worker`, beside whatever `extend` returned.
  *
  * Nothing connects, listens or applies DDL. Construction registers routes and returns, so the
  * database has to be carrying your own tables by the time you call `gateway.start()`.
@@ -203,8 +193,8 @@ export function createGateway<E extends GatewayExtension = Record<string, never>
     ...(options.sweepIntervalMs === undefined ? {} : { sweepIntervalMs: options.sweepIntervalMs }),
   });
 
-  // The infrastructure handed to `extend`. The worker is in it, but it is keyed last in the
-  // returned record below, not here.
+  // The infrastructure handed to `extend`, the worker among it: a component of the Operator's own
+  // takes it to emit a Signal.
   const infra: InfraComponents = { db, agentServer, publicServer, worker };
 
   // `{} as E` because there is no value this function can construct that TypeScript will accept
@@ -212,7 +202,8 @@ export function createGateway<E extends GatewayExtension = Record<string, never>
   // case `E` is the parameter's default, `Record<string, never>`.
   const extension: E = options.extend === undefined ? ({} as E) : options.extend(infra);
 
-  // Key order is start order, and it is not the construction order above; see the file header.
+  // The record the Gateway is assembled from: the four this call built, and whatever `extend`
+  // returned. The type forbids an extension key that collides with one of the four.
   const components = {
     db,
     agentServer,

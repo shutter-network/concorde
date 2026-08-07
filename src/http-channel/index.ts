@@ -1,24 +1,21 @@
 /**
- * The HTTP Channel, the component that reaches a User over HTTP and lets them reach back. A
- * Channel is what carries a Message to one person over one medium; the Messenger owns the log and
- * reaches nobody. This one is a submission and a poll on the Public server, which is what a browser
- * can talk to with no client library.
+ * The HTTP Channel is a Channel implementation for the Messenger, carrying Messages between the
+ * Shared Agent and a User over HTTP. The Messenger owns the log and reaches nobody; a Channel is
+ * what reaches a person over one medium. This one exposes a submission and a poll on the Public
+ * server, which a browser can drive with no client library.
  *
  * {@link createHttpChannel} makes one, and {@link HttpChannelOptions} is what it takes.
- * {@link HttpChannel} is what comes back, and there is no method on it that trusted code calls.
- * Answering a User is `messenger.send` and reading their log is `messenger.history`, and both are
- * the same call whichever Channel a deployment built.
+ * {@link HttpChannel} is what comes back, and it has no programmatic API at all. Sending and
+ * reading belong to the Messenger, and HTTP needs no identity of its own beyond the Token a User
+ * already presents, so an Operator's own code calls the Messenger and never this.
  *
- * Build the Messenger first, since the constructor registers with it, and build Users
- * first too, for the `requireUser` hook both routes run. A Messenger takes one Channel and refuses
- * the second, so this is where a deployment settles on one medium and gives up the other. Key this
- * in the Gateway's record ahead of the Signal Worker, beside the Messenger: the Worker is keyed
- * last so it drains first, and a Signal Handler's post phase may still be answering somebody.
+ * Construct the Messenger and Users first. The constructor registers itself with the Messenger,
+ * which accepts at most one Channel, so a deployment that registers this one gives up every other
+ * medium.
  *
- * Nothing is stored here and there are no tables, so this subpath has nothing for an Operator's
- * migration barrel. Barrel `shared-agent-framework/messenger` for the log, and
- * `shared-agent-framework/users` beside it. There is no queue either, because HTTP delivery is the
- * User asking: an outbound Message is already in the log, and the next poll carries it.
+ * It does not use the Db and exports no schema. It stores nothing, and it queues nothing either:
+ * HTTP delivery is the User asking, so an outbound Message is already in the Messenger's log and
+ * the next poll carries it.
  *
  * @example
  * A Gateway a browser can talk to: the Messenger, this Channel registered with it, and a Handler

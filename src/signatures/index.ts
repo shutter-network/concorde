@@ -1,17 +1,19 @@
 /**
- * Signatures, the component that holds the Shared Agent's signing identity. A Signed Statement is
- * one compact JWS: a string anybody can check against the agent's public key, offline, without
- * reaching this Gateway and without trusting the Operator.
+ * The Signatures component holds the Shared Agent's signing identity. A Signed Statement is one
+ * compact JWS: a string anybody can check against the agent's public key, offline, without reaching
+ * this Gateway and without trusting the Operator.
  *
- * {@link createSignatures} makes one. {@link Signatures} is what comes back, and its `sign` is the
- * whole of what trusted code gets. {@link SignedClaims} is what goes into a payload.
+ * {@link createSignatures} makes one. {@link Signatures} is what comes back, and its programmatic
+ * API is the single `sign`. {@link SignedClaims} is what goes into a payload.
  *
  * The deployment brings the key. Nothing here parses a PEM, reads an environment variable or
  * generates a keypair, so construction without one throws rather than inventing an identity.
  *
- * Build Users first, whose `requireUser` this takes, and build this before Decisions,
- * which signs through it. Key it ahead of the Signal Worker in the Gateway's record: the Worker is
- * keyed last so it drains first, and a Signal Handler's post phase may still need to sign.
+ * Construct Users first, whose `requireUser` this takes, and construct this before Decisions, which
+ * signs through it.
+ *
+ * It does not use the Db and exports no schema. A Signed Statement is never kept, so an Operator's
+ * migrations have nothing of this component to create.
  *
  * @example
  * A Gateway with Signatures, and a Statement signed from the Operator's own code.

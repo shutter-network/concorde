@@ -90,8 +90,8 @@ export type DecisionsOptions = {
 };
 
 /**
- * The Decision log as a Component: a publish that joins the caller's transaction, and a read of the
- * whole log that needs neither a Token nor a route.
+ * The Decision log as a Component. Its programmatic API is two methods: a publish that joins the
+ * caller's transaction, and a read of the whole log that needs neither a Token nor a route.
  *
  * Every other capability is a route this component registered itself, and no route plugin is
  * exported. A Signal Handler therefore commits to something and builds the next Prompt out of what

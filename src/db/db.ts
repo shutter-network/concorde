@@ -73,11 +73,8 @@ export type Listening = {
  * transactions, and `LISTEN` registrations.
  *
  * **No migrations, and no DDL of any kind.** Nothing here creates a schema, applies a change or
- * tracks what was applied. The Operator assembles the components they run into one barrel and
+ * tracks what was applied. The Operator re-exports the components they run into one barrel and
  * pushes it with their own `drizzle-kit` before the Gateway starts.
- *
- * A Component, and normally the first key in the Gateway's record. Everything queries it, and the
- * Signal Worker's drain queries it on the way down, so it starts first and stops last.
  */
 export type Db = Component & {
   /**

@@ -38,9 +38,9 @@ export type HttpChannelOptions = {
   /**
    * The Db one transaction is opened on, and queried through not at all.
    *
-   * This component owns no tables. What it needs a Db for is the submission: the Message and the
-   * Signal that wakes the agent for it are one act, and the Messenger's inbound write joins that
-   * transaction rather than opening one of its own.
+   * This component exports no schema and has no table to read. What it needs a Db for is the
+   * submission: the Message and the Signal that wakes the agent for it are one act, and the
+   * Messenger's inbound write joins that transaction rather than opening one of its own.
    */
   readonly db: Db;
   /**
@@ -80,19 +80,19 @@ export type HttpChannelOptions = {
  * `start` and `stop` are no-ops too, because polling opens no connection and sets no ticker going.
  * `name` is `"http"`, which nothing routes on and nothing stores.
  *
- * Nothing is kept: no tables, no queue and no read position, so a restart loses nothing this
- * component was holding and there is nothing here to migrate. The log and every Message in it are
- * the Messenger's.
+ * It keeps nothing: it exports no schema, it queues nothing, and it records no read position, so a
+ * restart loses nothing this component was holding and there is nothing here to migrate. The log
+ * and every Message in it are the Messenger's.
  *
- * So there is no method on this that trusted code calls. What a deployment holds the object for is
- * its place in the Gateway's record, and everything it does it does for a request on the Public
+ * So it has no programmatic API. Everything this Channel does it does for a request on the Public
  * server or for the Messenger that registered it.
  */
 export type HttpChannel = Channel;
 
 /**
- * Builds the HTTP Channel, registers it with the Messenger, and puts one route group at `/messages`
- * on the Public server: a submission, and a cursored read of the submitting User's own log.
+ * Builds the HTTP Channel, registers it with the Messenger, and registers one route group at
+ * `/messages` on the Public server: a submission, and a cursored read of the submitting User's own
+ * log.
  *
  * Nothing here connects, listens or applies DDL.
  *

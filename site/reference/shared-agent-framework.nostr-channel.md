@@ -1,32 +1,32 @@
 # shared-agent-framework/nostr-channel
 
-The Nostr Channel, the component that reaches a User in the Nostr client they already use, and
-lets them reach the Shared Agent from it. A **Channel** is what reaches one person over one
-medium, where the Messenger owns the log and reaches nobody. This one exchanges NIP-17 private
-direct messages over a single connection to one **Relay** the Operator runs, and a message from a
-public key the Operator recorded becomes an inbound Message and its Signal in one transaction, so
-a Signal Handler or a Prompt template written against the Messenger needs no change.
+The Nostr Channel is a Channel implementation for the Messenger, reaching a User in the Nostr
+client they already use and letting them reach the Shared Agent from it. The Messenger owns the
+log and reaches nobody; a Channel is what reaches a person over one medium. This one exchanges
+NIP-17 private direct messages over a single connection to one **Relay** the Operator runs, and a
+message from a public key the Operator recorded becomes an inbound Message and its Signal in one
+transaction, so a Signal Handler or a Prompt template written against the Messenger needs no
+change.
 
-[createNostrChannel](#createnostrchannel) makes one. [NostrChannel](#nostrchannel) is what comes back, and
-`recordPublicKey` is the only method trusted code calls: everything else on it is for the
-Messenger or for the Relay. [NostrChannelOptions](#nostrchanneloptions) takes the Shared Agent's Nostr secret key
-as 32 raw bytes, a second keypair that the signing identity neither is nor can become.
+[createNostrChannel](#createnostrchannel) makes one. [NostrChannel](#nostrchannel) is what comes back. Its programmatic
+API is `recordPublicKey`, which admits one User to this medium, and `publicKey`, which is the
+address an Operator tells that User to write to; everything else on it the Messenger and the
+Relay drive. [NostrChannelOptions](#nostrchanneloptions) takes the Shared Agent's Nostr secret key as 32 raw
+bytes, a second keypair that the signing identity neither is nor can become.
 
 It registers no route on either server, a Relay being what a User reaches over this medium, so a
 deployment running this and nothing else has a Public server carrying only the login. It
 publishes one thing about itself and no profile, a relay list naming that Relay, so the agent
 appears in a client as a bare public key.
 
-Build the Messenger first, which the constructor registers with, and Users first,
-whose Users these public keys belong to. Key the result ahead of the Signal Worker in the
-Gateway's record: the Worker is keyed last so it drains first, and a Signal Handler's post phase
-may still send. One Channel per Messenger, refused at registration, so a deployment runs Nostr or
-HTTP and not both.
+Construct the Messenger and Users first: the constructor registers with the Messenger, and these
+public keys belong to Users. A Messenger accepts at most one Channel and refuses a second at
+registration, so a deployment runs Nostr or HTTP and not both.
 
-The subpath also carries the three tables, `pubkeys`, `received` and `outbox`, for the barrel an
-Operator's `drizzle-kit` reads. Barrel `shared-agent-framework/users` beside
-it: two of those tables reference the tables of Users, and a barrel without them generates a
-key onto a table nothing creates.
+The subpath exports the three tables, `pubkeys`, `received` and `outbox`, beside the constructor,
+for the schema an Operator generates their migrations from. Put `shared-agent-framework/users`
+into that same schema, because two of those tables reference the Users component's table, and a
+schema without it generates a foreign key onto a table nothing creates.
 
 ## Example
 
@@ -325,10 +325,6 @@ it and `stop` closes it. What survives a stop is what PostgreSQL holds. A reply 
 and not published keeps its row and goes out at the next start, and a Message already written
 stays written.
 
-A deployment holds it to key it in the Gateway's record, ahead of the Signal Worker as the
-Messenger itself is: a Signal Handler's post phase sends after the drain, and that send arrives
-here.
-
 #### Type Declaration
 
 ##### publicKey
@@ -450,9 +446,9 @@ compared against what the Relay advertises, and the finished wrap is queued. A f
 those steps throws and rolls the Message back with it, so a Message recorded as sent was always
 one that could go out.
 
-What it does not do is reach the Relay. The publish waits for the commit and happens in
-[NostrChannel.drain](#nostrchannel), so a rollback after this returns leaves nobody holding words the log
-denies.
+It never touches the Relay. The publish waits for the commit and happens in
+[NostrChannel.drain](#nostrchannel), so a rollback after this returns leaves nobody holding words the
+log denies.
 
 ###### Type Parameters
 
@@ -515,7 +511,8 @@ a restart says it again at no cost, the kind being replaceable.
 stop(): Promise<void>;
 ```
 
-Closes the connection and stops handling what arrives on it or what is queued for it.
+Closes the connection, and stops both admitting what arrives on it and publishing what is
+queued for it.
 
 It returns once nothing is in flight, so a Message half-written when shutdown began is either
 committed or rolled back before the Db is closed under it. A publish interrupted here leaves its
@@ -571,7 +568,7 @@ a relay list the Relay refused is a warning and nothing else.
 readonly messenger: Messenger;
 ```
 
-The Messenger that owns the log. Build it before this.
+The Messenger that owns the log. Construct it before this.
 
 The constructor registers with it, which is what makes this the Channel that reaches people and
 hands back the only way to write an inbound Message. A second Channel on the same Messenger is
@@ -789,8 +786,7 @@ function createNostrChannel(options): NostrChannel;
 
 Builds the Nostr Channel and registers it with the Messenger.
 
-Nothing here connects, listens or applies DDL. Key the result before the Signal Worker, so that it
-stops after the drain.
+Nothing here connects, listens or applies DDL.
 
 #### Parameters
 

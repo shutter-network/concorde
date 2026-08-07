@@ -1,25 +1,22 @@
 # shared-agent-framework/http-channel
 
-The HTTP Channel, the component that reaches a User over HTTP and lets them reach back. A
-Channel is what carries a Message to one person over one medium; the Messenger owns the log and
-reaches nobody. This one is a submission and a poll on the Public server, which is what a browser
-can talk to with no client library.
+The HTTP Channel is a Channel implementation for the Messenger, carrying Messages between the
+Shared Agent and a User over HTTP. The Messenger owns the log and reaches nobody; a Channel is
+what reaches a person over one medium. This one exposes a submission and a poll on the Public
+server, which a browser can drive with no client library.
 
 [createHttpChannel](#createhttpchannel) makes one, and [HttpChannelOptions](#httpchanneloptions) is what it takes.
-[HttpChannel](#httpchannel) is what comes back, and there is no method on it that trusted code calls.
-Answering a User is `messenger.send` and reading their log is `messenger.history`, and both are
-the same call whichever Channel a deployment built.
+[HttpChannel](#httpchannel) is what comes back, and it has no programmatic API at all. Sending and
+reading belong to the Messenger, and HTTP needs no identity of its own beyond the Token a User
+already presents, so an Operator's own code calls the Messenger and never this.
 
-Build the Messenger first, since the constructor registers with it, and build Users
-first too, for the `requireUser` hook both routes run. A Messenger takes one Channel and refuses
-the second, so this is where a deployment settles on one medium and gives up the other. Key this
-in the Gateway's record ahead of the Signal Worker, beside the Messenger: the Worker is keyed
-last so it drains first, and a Signal Handler's post phase may still be answering somebody.
+Construct the Messenger and Users first. The constructor registers itself with the Messenger,
+which accepts at most one Channel, so a deployment that registers this one gives up every other
+medium.
 
-Nothing is stored here and there are no tables, so this subpath has nothing for an Operator's
-migration barrel. Barrel `shared-agent-framework/messenger` for the log, and
-`shared-agent-framework/users` beside it. There is no queue either, because HTTP delivery is the
-User asking: an outbound Message is already in the log, and the next poll carries it.
+It does not use the Db and exports no schema. It stores nothing, and it queues nothing either:
+HTTP delivery is the User asking, so an outbound Message is already in the Messenger's log and
+the next poll carries it.
 
 ## Example
 
@@ -79,12 +76,11 @@ outbound Message needs nothing from here, being in the log already for the next 
 `start` and `stop` are no-ops too, because polling opens no connection and sets no ticker going.
 `name` is `"http"`, which nothing routes on and nothing stores.
 
-Nothing is kept: no tables, no queue and no read position, so a restart loses nothing this
-component was holding and there is nothing here to migrate. The log and every Message in it are
-the Messenger's.
+It keeps nothing: it exports no schema, it queues nothing, and it records no read position, so a
+restart loses nothing this component was holding and there is nothing here to migrate. The log
+and every Message in it are the Messenger's.
 
-So there is no method on this that trusted code calls. What a deployment holds the object for is
-its place in the Gateway's record, and everything it does it does for a request on the Public
+So it has no programmatic API. Everything this Channel does it does for a request on the Public
 server or for the Messenger that registered it.
 
 ***
@@ -112,9 +108,9 @@ readonly db: Db;
 
 The Db one transaction is opened on, and queried through not at all.
 
-This component owns no tables. What it needs a Db for is the submission: the Message and the
-Signal that wakes the agent for it are one act, and the Messenger's inbound write joins that
-transaction rather than opening one of its own.
+This component exports no schema and has no table to read. What it needs a Db for is the
+submission: the Message and the Signal that wakes the agent for it are one act, and the
+Messenger's inbound write joins that transaction rather than opening one of its own.
 
 ##### messenger
 
@@ -169,8 +165,9 @@ answer.
 function createHttpChannel(options): Channel;
 ```
 
-Builds the HTTP Channel, registers it with the Messenger, and puts one route group at `/messages`
-on the Public server: a submission, and a cursored read of the submitting User's own log.
+Builds the HTTP Channel, registers it with the Messenger, and registers one route group at
+`/messages` on the Public server: a submission, and a cursored read of the submitting User's own
+log.
 
 Nothing here connects, listens or applies DDL.
 

@@ -1,23 +1,26 @@
 # shared-agent-framework/users
 
-Users, the component that holds the identities a Gateway authenticates. A User is an
-opaque Gateway-issued id, a set of Attributes the Operator writes, and a set of Tokens. There is
-no email and no username anywhere, so the id is the only handle a User has. Attributes are
-arbitrary JSON that nothing in the framework interprets, and they are where a deployment's
-grouping and therefore its authorization live.
+The Users component holds the identities a Gateway authenticates. A User is an opaque
+Gateway-issued id, a set of Attributes the Operator writes, and a set of Tokens. There is no
+email and no username anywhere, so the id is the only handle a User has. Attributes are arbitrary
+JSON that nothing in the framework interprets, and they are where a deployment's grouping and
+therefore its authorization live.
 
-[createUsers](#createusers) makes one. [Users](#users) is what comes back, and it carries the methods and
-the `requireUser` hook that the rest of a deployment reaches for. [UserRecord](#userrecord) is what
-every surface here answers with.
+[createUsers](#createusers) makes one. [Users](#users) is what comes back, carrying the `requireUser` hook
+the rest of a deployment reaches for and a programmatic API that creates a User, sets Attributes,
+replaces a password and issues a Token. The last three have no route anywhere.
+[UserRecord](#userrecord) is what every surface here answers with.
 
-Other components take that hook rather than authenticating anybody themselves, so build this one
-before them. Two of them also point a foreign key at the `users` table, so an Operator's barrel
-that carries the Messenger's tables or the Nostr Channel's without this subpath's generates a
-constraint onto a table it never creates.
+Other components take that hook rather than authenticating anybody themselves, so construct this
+one first.
 
-The subpath also exports the `users` and `tokens` tables, for the barrel an Operator's
-`drizzle-kit` reads, and importing it declares `request.safUser` on every `FastifyRequest` in
-the program, whether or not the program builds this component.
+The subpath exports the `users` and `tokens` tables beside the constructor, for the schema an
+Operator generates their migrations from. The Messenger and the Nostr Channel both point a
+foreign key at the `users` table, so a schema carrying either of them without this subpath
+generates a constraint onto a table it never creates.
+
+Importing this subpath declares `request.safUser` on every `FastifyRequest` in the program,
+whether or not the program constructs this component.
 
 ## Example
 
@@ -196,16 +199,16 @@ type Users = Component & {
 };
 ```
 
-The Users component as a Component: two route plugins, one hook, and the methods no route has.
+The Users component as a Component: two route plugins, one hook, and a programmatic API.
 
 It keeps a User's Attributes and a scrypt digest of their password, and one row per issued
 Token. A Token's plaintext exists once, in the response that issued it, so nothing here answers
 with one afterwards. Nothing removes a User either: `revoke` is the closest thing to shutting
 one out.
 
-Setting Attributes, replacing a password and issuing a Token are methods rather than routes.
-Trusted code holds this object, and the Agent server is the surface an injected prompt reaches,
-so the three capabilities that escalate are not there to reach.
+Setting Attributes, replacing a password and issuing a Token are in the programmatic API and have
+no route anywhere. The Agent server is the surface an injected prompt reaches, so the three
+capabilities that escalate are not there to reach.
 
 Every write takes the caller's transaction as its first argument and every read takes none, so a
 read cannot see the caller's own uncommitted write. That is why `create` and `issueToken` answer
@@ -384,9 +387,9 @@ revoke<TSchema>(tx, user): Promise<void>;
 
 Revokes every Token of one User, so that none of them works again.
 
-What `DELETE /auth/tokens` does, reachable without HTTP. Nothing removes a User, so this is
-the closest thing to shutting one out, and it is not close: they keep their password, which
-mints a new Token, so replace that too.
+The revocation `DELETE /auth/tokens` performs, reachable without HTTP. Nothing removes a User,
+so this is the closest thing to shutting one out, and it is not close: they keep their
+password, which mints a new Token, so replace that too.
 
 Idempotent, and it answers nothing, not even a count. The rows are deleted rather than marked,
 which is the only compaction that table gets.

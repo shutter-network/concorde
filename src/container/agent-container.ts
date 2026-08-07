@@ -23,8 +23,8 @@ import { runContainer } from "./process.ts";
  * The container one Run happens in, as an Operator declares it. Inert: it creates nothing, checks
  * no path and starts nothing.
  *
- * Only `image` is required. Everything else is a default worth overriding, or a fact about a
- * deployment that most deployments do not have.
+ * Everything but `image` is a default worth overriding, or a fact about a deployment that most
+ * deployments do not have.
  *
  * The container is always run with `--rm`, with stdin open and no TTY, and as this process's own
  * uid and gid. None of the three is configurable: a TTY makes an agent decide it is being used
@@ -32,7 +32,10 @@ import { runContainer } from "./process.ts";
  * Handler can read and delete but cannot change.
  */
 export type AgentContainer = {
-  /** The container image. The one thing no deployment can leave out. */
+  /**
+   * The container image, handed to the container runtime as written, so a tag or a digest pins what
+   * runs.
+   */
   readonly image: string;
   /**
    * What the container can reach on disk. Absent means nothing at all.

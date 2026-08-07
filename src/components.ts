@@ -17,9 +17,9 @@ import type { FastifyListenOptions } from "fastify";
 /**
  * One part of a Gateway: it starts, and it stops.
  *
- * Both methods are required. A part with nothing to start and nothing to release supplies two that
- * do nothing, which is ordinary rather than an apology: the record is the Gateway's directory of
- * its own parts, and membership gives a part a position before it needs one.
+ * A part with nothing to start and nothing to release supplies two methods that do nothing, which
+ * is ordinary rather than an apology: the record is the Gateway's directory of its own parts, and a
+ * part that holds no resource still belongs in it.
  *
  * A Component has no name of its own. Its key in the Gateway's record is its name, and that key is
  * what a failed start is reported under.
@@ -108,7 +108,7 @@ export type ListeningServer = {
 };
 
 /**
- * Gives a server a place in a Gateway's start order: `start` binds it, and `stop` closes it.
+ * Wraps a server as a Component: `start` binds it, and `stop` closes it.
  *
  * It constructs nothing and defaults nothing, so call `Fastify()` with whatever options you want
  * and state where the instance binds. There is no default address. What comes back carries that

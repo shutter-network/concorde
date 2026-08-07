@@ -1,31 +1,31 @@
 /**
- * The Nostr Channel, the component that reaches a User in the Nostr client they already use, and
- * lets them reach the Shared Agent from it. A **Channel** is what reaches one person over one
- * medium, where the Messenger owns the log and reaches nobody. This one exchanges NIP-17 private
- * direct messages over a single connection to one **Relay** the Operator runs, and a message from a
- * public key the Operator recorded becomes an inbound Message and its Signal in one transaction, so
- * a Signal Handler or a Prompt template written against the Messenger needs no change.
+ * The Nostr Channel is a Channel implementation for the Messenger, reaching a User in the Nostr
+ * client they already use and letting them reach the Shared Agent from it. The Messenger owns the
+ * log and reaches nobody; a Channel is what reaches a person over one medium. This one exchanges
+ * NIP-17 private direct messages over a single connection to one **Relay** the Operator runs, and a
+ * message from a public key the Operator recorded becomes an inbound Message and its Signal in one
+ * transaction, so a Signal Handler or a Prompt template written against the Messenger needs no
+ * change.
  *
- * {@link createNostrChannel} makes one. {@link NostrChannel} is what comes back, and
- * `recordPublicKey` is the only method trusted code calls: everything else on it is for the
- * Messenger or for the Relay. {@link NostrChannelOptions} takes the Shared Agent's Nostr secret key
- * as 32 raw bytes, a second keypair that the signing identity neither is nor can become.
+ * {@link createNostrChannel} makes one. {@link NostrChannel} is what comes back. Its programmatic
+ * API is `recordPublicKey`, which admits one User to this medium, and `publicKey`, which is the
+ * address an Operator tells that User to write to; everything else on it the Messenger and the
+ * Relay drive. {@link NostrChannelOptions} takes the Shared Agent's Nostr secret key as 32 raw
+ * bytes, a second keypair that the signing identity neither is nor can become.
  *
  * It registers no route on either server, a Relay being what a User reaches over this medium, so a
  * deployment running this and nothing else has a Public server carrying only the login. It
  * publishes one thing about itself and no profile, a relay list naming that Relay, so the agent
  * appears in a client as a bare public key.
  *
- * Build the Messenger first, which the constructor registers with, and Users first,
- * whose Users these public keys belong to. Key the result ahead of the Signal Worker in the
- * Gateway's record: the Worker is keyed last so it drains first, and a Signal Handler's post phase
- * may still send. One Channel per Messenger, refused at registration, so a deployment runs Nostr or
- * HTTP and not both.
+ * Construct the Messenger and Users first: the constructor registers with the Messenger, and these
+ * public keys belong to Users. A Messenger accepts at most one Channel and refuses a second at
+ * registration, so a deployment runs Nostr or HTTP and not both.
  *
- * The subpath also carries the three tables, `pubkeys`, `received` and `outbox`, for the barrel an
- * Operator's `drizzle-kit` reads. Barrel `shared-agent-framework/users` beside
- * it: two of those tables reference the tables of Users, and a barrel without them generates a
- * key onto a table nothing creates.
+ * The subpath exports the three tables, `pubkeys`, `received` and `outbox`, beside the constructor,
+ * for the schema an Operator generates their migrations from. Put `shared-agent-framework/users`
+ * into that same schema, because two of those tables reference the Users component's table, and a
+ * schema without it generates a foreign key onto a table nothing creates.
  *
  * @example
  * A Gateway a User reaches over Nostr, with their public key recorded out of band.

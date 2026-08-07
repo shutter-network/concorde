@@ -9,8 +9,8 @@ trusted by every party.
 has, hands them to an `extend` callback where the components you want are constructed by hand,
 and answers with a [Gateway](#gateway). A Gateway is a record of [Component](#component)s under your own
 keys, started in key order and stopped in the reverse of it, and a Component itself.
-[createBareGateway](#createbaregateway) takes such a record directly, for a deployment whose infrastructure
-shape is what differs.
+[createBareGateway](#createbaregateway) takes such a record directly, for a deployment that needs a different
+infrastructure shape than the one `createGateway` builds.
 
 What is left here belongs to no one component. [openDb](#opendb) is the PostgreSQL client every
 component queries through. [createAgentContainerRuntime](#createagentcontainerruntime) runs an agent as one fresh
@@ -20,10 +20,8 @@ Handlebars file, [defaultLogger](#defaultlogger) is what a part logs through whe
 [CursorWindow](#cursorwindow) is the stretch of a log a paged read asks for, which two components take and
 neither owns.
 
-The opinionated components are each on a subpath of their own and nothing here imports one, so a
-deployment loads only what it builds. The vocabulary a Signal Handler is written in is on
-`shared-agent-framework/signals`, and the agent program the reference deployment runs is on
-`shared-agent-framework/pi`.
+Every other component has a subpath of its own, and nothing here imports one, so a deployment
+loads only what it constructs.
 
 ## Example
 
@@ -71,8 +69,8 @@ type AgentContainer = {
 The container one Run happens in, as an Operator declares it. Inert: it creates nothing, checks
 no path and starts nothing.
 
-Only `image` is required. Everything else is a default worth overriding, or a fact about a
-deployment that most deployments do not have.
+Everything but `image` is a default worth overriding, or a fact about a deployment that most
+deployments do not have.
 
 The container is always run with `--rm`, with stdin open and no TTY, and as this process's own
 uid and gid. None of the three is configurable: a TTY makes an agent decide it is being used
@@ -131,7 +129,8 @@ the container runtime only: there is still no way to pass the agent itself an un
 readonly image: string;
 ```
 
-The container image. The one thing no deployment can leave out.
+The container image, handed to the container runtime as written, so a tag or a digest pins what
+runs.
 
 ##### logger?
 
@@ -335,9 +334,9 @@ type Component = {
 
 One part of a Gateway: it starts, and it stops.
 
-Both methods are required. A part with nothing to start and nothing to release supplies two that
-do nothing, which is ordinary rather than an apology: the record is the Gateway's directory of
-its own parts, and membership gives a part a position before it needs one.
+A part with nothing to start and nothing to release supplies two methods that do nothing, which
+is ordinary rather than an apology: the record is the Gateway's directory of its own parts, and a
+part that holds no resource still belongs in it.
 
 A Component has no name of its own. Its key in the Gateway's record is its name, and that key is
 what a failed start is reported under.
@@ -482,11 +481,8 @@ The one PostgreSQL client in a Gateway: the pool, a schema-typed handle per comp
 transactions, and `LISTEN` registrations.
 
 **No migrations, and no DDL of any kind.** Nothing here creates a schema, applies a change or
-tracks what was applied. The Operator assembles the components they run into one barrel and
+tracks what was applied. The Operator re-exports the components they run into one barrel and
 pushes it with their own `drizzle-kit` before the Gateway starts.
-
-A Component, and normally the first key in the Gateway's record. Everything queries it, and the
-Signal Worker's drain queries it on the way down, so it starts first and stops last.
 
 #### Type Declaration
 
@@ -647,9 +643,8 @@ type GatewayExtension = Record<string, Component> & { [K in keyof InfraComponent
 What `extend` may return: Components under keys of your own, and none of the four infrastructure
 keys.
 
-Those four are a type error rather than a substitution, because a spread would overwrite one and
-keep its position, in silence. Call [createBareGateway](#createbaregateway) to run a Db, a server or a Signal
-Worker of your own.
+Those four are a type error rather than a substitution, because a spread would overwrite one in
+silence. Call [createBareGateway](#createbaregateway) to run a Db, a server or a Signal Worker of your own.
 
 ***
 
@@ -709,11 +704,9 @@ readonly optional extend?: (components) => E;
 Builds Components of your own out of the four this call constructed, and returns them under
 keys of your own.
 
-The opinionated components go here, each one `create*` call: Users, Signatures, Decisions, the
-Messenger with the single Channel that reaches people, and the Scheduler. A deployment that
-wants none of them omits this callback. What it returns is keyed ahead of the Worker, so those
-Components are still live through the drain and stop after it, which is what a Signal
-Handler's post phase needs.
+Every component this call does not build is constructed here, one `create*` each: Users,
+Signatures, Decisions, the Messenger with the single Channel that reaches people, and the
+Scheduler. A deployment that wants none of them omits this callback.
 
 ###### Parameters
 
@@ -825,9 +818,6 @@ The four parts every deployment has, under the keys they are filed under.
 
 This is what `extend` is handed, and the four keys `handlers` is handed beside whatever `extend`
 returned. The same four keys are on `gateway.components` afterwards.
-
-It is not the start order. The Worker is keyed last in the Gateway's record, so that it drains
-while everything else is still live.
 
 #### Properties
 
@@ -1425,8 +1415,8 @@ function createGateway<E>(options): Gateway<never>;
 ```
 
 Builds the Db, both self-describing servers and the Signal Worker, runs `extend` and then
-`handlers`, and answers with a Gateway keyed `db`, `agentServer`, `publicServer`, whatever
-`extend` returned, and `worker` last.
+`handlers`, and answers with a Gateway holding those four under `db`, `agentServer`,
+`publicServer` and `worker`, beside whatever `extend` returned.
 
 Nothing connects, listens or applies DDL. Construction registers routes and returns, so the
 database has to be carrying your own tables by the time you call `gateway.start()`.
@@ -1542,7 +1532,7 @@ function serverComponent<S>(server, listen): Component & {
 };
 ```
 
-Gives a server a place in a Gateway's start order: `start` binds it, and `stop` closes it.
+Wraps a server as a Component: `start` binds it, and `stop` closes it.
 
 It constructs nothing and defaults nothing, so call `Fastify()` with whatever options you want
 and state where the instance binds. There is no default address. What comes back carries that

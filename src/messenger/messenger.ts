@@ -184,11 +184,12 @@ export type MessengerOptions = {
 
 /**
  * The Message log as a Component: one table holding every Message in both directions, numbered per
- * User, and the three acts on it that no request can express.
+ * User.
  *
- * A registration that hands a Channel the only way to write an inbound Message, a send that joins a
- * transaction of the caller's own, and a read of any User's whole log. Every other capability is a
- * route this component registered itself, and no route plugin is exported.
+ * Its programmatic API is three methods: a registration that hands a Channel the only way to write
+ * an inbound Message, a send that joins a transaction of the caller's own, and a read of any User's
+ * whole log. Every other capability is a route this component registered itself, and no route
+ * plugin is exported.
  *
  * It reaches nobody. Every outbound Message goes out through the one registered {@link Channel},
  * and there is none until one is constructed.
@@ -202,7 +203,7 @@ export type MessengerOptions = {
  */
 export type Messenger = Component & {
   /**
-   * Takes the Channel that will reach people, and answers with the handle it writes inbound
+   * Registers the Channel that will reach people, and answers with the handle it writes inbound
    * Messages through.
    *
    * Called by the Channel's own constructor and by nothing else, so an entry point performs no
@@ -327,8 +328,7 @@ export function createMessenger(options: MessengerOptions): Messenger {
     history: (userId, asked) =>
       readHistory(userId, { ...asked, limit: asked?.limit ?? limitSchema.default }),
 
-    // The two no-ops, whose reason is on the type above. This component is in the record for its
-    // membership and its position.
+    // The two no-ops, whose reason is on the type above.
     start: async () => {},
     stop: async () => {},
   };

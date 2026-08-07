@@ -1,28 +1,29 @@
 /**
- * The Messenger, the component that owns the Message log. A Message is a `text` string travelling
- * one way between the Shared Agent and one User, numbered from 1 inside that User's log across both
+ * The Messenger component owns the Message log. A Message is a `text` string travelling one way
+ * between the Shared Agent and one User, numbered from 1 inside that User's log across both
  * directions, kept forever.
  *
- * {@link createMessenger} makes one. {@link Messenger} is what comes back, and it carries the three
- * acts no request can express: taking a Channel, sending to one User inside a transaction of the
- * caller's own, and reading any User's whole log. {@link MessageRecord} is what every surface
- * answers with, and it is the Signal payload too: with {@link messageReceivedKind} beside it, an
- * Operator's Handler map needs no string literal of its own and no payload type to re-declare.
+ * {@link createMessenger} makes one. {@link Messenger} is what comes back, and its programmatic API
+ * registers a Channel, sends to one User inside a transaction the caller opened, and reads any
+ * User's whole log. {@link MessageRecord} is the record every surface answers with, and an inbound
+ * one is also the payload of the Signal that announces it. That Signal's `kind` is
+ * {@link messageReceivedKind}, so a Handler map keys off an exported constant and types its payload
+ * as `MessageRecord`, declaring neither for itself.
  *
- * It reaches nobody. A {@link Channel} is what gets a Message to a person over one medium, and
- * `shared-agent-framework/http-channel` and `shared-agent-framework/nostr-channel` are the two that
- * ship. Construct one with this Messenger and it registers itself, so an entry point wires nothing
- * further. One Channel per Messenger, refused at registration, so a deployment runs one medium and
- * a `send` before any Channel exists throws rather than recording something nothing will deliver.
+ * The Messenger reaches nobody. A {@link Channel} carries a Message to a person over one medium,
+ * and `shared-agent-framework/http-channel` and `shared-agent-framework/nostr-channel` are the two
+ * implementations that ship. Construct one with this Messenger and it registers itself, so an entry
+ * point wires nothing further.
  *
- * Build Users before this, which it takes beside the Signal Worker the Gateway hands to
- * `extend`. Key this component and its Channel ahead of that Worker in the Gateway's record: the
- * Worker is keyed last so it drains first, and a Signal Handler's post phase is where a person is
- * told that their Run failed.
+ * A Messenger accepts at most one Channel, and registering a second throws. A deployment therefore
+ * runs one medium. Until a Channel registers, `send` throws rather than recording a Message nothing
+ * will deliver.
  *
- * The subpath also carries the one table. Barrel `shared-agent-framework/users` beside it, because
- * `messages.user_id` references the Users component's table and a barrel without it generates a
- * foreign key onto a table nothing creates.
+ * Construct Users and the Signal Worker before this, which takes both.
+ *
+ * The subpath exports the one table beside the constructor. Put `shared-agent-framework/users` into
+ * the same schema, because `messages.user_id` references the Users component's table, and a schema
+ * without it generates a foreign key onto a table nothing creates.
  *
  * @example
  * A Gateway whose agent answers a submitted Message over HTTP, and a send from the Operator's own

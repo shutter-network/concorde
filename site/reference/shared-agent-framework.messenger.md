@@ -1,29 +1,30 @@
 # shared-agent-framework/messenger
 
-The Messenger, the component that owns the Message log. A Message is a `text` string travelling
-one way between the Shared Agent and one User, numbered from 1 inside that User's log across both
+The Messenger component owns the Message log. A Message is a `text` string travelling one way
+between the Shared Agent and one User, numbered from 1 inside that User's log across both
 directions, kept forever.
 
-[createMessenger](#createmessenger) makes one. [Messenger](#messenger) is what comes back, and it carries the three
-acts no request can express: taking a Channel, sending to one User inside a transaction of the
-caller's own, and reading any User's whole log. [MessageRecord](#messagerecord) is what every surface
-answers with, and it is the Signal payload too: with [messageReceivedKind](#messagereceivedkind) beside it, an
-Operator's Handler map needs no string literal of its own and no payload type to re-declare.
+[createMessenger](#createmessenger) makes one. [Messenger](#messenger) is what comes back, and its programmatic API
+registers a Channel, sends to one User inside a transaction the caller opened, and reads any
+User's whole log. [MessageRecord](#messagerecord) is the record every surface answers with, and an inbound
+one is also the payload of the Signal that announces it. That Signal's `kind` is
+[messageReceivedKind](#messagereceivedkind), so a Handler map keys off an exported constant and types its payload
+as `MessageRecord`, declaring neither for itself.
 
-It reaches nobody. A [Channel](#channel) is what gets a Message to a person over one medium, and
-`shared-agent-framework/http-channel` and `shared-agent-framework/nostr-channel` are the two that
-ship. Construct one with this Messenger and it registers itself, so an entry point wires nothing
-further. One Channel per Messenger, refused at registration, so a deployment runs one medium and
-a `send` before any Channel exists throws rather than recording something nothing will deliver.
+The Messenger reaches nobody. A [Channel](#channel) carries a Message to a person over one medium,
+and `shared-agent-framework/http-channel` and `shared-agent-framework/nostr-channel` are the two
+implementations that ship. Construct one with this Messenger and it registers itself, so an entry
+point wires nothing further.
 
-Build Users before this, which it takes beside the Signal Worker the Gateway hands to
-`extend`. Key this component and its Channel ahead of that Worker in the Gateway's record: the
-Worker is keyed last so it drains first, and a Signal Handler's post phase is where a person is
-told that their Run failed.
+A Messenger accepts at most one Channel, and registering a second throws. A deployment therefore
+runs one medium. Until a Channel registers, `send` throws rather than recording a Message nothing
+will deliver.
 
-The subpath also carries the one table. Barrel `shared-agent-framework/users` beside it, because
-`messages.user_id` references the Users component's table and a barrel without it generates a
-foreign key onto a table nothing creates.
+Construct Users and the Signal Worker before this, which takes both.
+
+The subpath exports the one table beside the constructor. Put `shared-agent-framework/users` into
+the same schema, because `messages.user_id` references the Users component's table, and a schema
+without it generates a foreign key onto a table nothing creates.
 
 ## Example
 
@@ -166,7 +167,7 @@ type MessageRecord = {
 
 A Message, as every surface answers with it.
 
-The POST response, both reads, the methods trusted code calls and the Signal payload are one
+The POST response, both reads, the Messenger's programmatic API and the Signal payload are one
 shape rather than a projection each, so `direction` is on a Signal payload too, where it is
 always `inbound`.
 
@@ -228,11 +229,12 @@ type Messenger = Component & {
 ```
 
 The Message log as a Component: one table holding every Message in both directions, numbered per
-User, and the three acts on it that no request can express.
+User.
 
-A registration that hands a Channel the only way to write an inbound Message, a send that joins a
-transaction of the caller's own, and a read of any User's whole log. Every other capability is a
-route this component registered itself, and no route plugin is exported.
+Its programmatic API is three methods: a registration that hands a Channel the only way to write
+an inbound Message, a send that joins a transaction of the caller's own, and a read of any User's
+whole log. Every other capability is a route this component registered itself, and no route
+plugin is exported.
 
 It reaches nobody. Every outbound Message goes out through the one registered [Channel](#channel),
 and there is none until one is constructed.
@@ -283,7 +285,7 @@ routes' default when omitted and is not capped, a cap being there to bound a res
 register(channel): MessengerHandle;
 ```
 
-Takes the Channel that will reach people, and answers with the handle it writes inbound
+Registers the Channel that will reach people, and answers with the handle it writes inbound
 Messages through.
 
 Called by the Channel's own constructor and by nothing else, so an entry point performs no

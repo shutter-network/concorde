@@ -241,7 +241,7 @@ export type Maturation = {
 };
 
 /**
- * What maturing a due row does: announce the occurrence it was armed for, and derive the one after.
+ * What maturing a due row decides: announce the occurrence it was armed for, and derive the next.
  *
  * The stored `at` is announced verbatim, and `next` is derived strictly forward from `now`, so a
  * gap the process slept through is jumped rather than enumerated. Keep both halves in one decision:

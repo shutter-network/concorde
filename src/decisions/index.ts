@@ -1,23 +1,22 @@
 /**
- * Decisions, the component that owns the one global log of Decisions. A Decision is a Statement the
+ * The Decisions component owns the one global log of Decisions. A Decision is a Statement the
  * Shared Agent has committed to in public: signed with its key, numbered from 1, kept forever, and
  * readable by every User rather than addressed to one.
  *
- * {@link createDecisions} makes one. {@link Decisions} is what comes back, carrying the `publish`
- * and `history` that no request can express. {@link DecisionRecord} is what every surface answers
+ * {@link createDecisions} makes one. {@link Decisions} is what comes back, and its programmatic API
+ * publishes into the log and reads it back. {@link DecisionRecord} is what every surface answers
  * with, and `jws` is the field that matters: the artifact is the Decision, and the other three
  * fields can be read back out of it by anybody holding the public key.
  *
- * Build Signatures first, which this signs through. A Decision that was not signed is not a
- * Decision, so there is no degraded mode where rows arrive without artifacts. Build Users
- * first too, for the hook the Public read runs. Key it ahead of the Signal Worker in the
- * Gateway's record: the Worker is keyed last so it drains first, and a Signal Handler's post phase
- * may still publish.
+ * Construct Signatures and Users first. Every Decision is signed, so there is no degraded mode in
+ * which rows arrive without artifacts.
  *
- * Nothing is notified when a Decision is published. There is no Signal and no Handler to wake, so a
- * User discovers a Decision by polling, and the largest `seq` they hold is the whole resume
- * mechanism. The subpath also carries the one table, which references no other component's, so a
- * barrel carrying it without the tables of Users generates cleanly.
+ * Publishing notifies nobody. It emits no Signal and wakes no Handler, so a User discovers a
+ * Decision by polling, and the largest `seq` they hold is the whole resume mechanism.
+ *
+ * The subpath exports the one table beside the constructor, for the schema an Operator generates
+ * their migrations from. It references no other component's table, so it can go into that schema
+ * on its own.
  *
  * @example
  * A Gateway with Decisions, and a Statement committed to from the Operator's own code.

@@ -3,7 +3,7 @@
  *
  * **Outbound is two halves and they must stay two**
  * ([ADR-0049](../../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)). `send` runs
- * inside the caller's transaction and does everything knowable there; `drain` is the network act
+ * inside the caller's transaction and settles everything knowable there; `drain` is the network act
  * and runs after that transaction commits. Moving the publish up into `send` either holds a
  * transaction open across a round trip to the Relay or leaves a recipient holding words a rollback
  * erased. Moving the seal down into `drain` turns the size bound into a queue row that fails once
@@ -74,7 +74,7 @@ export type NostrChannelOptions = {
    */
   readonly db: Db;
   /**
-   * The Messenger that owns the log. Build it before this.
+   * The Messenger that owns the log. Construct it before this.
    *
    * The constructor registers with it, which is what makes this the Channel that reaches people and
    * hands back the only way to write an inbound Message. A second Channel on the same Messenger is
@@ -138,10 +138,6 @@ export type NostrChannelOptions = {
  * it and `stop` closes it. What survives a stop is what PostgreSQL holds. A reply that was queued
  * and not published keeps its row and goes out at the next start, and a Message already written
  * stays written.
- *
- * A deployment holds it to key it in the Gateway's record, ahead of the Signal Worker as the
- * Messenger itself is: a Signal Handler's post phase sends after the drain, and that send arrives
- * here.
  */
 export type NostrChannel = Channel & {
   /**
@@ -194,9 +190,9 @@ export type NostrChannel = Channel & {
    * those steps throws and rolls the Message back with it, so a Message recorded as sent was always
    * one that could go out.
    *
-   * What it does not do is reach the Relay. The publish waits for the commit and happens in
-   * {@link NostrChannel.drain}, so a rollback after this returns leaves nobody holding words the log
-   * denies.
+   * It never touches the Relay. The publish waits for the commit and happens in
+   * {@link NostrChannel.drain}, so a rollback after this returns leaves nobody holding words the
+   * log denies.
    *
    * @throws `UnrecordedPublicKeyError` if no Nostr public key is recorded for that User.
    * @throws `MessageTooLargeError` if the wrap exceeds the Relay's advertised maximum message
@@ -247,7 +243,8 @@ export type NostrChannel = Channel & {
   start(): Promise<void>;
 
   /**
-   * Closes the connection and stops handling what arrives on it or what is queued for it.
+   * Closes the connection, and stops both admitting what arrives on it and publishing what is
+   * queued for it.
    *
    * It returns once nothing is in flight, so a Message half-written when shutdown began is either
    * committed or rolled back before the Db is closed under it. A publish interrupted here leaves its
@@ -259,8 +256,7 @@ export type NostrChannel = Channel & {
 /**
  * Builds the Nostr Channel and registers it with the Messenger.
  *
- * Nothing here connects, listens or applies DDL. Key the result before the Signal Worker, so that it
- * stops after the drain.
+ * Nothing here connects, listens or applies DDL.
  *
  * @throws `ChannelAlreadyRegisteredError` if a Channel is already registered with that Messenger.
  */

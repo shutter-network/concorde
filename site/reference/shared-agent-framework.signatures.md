@@ -1,18 +1,20 @@
 # shared-agent-framework/signatures
 
-Signatures, the component that holds the Shared Agent's signing identity. A Signed Statement is
-one compact JWS: a string anybody can check against the agent's public key, offline, without
-reaching this Gateway and without trusting the Operator.
+The Signatures component holds the Shared Agent's signing identity. A Signed Statement is one
+compact JWS: a string anybody can check against the agent's public key, offline, without reaching
+this Gateway and without trusting the Operator.
 
-[createSignatures](#createsignatures) makes one. [Signatures](#signatures) is what comes back, and its `sign` is the
-whole of what trusted code gets. [SignedClaims](#signedclaims) is what goes into a payload.
+[createSignatures](#createsignatures) makes one. [Signatures](#signatures) is what comes back, and its programmatic
+API is the single `sign`. [SignedClaims](#signedclaims) is what goes into a payload.
 
 The deployment brings the key. Nothing here parses a PEM, reads an environment variable or
 generates a keypair, so construction without one throws rather than inventing an identity.
 
-Build Users first, whose `requireUser` this takes, and build this before Decisions,
-which signs through it. Key it ahead of the Signal Worker in the Gateway's record: the Worker is
-keyed last so it drains first, and a Signal Handler's post phase may still need to sign.
+Construct Users first, whose `requireUser` this takes, and construct this before Decisions, which
+signs through it.
+
+It does not use the Db and exports no schema. A Signed Statement is never kept, so an Operator's
+migrations have nothing of this component to create.
 
 ## Example
 
@@ -70,12 +72,12 @@ type Signatures = Component & {
 
 The signing identity as a Component: one in-process method, and nothing kept.
 
-Nothing is stored. No tables, no route that lists what has been signed, and no record anywhere
-that a signing happened beyond the one log line. The artifact `sign` answers with is the whole
-of what happened, and losing it means signing again.
+Nothing is stored. No route lists what has been signed, and no record anywhere says that a
+signing happened beyond the one log line. The artifact `sign` answers with is the whole of what
+happened, and losing it means signing again.
 
-Verifying and handing out the public key are routes rather than methods here. Both answer
-somebody outside, and a caller in this process holds the key already.
+Checking an artifact and serving the public key are routes rather than part of the programmatic
+API. Both answer somebody outside, and a caller in this process holds the key already.
 
 Stopping the Gateway is what stops all signing. The key lives in this process and nothing about
 it can be revoked, so a key that outlived the process would sign forever.

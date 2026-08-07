@@ -1,27 +1,26 @@
 /**
- * The Signal Worker, the Component that owns the Signal queue, Signal Handler dispatch and Run
- * execution. A Signal is something that arrived and may make the agent act, emitted by a Producer,
- * which is anything inside the Gateway trusted to write one. A Run is one execution of the agent
- * over one Prompt. The Worker takes Signals in the order they arrived and runs one Run at a time,
- * whatever Session that Run is in.
+ * The Signal Worker owns the Signal queue, Signal Handler dispatch and Run execution. A Signal is
+ * something that arrived and may make the agent act, emitted by a Producer, which is anything
+ * inside the Gateway trusted to write one. A Run is one execution of the agent over one Prompt. The
+ * Worker claims Signals in the order they arrived and runs one Run at a time, whatever Session that
+ * Run is in.
  *
  * Most deployments meet this subpath as a vocabulary rather than as a constructor.
  * {@link SignalHandler} is what an Operator writes, and it is the framework's primary extension
  * point in the way an endpoint handler is a web framework's: it takes a {@link Signal} and answers
  * with {@link Prompt}s, and {@link SignalHandlers} is the map from a `kind` to one of them.
  * {@link Runtime} is the other seam, the single method an Agent Implementation is driven through.
- * {@link createSignalWorker} builds the Worker itself, and {@link SignalWorker} is what comes back,
- * carrying the `emit` a Producer writes through.
+ * {@link createSignalWorker} builds the Worker itself, and {@link SignalWorker} is what comes back.
+ * Its programmatic API is `emit`, which a Producer writes a Signal through.
  *
- * `createGateway` builds a Worker already and keys it last, so it drains while every other
- * Component is still live, which is when a Handler's post phase sends its failure notice. Build one
- * yourself only when you assemble a Gateway by hand. Either way the Handler map is a construction
- * option, so a Handler that emits back into the same Worker is built after it and assigned in.
+ * `createGateway` builds a Worker already, so reach for the constructor only when you assemble a
+ * Gateway by hand. Either way the Handler map is a construction option, so a Handler that emits back
+ * into the same Worker is built after the Worker and assigned in.
  *
  * None of this is on the package root. The Worker, its options and the whole Handler vocabulary are
  * reachable through `shared-agent-framework/signals` and nowhere else. The two tables are here too,
- * for the barrel an Operator generates their DDL from; they reference no other component's, so a
- * barrel may carry them alone.
+ * for the schema an Operator generates their migrations from. They reference no other component's
+ * table, so that schema can carry them alone.
  *
  * @example
  * A Signal Handler, and a Producer that emits into it.

@@ -8,8 +8,8 @@
  * has, hands them to an `extend` callback where the components you want are constructed by hand,
  * and answers with a {@link Gateway}. A Gateway is a record of {@link Component}s under your own
  * keys, started in key order and stopped in the reverse of it, and a Component itself.
- * {@link createBareGateway} takes such a record directly, for a deployment whose infrastructure
- * shape is what differs.
+ * {@link createBareGateway} takes such a record directly, for a deployment that needs a different
+ * infrastructure shape than the one `createGateway` builds.
  *
  * What is left here belongs to no one component. {@link openDb} is the PostgreSQL client every
  * component queries through. {@link createAgentContainerRuntime} runs an agent as one fresh
@@ -19,10 +19,8 @@
  * {@link CursorWindow} is the stretch of a log a paged read asks for, which two components take and
  * neither owns.
  *
- * The opinionated components are each on a subpath of their own and nothing here imports one, so a
- * deployment loads only what it builds. The vocabulary a Signal Handler is written in is on
- * `shared-agent-framework/signals`, and the agent program the reference deployment runs is on
- * `shared-agent-framework/pi`.
+ * Every other component has a subpath of its own, and nothing here imports one, so a deployment
+ * loads only what it constructs.
  *
  * @example
  * The smallest Gateway that runs: nothing of the Operator's own beyond one Signal Handler.

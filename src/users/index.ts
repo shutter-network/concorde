@@ -1,22 +1,25 @@
 /**
- * Users, the component that holds the identities a Gateway authenticates. A User is an
- * opaque Gateway-issued id, a set of Attributes the Operator writes, and a set of Tokens. There is
- * no email and no username anywhere, so the id is the only handle a User has. Attributes are
- * arbitrary JSON that nothing in the framework interprets, and they are where a deployment's
- * grouping and therefore its authorization live.
+ * The Users component holds the identities a Gateway authenticates. A User is an opaque
+ * Gateway-issued id, a set of Attributes the Operator writes, and a set of Tokens. There is no
+ * email and no username anywhere, so the id is the only handle a User has. Attributes are arbitrary
+ * JSON that nothing in the framework interprets, and they are where a deployment's grouping and
+ * therefore its authorization live.
  *
- * {@link createUsers} makes one. {@link Users} is what comes back, and it carries the methods and
- * the `requireUser` hook that the rest of a deployment reaches for. {@link UserRecord} is what
- * every surface here answers with.
+ * {@link createUsers} makes one. {@link Users} is what comes back, carrying the `requireUser` hook
+ * the rest of a deployment reaches for and a programmatic API that creates a User, sets Attributes,
+ * replaces a password and issues a Token. The last three have no route anywhere.
+ * {@link UserRecord} is what every surface here answers with.
  *
- * Other components take that hook rather than authenticating anybody themselves, so build this one
- * before them. Two of them also point a foreign key at the `users` table, so an Operator's barrel
- * that carries the Messenger's tables or the Nostr Channel's without this subpath's generates a
- * constraint onto a table it never creates.
+ * Other components take that hook rather than authenticating anybody themselves, so construct this
+ * one first.
  *
- * The subpath also exports the `users` and `tokens` tables, for the barrel an Operator's
- * `drizzle-kit` reads, and importing it declares `request.safUser` on every `FastifyRequest` in
- * the program, whether or not the program builds this component.
+ * The subpath exports the `users` and `tokens` tables beside the constructor, for the schema an
+ * Operator generates their migrations from. The Messenger and the Nostr Channel both point a
+ * foreign key at the `users` table, so a schema carrying either of them without this subpath
+ * generates a constraint onto a table it never creates.
+ *
+ * Importing this subpath declares `request.safUser` on every `FastifyRequest` in the program,
+ * whether or not the program constructs this component.
  *
  * @example
  * A Gateway with Users, and a User admitted from the Operator's own code.

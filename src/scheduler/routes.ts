@@ -1,8 +1,8 @@
 /**
  * A Fastify plugin, like every other component's routes, registered at no prefix on the Agent
  * server the Scheduler is constructed with. Passing no server registers none of it, and that switch
- * does double duty: a self-waking agent is a load on the one serial worker lane, and a
- * prompt-injectable one is a hand on the Operator's own Schedules.
+ * answers two worries at once: a self-waking agent loads the one serial worker lane, and a
+ * prompt-injectable one reaches the Operator's own Schedules.
  *
  * | Route | Answers |
  * | --- | --- |

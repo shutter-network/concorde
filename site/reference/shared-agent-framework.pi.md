@@ -1,13 +1,14 @@
 # shared-agent-framework/pi
 
-The `pi` Agent Implementation, from `shared-agent-framework/pi`. An Agent Implementation is the
-interchangeable agent program a Run happens in, and `pi` is the one this package adapts.
+The `pi` Agent Implementation drives the `pi` coding agent as the Signal Worker's Runtime. An
+Agent Implementation is the interchangeable agent program a Run happens in, and `pi` is the one
+this package adapts.
 
 [createPiRuntime](#createpiruntime) is the whole of it for an Operator: hand it an Agent Container, and pass
 what comes back as the Signal Worker's `runtime`. [piRun](#pirun) and [interpretPiOutput](#interpretpioutput) are
-pure functions, exported to be called from a test and to be read. `piRun` is what makes this `pi`
-rather than some other agent, and it is the entire size of the job for an author writing a second
-Agent Implementation.
+pure functions, exported to be called from a test and to be read. `piRun` holds everything
+specific to `pi` and nothing else does, so it is the entire size of the job for an author writing
+a second Agent Implementation.
 
 Nothing about a container is here. The Agent Container, the Mount Table, the argument assembly,
 the confinement flags, the process handling and the diagnosis appended to a failure all come from

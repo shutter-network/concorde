@@ -145,8 +145,8 @@ function resolveEntry(entry: Mount, hostRoot: MountTable["hostRoot"]): ResolvedE
 /**
  * What the daemon is given for a Gateway-side path.
  *
- * Identity while `hostRoot` is absent, which is a Gateway on the host. Otherwise the one pair does
- * the whole translation, and a path outside the root is refused.
+ * Identity while `hostRoot` is absent, which is a Gateway on the host. Otherwise the one pair
+ * translates every entry, and a path outside the root is refused.
  */
 function hostPathFor(gatewayPath: string, hostRoot: MountTable["hostRoot"]): string {
   if (hostRoot === undefined) return gatewayPath;

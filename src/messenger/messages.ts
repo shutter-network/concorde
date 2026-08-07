@@ -22,7 +22,7 @@ type MessagesHandle = Handle<typeof messengerTables>;
 /**
  * A Message, as every surface answers with it.
  *
- * The POST response, both reads, the methods trusted code calls and the Signal payload are one
+ * The POST response, both reads, the Messenger's programmatic API and the Signal payload are one
  * shape rather than a projection each, so `direction` is on a Signal payload too, where it is
  * always `inbound`.
  *
@@ -56,8 +56,8 @@ export type OutgoingMessage = {
  * No User has that id: PostgreSQL's `23503`, which is the foreign key catching a wrong one.
  *
  * An error class rather than a status. The insert is reached from a route, which has a 404 to
- * answer with, and from trusted code, which has no reply at all. There is no lookup in front of the
- * write, so this comes from the write that failed.
+ * answer with, and from the programmatic API, which has no reply at all. There is no lookup in
+ * front of the write, so this comes from the write that failed.
  *
  * The id is in the message and on no field of its own. Every caller already holds the id it passed.
  */

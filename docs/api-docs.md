@@ -9,6 +9,14 @@ comment](#never-in-a-rendered-comment).
 Prose style is `/simple-english`. This file is about content and organization: which fact goes
 in which comment.
 
+**Simplified Technical English is not a small vocabulary.** It bounds sentence length and forbids
+the constructions that make a sentence ambiguous. It asks for one meaning per word, which is an
+argument for the exact verb and against the vague one. So write the verb that names what happens: a
+component **registers** routes, a hook **refuses** a request, a sequence **burns** a number, a
+worker **drains** a queue. "Does", "makes" and "handles" fit every sentence because they describe
+none of them, and a reader who has to reconstruct the specific act from a general one has been
+given work rather than saved it. Short sentences of exact words, not short sentences of easy ones.
+
 ## The reader is the Operator
 
 Every rendered comment is written for the person consuming the API. Not for the maintainer, and
@@ -90,16 +98,34 @@ Three jobs, and nothing else.
 
 1. **What this subpath is.** A sentence or two. Define any domain term it owns that no exported
    type carries, because there is no glossary and `CONTEXT.md` is not published. Name a component
-   as "the Users component".
+   as "the Users component", and make it the grammatical subject of the first sentence: "The
+   Decisions component owns the one global log of Decisions." Not "Decisions, the component that
+   owns the one global log of Decisions." The apposition puts the same noun twice in a row and
+   reads as a definition of the word rather than a statement about the part. This matters most
+   where the name is the plural of the thing owned, which is most of them.
 2. **What is in here, and which one you start from.** The core type and the entry function, with
    `{@link}`s. Not every export: the page lists those below. Neutral in tone, and not in emphasis.
    Naming the export a reader starts from is a judgment, and it is the most useful thing on the
    page. A comment that lists six exports evenly has made the reader rank them with less
    information than the author had.
-3. **The relationships nothing else can state.** What this must be built before or after, and
-   what is deliberately absent and where it lives instead. No single symbol owns a relationship,
-   so this is the only content with no lower home. State a construction order only where getting
-   it wrong costs something real.
+3. **The relationships nothing else can state.** What this must be constructed before or after,
+   and what is deliberately absent and where it lives instead. No single symbol owns a
+   relationship, so this is the only content with no lower home.
+
+   Construction order means one constructor taking another's result as an argument. State it when
+   the chain runs longer than one link, and link the components rather than naming an option the
+   reader has not reached yet: "Construct {@link Messenger} and Users first", not "construct
+   Users first, for the `requireUser` hook both routes run".
+
+   **The order of the keys in the Gateway's record is not a relationship, and no rendered comment
+   states one.** Nothing may ask an Operator to key one component ahead of another so that it
+   outlives a drain or survives a shutdown. A component that needs another started, stopped or
+   drained at a particular moment has a bug, and writing the workaround into the reference turns
+   that bug into a promise.
+
+   Where a component keeps nothing, write that it does not use the Db and exports no schema.
+   `schema` is the word an Operator searches the page for when they assemble their migrations, and
+   "no tables" is not that word.
 
 Then one `@example`. It stays here rather than on the constructor because it is the fastest
 orientation on the page, and because it shows exports working together, which is job 3 written in
@@ -107,16 +133,17 @@ code.
 
 ```ts
 /**
- * Users, the component that holds the identities a Gateway authenticates. A User is an opaque id,
- * a set of Attributes that the Operator writes, and a set of Tokens.
+ * The Users component holds the identities a Gateway authenticates. A User is an opaque
+ * Gateway-issued id, a set of Attributes the Operator writes, and a set of Tokens.
  *
- * {@link createUsers} makes one. {@link Users} is what comes back, and it carries the methods and
- * the `requireUser` hook that the rest of a deployment reaches for. Other components take that
- * hook, so build this one before them.
+ * {@link createUsers} makes one. {@link Users} is what comes back, carrying the `requireUser` hook
+ * the rest of a deployment reaches for and a programmatic API that creates a User, sets Attributes,
+ * replaces a password and issues a Token. The last three have no route anywhere.
  *
- * The subpath also exports the `users` and `tokens` tables, for the barrel an Operator's
- * `drizzle-kit` reads, and importing it declares `request.safUser` on every `FastifyRequest` in
- * the program.
+ * Other components take that hook rather than authenticating anybody themselves, so construct this
+ * one first. The subpath exports the `users` and `tokens` tables beside the constructor, for the
+ * schema an Operator generates their migrations from, and importing it declares `request.safUser`
+ * on every `FastifyRequest` in the program.
  *
  * @example ...
  * @module
@@ -135,7 +162,13 @@ refusal at construction. No example, and nothing about the options.
 
 **The type a constructor answers with.** `Users`, `Signatures`, `Db`. This is where the substance
 the module comment does not carry lands: what the component stores, what it issues, what it
-derives, and what survives a shutdown. Internals go in only where a caller can observe them. That
+derives, and what survives a shutdown.
+
+Its methods are the component's **programmatic API**: what an Operator's own code and a Signal
+Handler call in process, as opposed to the routes the component registers. Use that term. It is
+short, a reader already knows it, and the paraphrases it replaces were all worse. "The acts no
+request can express" is a riddle. "What trusted code holds" names a security property to describe
+a calling convention. "The methods no route has" defines the thing by what it is not. Internals go in only where a caller can observe them. That
 a Token row carries an expiry the database clock reads is in. Which index serves the lookup is
 not.
 
@@ -196,6 +229,12 @@ here is repeated in `index.ts`.
 - **An internal name.** A private helper, an index, a column, a SQL construct.
 - **A phrasing more elaborate than the path the reader is on.** "Add it to the Gateway", not
   "keep it in the Gateway record under a key of your own".
+- **The word "opinionated" as a class of component.** Every component here has opinions. What the
+  word reaches for is "not one of the four `createGateway` builds", which is a fact about that one
+  call, so say it there or leave it out.
+- **"Barrel" as a verb.** An Operator writes a barrel, or re-exports the subpaths they run into
+  one. Nobody barrels anything.
+- **A guarantee about the order the Gateway starts or stops its record.** See job 3 above.
 - **A literal `{{` … `}}`.** VitePress compiles every reference page as a Vue template and reads
   that as an interpolation, so the site build fails on it, inside a code span as much as outside
   one. This is the one rule here a check does catch: `check:docs` builds the site. Name the

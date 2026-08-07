@@ -92,7 +92,7 @@ export type SchedulerOptions = {
   /**
    * Where the agent creates, lists, reads and cancels Schedules over HTTP. Omit it and no route is
    * registered anywhere, which is the switch that keeps the agent away from Schedules altogether.
-   * The methods below stay available either way.
+   * The programmatic API below stays available either way.
    *
    * Given one, the constructor registers `PUT /schedules/:name`, `GET /schedules`,
    * `GET /schedules/:name` and `DELETE /schedules/:name`, at no prefix. These are the only routes
@@ -125,9 +125,9 @@ export type SchedulerOptions = {
  * one but a cancel, a `once` that has fired, or a `cron` reaching its `until`. There is no expiry
  * and nothing sweeps.
  *
- * The four methods work whether or not the Agent routes were switched on, and none of them is
- * scoped: names live in one flat namespace that the Operator and the agent share, so either reaches
- * what the other arranged.
+ * The programmatic API works whether or not the Agent routes were registered, and none of its four
+ * methods is scoped: names live in one flat namespace that the Operator and the agent share, so
+ * either reaches what the other arranged.
  *
  * An occurrence is announced once. The Signal and the row's advance or delete commit in one
  * transaction, so nothing can fire twice or retire silently. An occurrence that fell while the
@@ -196,9 +196,9 @@ export type Scheduler = Component & {
   /**
    * Cancels the firing timer, so no fire begins once it returns.
    *
-   * A Gateway stops its Components in reverse key order and the Signal Worker is keyed last, so the
-   * Worker has already drained by the time this runs. A Schedule that matured during that drain has
-   * committed its Signal, and the next boot's Worker is what runs it.
+   * A fire already under way commits its Signal with the row's advance or delete, so an occurrence
+   * announced during a shutdown is announced exactly once. A Signal no Worker reached before the
+   * process ended is run at the next boot.
    *
    * A second `stop`, or a `stop` before any `start`, finds no timer and does nothing.
    */
@@ -208,8 +208,7 @@ export type Scheduler = Component & {
 /**
  * Builds the Scheduler, and registers the four Agent routes when an Agent server is given.
  *
- * Nothing here connects, listens or applies DDL. Put the result in the Gateway's record under a key
- * of your own, ahead of the Signal Worker.
+ * Nothing here connects, listens or applies DDL, and no timer is armed until `start`.
  */
 export function createScheduler(options: SchedulerOptions): Scheduler {
   // The Component's own handle, typed to its own tables. `pg` never leaves the Db.

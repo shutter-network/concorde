@@ -105,16 +105,16 @@ export type UsersOptions = {
 };
 
 /**
- * The Users component as a Component: two route plugins, one hook, and the methods no route has.
+ * The Users component as a Component: two route plugins, one hook, and a programmatic API.
  *
  * It keeps a User's Attributes and a scrypt digest of their password, and one row per issued
  * Token. A Token's plaintext exists once, in the response that issued it, so nothing here answers
  * with one afterwards. Nothing removes a User either: `revoke` is the closest thing to shutting
  * one out.
  *
- * Setting Attributes, replacing a password and issuing a Token are methods rather than routes.
- * Trusted code holds this object, and the Agent server is the surface an injected prompt reaches,
- * so the three capabilities that escalate are not there to reach.
+ * Setting Attributes, replacing a password and issuing a Token are in the programmatic API and have
+ * no route anywhere. The Agent server is the surface an injected prompt reaches, so the three
+ * capabilities that escalate are not there to reach.
  *
  * Every write takes the caller's transaction as its first argument and every read takes none, so a
  * read cannot see the caller's own uncommitted write. That is why `create` and `issueToken` answer
@@ -226,9 +226,9 @@ export type Users = Component & {
   /**
    * Revokes every Token of one User, so that none of them works again.
    *
-   * What `DELETE /auth/tokens` does, reachable without HTTP. Nothing removes a User, so this is
-   * the closest thing to shutting one out, and it is not close: they keep their password, which
-   * mints a new Token, so replace that too.
+   * The revocation `DELETE /auth/tokens` performs, reachable without HTTP. Nothing removes a User,
+   * so this is the closest thing to shutting one out, and it is not close: they keep their
+   * password, which mints a new Token, so replace that too.
    *
    * Idempotent, and it answers nothing, not even a count. The rows are deleted rather than marked,
    * which is the only compaction that table gets.

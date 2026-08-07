@@ -163,10 +163,10 @@ export type SignalWorker = Component & {
   /**
    * Stops looking for Signals and waits for the Run in flight to finish.
    *
-   * Not a shutdown protocol. The order Components stop in is the Operator's, and the framework
-   * installs no `SIGTERM` handling of its own. There is no cancellation either: the Run in flight
-   * runs to completion, because abandoning it would leave partial effects nothing retries. So this
-   * takes as long as the slowest Run the agent can have started.
+   * Not a shutdown protocol: the framework installs no `SIGTERM` handling of its own. There is no
+   * cancellation either. The Run in flight runs to completion, because abandoning it would leave
+   * partial effects nothing retries, so this takes as long as the slowest Run the agent can have
+   * started.
    *
    * Whatever is still pending stays pending, for the next worker over this database to drain.
    */
@@ -207,9 +207,8 @@ type WakeupReason = "start" | "notification" | "listening" | "sweep";
  * Builds a Signal Worker over a Db, a Runtime and a map of Signal Handlers, and registers the read
  * routes on the Agent server if one was passed.
  *
- * `createGateway` builds a Worker already and keys it last, so it drains while every other
- * Component is still live. Reach for this only when assembling a Gateway by hand with
- * `createBareGateway`.
+ * `createGateway` builds a Worker already. Reach for this only when assembling a Gateway by hand
+ * with `createBareGateway`.
  */
 export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   const log = options.logger ?? defaultLogger();
