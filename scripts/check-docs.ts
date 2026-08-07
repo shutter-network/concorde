@@ -18,12 +18,13 @@
  * the inner loop (`site/README.md`). This installs that tree, so it needs the network and it
  * is slow. CI runs it as its own step.
  *
- * **TypeDoc's warnings do not fail this check, and that is deliberate.** It warns today that
- * `CursorWindow` is referenced by `Decisions.history` but exported by no specifier, so the
- * committed reference carries one known dangling reference. Fixing that means changing the
- * export map, which is a decision of its own rather than a thing a check gets to force at an
- * unrelated moment. TypeDoc's *errors* do fail it: the generation exits non-zero and so does
- * this.
+ * **TypeDoc's warnings fail this check**, through `treatWarningsAsErrors` in `typedoc.jsonc`,
+ * which says why. They did not until `CursorWindow` reached the package root: one dangling
+ * reference was known and tolerated, and an export map is not something a documentation check
+ * gets to force at an unrelated moment. With none left to tolerate, the tolerance only hid the
+ * next one, and the comparison below cannot see that one — a page rendering a type nobody can
+ * import is not a *stale* page, so it is committed and matches and this check passes. A failing
+ * generation stops the run before there is anything to compare against.
  */
 
 import { execFileSync } from "node:child_process";

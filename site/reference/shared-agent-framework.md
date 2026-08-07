@@ -10,6 +10,8 @@ The root carries what belongs to no component:
 - `openDb`, the PostgreSQL client every component queries through.
 - The Agent Container, which declares how the agent's container runs.
 - `templateHandler`, a Signal Handler that renders a Handlebars file.
+- `CursorWindow`, the stretch of a log a paged read asks for, which two components take as
+  an argument and neither of them owns.
 
 Each opinionated component has a subpath of its own, and the root imports none of them.
 A deployment loads only the components it builds.
@@ -368,6 +370,48 @@ readonly stdin: string;
 ```
 
 The Prompt, or whatever else the agent's function asked to have written to stdin.
+
+***
+
+### CursorWindow
+
+```ts
+type CursorWindow = object;
+```
+
+Which stretch of a log a read asks for: one cursor, or the other, or neither, and a limit.
+
+It carries no User id. Which log is read is settled elsewhere. A Token settles it on the
+Public server, and a query parameter on the Agent server. So it is the same shape wherever
+a log is paged. A component that wants its own name aliases this type, and the alias stays
+internal: an alias is transparent to the compiler, so a signature written against one still
+resolves to this.
+
+Exported from `shared-agent-framework`, the one name in this module that is. `Decisions.history`
+and `HttpMessenger.history` each take `Partial` of it, every field optional, so a caller that
+wants the newest page passes nothing.
+
+Both cursors at once describes two windows, and the route refuses it with `bothCursors`.
+
+#### Properties
+
+##### after?
+
+```ts
+readonly optional after?: number;
+```
+
+##### before?
+
+```ts
+readonly optional before?: number;
+```
+
+##### limit
+
+```ts
+readonly limit: number;
+```
 
 ***
 

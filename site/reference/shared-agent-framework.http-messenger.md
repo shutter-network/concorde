@@ -93,7 +93,7 @@ the routes' default and is not capped.
 
 ###### options?
 
-`Partial`\<`CursorWindow`\>
+`Partial`\<[`CursorWindow`](shared-agent-framework.md#cursorwindow)\>
 
 ###### Returns
 

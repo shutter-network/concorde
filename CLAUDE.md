@@ -126,9 +126,16 @@ fails in a check rather than in a browser. It reports both failures rather than 
 first. It is also what makes the guard in `site/specifier-titles.mjs` unattended: that guard
 compares `typedoc.jsonc`'s entry points against `package.json` `exports` both ways and fails
 the generation if they disagree, and before this command nothing but a human running TypeDoc
-fired it. CI runs it as its own step. TypeDoc's *warnings* do not fail it, deliberately and
-statedly: one dangling reference is known and ticketed, and an export-map change is not
-something a documentation check gets to force.
+fired it. CI runs it as its own step. TypeDoc's *warnings* fail it, through
+`treatWarningsAsErrors` in `typedoc.jsonc`. They did not while one dangling reference was known
+and ticketed, on the argument that an export-map change is not something a documentation check
+gets to force at an unrelated moment; `CursorWindow` reaching the package root left nothing to
+tolerate, and a tolerance with nothing behind it hides only the next one. The comparison against
+the committed pages cannot cover that case, because a page naming a type no specifier exports is
+honestly rendered rather than stale: it is committed, it matches, the check passes, and a
+Developer reads a name they cannot type into an import. What the strictness costs is that the
+export map is now something a CI step can force, at whatever moment a doc comment reaches for a
+symbol that is on no subpath.
 
 **The one command must stay ignorant of the second compiler.** `npm run check` installs none of
 `site/` and **must keep passing on a checkout where `site/node_modules` was never created** —

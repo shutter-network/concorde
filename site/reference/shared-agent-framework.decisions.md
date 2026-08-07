@@ -142,7 +142,7 @@ defaults to the routes' default and is not capped here, because a cap bounds a r
 
 ###### options?
 
-`Partial`\<`CursorWindow`\>
+`Partial`\<[`CursorWindow`](shared-agent-framework.md#cursorwindow)\>
 
 The shared window, every field optional.
 

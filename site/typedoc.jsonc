@@ -54,6 +54,17 @@
   "excludePrivate": true,
   "excludeInternal": true,
 
+  // A warning fails the generation, and therefore `check:docs`. TypeDoc's loudest warning is the
+  // dangling reference: a public signature naming a type that is on no specifier, which renders as
+  // dead text a Developer cannot follow and cannot import. There was one of those, tolerated
+  // because fixing it meant changing the export map and a documentation check does not get to
+  // force that at an unrelated moment. There is none now (issue 09), so tolerating buys nothing
+  // and hides the next one. Nothing else in the repository scans for it: committing the reference
+  // catches a *stale* page, not a page that is honestly rendered and says `CursorWindow` to a
+  // reader who cannot type it. What this costs is that an export a doc comment references but no
+  // subpath carries now fails a CI step, which is the moment to notice it.
+  "treatWarningsAsErrors": true,
+
   // TypeDoc's default grouping by kind is kept and no custom group is declared: a component's
   // tables land under Variables and its constructor under Functions, which separates them
   // without hiding either. The page header and breadcrumb are dropped because the title is

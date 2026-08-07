@@ -1,9 +1,12 @@
 /**
  * The conventions every component's HTTP routes share.
  *
- * Internal to the framework, and exported from no subpath. An Operator writing routes of
- * their own brings Fastify and writes them however they like. These are the rules the
- * framework's own components hold each other to, so that a Gateway answers one way:
+ * Internal to the framework, with one name excepted. `CursorWindow` below is a parameter of
+ * `Decisions.history` and of `HttpMessenger.history`, so it is exported from the package root,
+ * where what belongs to no single component lives. Everything else here reaches no specifier.
+ * An Operator writing routes of their own brings Fastify and writes them however they like.
+ * These are the rules the framework's own components hold each other to, so that a Gateway
+ * answers one way:
  *
  * - an unknown query parameter is a **400**, not a request answered with everything;
  * - an id in a path is **pattern-validated** before it reaches PostgreSQL;
@@ -45,7 +48,13 @@ export const cappedLimit = `\`limit\` defaults to ${limitSchema.default} and is 
  *
  * It carries no User id. Which log is read is settled elsewhere. A Token settles it on the
  * Public server, and a query parameter on the Agent server. So it is the same shape wherever
- * a log is paged. A component that wants its own name aliases this type.
+ * a log is paged. A component that wants its own name aliases this type, and the alias stays
+ * internal: an alias is transparent to the compiler, so a signature written against one still
+ * resolves to this.
+ *
+ * Exported from `shared-agent-framework`, the one name in this module that is. `Decisions.history`
+ * and `HttpMessenger.history` each take `Partial` of it, every field optional, so a caller that
+ * wants the newest page passes nothing.
  *
  * Both cursors at once describes two windows, and the route refuses it with `bothCursors`.
  */
