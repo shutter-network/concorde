@@ -228,6 +228,15 @@ describe("a Relay that serves nobody it has not authenticated", () => {
           authenticated?.event?.tags.find((tag) => tag[0] === "relay"),
           ["relay", relay.url],
         );
+
+        // The relay list goes out on the same connection, and it is offered before the challenge
+        // has been answered — so what gets it there is the client retrying a refused event once
+        // authentication completes. Without this the announcement would silently never happen on
+        // every Relay worth authenticating to, and the Message above would still arrive.
+        await waitUntil(
+          "the relay list survives the handshake",
+          async () => announcements(relay).length === 1,
+        );
       });
     });
   }

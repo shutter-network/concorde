@@ -55,12 +55,7 @@ export const giftWrapKind = 1059;
 /** NIP-42's authentication event, which is the whole of what this component reads from it. */
 export const authenticationKind = 22242;
 
-/**
- * NIP-17's relay list: where a public key receives private direct messages.
- *
- * In NIP-01's replaceable range, which is what makes republishing it at every start idempotent
- * rather than something that piles up on the Relay.
- */
+/** NIP-17's relay list: where a public key receives private direct messages. */
 export const directMessageRelaysKind = 10050;
 
 /**

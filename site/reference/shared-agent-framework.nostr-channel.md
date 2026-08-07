@@ -503,8 +503,8 @@ outage rather than a boot failure, and the client reconnects with a backoff of i
 second `start` finds a client already built and does nothing.
 
 The relay list is one event naming the Relay this Channel was built with, and a Relay that
-refuses it is a warning on the log and a Channel that started anyway. Republishing it at every
-start costs nothing, because the event replaces the one before it rather than joining it.
+refuses it is a warning on the log and a Channel that started anyway. A restart says it again,
+and nothing accumulates on the Relay for its having been said twice.
 
 ###### Returns
 

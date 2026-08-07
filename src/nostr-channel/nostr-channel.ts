@@ -15,12 +15,10 @@
  * builds the client, subscribes and listens for queued replies, and `stop` closes all three. A
  * stop followed by a start builds a fresh client, because the library's `close` is terminal.
  *
- * **`start` awaits nothing it sends to the Relay**, and the relay list is the newest reason. Three
- * things go out there — the NIP-11 request, the subscription and the announcement — and each is
- * held as a promise `stop` waits for rather than one `start` waits for, because a Relay that is
- * down is an outage and not a boot failure. A Relay that refuses the announcement outright is a
- * warning for the same reason: the Gateway is more than this Channel, and a Relay's mood is not
- * a reason for the rest of it not to come up.
+ * **`start` awaits nothing it sends to the Relay.** Three things go out there — the NIP-11
+ * request, the subscription and the relay list — and each is held as a promise `stop` waits for
+ * rather than one `start` waits for, because a Relay that is down is an outage and not a boot
+ * failure for a Gateway that is much more than this Channel.
  *
  * **It admits nobody.** A message from a public key no `pubkeys` row names is dropped and nothing
  * whatever is stored for it, because the deployment is permissioned and an agent whose public
@@ -246,8 +244,8 @@ export type NostrChannel = Channel & {
    * second `start` finds a client already built and does nothing.
    *
    * The relay list is one event naming the Relay this Channel was built with, and a Relay that
-   * refuses it is a warning on the log and a Channel that started anyway. Republishing it at every
-   * start costs nothing, because the event replaces the one before it rather than joining it.
+   * refuses it is a warning on the log and a Channel that started anyway. A restart says it again,
+   * and nothing accumulates on the Relay for its having been said twice.
    */
   start(): Promise<void>;
 
