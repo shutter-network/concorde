@@ -1,19 +1,24 @@
 # shared-agent-framework/decisions
 
-Decisions, from `shared-agent-framework/decisions`.
+Decisions, the component that owns the one global log of Decisions. A Decision is a Statement the
+Shared Agent has committed to in public: signed with its key, numbered from 1, kept forever, and
+readable by every User rather than addressed to one.
 
-`createDecisions` is the whole of it for an Operator. Hand it the Db, Signatures, the User
-Manager and both servers. It registers its two route groups at `/decisions` on both. Then key it
-in the Gateway's record before the Signal Worker, so that it stops after the drain.
+[createDecisions](#createdecisions) makes one. [Decisions](#decisions) is what comes back, carrying the `publish`
+and `history` that no request can express. [DecisionRecord](#decisionrecord) is what every surface answers
+with, and `jws` is the field that matters: the artifact is the Decision, and the other three
+fields can be read back out of it by anybody holding the public key.
 
-Construct it after Signatures, which it holds. A Decision that was not signed is not a Decision.
-It answers with two methods no request can express. `publish` commits to a Statement from inside
-the caller's transaction, and `history` reads the whole log. Neither takes a User id, because
-this log has no owner.
+Build Signatures first, which this signs through. A Decision that was not signed is not a
+Decision, so there is no degraded mode where rows arrive without artifacts. Build the User
+Manager first too, for the hook the Public read runs. Key it ahead of the Signal Worker in the
+Gateway's record: the Worker is keyed last so it drains first, and a Signal Handler's post phase
+may still publish.
 
-`DecisionRecord` is the shape every surface answers with, and `jws` is the field that matters:
-the artifact is the Decision. This subpath also carries the one table. The log references nobody,
-so a barrel carrying it alone generates cleanly.
+Nothing is notified when a Decision is published. There is no Signal and no Handler to wake, so a
+User discovers a Decision by polling, and the largest `seq` they hold is the whole resume
+mechanism. The subpath also carries the one table, which references no other component's, so a
+barrel carrying it without the User Manager's generates cleanly.
 
 ## Example
 
@@ -70,14 +75,13 @@ type DecisionRecord = {
 };
 ```
 
-A Decision as every surface answers with it: the POST response and both reads.
+A Decision as every surface answers with it: the publish response, both reads, and `history`.
 
-One shape and not a projection per surface. It is the whole row, four columns. `createdAt` is an
-ISO 8601 string, because JSON has no date, and it is the string the artifact's payload carries.
+The artifact is the Decision. Anybody holding the public key reads the other three fields back
+out of `jws`, which is what makes handing one string to a third party worth doing.
 
-The JWS is the Decision, and the other three fields are the log's convenience. Anybody holding
-the public key can read all three back out of `jws`. That is what makes handing one artifact
-onward the point of the whole Component.
+`createdAt` is ISO 8601, JSON having no date, and is the same string the artifact's payload
+carries rather than a re-rendering of it.
 
 #### Properties
 
@@ -118,17 +122,21 @@ type Decisions = Component & {
 };
 ```
 
-What the constructor answers with: the two things trusted code needs and no request can express.
+The Decision log as a Component: a publish that joins the caller's transaction, and a read of the
+whole log that needs neither a Token nor a route.
 
-Every other capability is a route this Component registered itself, and no route plugin is
-exported. So a Signal Handler and an Operator's entry point get two things. One is a publish that
-joins a transaction of their own. The other is a read of the whole log, needing neither a Token
-nor a route. A Handler can therefore commit to something and then build the next Prompt from what
-is already committed to.
+Every other capability is a route this component registered itself, and no route plugin is
+exported. A Signal Handler therefore commits to something and builds the next Prompt out of what
+is already committed to, without going near HTTP.
 
-No method writes a Decision without signing it, and neither takes a User id. There is no
-parameter for the artifact anywhere, so no caller's bytes reach the `jws` column. And there is
-nothing to scope either method by, because the log has no owner.
+There is no parameter for the artifact anywhere, so no caller's bytes reach the `jws` column, and
+neither method takes a User id, the log having no owner and nothing to scope by.
+
+Publishing notifies nothing. No Signal is emitted and no Handler wakes, so a Decision published
+during a Run cannot queue work for the Run that published it.
+
+`start` and `stop` do nothing. A Decision is a committed row and an artifact somebody may already
+hold, and both outlive this process.
 
 #### Type Declaration
 
@@ -138,23 +146,21 @@ nothing to scope either method by, because the log has no owner.
 history(options?): Promise<DecisionRecord[]>;
 ```
 
-The Decision log, ascending by `seq`, so a Handler can read everything already committed to.
+Reads the log, ascending by `seq`, so a Handler can see everything already committed to.
 
-Nothing scopes it: the log is global, and every reader sees the same sequence. The window is
-what bounds an answer. A Handler wanting everything asks with `after: 0` and a large `limit`,
-rather than by omitting an argument.
+Nothing scopes it: every reader sees the same sequence, and `options` is what bounds the
+answer. Asking for everything means `{ after: 0, limit: <large> }` rather than omitting the
+argument, which answers the newest page instead.
 
-A read, so it takes no transaction and cannot see the caller's own uncommitted write. It
-answers from the same query both routes answer from, with the same cursor options. `limit`
-defaults to the routes' default and is not capped here, because a cap bounds a response body.
+A read, so it takes no transaction and cannot see the caller's own uncommitted write. `limit`
+takes the routes' default when omitted and is not capped here, a cap being there to bound a
+response body.
 
 ###### Parameters
 
 ###### options?
 
 `Partial`\<[`CursorWindow`](shared-agent-framework.md#cursorwindow)\>
-
-The shared window, every field optional.
 
 ###### Returns
 
@@ -166,18 +172,18 @@ The shared window, every field optional.
 publish<TSchema>(tx, statement): Promise<DecisionRecord>;
 ```
 
-Publishes a Decision from inside the caller's transaction, and answers with the record.
+Publishes a Decision inside the transaction `tx` belongs to, and answers with the record.
 
-Takes the caller's transaction rather than finding one, so committing to something and
-recording why cannot come apart. A rollback loses both. Ambient enlistment is not available: a
-second handle takes its own connection and its writes survive the rollback.
+Takes the caller's transaction rather than opening one, so committing to something and
+recording why cannot come apart: a rollback loses both. Ambient enlistment is not available,
+because a second handle takes its own connection and its writes would survive that rollback.
 
-The Statement is the only other argument. The number, the timestamp and the artifact are the
-write path's. They are produced in that order, because the signature binds the first two. A
-read cannot see the caller's own uncommitted write, so the record comes back here instead.
+`statement` is the only other argument. The number, the timestamp and the artifact belong to
+the write path, and the record comes back from here because a read cannot see the caller's own
+uncommitted write.
 
-A publish that rolls back burns its number, since the sequence is not transactional. That is
-expected and means nothing.
+A publish that rolls back burns its number, the sequence not being transactional. Gaps in the
+log are expected and mean nothing.
 
 ###### Type Parameters
 
@@ -191,31 +197,19 @@ expected and means nothing.
 
 [`Handle`](shared-agent-framework.md#handle)\<`TSchema`\>
 
-The caller's transaction, carrying whatever schema it was started on.
-
 ###### statement
 
 `string`
 
-The string being committed to.
-
 ###### Returns
 
 `Promise`\<[`DecisionRecord`](#decisionrecord)\>
-
-The Decision, including the number it drew and the artifact signed over it.
 
 ##### start()
 
 ```ts
 start(): Promise<void>;
 ```
-
-Does nothing. There is nothing here to start.
-
-Nothing is notified when a Decision is published. There is no connection to open and no ticker
-to set going. Users poll the log, and the largest `seq` they hold is the whole resume
-mechanism.
 
 ###### Returns
 
@@ -226,11 +220,6 @@ mechanism.
 ```ts
 stop(): Promise<void>;
 ```
-
-Does nothing, and there is nothing here a shutdown could lose.
-
-A Decision is a committed row and an artifact somebody may already hold. Both outlive this
-process, and the artifact outlives the deployment.
 
 ###### Returns
 
@@ -254,8 +243,6 @@ type DecisionsOptions = {
 };
 ```
 
-Everything `createDecisions` needs: the Db, two Components, and both servers.
-
 #### Properties
 
 ##### agentServer
@@ -266,10 +253,10 @@ readonly agentServer: {
 };
 ```
 
-The Agent server, where the agent publishes and reads, at `/decisions`.
+Where the agent publishes and reads, at `/decisions`.
 
-Required: Decisions the agent cannot publish into holds nothing. Structural, and asks for
-nothing but the Fastify instance, so what satisfies it is what `serverComponent` returns.
+Structural: anything carrying a Fastify instance satisfies it, including what
+`serverComponent` returns.
 
 ###### fastify
 
@@ -291,10 +278,10 @@ readonly publicServer: {
 };
 ```
 
-The Public server, where any authenticated User reads the log, at `/decisions`.
+Where any authenticated User reads the log, at `/decisions`.
 
-Required, and for a sharper reason. A log no User can read is not public, and a commitment that
-is not public is not a commitment.
+A log no User can read is not public, and a commitment that is not public is not a commitment,
+so there is no assembly of this component that omits it.
 
 ###### fastify
 
@@ -308,11 +295,10 @@ readonly fastify: FastifyInstance;
 readonly signatures: Signatures;
 ```
 
-The Component that holds the signing identity, and the reason this one has no key.
+Where every Decision is signed, which is why this component holds no key of its own.
 
-Required, and construct it before this one. A Decision that was not signed is not a Decision.
-So there is no degraded mode in which rows arrive without artifacts. Signing happens through
-this object in process, never as an HTTP request.
+Build it first. Signing happens through this object in process and never as an HTTP request to
+the Signatures routes, so a publish inside a transaction never leaves the process.
 
 ##### users
 
@@ -320,14 +306,11 @@ this object in process, never as an HTTP request.
 readonly users: Users;
 ```
 
-The User Manager whose Users may read the log.
+Supplies the `requireUser` hook that the Public read runs, so this component holds no Token and
+authenticates nobody.
 
-Required, and it is where the Public read's authentication comes from. `requireUser` is taken
-off this object and put on the route as one option. So this Component holds no Token, and it
-answers the Manager's single 401.
-
-Unlike the Messenger's, this is not a schema-level dependency. Nothing here references a
-User, so a barrel may carry this schema without the User Manager's.
+Not a schema-level dependency, unlike the Messenger's: nothing here references a User, so a
+barrel may carry this component's tables without the User Manager's.
 
 ## Variables
 
@@ -340,7 +323,7 @@ const decisions: PgTableWithColumns<{
 
 One Decision: a Signed Statement, numbered and kept.
 
-Four columns, and no `user_id`. The log is global and a Decision is addressed to nobody. That is
+Four columns, and no `user_id`. The log is global and a Decision is addressed to nobody, which is
 the whole of why a commitment here is a commitment.
 
 ***
@@ -351,10 +334,11 @@ the whole of why a commitment here is a commitment.
 const decisionsSchema: PgSchema<"saf_decisions">;
 ```
 
-Decisions' schema, named for its subject rather than for the Component.
+The PostgreSQL schema every table below lives in, `saf_decisions`.
 
-Prefixed because the framework is installed into a database it does not own. The name is not
-theirs to change: the table below is compiled against it, and their generation reads this object.
+Prefixed because the framework is installed into a database it does not own, and not
+configurable: the table is compiled against this object, and the same object is what a
+generation reads.
 
 ***
 
@@ -367,10 +351,6 @@ const decisionsTables: {
 };
 ```
 
-Everything Decisions keeps, as `db.handle` wants it.
-
-One object, so every module of this Component asks for the same handle by the same name.
-
 #### Type Declaration
 
 ##### decisions
@@ -382,7 +362,7 @@ decisions: PgTableWithColumns<{
 
 One Decision: a Signed Statement, numbered and kept.
 
-Four columns, and no `user_id`. The log is global and a Decision is addressed to nobody. That is
+Four columns, and no `user_id`. The log is global and a Decision is addressed to nobody, which is
 the whole of why a commitment here is a commitment.
 
 ## Functions
@@ -395,8 +375,7 @@ function createDecisions(options): Decisions;
 
 Builds Decisions and registers its two route groups at `/decisions` on both servers.
 
-Nothing here connects, listens or applies DDL. Put the result in the Gateway's record under a key
-of your own, ahead of the Signal Worker.
+Nothing here connects, listens or applies DDL.
 
 #### Parameters
 
@@ -407,45 +386,3 @@ of your own, ahead of the Signal Worker.
 #### Returns
 
 [`Decisions`](#decisions)
-
-#### Example
-
-Built in `extend`, and then used from the Operator's own trusted code.
-```ts
-import { createPrivateKey } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { createGateway } from "shared-agent-framework";
-import { createDecisions } from "shared-agent-framework/decisions";
-import { createPiRuntime } from "shared-agent-framework/pi";
-import { createSignatures } from "shared-agent-framework/signatures";
-import { createUsers } from "shared-agent-framework/users";
-
-const signingKey = createPrivateKey(readFileSync("./signing-key.pem"));
-
-const gateway = createGateway({
-  databaseUrl: process.env.DATABASE_URL ?? "",
-  runtime: createPiRuntime({ image: "my-agent:1" }),
-  agentListen: { host: "127.0.0.1", port: 8081 },
-  publicListen: { host: "0.0.0.0", port: 8080 },
-  extend: ({ db, agentServer, publicServer }) => {
-    const users = createUsers({ db, tokenTtl: 86_400_000, agentServer, publicServer });
-    const signatures = createSignatures({ signingKey, agentServer, publicServer, users });
-    return {
-      users,
-      signatures,
-      decisions: createDecisions({ db, signatures, users, agentServer, publicServer }),
-    };
-  },
-  handlers: () => ({}),
-});
-
-await gateway.start();
-
-// One transaction holds the Decision and the Operator's own record of why.
-const { db, decisions } = gateway.components;
-const published = await db.tx((tx) => decisions.publish(tx, "shipping on Friday"));
-
-// And the whole log, for the next Prompt.
-const log = await decisions.history({ after: 0, limit: 100 });
-console.log(published.seq, log.length);
-```

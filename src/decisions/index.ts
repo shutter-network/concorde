@@ -1,18 +1,23 @@
 /**
- * Decisions, from `shared-agent-framework/decisions`.
+ * Decisions, the component that owns the one global log of Decisions. A Decision is a Statement the
+ * Shared Agent has committed to in public: signed with its key, numbered from 1, kept forever, and
+ * readable by every User rather than addressed to one.
  *
- * `createDecisions` is the whole of it for an Operator. Hand it the Db, Signatures, the User
- * Manager and both servers. It registers its two route groups at `/decisions` on both. Then key it
- * in the Gateway's record before the Signal Worker, so that it stops after the drain.
+ * {@link createDecisions} makes one. {@link Decisions} is what comes back, carrying the `publish`
+ * and `history` that no request can express. {@link DecisionRecord} is what every surface answers
+ * with, and `jws` is the field that matters: the artifact is the Decision, and the other three
+ * fields can be read back out of it by anybody holding the public key.
  *
- * Construct it after Signatures, which it holds. A Decision that was not signed is not a Decision.
- * It answers with two methods no request can express. `publish` commits to a Statement from inside
- * the caller's transaction, and `history` reads the whole log. Neither takes a User id, because
- * this log has no owner.
+ * Build Signatures first, which this signs through. A Decision that was not signed is not a
+ * Decision, so there is no degraded mode where rows arrive without artifacts. Build the User
+ * Manager first too, for the hook the Public read runs. Key it ahead of the Signal Worker in the
+ * Gateway's record: the Worker is keyed last so it drains first, and a Signal Handler's post phase
+ * may still publish.
  *
- * `DecisionRecord` is the shape every surface answers with, and `jws` is the field that matters:
- * the artifact is the Decision. This subpath also carries the one table. The log references nobody,
- * so a barrel carrying it alone generates cleanly.
+ * Nothing is notified when a Decision is published. There is no Signal and no Handler to wake, so a
+ * User discovers a Decision by polling, and the largest `seq` they hold is the whole resume
+ * mechanism. The subpath also carries the one table, which references no other component's, so a
+ * barrel carrying it without the User Manager's generates cleanly.
  *
  * @example
  * A Gateway with Decisions, and a Statement committed to from the Operator's own code.

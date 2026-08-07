@@ -1,12 +1,7 @@
 /**
- * Decisions' one table: `decisions`, in the `saf_decisions` schema.
- *
- * Public API, re-exported from `shared-agent-framework/decisions`. An Operator barrels that subpath
- * into their own `schema.ts` and generates their DDL from it.
- *
- * An Operator's `drizzle-kit` reads this file through that barrel. Keep it to the table and the
- * values that define it. It imports no other Component's schema, because this log references
- * nobody, so a barrel carrying it alone generates cleanly.
+ * An Operator's `drizzle-kit` reads this file, through the barrel they build out of the component
+ * subpaths. Keep it to the table and the values that define it, and add no import of another
+ * component's schema: this log references nobody, which is what lets a barrel carry it alone.
  *
  * A Decision is immutable. No column is ever updated, and nothing removes a row: no delete, no TTL,
  * no sweeper and no supersession field. A reversal is a new Decision whose statement says so.
@@ -15,17 +10,18 @@
 import { integer, pgSchema, text, timestamp } from "drizzle-orm/pg-core";
 
 /**
- * Decisions' schema, named for its subject rather than for the Component.
+ * The PostgreSQL schema every table below lives in, `saf_decisions`.
  *
- * Prefixed because the framework is installed into a database it does not own. The name is not
- * theirs to change: the table below is compiled against it, and their generation reads this object.
+ * Prefixed because the framework is installed into a database it does not own, and not
+ * configurable: the table is compiled against this object, and the same object is what a
+ * generation reads.
  */
 export const decisionsSchema = pgSchema("saf_decisions");
 
 /**
  * One Decision: a Signed Statement, numbered and kept.
  *
- * Four columns, and no `user_id`. The log is global and a Decision is addressed to nobody. That is
+ * Four columns, and no `user_id`. The log is global and a Decision is addressed to nobody, which is
  * the whole of why a commitment here is a commitment.
  */
 export const decisions = decisionsSchema.table("decisions", {
@@ -71,9 +67,4 @@ export const decisions = decisionsSchema.table("decisions", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 });
 
-/**
- * Everything Decisions keeps, as `db.handle` wants it.
- *
- * One object, so every module of this Component asks for the same handle by the same name.
- */
 export const decisionsTables = { decisions };

@@ -1,9 +1,6 @@
 /**
- * Decisions' routes: the log on the Agent server, and the same log on the Public one.
- *
  * Two plugins, because they go on two Fastify instances. Neither is exported and neither prefix is
- * configurable. These routes are half of a contract whose other half is the artifact shape. The
- * paths below are relative to the prefix the constructor supplies, which is `/decisions`.
+ * configurable. The paths below are relative to the prefix the constructor supplies, `/decisions`.
  *
  * | Agent server | Answers |
  * | --- | --- |
@@ -21,10 +18,8 @@
  * with the cursor worked out for the caller. So a citation and a page cannot disagree.
  *
  * Publishing is the Agent server's alone. A Decision is the Shared Agent's commitment, and a User
- * with a Token is not the Shared Agent. Nothing here authenticates anybody. The Public read takes
+ * with a Token is not the Shared Agent. Nothing here authenticates anybody: the Public read takes
  * the User Manager's `requireUser` as one option, so every refusal is the Manager's single 401.
- * Each route's own `description` is what `/openapi.json` serves, so those sentences are the API
- * documentation rather than commentary.
  */
 
 import type { FastifyPluginAsync, FastifyReply, preHandlerAsyncHookHandler } from "fastify";
