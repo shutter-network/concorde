@@ -17,6 +17,9 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
+    // `config.ts` imports `../shiki-themes.mjs`, which the TypeDoc plugin imports too. Without
+    // this an editor reports it unresolved; the bundler reads neither line.
+    "allowJs": true,
     "strict": true
   }
 }

@@ -28,6 +28,14 @@ gitignored, and so is `reference/typedoc-sidebar.json`, for the reason `.gitigno
 gitignored sidebar, and VitePress reads its config before anything else, so both `dev` and
 `build` generate first. Neither is a script to skip because `reference/` looks present.
 
+**A type alias's signature block is HTML rather than a fenced code block**, so that the type
+references in it can be links: `expanded-object-methods.mjs` writes the declaration itself, hands
+Shiki the characters and the ranges that are links, and wraps the result in the markup VitePress
+puts around its own code blocks. Shiki is a declared dependency here for that reason, rather than
+one reached through VitePress, and `shiki-themes.mjs` is where the two theme names both callers
+use are written down. `.vitepress/theme/` exists to load the one authored stylesheet in this site,
+which is what gives such a link its dotted underline.
+
 `check:docs` is the guard on all of that, and it lives at the root because it is a check rather
 than a way to look at the site: it regenerates, names every page that differs from what is
 committed, and builds. It is not part of `npm run check`, for the reason the next section
@@ -50,7 +58,7 @@ tree holds only the documentation toolchain.
 ## The exit condition
 
 **When TypeDoc supports the compiler this repository pins, delete this package.** Move
-`typedoc.jsonc`, `.vitepress/config.ts`, `specifier-titles.mjs` and
+`typedoc.jsonc`, `.vitepress/`, `shiki-themes.mjs`, `specifier-titles.mjs` and
 `expanded-object-methods.mjs` to the root, fold the
 devDependencies into the root ones minus `typescript`, and let `npm run docs:*` call the tools
 directly. Nothing else here is load-bearing.
