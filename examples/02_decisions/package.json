@@ -1,0 +1,23 @@
+{
+  "name": "saf-example-02-decisions",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "migrate": "drizzle-kit push --force",
+    "start": "node main.ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.2",
+    "fastify": "^5.11.0",
+    "shared-agent-framework": "^0.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^7.0.2"
+  }
+}
