@@ -260,8 +260,8 @@ Recorded rather than solved.
   signature in both cases, so a reader cannot tell that somebody decided there was nothing to say.
   We take that, because a comment written to fill the space is paid for by every reader, and the
   blank is paid for by the one who wondered.
-- **Nothing checks any of this.** `check:docs` catches a stale page and an unresolvable
-  `{@link}`. It does not read prose. The one rule a machine could see is the ADR citation, and
+- **Nothing checks any of this.** `check:docs` catches a page whose signature blocks lost their
+  links and an unresolvable `{@link}`. It does not read prose. The one rule a machine could see is the ADR citation, and
   no check for it exists yet.
 
 ## Where these rules come from
