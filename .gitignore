@@ -3,17 +3,17 @@
 /dist
 *.tgz
 
-# What the reference deployment writes: the Workspace and the agent's own directory, which
-# is where the Session transcripts live too. The agent's directory holds the credentials it
-# wrote itself, so this must not be committed. `example/settings.json` beside it is the
-# Operator's own file and is committed.
-/example/state
-
 # What an example under `examples/` is given or writes: its own dependency tree and the
 # lockfile that comes with it (each is a real npm application that installs the published
 # package with `npm install`, and a committed lockfile is what 1.0.0 buys), the model key its
 # README tells a reader to put in `.env`, and the Workspace and agent directory its Gateway
-# writes. The committed `.env.example` and `settings.json` beside them are not these.
+# writes. The committed `.env.example` and `settings.json` beside them are not these: the
+# `.env` line matches that one name and no other.
+#
+# These four lines also decide what Biome sees, because `biome.json` sets `vcs.useIgnoreFile`.
+# That is the whole of what keeps four dependency trees out of `biome check .`, and no Biome
+# configuration names `examples/` at all. Each example's own sources stay linted, which is
+# wanted.
 /examples/*/node_modules
 /examples/*/package-lock.json
 /examples/*/.env

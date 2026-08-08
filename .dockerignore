@@ -1,8 +1,0 @@
-.git
-node_modules
-dist
-example/state
-.scratch
-# The documentation site. Named explicitly because `node_modules` above matches only at the
-# root, and `site/node_modules` is a second dependency tree nothing in either image needs.
-site

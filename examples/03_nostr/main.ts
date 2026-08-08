@@ -35,7 +35,6 @@ const people = [
 
 const publicPort = 8083;
 const agentPort = 7411;
-const tokenTtl = 30 * 24 * 60 * 60 * 1000;
 
 const runtime = createPiRuntime({
   image: "saf-nostr-agent:0.83.0",
@@ -71,12 +70,14 @@ const gateway = createGateway({
   runtime,
   publicListen: { host: "0.0.0.0", port: publicPort },
   agentListen: { host: "0.0.0.0", port: agentPort },
-  extend: ({ db, agentServer, publicServer, worker }) => {
-    const users = createUsers({ db, tokenTtl, agentServer, publicServer });
+  extend: ({ db, agentServer, worker }) => {
+    // No Public server and no Auth: nobody reaches this deployment over HTTP. Handing Users the
+    // Public server would register `GET /users/me` behind a `requireUser` no scheme composes,
+    // and that route throws on every request instead of serving one.
+    const users = createUsers({ db, agentServer });
     const messenger = createMessenger({ db, users, worker, agentServer });
     // The Channel registers itself with the Messenger and registers no route anywhere. The
-    // relay is what a person reaches over this medium, so the Public server carries only the
-    // login and there is nothing on it to message.
+    // relay is what a person reaches over this medium.
     const nostr = createNostrChannel({ db, messenger, users, secretKey, relayUrl });
     return { users, messenger, nostr };
   },

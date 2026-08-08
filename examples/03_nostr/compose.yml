@@ -33,9 +33,9 @@ services:
       - ./state/workspace:/app/state/workspace
       - ./state/agent:/app/state/agent
     ports:
-      # The Nostr Channel registers no route, so the only things on the Public server are the
-      # login, the OpenAPI document at /openapi.json and the page at /docs. The Agent server is
-      # bound but published to nobody.
+      # The Nostr Channel registers no route and no Auth is built, so the only things on the
+      # Public server are the OpenAPI document at /openapi.json and the page at /docs. The Agent
+      # server is bound but published to nobody.
       - "127.0.0.1:8083:8083"
     networks: [db, agent, nostr]
     depends_on:

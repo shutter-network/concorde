@@ -71,3 +71,25 @@ jobs:
       # `--add-host=host.docker.internal:host-gateway` and binds the server beyond
       # loopback.
       - run: npm run test:container
+
+      # One step per example under `examples/`. Each is a real npm application: it installs
+      # `shared-agent-framework` from the registry and type-checks against its own
+      # `node_modules`, which is why `npm install` and not `npm ci` (no example commits a
+      # lockfile until 1.0.0) and why nothing here points at this checkout.
+      #
+      # THIS DOES NOT CHECK AN EXAMPLE AGAINST THIS TREE. It checks it against the version it
+      # pins, so a break introduced in `src` in the same commit is invisible here and stays
+      # invisible until after a publish. What these four steps catch is editing rot, and a
+      # version bumped to one the example does not work against. Nothing checks that an
+      # example comes up at all.
+      - run: npm install && npx tsc --noEmit
+        working-directory: examples/00_minimal
+
+      - run: npm install && npx tsc --noEmit
+        working-directory: examples/01_scheduler
+
+      - run: npm install && npx tsc --noEmit
+        working-directory: examples/02_decisions
+
+      - run: npm install && npx tsc --noEmit
+        working-directory: examples/03_nostr

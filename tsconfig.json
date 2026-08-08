@@ -24,44 +24,18 @@
     "erasableSyntaxOnly": true,
 
     "skipLibCheck": true,
-    "noEmit": true,
+    "noEmit": true
 
-    // `example/` imports the package by name, exactly as an Operator's entry point
-    // does, and that is the point of it: the reference entry point has to read like
-    // the thing it is a reference for, not like a file reaching into `src`. Node
-    // resolves that by itself — a package may refer to its own `exports` — but it
-    // resolves it to `dist`, which is generated and gitignored, so a typecheck
-    // before a build would fail on a fresh clone. These two lines point the type
-    // checker at the sources instead. Nothing in `src` imports the package by name,
-    // so nothing else is affected.
-    //
-    // The fifteen below are the whole export map, and a component is one subpath: its
-    // constructor, its types and its tables arrive together
-    // ([ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md)). That is why there are
-    // no `/schema` entries any more — `example/` is the reference Operator and its
-    // migration barrel is assembled from the component subpaths, so the barrel
-    // type-checks against `src` through exactly the same mappings its entry point does.
-    "paths": {
-      "shared-agent-framework/gateway": ["./src/gateway/index.ts"],
-      "shared-agent-framework/logging": ["./src/logging/index.ts"],
-      "shared-agent-framework/db": ["./src/db/index.ts"],
-      "shared-agent-framework/agent-container": ["./src/agent-container/index.ts"],
-      "shared-agent-framework/signals": ["./src/signals/index.ts"],
-      "shared-agent-framework/pi": ["./src/pi/index.ts"],
-      "shared-agent-framework/users": ["./src/users/index.ts"],
-      "shared-agent-framework/password-auth": ["./src/password-auth/index.ts"],
-      "shared-agent-framework/nostr-auth": ["./src/nostr-auth/index.ts"],
-      "shared-agent-framework/messenger": ["./src/messenger/index.ts"],
-      "shared-agent-framework/http-channel": ["./src/http-channel/index.ts"],
-      "shared-agent-framework/nostr-channel": ["./src/nostr-channel/index.ts"],
-      "shared-agent-framework/signatures": ["./src/signatures/index.ts"],
-      "shared-agent-framework/decisions": ["./src/decisions/index.ts"],
-      "shared-agent-framework/scheduler": ["./src/scheduler/index.ts"]
-    }
+    // No `paths`. There were fifteen, one per subpath of the export map, and they existed
+    // for one reader: `example/`, which lived in this tree, imported the package by name and
+    // had to type-check before `dist` was built. Every example is its own npm application
+    // now and resolves `shared-agent-framework` out of its own `node_modules`, so a mapping
+    // here would serve nothing and cost something: anything that did resolve through it
+    // would silently get `src` in place of the installed package, which is the one
+    // difference an example exists to not have.
   },
-  // There are no `drizzle.*.config.ts` files here any more: the framework generates
-  // nothing, so the only one in the repository is `example/drizzle.config.ts`, the
-  // reference Operator's own (ADR-0046). `example` is included but not built — it is
-  // the reference deployment, and one that does not compile is worse than none.
-  "include": ["src", "scripts", "example"]
+  // `src` and `scripts`, and nothing under `examples/`. Each example carries a
+  // `tsconfig.json` of its own and is checked by a step of its own in CI, against the
+  // version it pins rather than against this tree.
+  "include": ["src", "scripts"]
 }

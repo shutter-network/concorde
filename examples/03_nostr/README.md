@@ -4,8 +4,8 @@ Two people talking to one agent over Nostr, against a relay this stack runs. It 
 
 - **The Nostr Channel.** The Messenger owns the Message log and reaches nobody; the Channel is
   what reaches a person, and here it exchanges NIP-17 private direct messages over one relay.
-  It registers no route, so the only things on the Public server are the login and the API
-  document.
+  It registers no route, and no Auth is built here either, so the only thing on the Public
+  server is the API document.
 - **A third-party client.** `nak` is written by the author of the NIPs, so a round trip through
   it says something about NIP-17 conformance rather than about our two halves agreeing.
 - **Admission by preregistered public key.** `main.ts` records Alice's and Bob's public keys
@@ -14,7 +14,7 @@ Two people talking to one agent over Nostr, against a relay this stack runs. It 
 - **The Operator never sees a secret.** `main.ts` reads the two **public** keys. Each secret
   goes to that person's own `nak` container and nowhere else.
 - **A Channel with tables of its own.** The other Channel that ships has none. `schema.ts` is
-  four specifiers wide because of the three in `saf_nostr`, two of which reference
+  four specifiers wide because of the three in `saf_nostr_channel`, two of which reference
   `saf_users.users.id`.
 
 **This example is less pleasant to use than the other three, and that is deliberate.** No
