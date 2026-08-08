@@ -81,7 +81,7 @@ before(async () => {
   db = database.db;
   await applySchema(db, signalsSchema, usersSchema, messengerSchema, nostrChannelSchema);
 
-  users = createUsers({ db, tokenTtl: 60 * 60 * 1000 });
+  users = createUsers({ db });
   worker = createSignalWorker({
     db,
     runtime: fakeRuntime(),

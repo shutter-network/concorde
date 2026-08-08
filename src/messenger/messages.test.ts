@@ -10,29 +10,33 @@
  * started and never emits: the agent's send wakes nobody, and nothing in this file posts.
  * An HTTP Channel is constructed too, because a Messenger with no Channel registered refuses
  * to send at all, and it is what puts the Public routes up: what they answer from here — the
- * 401 of Users on both of them, since this Db's own agent presents no Token — is the
- * last test in this file. What that 401 is made of is `own-messages.test.ts`'s subject, and
- * what a post does when one is presented is `posted-messages.test.ts`'s.
+ * Public server's single 401 on both of them, since this Db's own agent presents no
+ * credential, is the last test in this file. What that 401 is made of is
+ * `own-messages.test.ts`'s subject, and what a post does when one is presented is
+ * `posted-messages.test.ts`'s.
  *
- * Users are admitted over the Users component's own Agent route, and each test admits its
- * own, so that a numbering assertion is about one User's log and not about what an earlier
- * test left behind.
+ * One Auth is registered with that server and it recognises nothing, which is what makes the
+ * refusal a 401 rather than the `NoAuthRegisteredError` a server with no scheme at all throws.
+ * A real scheme would drag a credential through a file whose subject is the agent's surface.
+ *
+ * Users are admitted from trusted code, and each test admits its own, so that a numbering
+ * assertion is about one User's log and not about what an earlier test left behind.
  */
 
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { Db } from "../db/index.ts";
-import { type Component, serverComponent } from "../gateway/components.ts";
+import { type ServerComponent, serverComponent } from "../gateway/components.ts";
 import { createHttpChannel } from "../http-channel/http-channel.ts";
 import * as signalsSchema from "../signals/schema.ts";
 import { createSignalWorker } from "../signals/worker.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
+import { fakeAuth } from "../test-support/fake-auth.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
-import type { UserRecord } from "../users/routes.ts";
 import * as usersSchema from "../users/schema.ts";
-import { createUsers } from "../users/users.ts";
+import { createUsers, type Users } from "../users/users.ts";
 import type { MessageRecord } from "./messages.ts";
 import { createMessenger } from "./messenger.ts";
 import * as messengerSchema from "./schema.ts";
@@ -40,8 +44,10 @@ import * as messengerSchema from "./schema.ts";
 let database: TestDatabase;
 let db: Db;
 /** Both servers, as an Operator constructs them: bare Fastify instances in a start order. */
-let agentServer: Component & { readonly fastify: FastifyInstance };
-let publicServer: Component & { readonly fastify: FastifyInstance };
+let agentServer: ServerComponent<FastifyInstance>;
+let publicServer: ServerComponent<FastifyInstance>;
+/** The identity every Message in this file is addressed to a row of. */
+let directory: Users;
 
 /**
  * Where the constructor put each plugin. There is no second registration in this file, and
@@ -67,13 +73,15 @@ before(async () => {
   const worker = createSignalWorker({ db, runtime: fakeRuntime(), handlers: {} });
   // Before the Messenger, which takes it: `messages.user_id` references this part's table
   // (ADR-0036), and the push below has to see both schemas for the constraint to generate.
-  const users = createUsers({ db, tokenTtl: 60 * 60 * 1000, agentServer });
+  directory = createUsers({ db, agentServer });
+  // A scheme that recognises nothing, so the Public routes refuse with the composed 401
+  // rather than throwing for having no scheme registered at all (ADR-0052).
+  publicServer.registerAuth(fakeAuth("Bearer"));
   // Nothing is held: every capability this part has so far is a route, and it registered
   // both plugins itself (ADR-0032).
   createHttpChannel({
     db,
-    messenger: createMessenger({ db, users, worker, agentServer }),
-    users,
+    messenger: createMessenger({ db, users: directory, worker, agentServer }),
     publicServer,
   });
 
@@ -87,11 +95,9 @@ after(async () => {
   await database.drop();
 });
 
-/** A User, admitted over the Users component's own Agent route. */
+/** A User, admitted from trusted code, which is the only way one is admitted (ADR-0052). */
 async function admitted(): Promise<string> {
-  const response = await agentServer.fastify.inject({ method: "POST", url: "/users" });
-  assert.equal(response.statusCode, 201, `admitting a User should have answered: ${response.body}`);
-  return response.json<UserRecord>().id;
+  return (await db.tx((tx) => directory.create(tx))).id;
 }
 
 /** One `POST /messages` on the Agent server, with whatever body the caller wants sent. */
@@ -301,8 +307,8 @@ describe("the Public server's plugin", () => {
   it("needs a Token to read and to post", async () => {
     // Both routes exist and both refuse this Db's own agent, because the Agent server's
     // freedom from authentication is that server's and not the Messenger's: a Public route is
-    // behind `requireUser` wherever the request came from. What that refusal is made
-    // of is `own-messages.test.ts`'s subject.
+    // behind the server's `requireUser` wherever the request came from. What that refusal is
+    // made of is `own-messages.test.ts`'s subject.
     const read = await publicServer.fastify.inject({ method: "GET", url: prefix });
     assert.equal(read.statusCode, 401, read.body);
 

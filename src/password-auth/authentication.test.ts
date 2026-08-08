@@ -21,6 +21,9 @@
  *  - `falls through to the next scheme rather than refusing on its behalf` is why the outcome has
  *    three arms. A request carrying nothing of this scheme must reach whatever is registered
  *    behind it, and a request carrying a broken one of this scheme must not.
+ *  - `serves nothing to a route that forgot the preHandler` records what actually happens rather
+ *    than what would be nice. Nothing is protected by default, and the type cannot say "set only
+ *    after `requireUser` ran" (ADR-0030), so the failure mode is pinned here.
  *
  * A database of this file's own, because no two test files may share one, and a deliberately
  * cheap scrypt cost, because every Token here starts with a login.
@@ -96,6 +99,11 @@ const operatorRoutes: FastifyPluginAsync = async (fastify) => {
     },
     { prefix: "/deep" },
   );
+
+  // And two routes that forgot it, which is the failure mode this file records. One answers the
+  // property, the other reaches through it.
+  fastify.get("/unguarded", async (request) => request.safUser);
+  fastify.get("/unguarded-id", async (request) => ({ id: request.safUser.id }));
 };
 
 before(async () => {
@@ -105,7 +113,7 @@ before(async () => {
 
   publicServer = serverComponent(Fastify(), nowhere, { logger });
   built.push(publicServer);
-  users = createUsers({ db, tokenTtl: hour, scrypt: cheap });
+  users = createUsers({ db });
   // Registers its routes at `/auth` and registers itself with the server, both in its own
   // constructor. Nothing below wires either.
   passwordAuth = createPasswordAuth({ db, users, publicServer, tokenTtl: hour, scrypt: cheap });
@@ -208,6 +216,46 @@ describe("authenticating a request", () => {
     });
     assert.equal(deeper.statusCode, 200, deeper.body);
     assert.deepEqual(deeper.json(), { by: user.id, said: "what happened?" });
+  });
+});
+
+describe("a route of the Operator's own", () => {
+  it("serves nothing to a route that forgot the preHandler", async () => {
+    // Nothing is protected by default, and the augmentation cannot express "set only after
+    // `requireUser` ran" (ADR-0030), so a route that omits it type-checks and runs. What it does
+    // then is measured here rather than assumed, because a guess about this is exactly the guess
+    // an Operator would make:
+    //
+    //  - answering `request.safUser` is a **200 with an empty body**. It is not a refusal, and it
+    //    is not an authenticated-looking response either: there is no User in it, because there
+    //    was none on the request.
+    //  - reaching *through* it is a **500**, because `undefined.id` throws where the type said it
+    //    could not.
+    //
+    // So the route is unprotected either way, and the second shape is the one that fails loudly
+    // on first use. Neither ever answers with a User, which is the part that matters: the
+    // property is written by the server's hook and by nothing else.
+    const user = await admit();
+    const issued = await logIn(user.id);
+
+    // With a perfectly good Token, which is the case that matters: forgetting the preHandler does
+    // not accidentally work for an authenticated client either.
+    const answered = await unguarded("/unguarded", `Bearer ${issued.token}`);
+    assert.equal(answered.statusCode, 200, answered.body);
+    assert.equal(answered.body, "", "a route without the preHandler has no User to answer with");
+
+    const threw = await unguarded("/unguarded-id", `Bearer ${issued.token}`);
+    assert.equal(threw.statusCode, 500, threw.body);
+
+    // And the same two without a header at all, so what decides the outcome is the missing hook
+    // rather than the missing credential.
+    assert.equal((await unguarded("/unguarded")).body, "");
+    assert.equal((await unguarded("/unguarded-id")).statusCode, 500);
+
+    // Neither shape leaks the User, on a request that carried a Token naming them.
+    for (const response of [answered, threw]) {
+      assert.ok(!response.body.includes(user.id), `a User leaked: ${response.body}`);
+    }
   });
 });
 
@@ -393,6 +441,15 @@ describe("refusing a request", () => {
     assert.equal((await bearing((await logIn(user.id)).token)).statusCode, 200);
   });
 });
+
+/** A GET at one of the Operator's routes that forgot the preHandler. */
+function unguarded(path: string, authorization?: string) {
+  return publicServer.fastify.inject(
+    authorization === undefined
+      ? { method: "GET", url: `${ops}${path}` }
+      : { method: "GET", url: `${ops}${path}`, headers: { authorization } },
+  );
+}
 
 function login(payload: Record<string, unknown>) {
   return publicServer.fastify.inject({ method: "POST", url: "/auth/tokens", payload });

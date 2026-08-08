@@ -58,7 +58,7 @@ before(async () => {
   publicServer = serverComponent(Fastify(), nowhere);
   // No Public server on Users: this component registers the route group at `/auth`, and Fastify
   // refuses the second registration of one path.
-  users = createUsers({ db, tokenTtl: hour, scrypt: cheap });
+  users = createUsers({ db });
   passwordAuth = createPasswordAuth({
     db,
     users,

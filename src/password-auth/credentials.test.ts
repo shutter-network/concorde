@@ -49,7 +49,7 @@ before(async () => {
   await applySchema(db, usersSchema, passwordAuthSchema);
 
   publicServer = serverComponent(Fastify(), nowhere);
-  users = createUsers({ db, tokenTtl: hour, scrypt: cheap });
+  users = createUsers({ db });
   passwordAuth = createPasswordAuth({ db, users, publicServer, tokenTtl: hour, scrypt: cheap });
 
   // One route of the Operator's own behind the server's composed hook, so that "this Token still

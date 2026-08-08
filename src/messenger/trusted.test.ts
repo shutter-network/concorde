@@ -39,19 +39,20 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { Db } from "../db/index.ts";
-import { type Component, serverComponent } from "../gateway/components.ts";
+import { type ServerComponent, serverComponent } from "../gateway/components.ts";
 import { createHttpChannel } from "../http-channel/http-channel.ts";
 import type { Logger } from "../logging/logging.ts";
+import { createPasswordAuth, type PasswordAuth } from "../password-auth/password-auth.ts";
+import * as passwordAuthSchema from "../password-auth/schema.ts";
+import type { ScryptParameters } from "../password-auth/secrets.ts";
 import type { SignalRecord } from "../signals/routes.ts";
 import * as signalsSchema from "../signals/schema.ts";
 import { createSignalWorker, type SignalWorker } from "../signals/worker.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
-import type { UserRecord } from "../users/routes.ts";
 import * as usersSchema from "../users/schema.ts";
-import type { ScryptParameters } from "../users/secrets.ts";
-import { createUsers } from "../users/users.ts";
+import { createUsers, type Users } from "../users/users.ts";
 import type { MessageRecord } from "./messages.ts";
 import { createMessenger, type Messenger } from "./messenger.ts";
 import * as messengerSchema from "./schema.ts";
@@ -62,8 +63,11 @@ let db: Db;
 let messenger: Messenger;
 let worker: SignalWorker;
 /** Both servers, as an Operator constructs them: bare Fastify instances in a start order. */
-let agentServer: Component & { readonly fastify: FastifyInstance };
-let publicServer: Component & { readonly fastify: FastifyInstance };
+let agentServer: ServerComponent<FastifyInstance>;
+let publicServer: ServerComponent<FastifyInstance>;
+/** The two parts a User with a password comes from. */
+let users: Users;
+let passwordAuth: PasswordAuth;
 
 /** Where the two constructors put their plugins, and where the login route of Users is. */
 const prefix = "/messages";
@@ -109,17 +113,20 @@ before(async () => {
     agentServer,
     logger: silent,
   });
-  // Both servers, so that `POST /users` and the login under `/auth` exist: a Token here is
-  // bought with a password at the login route of Users. Both parts take it, so it is
-  // constructed first; the foreign key's ordering is the push's to arrange (ADR-0046).
-  const users = createUsers({ db, tokenTtl: hour, scrypt: cheap, agentServer, publicServer });
-  // And held, which this file is the first to have a reason to do.
+  // Users first, because the Messenger's foreign key names it; the foreign key's ordering is
+  // the push's to arrange (ADR-0046). Password Auth is the login under `/auth` a Token here is
+  // bought at, and registering it with the Public server is what lets the Channel's routes
+  // authenticate anybody (ADR-0052).
+  users = createUsers({ db, agentServer, publicServer });
+  passwordAuth = createPasswordAuth({ db, users, publicServer, tokenTtl: hour, scrypt: cheap });
+  // And the Messenger is held, which this file is the first to have a reason to do.
   messenger = createMessenger({ db, users, worker, agentServer });
-  createHttpChannel({ db, messenger, users, publicServer });
+  createHttpChannel({ db, messenger, publicServer });
 
   // The schema of Users alongside the Messenger's, because `messages.user_id` references
-  // `saf_users.users.id` and one push has to see both (ADR-0036, ADR-0046).
-  await applySchema(db, signalsSchema, usersSchema, messengerSchema);
+  // `saf_users.users.id` and one push has to see both (ADR-0036, ADR-0046). Password Auth's is
+  // there because both of its columns reference that table too (ADR-0052).
+  await applySchema(db, signalsSchema, usersSchema, passwordAuthSchema, messengerSchema);
 });
 
 after(async () => {
@@ -129,15 +136,18 @@ after(async () => {
   await database.drop();
 });
 
-/** A User with a password, admitted over the Agent server, holding a Token they logged in for. */
+/**
+ * A User with a password, admitted from trusted code, holding a Token they logged in for.
+ *
+ * Two writes in one transaction, which is the only way a User who can log in exists: no route
+ * anywhere creates one (ADR-0052).
+ */
 async function admitted(): Promise<Client> {
-  const created = await agentServer.fastify.inject({
-    method: "POST",
-    url: "/users",
-    payload: { password },
+  const { id } = await db.tx(async (tx) => {
+    const user = await users.create(tx);
+    await passwordAuth.setPassword(tx, user.id, password);
+    return user;
   });
-  assert.equal(created.statusCode, 201, `admitting a User should have answered: ${created.body}`);
-  const id = created.json<UserRecord>().id;
 
   const issued = await publicServer.fastify.inject({
     method: "POST",

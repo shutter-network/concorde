@@ -28,28 +28,32 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { Db } from "../db/index.ts";
-import { type Component, serverComponent } from "../gateway/components.ts";
+import { type ServerComponent, serverComponent } from "../gateway/components.ts";
 import type { MessageRecord } from "../messenger/messages.ts";
 import { createMessenger } from "../messenger/messenger.ts";
 import * as messengerSchema from "../messenger/schema.ts";
+import { createPasswordAuth, type PasswordAuth } from "../password-auth/password-auth.ts";
+import * as passwordAuthSchema from "../password-auth/schema.ts";
+import type { ScryptParameters } from "../password-auth/secrets.ts";
 import * as signalsSchema from "../signals/schema.ts";
 import { createSignalWorker } from "../signals/worker.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
-import type { UserRecord } from "../users/routes.ts";
 import * as usersSchema from "../users/schema.ts";
-import type { ScryptParameters } from "../users/secrets.ts";
-import { createUsers } from "../users/users.ts";
+import { createUsers, type Users } from "../users/users.ts";
 import { createHttpChannel } from "./http-channel.ts";
 
 let database: TestDatabase;
 let db: Db;
 /** Both servers, as an Operator constructs them: bare Fastify instances in a start order. */
-let agentServer: Component & { readonly fastify: FastifyInstance };
-let publicServer: Component & { readonly fastify: FastifyInstance };
+let agentServer: ServerComponent<FastifyInstance>;
+let publicServer: ServerComponent<FastifyInstance>;
+/** The two parts a Token here comes from: the identity, and the scheme that names it. */
+let users: Users;
+let passwordAuth: PasswordAuth;
 
-/** Where the two constructors put their plugins, and where the login route of Users is. */
+/** Where the two constructors put their plugins, and where the login route of Password Auth is. */
 const prefix = "/messages";
 const auth = "/auth";
 
@@ -86,23 +90,25 @@ before(async () => {
   // draining the queue it stays `pending` and wakes nothing — which is exactly what a read
   // test wants, since the row is what it reads and the Run is not its subject.
   const worker = createSignalWorker({ db, runtime: fakeRuntime(), handlers: {} });
-  // Both servers, so that `POST /users` and the login under `/auth` exist: a Token here is
-  // bought with a password at the login route of Users. Both parts take it, so it is
-  // constructed first; the foreign key's ordering is the push's to arrange (ADR-0046).
-  const users = createUsers({ db, tokenTtl: hour, scrypt: cheap, agentServer, publicServer });
+  // Users first, because the Messenger's foreign key names it and Password Auth reads through
+  // it; the foreign key's ordering is the push's to arrange (ADR-0046). Password Auth is where
+  // a Token here comes from, and registering it with the Public server is what makes
+  // `publicServer.requireUser` able to authenticate the reads below (ADR-0052).
+  users = createUsers({ db, agentServer, publicServer });
+  passwordAuth = createPasswordAuth({ db, users, publicServer, tokenTtl: hour, scrypt: cheap });
   // Nothing is held: the read under test is a route, and the Channel's constructor registered
   // it itself, behind that component's own hook (ADR-0032). The Messenger is built inline because
   // this file holds neither — the log it owns is reached only over HTTP here.
   createHttpChannel({
     db,
     messenger: createMessenger({ db, users, worker, agentServer }),
-    users,
     publicServer,
   });
 
   // The schema of Users alongside the Messenger's, because `messages.user_id` references
-  // `saf_users.users.id` and one push has to see both (ADR-0036, ADR-0046).
-  await applySchema(db, signalsSchema, usersSchema, messengerSchema);
+  // `saf_users.users.id` and one push has to see both (ADR-0036, ADR-0046). Password Auth's is
+  // there for the same reason: both of its columns reference that table too (ADR-0052).
+  await applySchema(db, signalsSchema, usersSchema, passwordAuthSchema, messengerSchema);
 });
 
 after(async () => {
@@ -111,19 +117,22 @@ after(async () => {
   await database.drop();
 });
 
-/** A User with a password, admitted over the Agent server, holding a Token they logged in for. */
+/**
+ * A User with a password, admitted from trusted code, holding a Token they logged in for.
+ *
+ * Two writes in one transaction, which is the only way a User who can log in exists: no route
+ * anywhere creates one (ADR-0052).
+ */
 async function admitted(): Promise<Client> {
-  const created = await agentServer.fastify.inject({
-    method: "POST",
-    url: "/users",
-    payload: { password },
+  const created = await db.tx(async (tx) => {
+    const user = await users.create(tx);
+    await passwordAuth.setPassword(tx, user.id, password);
+    return user;
   });
-  assert.equal(created.statusCode, 201, `admitting a User should have answered: ${created.body}`);
-  const id = created.json<UserRecord>().id;
-  return { id, token: await tokenFor(id) };
+  return { id: created.id, token: await tokenFor(created.id) };
 }
 
-/** One real login, at the route of Users, on whichever Public server carries it. */
+/** One real login, at the route of Password Auth, on whichever Public server carries it. */
 async function tokenFor(id: string, server = () => publicServer.fastify): Promise<string> {
   const issued = await server().inject({
     method: "POST",
@@ -324,15 +333,15 @@ describe("a User reading their own Messages", () => {
 });
 
 describe("an unauthenticated read", () => {
-  it("is the single 401 of Users, however the Token is missing or refused", async () => {
+  it("is the single 401 of the Public server, however the Token is missing or refused", async () => {
     const client = await admitted();
     await sent(client.id, "not for a stranger");
 
-    // A Token from a Users component whose Tokens last a millisecond, over the same Db: the row
+    // A Token from a Password Auth whose Tokens last a millisecond, over the same Db: the row
     // is there and only its `expires_at` is in the past, so an expired Token is reachable
     // without a test waiting for anything.
     const briefly = serverComponent(Fastify(), nowhere);
-    createUsers({ db, tokenTtl: 1, scrypt: cheap, publicServer: briefly });
+    createPasswordAuth({ db, users, publicServer: briefly, tokenTtl: 1, scrypt: cheap });
     let expired: string;
     try {
       expired = await tokenFor(client.id, () => briefly.fastify);
@@ -364,7 +373,8 @@ describe("an unauthenticated read", () => {
     }
 
     // Byte for byte, not merely equivalent: the Channel authenticates nobody, so this is
-    // the one refusal of Users reaching a route in another part unchanged (ADR-0030).
+    // the one refusal the Public server composes, reaching a route in another part unchanged
+    // (ADR-0030, ADR-0052).
     const [first, ...rest] = refusals;
     assert.ok(first !== undefined);
     for (const refused of rest) {
@@ -376,7 +386,7 @@ describe("an unauthenticated read", () => {
     assert.equal((await bearing(client.token)).statusCode, 200);
   });
 
-  it("answers a malformed request before it looks at a Token, as GET /auth/me does", async () => {
+  it("answers a malformed request before it looks at a Token, as GET /users/me does", async () => {
     // The documented consequence of the query refusal being a `preValidation` hook and the
     // `requireUser` being a `preHandler`: a stranger asking for something this route does not
     // have is told so, and never gets as far as the 401. Pinned rather than guarded, because

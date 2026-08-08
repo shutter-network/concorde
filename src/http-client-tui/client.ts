@@ -1,7 +1,7 @@
 /**
  * The whole of what this client knows how to ask for: a Token, a User's own Message log, and a
- * submission. Three requests against two routes of the HTTP Channel and one of the Users
- * component, and nothing else. Decisions, Schedules and the Agent server are deliberately absent,
+ * submission. Three requests against two routes of the HTTP Channel and one of Password Auth,
+ * and nothing else. Decisions, Schedules and the Agent server are deliberately absent,
  * which is what lets one binary serve every deployment that runs an HTTP Channel with no
  * conditionals in it.
  *
@@ -26,7 +26,8 @@
  */
 
 import type { MessageRecord } from "../messenger/messages.ts";
-import type { IssuedToken, UserRecord } from "../users/routes.ts";
+import type { IssuedToken } from "../password-auth/routes.ts";
+import type { UserRecord } from "../users/routes.ts";
 
 /** What `fetch` is here: the global by default, and a parameter so a test can answer without one. */
 export type Fetch = (url: string, init: RequestInit) => Promise<Response>;

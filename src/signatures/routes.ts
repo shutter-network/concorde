@@ -26,8 +26,13 @@
 
 import type { JsonWebKey } from "node:crypto";
 import type { FastifyPluginAsync, preHandlerAsyncHookHandler } from "fastify";
-import { refused, unknownParameter, unknownQueryRefusal } from "../route-conventions.ts";
-import { authenticationFailed, bearerRequired } from "../users/routes.ts";
+import {
+  bearerRequired,
+  notAuthenticated,
+  refused,
+  unknownParameter,
+  unknownQueryRefusal,
+} from "../route-conventions.ts";
 import type { SignedClaims } from "./signatures.ts";
 
 /** RFC 7517's container. Why a Set for one key is at the construction site in `signatures.ts`. */
@@ -198,10 +203,6 @@ const verdictSchema = {
   required: ["verified"],
 } as const;
 
-// The imported sentence is the whole of what the refusal says; what this adds is where it comes
-// from, so a client reading this route need not discover that the hook belongs elsewhere.
-const notAuthenticated = `${authenticationFailed} This part authenticates nobody: the refusal is the \`requireUser\` of the Users component, taken as one option on the route, so it is the same 401 the routes under \`/auth\` answer.`;
-
 // Both halves are load-bearing. The first is the mechanics: this is the URL a JOSE library
 // consumes. The second says plainly what a signature proves, because a verifier who mistakes a
 // cryptographic artifact for evidence about the agent's conduct has been misled by us.
@@ -257,7 +258,7 @@ export function agentSignatureRoutes(signing: StatementSigning): FastifyPluginAs
 }
 
 /**
- * `presentedUser` is `requireUser`, taken as one option and not wrapped, extended or
+ * `presentedUser` is the server's `requireUser`, taken as one option and not wrapped, extended or
  * re-implemented, so an unauthenticated check is the single 401 of Users.
  *
  * The Token is required and the User it names is then unused: it gates the surface rather than

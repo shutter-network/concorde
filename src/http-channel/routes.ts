@@ -16,12 +16,12 @@
  * self-contained is exactly the copy that could lose a field here and nowhere else. Do not inline
  * one.
  *
- * Nothing here authenticates anybody. Both routes take the `requireUser` of Users as one
- * option and read the User off `request.safUser`, and neither has a parameter naming a User at all,
- * so no User can read another's log.
+ * Nothing here authenticates anybody. Both routes take the Public server's own `requireUser` as
+ * one option and read the User off `request.safUser`, and neither has a parameter naming a User at
+ * all, so no User can read another's log.
  *
- * The 401 and the Token are described in the words of the Users component, imported from its route
- * module rather than restated here.
+ * The 401 and the credential are described in the shared words of `route-conventions.ts` rather
+ * than restated here, because the refusal belongs to the server and to no component.
  */
 
 import type { FastifyPluginAsync, preHandlerAsyncHookHandler } from "fastify";
@@ -43,13 +43,14 @@ import {
 } from "../messenger/routes.ts";
 import {
   afterCursor,
+  bearerRequired,
   beforeCursor,
   cursorCases,
   limitSchema,
+  notAuthenticated,
   refused,
   unknownParameter,
 } from "../route-conventions.ts";
-import { authenticationFailed, bearerRequired } from "../users/routes.ts";
 
 /**
  * What a User's own routes need: the shared read, and a submission.
@@ -62,14 +63,6 @@ import { authenticationFailed, bearerRequired } from "../users/routes.ts";
 export type OwnMessageOperations = MessageHistory & {
   submit(userId: string, text: string): Promise<MessageRecord>;
 };
-
-/**
- * The 401, which is the Users component's and is described in its words.
- *
- * The imported sentence is the whole of the refusal. What this adds is where it comes from, so a
- * client reading a Message route need not discover that the hook belongs elsewhere.
- */
-const notAuthenticated = `${authenticationFailed} This part authenticates nobody: the refusal is the \`requireUser\` of the Users component, taken as one option on the route, so it is the same 401 the routes under \`/auth\` answer.`;
 
 /**
  * The body of `POST /`: what the User said, and nothing else.
@@ -102,7 +95,7 @@ const ownHistorySchema = {
 /**
  * The Public server's Message routes: a User's own log, and the one way into it from outside.
  *
- * `presentedUser` is `requireUser`, taken as one option on each route and not wrapped, extended or
+ * `presentedUser` is the server's `requireUser`, taken as one option on each route and not wrapped, extended or
  * re-implemented. So an unauthenticated read or submission is the single 401 of Users.
  *
  * The hook runs at `preHandler`, after validation, so a malformed window, an unknown query

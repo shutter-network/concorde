@@ -87,6 +87,8 @@ import {
   messageReceivedKind,
 } from "../messenger/index.ts";
 import * as messengerSchema from "../messenger/schema.ts";
+import { createPasswordAuth, type IssuedToken, type PasswordAuth } from "../password-auth/index.ts";
+import * as passwordAuthSchema from "../password-auth/schema.ts";
 import {
   createScheduler,
   type ScheduleFiredRecord,
@@ -102,7 +104,7 @@ import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
-import { createUsers, type IssuedToken, type UserRecord, type Users } from "../users/index.ts";
+import { createUsers, type UserRecord, type Users } from "../users/index.ts";
 import * as usersSchema from "../users/schema.ts";
 import type { Component, Gateway } from "./components.ts";
 import { createGateway, describedVersion, type InfraComponents } from "./gateway.ts";
@@ -151,6 +153,7 @@ const theRecord = [
   "agentServer",
   "publicServer",
   "users",
+  "passwordAuth",
   "signatures",
   "decisions",
   "messenger",
@@ -195,6 +198,7 @@ function notebook(): Notebook {
  */
 type Stack = {
   readonly users: Users;
+  readonly passwordAuth: PasswordAuth;
   readonly signatures: Signatures;
   readonly decisions: Decisions;
   readonly messenger: Messenger;
@@ -213,23 +217,21 @@ type Stack = {
  * to hide is on display here, which is the whole point of the parts being the Operator's now.
  */
 function fullStack({ db, agentServer, publicServer, worker }: InfraComponents): Stack {
-  const users = createUsers({ db, tokenTtl: hour, agentServer, publicServer });
-  const signatures = createSignatures({
-    signingKey,
-    agentServer,
-    publicServer,
-    users,
-    logger: silent,
-  });
-  const decisions = createDecisions({ db, signatures, users, agentServer, publicServer });
+  const users = createUsers({ db, agentServer, publicServer });
+  // The one scheme this deployment accepts. It registers itself with the Public server inside
+  // its own constructor, which is what makes `publicServer.requireUser` able to authenticate
+  // anybody: every other part here takes that hook and holds no credential (ADR-0052).
+  const passwordAuth = createPasswordAuth({ db, users, publicServer, tokenTtl: hour });
+  const signatures = createSignatures({ signingKey, agentServer, publicServer, logger: silent });
+  const decisions = createDecisions({ db, signatures, agentServer, publicServer });
   const messenger = createMessenger({ db, users, worker, agentServer });
-  const httpChannel = createHttpChannel({ db, messenger, users, publicServer });
+  const httpChannel = createHttpChannel({ db, messenger, publicServer });
   // The Scheduler, given the Agent server so its routes register and are discovered by the
   // description plugin the constructor put on ahead of `extend` — the seam this file's document
   // suite reads them out of (ADR-0040, ADR-0045). It imposes no construction-order constraint of
   // its own: a Schedule references nobody.
   const scheduler = createScheduler({ db, worker, agentServer, logger: silent });
-  return { users, signatures, decisions, messenger, httpChannel, scheduler };
+  return { users, passwordAuth, signatures, decisions, messenger, httpChannel, scheduler };
 }
 
 /** Which callback ran when, since "`extend` before `handlers`" is a claim about order. */
@@ -409,6 +411,7 @@ before(async () => {
     components.db,
     signalsSchema,
     usersSchema,
+    passwordAuthSchema,
     decisionsSchema,
     messengerSchema,
     schedulerSchema,
@@ -506,16 +509,24 @@ describe("a whole deployment from one call", () => {
     assert.deepEqual(components.notes.lines, []);
   });
 
-  it("wired every part to every other, which is eight route groups on two servers", async () => {
+  it("wired every part to every other, which is nine route groups on two servers", async () => {
     // One read per group, chosen so that nothing here derives a password: the two plugins of
-    // Users, the Signal Worker's, the Messenger's pair, Decisions' pair and Signatures' pair. A
-    // group that was never registered answers 404, and so does one registered on the
-    // other server.
+    // Users, Password Auth's, the Signal Worker's, the Messenger's pair, Decisions' pair and
+    // Signatures' pair. A group that was never registered answers 404, and so does one
+    // registered on the other server.
     assert.equal((await fetch(`${agentUrl}/users`)).status, 200);
     assert.equal((await fetch(`${agentUrl}/signals`)).status, 200);
     assert.equal((await fetch(`${agentUrl}/messages?user=${client.id}`)).status, 200);
     assert.equal((await fetch(`${agentUrl}/decisions`)).status, 200);
-    assert.equal((await authenticated(`${publicUrl}/auth/me`)).status, 200);
+    assert.equal((await authenticated(`${publicUrl}/users/me`)).status, 200);
+    // Password Auth's group, read by presenting a password nobody holds: a 401 is the login
+    // route answering, where a group nobody registered would be a 404. Nothing is admitted and
+    // no Token is dropped, so the counts the round trips below assert on do not move.
+    assert.equal(
+      (await postJson(`${publicUrl}/auth/tokens`, { user: nobody, password: "not anybody's" }))
+        .status,
+      401,
+    );
     assert.equal((await authenticated(`${publicUrl}/messages`)).status, 200);
     assert.equal((await authenticated(`${publicUrl}/decisions`)).status, 200);
     // And Signatures' two, whose one read is the only route on the Public server that takes no
@@ -543,12 +554,13 @@ describe("a whole deployment from one call", () => {
     );
   });
 
-  it("starts and stops the four parts with nothing to run, and no call does a thing", async () => {
+  it("starts and stops the idle parts with nothing to run, and no call does a thing", async () => {
     // Started once already, by `start` above, and started again here — which is safe for
     // precisely the reason `worker.start` refuses a second call and these do not: there is
     // nothing running to run twice.
     for (const idle of [
       components.users,
+      components.passwordAuth,
       components.signatures,
       components.decisions,
       components.messenger,
@@ -651,7 +663,7 @@ describe("a whole deployment from one call", () => {
     const created = await components.db.tx(async (tx) => {
       const user = await components.users.create(tx);
       await components.users.setAttributes(tx, user.id, roundTripAttributes);
-      await components.users.setPassword(tx, user.id, theOnePassword);
+      await components.passwordAuth.setPassword(tx, user.id, theOnePassword);
       return user;
     });
     // Read back through the part's own method rather than reusing what `create` answered,
@@ -684,7 +696,9 @@ describe("a whole deployment from one call", () => {
     // The in-process half is `issueToken`, the method an Operator's own OIDC route calls,
     // and it builds the shape the login builds: a field added to `IssuedToken` and
     // forgotten in the schema is a key on one side and not the other.
-    const minted = await components.db.tx((tx) => components.users.issueToken(tx, created.id));
+    const minted = await components.db.tx((tx) =>
+      components.passwordAuth.issueToken(tx, created.id),
+    );
     const login = await postJson(`${publicUrl}/auth/tokens`, {
       user: created.id,
       password: theOnePassword,
@@ -709,7 +723,7 @@ describe("a whole deployment from one call", () => {
 
     // The presented User, over the Token just traded for, which is the fourth schema
     // answering a `UserRecord` and the last one.
-    const presented = await fetch(`${publicUrl}/auth/me`, {
+    const presented = await fetch(`${publicUrl}/users/me`, {
       headers: { authorization: `Bearer ${issued.token}` },
     });
     const presentedBody = await presented.text();
@@ -726,7 +740,7 @@ describe("a whole deployment from one call", () => {
       ["GET /users/:id", JSON.stringify(read)],
       ["GET /users", JSON.stringify(listed)],
       ["POST /auth/tokens", issuedBody],
-      ["GET /auth/me", presentedBody],
+      ["GET /users/me", presentedBody],
     ] as const) {
       assert.equal(/password|scrypt/i.test(body), false, `${what} carried a credential: ${body}`);
     }
@@ -979,16 +993,17 @@ describe("a whole deployment from one call", () => {
       "signing must not have published anything",
     );
 
-    // The lazy check, and the first half of what it costs: a Token, and the Users component's
+    // The lazy check, and the first half of what it costs: a Token, and the Public server's
     // single 401 without one. Compared body for body against another Public route's refusal,
-    // because "the same 401" is the claim and this part authenticates nobody (ADR-0030).
+    // because "the same 401" is the claim and this part authenticates nobody (ADR-0030,
+    // ADR-0052).
     const refused = await fetch(`${publicUrl}/verify`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ jws }),
     });
     assert.equal(refused.status, 401);
-    const elsewhere = await fetch(`${publicUrl}/auth/me`);
+    const elsewhere = await fetch(`${publicUrl}/users/me`);
     assert.equal(elsewhere.status, 401);
     assert.deepEqual(JSON.parse(await refused.text()), JSON.parse(await elsewhere.text()));
 
@@ -1245,8 +1260,8 @@ describe("the infrastructure on its own", () => {
  * further up: that suite's subject is what is listening and when, and `inject` answers on
  * a server that has been closed. This one never starts or stops a Gateway.
  *
- * **All twenty-eight routes declare what they answer with**, one part at a time: the Signal
- * Worker's four, Users' eight, the HTTP Messenger's four, Decisions' five,
+ * **All twenty-seven routes declare what they answer with**, one part at a time: the Signal
+ * Worker's four, Users' three, Password Auth's four, the HTTP Messenger's four, Decisions' five,
  * Signatures' three and the Scheduler's four. What no test here can do is catch a *dropped*
  * field, since a document and
  * the wire it describes are the same schema read twice. That is the round-trip assertions in
@@ -1266,7 +1281,7 @@ describe("the description both servers serve", () => {
    * (ADR-0040).
    *
    * A path ending in a slash is a route registered at `""` under a prefix, which is how
-   * `POST /users` and both Message routes are written. Cosmetic, carried by a generated
+   * `GET /users` and both Message routes are written. Cosmetic, carried by a generated
    * client, and not worth changing a route over.
    */
   const agentPaths = [
@@ -1284,7 +1299,6 @@ describe("the description both servers serve", () => {
     "/users/{id}",
   ];
   const publicPaths = [
-    "/auth/me",
     "/auth/password",
     "/auth/tokens",
     "/auth/tokens/current",
@@ -1292,6 +1306,7 @@ describe("the description both servers serve", () => {
     "/decisions/{seq}",
     "/jwks.json",
     "/messages/",
+    "/users/me",
     "/verify",
   ];
 
@@ -1451,40 +1466,25 @@ describe("the description both servers serve", () => {
     }
   });
 
-  it("says what the eight Users routes answer with, across both surfaces", async () => {
-    // Eight routes and two documents, which is the one part that spans both surfaces and
-    // therefore the one where "an Agent server route can never leak into the Public
+  it("says what the three Users routes answer with, across both surfaces", async () => {
+    // Three routes and two documents, which is one of the parts that span both surfaces and
+    // therefore one of the places where "an Agent server route can never leak into the Public
     // server's description" is a claim about a part rather than about a server (ADR-0040).
     const documents = {
       agent: await documentOf(described.components.agentServer.fastify),
       public: await documentOf(described.components.publicServer.fastify),
     };
     // A path ending in a slash is a route registered at `""` under a prefix, which is how
-    // `POST /users` and `GET /users` are written.
+    // `GET /users` is written.
     const answers: readonly {
       readonly surface: keyof typeof documents;
       readonly path: string;
       readonly method: Method;
       readonly statuses: readonly string[];
     }[] = [
-      { surface: "agent", path: "/users/", method: "post", statuses: ["201", "400"] },
       { surface: "agent", path: "/users/", method: "get", statuses: ["200", "400"] },
       { surface: "agent", path: "/users/{id}", method: "get", statuses: ["200", "400", "404"] },
-      { surface: "public", path: "/auth/tokens", method: "post", statuses: ["201", "400", "401"] },
-      { surface: "public", path: "/auth/me", method: "get", statuses: ["200", "400", "401"] },
-      {
-        surface: "public",
-        path: "/auth/tokens/current",
-        method: "delete",
-        statuses: ["204", "400", "401"],
-      },
-      {
-        surface: "public",
-        path: "/auth/tokens",
-        method: "delete",
-        statuses: ["204", "400", "401"],
-      },
-      { surface: "public", path: "/auth/password", method: "put", statuses: ["204", "400", "401"] },
+      { surface: "public", path: "/users/me", method: "get", statuses: ["200", "400", "401"] },
     ];
 
     for (const { surface, path, method, statuses } of answers) {
@@ -1496,49 +1496,47 @@ describe("the description both servers serve", () => {
         // "Default Response" is what an undeclared response reads as, so this is the line
         // that tells a described status from a status the plugin invented a sentence for.
         assert.notEqual(answered.description, "Default Response", `${where} ${status}`);
-        // A 204 carries **no `content` at all**, which is what stops the document from
-        // promising a body nobody sends. That the route still answers 204 is the first
-        // suite's, since it needs a request that reaches a handler.
-        assert.equal(Object.hasOwn(answered, "content"), status !== "204", `${where} ${status}`);
+        assert.ok(Object.hasOwn(answered, "content"), `${where} ${status}`);
       }
 
       assert.ok(route.tags !== undefined && route.tags.length > 0, `${where} should be tagged`);
       assert.ok(route.summary !== undefined && route.summary.length > 0, where);
       assert.ok(route.description !== undefined && route.description.length > 0, where);
+      // One tag across both surfaces, because these three are one part: which surface a
+      // reader is on is the document they fetched rather than a label inside it.
+      assert.deepEqual(tagsOf(documents[surface], path, method), ["Users"], where);
     }
 
-    // Tagged so that the two surfaces group separately rather than arriving as one list of
-    // eight: the routes an agent may call are Users, the routes a person's client calls are
-    // Authentication, and neither name appears in the other document.
-    assert.deepEqual(tagsOf(documents.agent, "/users/", "post"), ["Users"]);
-    assert.deepEqual(tagsOf(documents.public, "/auth/me", "get"), ["Authentication"]);
-    assert.equal(JSON.stringify(documents.agent.paths).includes("Authentication"), false);
-    assert.equal(JSON.stringify(documents.public.paths).includes('"Users"'), false);
-
-    // The sentence an Operator used to transcribe into the agent's instructions, and the
-    // one this route's whole security boundary is: there is no parameter, so there is
-    // nothing to bypass (ADR-0029).
-    const creating = String(documents.agent.paths["/users/"]?.post?.description);
-    assert.match(creating, /accepts no Attributes, and there is no parameter for them/);
-
-    // Which routes want a Token, said per route, because the useful thing to know is which
-    // one is the exception rather than that most of them do.
-    for (const [path, method] of [
-      ["/auth/me", "get"],
-      ["/auth/tokens/current", "delete"],
-      ["/auth/tokens", "delete"],
-      ["/auth/password", "put"],
-    ] as const) {
-      const route = documents.public.paths[path]?.[method];
-      assert.match(String(route?.description), /\*\*Requires a bearer Token\*\*/, path);
+    // **There is no create, and the document is where that is visible to a client author.**
+    // `POST /users` was removed rather than stripped of its password parameter, so an injected
+    // prompt cannot mint itself an account and then a credential for it (ADR-0052). Asserted on
+    // the served document, because that is the only part of this a consumer sees.
+    assert.equal(documents.agent.paths["/users/"]?.post, undefined);
+    assert.equal(documents.agent.paths["/users/{id}"]?.post, undefined);
+    assert.equal(JSON.stringify(documents.agent.paths).includes('"requestBody"'), true);
+    for (const surface of ["agent", "public"] as const) {
+      for (const [path, operations] of Object.entries(documents[surface].paths)) {
+        if (!path.startsWith("/users")) continue;
+        assert.deepEqual(Object.keys(operations), ["get"], `${surface} ${path}`);
+      }
     }
-    const trading = String(documents.public.paths["/auth/tokens"]?.post?.description);
-    assert.match(trading, /the one Public route that requires no Token/);
+    // And the read says so, so a client author is told rather than left to notice a missing
+    // verb.
+    assert.match(
+      String(documents.agent.paths["/users/"]?.get?.description),
+      /\*\*These routes are reads\.\*\*/,
+    );
+
+    // `GET /users/me` wants a credential and names no scheme as *the* scheme, because it
+    // echoes whichever User the Gateway authenticated (ADR-0052).
+    const me = String(documents.public.paths["/users/me"]?.get?.description);
+    assert.match(me, /\*\*Requires authentication\.\*\*/);
+    assert.match(me, /any scheme this deployment accepts/);
 
     // The User as it is answered: exactly three fields, named rather than counted, because
     // the schema being a **positive list** is what keeps a column added to `saf_users.users`
-    // off the wire. A hash reaching one is the first suite's assertion; that the document
-    // does not even describe one is this.
+    // off the wire. That no credential reaches one is the first suite's assertion; that the
+    // document does not even describe one is this.
     const user = schemaOf(documents.agent, "/users/{id}", "get", "200");
     assert.deepEqual(Object.keys(user.properties ?? {}).sort(), ["attributes", "createdAt", "id"]);
     assert.deepEqual([...(user.required ?? [])].sort(), ["attributes", "createdAt", "id"]);
@@ -1553,11 +1551,82 @@ describe("the description both servers serve", () => {
     // suite is what proves the passthrough rather than this line.
     assert.equal(user.properties?.attributes?.type, undefined);
 
-    // Property descriptions on the two fields whose name is not the whole story, and on
+    // Property descriptions on the one field whose name is not the whole story, and on
     // neither of the two whose name is.
     assert.match(String(user.properties?.attributes?.description), /where grouping/);
     assert.equal(user.properties?.id?.description, undefined);
     assert.equal(user.properties?.createdAt?.description, undefined);
+
+    // The same shape on the Public route, which is a second response schema written
+    // separately: a field declared in one and forgotten in the other differs here.
+    assert.deepEqual(
+      Object.keys(schemaOf(documents.public, "/users/me", "get", "200").properties ?? {}).sort(),
+      ["attributes", "createdAt", "id"],
+    );
+  });
+
+  it("says what Password Auth's four routes answer with, and which one needs no Token", async () => {
+    // The one part whose routes are all on the Public server, and the only part in this
+    // deployment that holds a credential: the login and the three routes below it (ADR-0052).
+    const documents = {
+      agent: await documentOf(described.components.agentServer.fastify),
+      public: await documentOf(described.components.publicServer.fastify),
+    };
+    const answers: readonly {
+      readonly path: string;
+      readonly method: Method;
+      readonly statuses: readonly string[];
+    }[] = [
+      { path: "/auth/tokens", method: "post", statuses: ["201", "400", "401"] },
+      { path: "/auth/tokens/current", method: "delete", statuses: ["204", "400", "401"] },
+      { path: "/auth/tokens", method: "delete", statuses: ["204", "400", "401"] },
+      { path: "/auth/password", method: "put", statuses: ["204", "400", "401"] },
+    ];
+
+    for (const { path, method, statuses } of answers) {
+      const where = `${method.toUpperCase()} ${path}`;
+      const route = documents.public.paths[path]?.[method];
+      assert.ok(route !== undefined, `${where} should be described`);
+      assert.deepEqual(Object.keys(route.responses).sort(), [...statuses].sort(), where);
+      for (const [status, answered] of Object.entries(route.responses)) {
+        // "Default Response" is what an undeclared response reads as, so this is the line
+        // that tells a described status from a status the plugin invented a sentence for.
+        assert.notEqual(answered.description, "Default Response", `${where} ${status}`);
+        // A 204 carries **no `content` at all**, which is what stops the document from
+        // promising a body nobody sends. That the route still answers 204 is the first
+        // suite's, since it needs a request that reaches a handler.
+        assert.equal(Object.hasOwn(answered, "content"), status !== "204", `${where} ${status}`);
+      }
+
+      assert.deepEqual(tagsOf(documents.public, path, method), ["Authentication"], where);
+      assert.ok(route.summary !== undefined && route.summary.length > 0, where);
+      assert.ok(route.description !== undefined && route.description.length > 0, where);
+    }
+
+    // Tagged so that the two surfaces group separately: the routes an agent may call are
+    // Users, the routes a person's client calls to get a credential are Authentication, and
+    // neither name appears in the other document.
+    assert.equal(JSON.stringify(documents.agent.paths).includes("Authentication"), false);
+    assert.deepEqual(tagsOf(documents.agent, "/users/", "get"), ["Users"]);
+    // Nothing of this part reaches the Agent server at all: every credential route is the
+    // Public server's, and the three that escalate have no route anywhere.
+    for (const path of ["/auth/tokens", "/auth/tokens/current", "/auth/password"]) {
+      assert.equal(documents.agent.paths[path], undefined, path);
+    }
+
+    // Which routes want a Token, said per route, because the useful thing to know is which
+    // one is the exception rather than that most of them do.
+    for (const [path, method] of [
+      ["/auth/tokens/current", "delete"],
+      ["/auth/tokens", "delete"],
+      ["/auth/password", "put"],
+    ] as const) {
+      const route = documents.public.paths[path]?.[method];
+      assert.match(String(route?.description), /\*\*Requires a bearer Token\*\*/, path);
+    }
+    const trading = String(documents.public.paths["/auth/tokens"]?.post?.description);
+    assert.match(trading, /the one route here that requires no Token/);
+
     const token = schemaOf(documents.public, "/auth/tokens", "post", "201");
     assert.deepEqual(Object.keys(token.properties ?? {}).sort(), ["expiresAt", "token", "user"]);
     assert.match(String(token.properties?.expiresAt?.description), /When the Token stops working/);
@@ -1616,7 +1685,7 @@ describe("the description both servers serve", () => {
     assert.deepEqual(tagsOf(documents.agent, messages, "post"), ["Messages"]);
     assert.deepEqual(tagsOf(documents.public, messages, "get"), ["Messages"]);
     assert.equal(tagsOf(documents.agent, "/signals", "get").includes("Messages"), false);
-    assert.equal(tagsOf(documents.public, "/auth/me", "get").includes("Messages"), false);
+    assert.equal(tagsOf(documents.public, "/users/me", "get").includes("Messages"), false);
 
     // **The cursor semantics, which no schema conveys any part of**: `after` and `before` are
     // two optional integers, and nothing about that shape says which of them is the newest
@@ -1708,8 +1777,8 @@ describe("the description both servers serve", () => {
       );
     }
 
-    // Which Public routes want a Token, in the Users component's own words: this part holds no
-    // scheme of its own, so restating them would be two descriptions of one hook.
+    // Which Public routes want a Token, in the shared words of `route-conventions.ts`: this
+    // part holds no scheme of its own, so restating them would be two descriptions of one hook.
     for (const method of ["post", "get"] as const) {
       const route = documents.public.paths[messages]?.[method];
       assert.match(String(route?.description), /\*\*Requires a bearer Token\*\*/, method);
@@ -1910,14 +1979,20 @@ describe("the description both servers serve", () => {
     assert.match(check, /\*\*it proves less than it looks like it proves\*\*/);
     assert.match(check, /\*\*Real verification is offline\.\*\*/);
     assert.match(check, /\*\*Requires a bearer Token\*\*/);
-    // The 401 in the Users component's own words with where the hook came from added, which is
-    // how Decisions describes the same refusal: this part holds no scheme of its own, and a
-    // client should not have to discover that to know the answer is identical there.
+    // The 401 in the shared words with where the hook came from added, which is how Decisions
+    // and the HTTP Channel describe the same refusal: this part holds no scheme of its own, and
+    // a client should not have to discover that to know the answer is identical there. It names
+    // no scheme either, because more than one can refuse (ADR-0052).
     const unauthenticated = String(
       documents.public.paths["/verify"]?.post?.responses["401"]?.description,
     );
     assert.match(unauthenticated, /Authentication failed/);
-    assert.match(unauthenticated, /the same 401 the routes under `\/auth` answer/);
+    assert.match(unauthenticated, /the refusal is `publicServer\.requireUser`/);
+    assert.match(
+      unauthenticated,
+      /the same 401 every protected route on this server answers, whichever scheme the deployment accepts/,
+    );
+    assert.equal(unauthenticated.includes("of the Users component"), false);
 
     const route = documents.public.paths["/jwks.json"]?.get;
     assert.ok(route !== undefined, "the key set should be described");
@@ -2259,15 +2334,15 @@ async function reaching(what: string, act: () => Promise<string>): Promise<strin
  * A User admitted from trusted code, holding a Token nobody traded a password for.
  *
  * The two calls an OIDC callback makes, and the reason every test here but one needs no
- * password: `create` takes none and derives nothing, `issueToken` mints a Token for
+ * password: `users.create` derives nothing, `passwordAuth.issueToken` mints a Token for
  * somebody who presented nothing, and what comes back is indistinguishable from a Token a
- * login bought (ADR-0030). The defaults constructor exposes no `scrypt` option, so the
- * alternative would be two derivations at OWASP's 32 MiB cost for nothing most of this
- * file asserts. The one test that does assert something about them buys its own.
+ * login bought (ADR-0030, ADR-0052). This fixture builds Password Auth with no `scrypt`
+ * option, so the alternative would be two derivations at OWASP's 32 MiB cost for nothing most
+ * of this file asserts. The one test that does assert something about them buys its own.
  */
 async function admitted(): Promise<{ id: string; token: string }> {
   const user: UserRecord = await components.db.tx((tx) => components.users.create(tx));
-  const issued = await components.db.tx((tx) => components.users.issueToken(tx, user.id));
+  const issued = await components.db.tx((tx) => components.passwordAuth.issueToken(tx, user.id));
   return { id: user.id, token: issued.token };
 }
 

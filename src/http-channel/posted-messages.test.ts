@@ -29,11 +29,14 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { Db } from "../db/index.ts";
-import { type Component, serverComponent } from "../gateway/components.ts";
+import { serverComponent } from "../gateway/components.ts";
 import type { Logger } from "../logging/logging.ts";
 import type { MessageRecord } from "../messenger/messages.ts";
 import { createMessenger, messageReceivedKind } from "../messenger/messenger.ts";
 import * as messengerSchema from "../messenger/schema.ts";
+import { createPasswordAuth, type PasswordAuth } from "../password-auth/password-auth.ts";
+import * as passwordAuthSchema from "../password-auth/schema.ts";
+import type { ScryptParameters } from "../password-auth/secrets.ts";
 import type { Signal, SignalHandlers } from "../signals/handlers.ts";
 import type { SignalRecord } from "../signals/routes.ts";
 import * as signalsSchema from "../signals/schema.ts";
@@ -42,16 +45,14 @@ import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { type FakeRuntime, fakeRuntime } from "../test-support/fake-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
-import type { UserRecord } from "../users/routes.ts";
 import * as usersSchema from "../users/schema.ts";
-import type { ScryptParameters } from "../users/secrets.ts";
-import { createUsers } from "../users/users.ts";
+import { createUsers, type Users } from "../users/users.ts";
 import { createHttpChannel } from "./http-channel.ts";
 
 let database: TestDatabase;
 let db: Db;
 
-/** Where the two constructors put their plugins, and where the login route of Users is. */
+/** Where the two constructors put their plugins, and where the login route of Password Auth is. */
 const prefix = "/messages";
 const auth = "/auth";
 
@@ -84,12 +85,15 @@ type Client = {
 
 /** One whole Gateway, as a test drives it. */
 type Gateway = {
-  /** Where a User posts and reads, behind the Users component's own hook. */
+  /** Where a User posts and reads, behind the Public server's own composed hook. */
   readonly publicServer: FastifyInstance;
-  /** Where a User is admitted, the agent sends, and prior Signals are read. */
+  /** Where the agent sends and prior Signals are read. */
   readonly agentServer: FastifyInstance;
   /** Every Prompt a Run was started for, in order. */
   readonly runtime: FakeRuntime;
+  /** The two parts a User with a password comes from, held so a test can admit one. */
+  readonly users: Users;
+  readonly passwordAuth: PasswordAuth;
 };
 
 before(async () => {
@@ -99,14 +103,14 @@ before(async () => {
   // once per test and the tables are created once: this is the Operator's own apply, and
   // one call is the whole of it — a second push into this database would fail on `CREATE
   // SCHEMA` (ADR-0046).
-  await applySchema(db, signalsSchema, usersSchema, messengerSchema);
+  await applySchema(db, signalsSchema, usersSchema, passwordAuthSchema, messengerSchema);
 });
 
 after(() => database.drop());
 
 /**
  * A whole Gateway with these Handlers: two servers, a started Signal Worker, a Users
- * component, a Messenger and an HTTP Channel, stopped again afterwards.
+ * component, Password Auth, a Messenger and an HTTP Channel, stopped again afterwards.
  *
  * Everything is constructed in the order an Operator constructs it, and the Messenger after
  * Users — which here is narrative rather than load-bearing, since the migrations are
@@ -128,14 +132,22 @@ async function withGateway(
     logger: silent,
     sweepIntervalMs,
   });
-  const users = createUsers({ db, tokenTtl: hour, scrypt: cheap, agentServer, publicServer });
-  // Nothing is held: every capability under test is a route a constructor registered itself,
-  // and no route plugin is exported (ADR-0032, ADR-0034). The Messenger is built inline
+  const users = createUsers({ db, agentServer, publicServer });
+  // The scheme this file logs in with. It registers itself with the Public server, which is
+  // what makes the Channel's two routes able to authenticate anybody (ADR-0052).
+  const passwordAuth = createPasswordAuth({
+    db,
+    users,
+    publicServer,
+    tokenTtl: hour,
+    scrypt: cheap,
+  });
+  // The Channel is not held: every capability under test is a route a constructor registered
+  // itself, and no route plugin is exported (ADR-0032, ADR-0034). The Messenger is built inline
   // because the Channel registers with it and this file reaches the log only over HTTP.
   createHttpChannel({
     db,
     messenger: createMessenger({ db, users, worker, agentServer }),
-    users,
     publicServer,
   });
 
@@ -145,6 +157,8 @@ async function withGateway(
       publicServer: publicServer.fastify,
       agentServer: agentServer.fastify,
       runtime,
+      users,
+      passwordAuth,
     });
   } finally {
     await worker.stop();
@@ -153,15 +167,18 @@ async function withGateway(
   }
 }
 
-/** A User with a password, admitted over the Agent server, holding a Token they logged in for. */
+/**
+ * A User with a password, admitted from trusted code, holding a Token they logged in for.
+ *
+ * Two writes in one transaction, which is the only way a User who can log in exists: no route
+ * anywhere creates one (ADR-0052).
+ */
 async function admitted(gateway: Gateway): Promise<Client> {
-  const created = await gateway.agentServer.inject({
-    method: "POST",
-    url: "/users",
-    payload: { password },
+  const { id } = await db.tx(async (tx) => {
+    const user = await gateway.users.create(tx);
+    await gateway.passwordAuth.setPassword(tx, user.id, password);
+    return user;
   });
-  assert.equal(created.statusCode, 201, `admitting a User should have answered: ${created.body}`);
-  const id = created.json<UserRecord>().id;
 
   const issued = await gateway.publicServer.inject({
     method: "POST",

@@ -29,24 +29,25 @@ import { generateKeyPairSync } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { Db } from "../db/index.ts";
-import { type Component, serverComponent } from "../gateway/components.ts";
+import { type ServerComponent, serverComponent } from "../gateway/components.ts";
+import { createPasswordAuth } from "../password-auth/password-auth.ts";
+import * as passwordAuthSchema from "../password-auth/schema.ts";
+import type { ScryptParameters } from "../password-auth/secrets.ts";
 import { limitSchema } from "../route-conventions.ts";
 import { createSignatures } from "../signatures/index.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
-import type { UserRecord } from "../users/routes.ts";
 import * as usersSchema from "../users/schema.ts";
-import type { ScryptParameters } from "../users/secrets.ts";
 import { createUsers } from "../users/users.ts";
 import { createDecisions, type DecisionRecord } from "./decisions.ts";
 import * as decisionsSchema from "./schema.ts";
 
 let database: TestDatabase;
 let db: Db;
-let agentServer: Component & { readonly fastify: FastifyInstance };
-let publicServer: Component & { readonly fastify: FastifyInstance };
+let agentServer: ServerComponent<FastifyInstance>;
+let publicServer: ServerComponent<FastifyInstance>;
 
-/** Where the constructor put both route groups, and the login route of Users. */
+/** Where the constructor put both route groups, and the login route of Password Auth. */
 const prefix = "/decisions";
 const auth = "/auth";
 
@@ -94,7 +95,16 @@ before(async () => {
   agentServer = serverComponent(Fastify(), nowhere);
   publicServer = serverComponent(Fastify(), nowhere);
 
-  const users = createUsers({ db, tokenTtl: hour, scrypt: cheap, agentServer, publicServer });
+  const users = createUsers({ db, agentServer, publicServer });
+  // The scheme this file logs in with, and what makes `publicServer.requireUser` able to
+  // authenticate anybody: Decisions holds no credential of its own (ADR-0052).
+  const passwordAuth = createPasswordAuth({
+    db,
+    users,
+    publicServer,
+    tokenTtl: hour,
+    scrypt: cheap,
+  });
   // Generated here, which is where a keypair may be generated: the framework generates none
   // (ADR-0041). Nothing in this file looks at an artifact; the key is what Decisions needs to
   // exist at all.
@@ -103,23 +113,23 @@ before(async () => {
     signingKey: privateKey,
     agentServer,
     publicServer,
-    users,
     logger: silent,
   });
-  createDecisions({ db, signatures, users, agentServer, publicServer });
+  createDecisions({ db, signatures, agentServer, publicServer });
 
-  await applySchema(db, usersSchema, decisionsSchema);
+  await applySchema(db, usersSchema, passwordAuthSchema, decisionsSchema);
 
-  const created = await agentServer.fastify.inject({
-    method: "POST",
-    url: "/users",
-    payload: { password },
+  // Admitted from trusted code, in one transaction: there is no route that creates a User
+  // (ADR-0052).
+  const created = await db.tx(async (tx) => {
+    const user = await users.create(tx);
+    await passwordAuth.setPassword(tx, user.id, password);
+    return user;
   });
-  assert.equal(created.statusCode, 201, `admitting a User should have answered: ${created.body}`);
   const issued = await publicServer.fastify.inject({
     method: "POST",
     url: `${auth}/tokens`,
-    payload: { user: created.json<UserRecord>().id, password },
+    payload: { user: created.id, password },
   });
   assert.equal(issued.statusCode, 201, `logging in should have answered: ${issued.body}`);
   token = issued.json<{ token: string }>().token;

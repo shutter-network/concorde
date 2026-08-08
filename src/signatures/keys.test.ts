@@ -49,12 +49,14 @@ import {
 } from "node:crypto";
 import { after, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
-import { type Component, serverComponent } from "../gateway/components.ts";
+import { type Component, type ServerComponent, serverComponent } from "../gateway/components.ts";
 import type { Logger } from "../logging/logging.ts";
+import { fakeAuth } from "../test-support/fake-auth.ts";
+import type { UserRecord } from "../users/routes.ts";
 import { createSignatures, type Signatures } from "./signatures.ts";
 
 /** A server that is only ever injected into, and the pair a Signatures is constructed on. */
-type Server = Component & { readonly fastify: FastifyInstance };
+type Server = ServerComponent<FastifyInstance>;
 
 /**
  * One keypair per key type, generated here, which is where a keypair may be generated: the
@@ -79,6 +81,13 @@ const keys = {
 
 /** Where a server that is never started would have listened, had it been. */
 const nowhere = { port: 0, host: "127.0.0.1" } as const;
+
+/** The User every authenticated request in this file acts as, and no row anywhere. */
+const somebody: UserRecord = {
+  id: "3f2a1c88-5b41-4d0e-9c72-6a1e4b8d3c05",
+  attributes: {},
+  createdAt: new Date(0).toISOString(),
+};
 
 /** The Statement every artifact here is signed over. */
 const statement = "we will ship on Friday";
@@ -294,6 +303,17 @@ function constructedWith(
 ): { signatures: Signatures; publicServer: Server; servedKey: () => Promise<JsonWebKey> } {
   const agentServer = serverComponent(Fastify(), nowhere);
   const publicServer = serverComponent(Fastify(), nowhere);
+  // A scheme that takes any `Authorization` header, because `POST /verify` takes the server's
+  // hook and a server with no scheme registered throws rather than refusing (ADR-0052). Only the
+  // one test that reaches that route presents a header; what a real scheme does is
+  // `src/password-auth/`'s.
+  publicServer.registerAuth(
+    fakeAuth("Bearer", (request) =>
+      request.headers.authorization === undefined
+        ? { kind: "absent" }
+        : { kind: "authenticated", user: somebody },
+    ),
+  );
   opened.push(agentServer, publicServer);
 
   const signatures = createSignatures({
@@ -301,9 +321,6 @@ function constructedWith(
     ...(signingAlg === undefined ? {} : { signingAlg }),
     agentServer,
     publicServer,
-    // Nothing here reaches the check's hook but the one test that does, and it presents a
-    // header; what the real 401 is belongs to `gateway.test.ts` (ADR-0030).
-    users: { requireUser: async () => undefined },
     logger: silent,
   });
 

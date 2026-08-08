@@ -20,23 +20,27 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { Db } from "../db/index.ts";
+import { serverComponent } from "../gateway/components.ts";
 import { createHttpChannel } from "../http-channel/http-channel.ts";
 import type { Logger } from "../logging/logging.ts";
 import { createMessenger, type Messenger } from "../messenger/messenger.ts";
 import * as messengerSchema from "../messenger/schema.ts";
+import { createPasswordAuth, type PasswordAuth } from "../password-auth/password-auth.ts";
+import * as passwordAuthSchema from "../password-auth/schema.ts";
+import type { ScryptParameters } from "../password-auth/secrets.ts";
 import * as signalsSchema from "../signals/schema.ts";
 import { createSignalWorker } from "../signals/worker.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import * as usersSchema from "../users/schema.ts";
-import type { ScryptParameters } from "../users/secrets.ts";
 import { createUsers, type Users } from "../users/users.ts";
 import { type Client, createClient, RefusedError, UnreachableError, urlFor } from "./client.ts";
 
 let database: TestDatabase;
 let db: Db;
 let users: Users;
+let passwordAuth: PasswordAuth;
 let messenger: Messenger;
 let publicServer: FastifyInstance;
 
@@ -62,22 +66,27 @@ const nothingListensHere = "http://127.0.0.1:1";
 before(async () => {
   database = await createTestDatabase("http_client_tui");
   db = database.db;
-  await applySchema(db, signalsSchema, usersSchema, messengerSchema);
+  await applySchema(db, signalsSchema, usersSchema, passwordAuthSchema, messengerSchema);
 
   const agentServer = { fastify: Fastify() };
-  publicServer = Fastify();
+  const server = serverComponent(Fastify(), { port: 0, host: "127.0.0.1" });
+  publicServer = server.fastify;
   // Unstarted: a submitted Message writes a Signal row that nothing has to pick up, the Run being
   // no part of what a client sees.
   const worker = createSignalWorker({ db, runtime: fakeRuntime(), handlers: {}, logger: silent });
-  users = createUsers({
+  users = createUsers({ db, agentServer, publicServer: server });
+  // The scheme this client logs in with: `POST /auth/tokens` is Password Auth's route now, and
+  // registering it with the server is what makes the Channel's two routes authenticate anybody
+  // (ADR-0052).
+  passwordAuth = createPasswordAuth({
     db,
+    users,
+    publicServer: server,
     tokenTtl: hour,
     scrypt: cheap,
-    agentServer,
-    publicServer: { fastify: publicServer },
   });
   messenger = createMessenger({ db, users, worker, agentServer });
-  createHttpChannel({ db, messenger, users, publicServer: { fastify: publicServer } });
+  createHttpChannel({ db, messenger, publicServer: server });
 
   baseUrl = await publicServer.listen({ port: 0, host: "127.0.0.1" });
 });
@@ -91,7 +100,7 @@ after(async () => {
 function admitted(): Promise<string> {
   return db.tx(async (tx) => {
     const created = await users.create(tx);
-    await users.setPassword(tx, created.id, password);
+    await passwordAuth.setPassword(tx, created.id, password);
     return created.id;
   });
 }

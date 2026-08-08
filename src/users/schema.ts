@@ -4,12 +4,18 @@
  * [ADR-0047](../../docs/adr/0047-a-component-is-one-subpath.md)). Keep it to the tables and the
  * values that define them, and import no other component's schema.
  *
- * Two other components import this one and point a foreign key at `users.id`: the Messenger's
- * `messages.user_id` (ADR-0036) and the Nostr Channel's `pubkeys.user_id` and `outbox.user_id`
- * ([ADR-0049](../../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)). A barrel
- * carrying either of those without this one generates a constraint onto a table it never creates.
- * `schemas.test.ts` pushes every part's schema together, which is what keeps the assembled set
- * honest.
+ * Three other components import this one and point a foreign key at `users.id`: the Messenger's
+ * `messages.user_id` (ADR-0036), the Nostr Channel's `pubkeys.user_id` and `outbox.user_id`
+ * ([ADR-0049](../../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)), and Password
+ * Auth's `passwords.user_id` and `tokens.user_id`
+ * ([ADR-0052](../../docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)).
+ * A barrel carrying any of those without this one generates a constraint onto a table it never
+ * creates. `schemas.test.ts` pushes every part's schema together, which is what keeps the
+ * assembled set honest.
+ *
+ * **One table, and nothing a person presents.** The password digest and the Token table left for
+ * Password Auth (ADR-0052), so a credential of any kind reaching this module again is the thing to
+ * refuse in review: this component keeps identity, and the seam is who owns the secret.
  *
  * Nothing removes a User ([ADR-0029](../../docs/adr/0029-users-are-a-part-of-their-own.md)): no
  * delete route, no deactivation, and no column holding one. Do not add a `deactivated_at` for a
@@ -18,7 +24,7 @@
  */
 
 import { sql } from "drizzle-orm";
-import { index, jsonb, pgSchema, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { jsonb, pgSchema, timestamp, uuid } from "drizzle-orm/pg-core";
 
 /**
  * The PostgreSQL schema every table below lives in, `saf_users`.
@@ -30,7 +36,7 @@ import { index, jsonb, pgSchema, text, timestamp, uuid } from "drizzle-orm/pg-co
 export const usersSchema = pgSchema("saf_users");
 
 /**
- * A User: an opaque Gateway-issued id, arbitrary Attributes, and a password that may not exist.
+ * A User: an opaque Gateway-issued id, arbitrary Attributes, and when they were admitted.
  *
  * Nothing removes a row. There is no delete, no deactivation and no column recording either, so a
  * reference to a User from another component's table cannot come to dangle.
@@ -40,18 +46,11 @@ export const users = usersSchema.table("users", {
   /**
    * Arbitrary JSON the deployment defines, and where grouping and therefore authorization live.
    *
-   * `POST /users` has no parameter an attribute could arrive through, so this default is the only
-   * thing that decides what a created User has. It is the empty object.
+   * No route anywhere writes this column: the agent cannot create a User at all, and trusted code
+   * is the only caller of `setAttributes`. So the default is what every new row gets, and it is the
+   * empty object.
    */
   attributes: jsonb("attributes").notNull().default({}),
-  /**
-   * scrypt, with its cost parameters beside the digest, in the PHC-style string `secrets.ts`
-   * writes and parses.
-   *
-   * Nullable, and permanently so. Null means this User cannot log in with a password. Trusted code
-   * can still hand them a Token, which is the OIDC path rather than a half-created row.
-   */
-  passwordHash: text("password_hash"),
   /**
    * `clock_timestamp()` and not `now()`, which is the transaction's start time.
    *
@@ -63,50 +62,4 @@ export const users = usersSchema.table("users", {
     .default(sql`clock_timestamp()`),
 });
 
-/**
- * A bearer Token: one row per login, and the only credential a request ever carries.
- *
- * The plaintext exists once, in the response that issued it, so a row is verifiable and never
- * readable. Nothing reaps a row past its expiry. An expired Token stops matching.
- */
-export const tokens = usersSchema.table(
-  "tokens",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    /**
-     * The User this Token belongs to, a real foreign key inside this component's own schema.
-     *
-     * Both tables are in this module, so a barrel carrying one carries the other. The cascade is
-     * carried for a delete that cannot happen: nothing removes a User, so the day one is added the
-     * credentials go with them.
-     */
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    /**
-     * A single-pass SHA-256 of the 32 random bytes the holder carries, with no salt.
-     *
-     * The input already carries full entropy, so nothing stretches it. Unique, so verification is
-     * a lookup by this column and the index does the comparison.
-     */
-    tokenHash: text("token_hash").notNull().unique(),
-    /** `clock_timestamp()` for the reason the User's is: it is the row's own time. */
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .notNull()
-      .default(sql`clock_timestamp()`),
-    /**
-     * When the Token stops working. Not nullable, so "never expires" is unrepresentable.
-     *
-     * Written from the component's construction-time lifetime against the database's clock, which
-     * is the clock the comparison that refuses an expired Token reads too.
-     */
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-  },
-  (table) => [
-    // Revoking every Token of one User reads exactly this way. PostgreSQL indexes the primary
-    // key and the unique constraint, not the referencing side.
-    index("tokens_user_idx").on(table.userId),
-  ],
-);
-
-export const usersTables = { users, tokens };
+export const usersTables = { users };

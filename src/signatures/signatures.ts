@@ -8,11 +8,11 @@
  *
  * The key is a `KeyObject` and not a PEM string so that its material stays in the OpenSSL layer
  * and cannot stringify into a log line by accident. The public half is derived rather than taken
- * as a second option, because a second option is a second answer to which key this is. The
- * `users` option is the bare hook rather than a `Users`, unlike Decisions': nothing here reads a
- * User, and there is no second thing this could want off the Users component. What that costs is
- * that the assembly rather than the type makes it the real hook, which is why `gateway.test.ts`
- * proves the 401 is the same one.
+ * as a second option, because a second option is a second answer to which key this is. The hook
+ * `POST /verify` runs comes off the Public server rather than off a component, because which
+ * schemes a deployment accepts is what that server holds
+ * ([ADR-0052](../../docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)).
+ * So this component takes no Users, reads no User anywhere, and authenticates nobody.
  *
  * `algorithmForCurve` is deliberately narrower than JOSE. Ed448 and secp256k1 determine `EdDSA`
  * and `ES256K` perfectly well, and `jose` can perform neither, so deriving them would start a
@@ -84,23 +84,21 @@ export type SignaturesOptions = {
     readonly fastify: FastifyInstance;
   };
   /**
-   * Where `POST /verify` and `GET /jwks.json` are registered.
+   * Where `POST /verify` and `GET /jwks.json` are registered, and the schemes the first of them
+   * accepts.
    *
-   * `GET /jwks.json` asks for no Token. A public key is public, and the party this identity exists
-   * for has nothing to log in with.
+   * `requireUser` is taken as one option on `POST /verify` and neither wrapped nor
+   * re-implemented, so this component authenticates nobody and an unauthenticated check is
+   * refused with the same 401 every protected route on that server answers.
    *
-   * Structural, on the same terms as `agentServer`.
+   * `GET /jwks.json` asks for no credential at all. A public key is public, and the party this
+   * identity exists for has nothing to log in with.
+   *
+   * Structural, on the same terms as `agentServer`: anything carrying a Fastify instance and a
+   * `requireUser` satisfies it, which is what `serverComponent` answers with.
    */
   readonly publicServer: {
     readonly fastify: FastifyInstance;
-  };
-  /**
-   * Supplies the `requireUser` hook that `POST /verify` runs as one option on the route.
-   *
-   * Taken and neither wrapped nor re-implemented, so this component authenticates nobody and an
-   * unauthenticated check is refused with the same 401 the routes under `/auth` answer.
-   */
-  readonly users: {
     readonly requireUser: preHandlerAsyncHookHandler;
   };
   /**
@@ -217,9 +215,9 @@ export function createSignatures(options: SignaturesOptions): Signatures {
   // construction and loaded at `listen`.
   options.agentServer.fastify.register(agentSignatureRoutes({ sign: signStatement }));
   options.publicServer.fastify.register(
-    // The Users component's own hook, passed through and not wrapped. This Component
+    // The server's own composed hook, passed through and not wrapped. This Component
     // authenticates nobody.
-    publicSignatureRoutes(keySet, { verify: verifyArtifact }, options.users.requireUser),
+    publicSignatureRoutes(keySet, { verify: verifyArtifact }, options.publicServer.requireUser),
   );
 
   return {

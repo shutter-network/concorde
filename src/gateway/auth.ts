@@ -6,11 +6,13 @@
  * nobody in the deployment that reads best, where the servers are built before every component
  * that registers with them.
  *
- * **The 401 is written here and it is written again in the Users component**, whose `unauthorized`
- * answers the same three fields with the same message. Two producers of one body is the cost of
- * the aggregate depending on no component, and it is paid rather than hidden: `auths.test.ts`
- * compares the two over real HTTP, byte for byte, instead of trusting that somebody kept them in
- * step. Nothing here may import that function, because the layer runs the other way.
+ * **The 401 is written here and it is written again in Password Auth**, whose `unauthorized`
+ * answers the same three fields with the same message on the login route, where no hook has run
+ * and there is nothing for this file to refuse. Two producers of one body is the cost of the
+ * aggregate depending on no component, and it is paid rather than hidden: `auths.test.ts` and
+ * `password-auth/authentication.test.ts` compare them over real HTTP, byte for byte, instead of
+ * trusting that somebody kept them in step. Nothing here may import that function, because the
+ * layer runs the other way.
  *
  * `detail` is read once, into a log line, and is never given to the reply. Adding it to the body,
  * or to RFC 6750's `error_description`, would hand a client the sentence that was written for

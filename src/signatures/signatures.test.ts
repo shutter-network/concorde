@@ -28,8 +28,7 @@
  * one: a string another identity really signed is the case `POST /verify` most has to get
  * right, and a hand-assembled forgery would be testing our own idea of what one looks like.
  *
- * The one thing stood in for is the Users component's hook, and what that costs is recorded on
- * `presentedUser` below.
+ * The one thing stood in for is the scheme, and what that costs is recorded on `anyHeader` below.
  */
 
 import assert from "node:assert/strict";
@@ -41,9 +40,11 @@ import {
   verify,
 } from "node:crypto";
 import { after, before, describe, it } from "node:test";
-import Fastify, { type FastifyInstance, type preHandlerAsyncHookHandler } from "fastify";
-import { type Component, serverComponent } from "../gateway/components.ts";
+import Fastify, { type FastifyInstance } from "fastify";
+import { type ServerComponent, serverComponent } from "../gateway/components.ts";
 import type { LogFields, Logger } from "../logging/logging.ts";
+import { type FakeAuth, fakeAuth } from "../test-support/fake-auth.ts";
+import type { UserRecord } from "../users/routes.ts";
 import { createSignatures, type Signatures } from "./signatures.ts";
 
 /** Where a server that is never started would have listened, had it been. */
@@ -55,28 +56,34 @@ const statement = "we will ship on Friday";
 /** What a request that has authenticated carries, whatever the hook below is standing in for. */
 const withAToken = { authorization: "Bearer whatever this file's hook accepts" } as const;
 
-/**
- * A stand-in for the `requireUser` of Users, and the whole of the authentication here.
- *
- * The real one needs a Db and a Token bought with a real password, and this suite has neither
- * by design — its subject is an artifact and a key, and nothing about either is a row. So what
- * is asserted below is what belongs to *this* part: the check route runs the hook it was handed
- * and runs it **before** its own handler, so a caller who does not get past it gets no verdict.
- *
- * What that cannot say is that the hook is the real one and that the refusal is therefore
- * the same single 401 the routes under `/auth` answer. That claim is about the assembly, and it
- * is made in `gateway.test.ts` against the real one (ADR-0030).
- */
-const presentedUser: preHandlerAsyncHookHandler = async (request, reply) => {
-  // Returning the reply is how an async hook says the lifecycle is over; without it Fastify
-  // would carry on to the handler after the 401 had been sent.
-  if (request.headers.authorization === undefined) {
-    return reply
-      .code(401)
-      .send({ statusCode: 401, error: "Unauthorized", message: "authentication failed" });
-  }
-  return undefined;
+/** The User every authenticated request in this file acts as, and no row anywhere. */
+const somebody: UserRecord = {
+  id: "3f2a1c88-5b41-4d0e-9c72-6a1e4b8d3c05",
+  attributes: {},
+  createdAt: new Date(0).toISOString(),
 };
+
+/**
+ * A scheme that takes any `Authorization` header at all, which is the whole of the
+ * authentication here.
+ *
+ * The hook itself is the real one: it is the Public server's, composed over whatever registered
+ * with it, and this part takes it as one route option. What is stood in for is the *scheme*,
+ * because a real one needs a Db and a Token bought with a real password, and this suite has
+ * neither by design: its subject is an artifact and a key, and nothing about either is a row.
+ *
+ * So what is asserted below is what belongs to *this* part: the check route runs the server's
+ * hook and runs it **before** its own handler, so a caller who does not get past it gets no
+ * verdict. That a deployment's real schemes refuse the same way is the assembly's claim and is
+ * made in `gateway.test.ts` (ADR-0030, ADR-0052).
+ */
+function anyHeader(): FakeAuth {
+  return fakeAuth("Bearer", (request) =>
+    request.headers.authorization === undefined
+      ? { kind: "absent" }
+      : { kind: "authenticated", user: somebody },
+  );
+}
 
 /** One line the part wrote, as the fields and the message it was written with. */
 type Line = { readonly fields: LogFields; readonly message: string };
@@ -101,34 +108,34 @@ const { privateKey } = generateKeyPairSync("ed25519");
 /** Somebody else's identity entirely, and the only thing it is ever asked to do is sign. */
 const { privateKey: someoneElsesKey } = generateKeyPairSync("ed25519");
 
-let agentServer: Component & { readonly fastify: FastifyInstance };
-let publicServer: Component & { readonly fastify: FastifyInstance };
+let agentServer: ServerComponent<FastifyInstance>;
+let publicServer: ServerComponent<FastifyInstance>;
 let signatures: Signatures;
 
 /** The other Shared Agent's servers, which exist only so that its constructor has somewhere. */
-let elsewhere: Component & { readonly fastify: FastifyInstance };
+let elsewhere: ServerComponent<FastifyInstance>;
 let someoneElse: Signatures;
 
 before(() => {
   agentServer = serverComponent(Fastify(), nowhere);
   publicServer = serverComponent(Fastify(), nowhere);
-  // The whole construction: a key, the two servers its three routes go on, and where the
-  // check's 401 comes from. No Db, because there is nothing to store, and this is the only
-  // part of which that is true.
+  publicServer.registerAuth(anyHeader());
+  // The whole construction: a key and the two servers its three routes go on. No Db, because
+  // there is nothing to store, and this is the only part of which that is true. The check's
+  // 401 is the Public server's, which is why this component takes no scheme of its own.
   signatures = createSignatures({
     signingKey: privateKey,
     agentServer,
     publicServer,
-    users: { requireUser: presentedUser },
     logger: capturing,
   });
 
   elsewhere = serverComponent(Fastify(), nowhere);
+  elsewhere.registerAuth(anyHeader());
   someoneElse = createSignatures({
     signingKey: someoneElsesKey,
     agentServer: elsewhere,
     publicServer: elsewhere,
-    users: { requireUser: presentedUser },
     logger: capturing,
   });
 });
@@ -141,7 +148,7 @@ after(async () => {
 
 describe("the key set", () => {
   it("is served to somebody holding no Token at all", async () => {
-    // Every other read on this server is behind the single 401 of Users, and this is
+    // Every other read on this server is behind the Public server's single 401, and this is
     // the stated exception: a public key is public, and the whole audience for it is a third
     // party who has no Token and never touches the rest of the Gateway (ADR-0042).
     const answered = await publicServer.fastify.inject({ method: "GET", url: "/jwks.json" });
@@ -390,7 +397,7 @@ describe("the check it will do for a User", () => {
     }
   });
 
-  it("runs the hook it was handed before its own handler, so a refusal answers no verdict", async () => {
+  it("runs the server's hook before its own handler, so a refusal answers no verdict", async () => {
     const jws = signedBy(await signing({ statement }));
 
     const answered = await publicServer.fastify.inject({
@@ -401,8 +408,8 @@ describe("the check it will do for a User", () => {
 
     assert.equal(answered.statusCode, 401, answered.body);
     // The artifact is genuinely ours, so a `true` here would be the handler having run behind
-    // the refusal. That the 401 is the Users component's own is the assembly's claim and is
-    // asserted in `gateway.test.ts`, this file's hook being a stand-in.
+    // the refusal. That a deployment's real schemes refuse the same way is the assembly's
+    // claim and is asserted in `gateway.test.ts`, this file's scheme being a stand-in.
     assert.equal(answered.body.includes("verified"), false, answered.body);
   });
 

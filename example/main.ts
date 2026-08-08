@@ -9,6 +9,7 @@ import {
   type MessageRecord,
   messageReceivedKind,
 } from "shared-agent-framework/messenger";
+import { createPasswordAuth } from "shared-agent-framework/password-auth";
 import { createPiRuntime } from "shared-agent-framework/pi";
 import {
   createScheduler,
@@ -134,21 +135,27 @@ const gateway = createGateway({
   runtime,
   publicListen: { port: publicPort, host: publicHost },
   agentListen: { port: agentPort, host: agentHost },
-  // The six components, built by hand from the infrastructure `createGateway` hands us
+  // The seven components, built by hand from the infrastructure `createGateway` hands us
   // and returned so they become Components of the Gateway — keyed ahead of the Signal Worker, so
   // they stop after the drain a Handler's post phase reaches them through (ADR-0045). This is the
   // wiring and the construction order ADR-0038 hid; here they are where the deployment holding the
   // opinion can see them. A deployment that publishes no Decision builds neither Signatures nor
   // Decisions and reads no signing key at all.
   extend: ({ db, agentServer, publicServer, worker }) => {
-    // Users **before** the Messenger and the HTTP Channel, both of which need it as a
-    // value. The tables' order is no longer this line's business — `messages.user_id` is still a
-    // foreign key onto `saf_users.users.id`, but it is declared in the Messenger's schema and
-    // ordered by the single generation the migrate service pushes from `schema.ts` (ADR-0036,
-    // ADR-0046). What that barrel does require is that Users be *in* it, and it is.
-    const users = createUsers({ db, tokenTtl, agentServer, publicServer });
-    const signatures = createSignatures({ signingKey, agentServer, publicServer, users });
-    const decisions = createDecisions({ db, signatures, users, agentServer, publicServer });
+    // Users **before** the Messenger and Password Auth, both of which need it as a value. The
+    // tables' order is no longer this line's business. `messages.user_id` is still a foreign
+    // key onto `saf_users.users.id`, and so are Password Auth's two columns, but they are
+    // declared in those parts' own schemas and ordered by the single generation the migrate
+    // service pushes from `schema.ts` (ADR-0036, ADR-0046, ADR-0052). What that barrel does
+    // require is that Users be *in* it, and it is.
+    const users = createUsers({ db, agentServer, publicServer });
+    // Password Auth is the one scheme this deployment accepts. It registers itself with the
+    // Public server inside its own constructor, and that server composes every registered
+    // scheme into the one `requireUser` every protected route below takes, which is why
+    // Signatures, Decisions and the HTTP Channel take no Users at all (ADR-0052).
+    const passwordAuth = createPasswordAuth({ db, users, publicServer, tokenTtl });
+    const signatures = createSignatures({ signingKey, agentServer, publicServer });
+    const decisions = createDecisions({ db, signatures, agentServer, publicServer });
     // The Messenger owns the log and reaches nobody; the HTTP Channel is what reaches a person,
     // and it registers itself with the Messenger inside its own constructor, so there is no wiring
     // line here to forget (ADR-0048). This deployment runs HTTP, which is the whole of the
@@ -156,7 +163,7 @@ const gateway = createGateway({
     // Messenger would be refused at that registration, so the choice of medium is the choice of
     // which Channel is constructed.
     const messenger = createMessenger({ db, users, worker, agentServer });
-    const httpChannel = createHttpChannel({ db, messenger, users, publicServer });
+    const httpChannel = createHttpChannel({ db, messenger, publicServer });
     // The Scheduler, the second Producer, opted in and wired like the Messenger: the Db and
     // the Signal Worker it emits into, and the Agent server so the agent can create and cancel
     // Schedules over HTTP (omit it to switch that surface off). It is keyed ahead of the Worker
@@ -165,7 +172,7 @@ const gateway = createGateway({
     // Signal the next boot handles, which is the residual ADR-0018 accepts rather than leaving
     // `extend` for `createBareGateway` to stop it first (ADR-0045).
     const scheduler = createScheduler({ db, worker, agentServer });
-    return { users, signatures, decisions, messenger, httpChannel, scheduler };
+    return { users, passwordAuth, signatures, decisions, messenger, httpChannel, scheduler };
   },
   handlers: () => ({
     [messageReceivedKind]: templateHandler<MessageRecord>({

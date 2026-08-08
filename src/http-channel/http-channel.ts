@@ -19,10 +19,9 @@
  * with bookkeeping of its own commit that bookkeeping with the Message.
  */
 
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, preHandlerAsyncHookHandler } from "fastify";
 import type { Db } from "../db/index.ts";
 import type { Channel, Messenger } from "../messenger/messenger.ts";
-import type { Users } from "../users/users.ts";
 import { publicMessageRoutes } from "./routes.ts";
 
 // A constant and not an option: no prefix to configure and no plugin to register elsewhere, so a
@@ -52,22 +51,22 @@ export type HttpChannelOptions = {
    */
   readonly messenger: Messenger;
   /**
-   * Supplies the `requireUser` hook both routes take as one option, and nothing else is read off
-   * it.
-   *
-   * Taken and neither wrapped nor re-implemented, so this component authenticates nobody and an
-   * unauthenticated submission or read is refused with the same 401 the routes under `/auth`
-   * answer.
-   */
-  readonly users: Users;
-  /**
-   * Where Users submit and poll, at `/messages`.
+   * Where Users submit and poll, at `/messages`, and the schemes those two routes accept.
    *
    * A Channel nobody can reach is broken rather than smaller, so there is no assembly of this
-   * component that omits it. Structural: anything carrying a Fastify instance satisfies it.
+   * component that omits it.
+   *
+   * `requireUser` is the server's own composed hook, taken as one option on each route and
+   * neither wrapped nor re-implemented, so this component authenticates nobody and an
+   * unauthenticated submission or read is refused with the same 401 every protected route on that
+   * server answers. Nothing else is read off this option.
+   *
+   * Structural: anything carrying a Fastify instance and a `requireUser` satisfies it, which is
+   * what `serverComponent` answers with.
    */
   readonly publicServer: {
     readonly fastify: FastifyInstance;
+    readonly requireUser: preHandlerAsyncHookHandler;
   };
 };
 
@@ -121,8 +120,9 @@ export function createHttpChannel(options: HttpChannelOptions): HttpChannel {
       // and the only User who can cause one is the User the Token named.
       submit: (userId, text) => options.db.tx((tx) => inbound.receive(tx, userId, text)),
     },
-    // The hook of Users, passed through and not wrapped. This component authenticates nobody.
-    options.users.requireUser,
+    // The server's own composed hook, passed through and not wrapped. This component
+    // authenticates nobody.
+    options.publicServer.requireUser,
   );
 
   // The second act of wiring, here so that an Operator's entry point does neither. Not awaited:

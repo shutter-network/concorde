@@ -12,12 +12,11 @@
  */
 
 import { and, asc, desc, getTableName, gt, lt, sql } from "drizzle-orm";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, preHandlerAsyncHookHandler } from "fastify";
 import type { Db, Handle } from "../db/index.ts";
 import type { Component } from "../gateway/components.ts";
 import { type CursorWindow, limitSchema } from "../route-conventions.ts";
 import type { Signatures } from "../signatures/index.ts";
-import type { Users } from "../users/users.ts";
 import { agentDecisionRoutes, publicDecisionRoutes } from "./routes.ts";
 import { decisions, decisionsSchema, decisionsTables } from "./schema.ts";
 
@@ -62,14 +61,6 @@ export type DecisionsOptions = {
    */
   readonly signatures: Signatures;
   /**
-   * Supplies the `requireUser` hook that the Public read runs, so this component holds no Token and
-   * authenticates nobody.
-   *
-   * Not a schema-level dependency, unlike the Messenger's: nothing here references a User, so a
-   * barrel may carry this component's tables without the tables of Users.
-   */
-  readonly users: Users;
-  /**
    * Where the agent publishes and reads, at `/decisions`.
    *
    * Structural: anything carrying a Fastify instance satisfies it.
@@ -78,13 +69,23 @@ export type DecisionsOptions = {
     readonly fastify: FastifyInstance;
   };
   /**
-   * Where any authenticated User reads the log, at `/decisions`.
+   * Where any authenticated User reads the log, at `/decisions`, and the schemes that read
+   * accepts.
    *
    * A log no User can read is not public, and a commitment that is not public is not a commitment,
    * so there is no assembly of this component that omits it.
+   *
+   * `requireUser` is the server's own composed hook, taken as one route option, so this component
+   * holds no credential and authenticates nobody. It is not a schema-level dependency either:
+   * nothing here references a User, so a barrel may carry this component's tables without the
+   * table of Users.
+   *
+   * Structural, on the same terms as `agentServer`: anything carrying a Fastify instance and a
+   * `requireUser` satisfies it, which is what `serverComponent` answers with.
    */
   readonly publicServer: {
     readonly fastify: FastifyInstance;
+    readonly requireUser: preHandlerAsyncHookHandler;
   };
 };
 
@@ -192,8 +193,9 @@ export function createDecisions(options: DecisionsOptions): Decisions {
   });
   const publicRoutes = publicDecisionRoutes(
     { history: readHistory, numbered: readNumbered },
-    // The hook of Users, passed through and not wrapped. This Component authenticates nobody.
-    options.users.requireUser,
+    // The server's own composed hook, passed through and not wrapped. This Component
+    // authenticates nobody.
+    options.publicServer.requireUser,
   );
 
   // The two acts of wiring, both here so that an Operator's entry point does neither. Not awaited:

@@ -50,8 +50,11 @@ import { createPublicKey, generateKeyPairSync, type JsonWebKey, verify } from "n
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { Db } from "../db/index.ts";
-import { type Component, serverComponent } from "../gateway/components.ts";
+import { type ServerComponent, serverComponent } from "../gateway/components.ts";
 import type { Logger } from "../logging/logging.ts";
+import { createPasswordAuth } from "../password-auth/password-auth.ts";
+import * as passwordAuthSchema from "../password-auth/schema.ts";
+import type { ScryptParameters } from "../password-auth/secrets.ts";
 import type { SignalRecord } from "../signals/routes.ts";
 import * as signalsSchema from "../signals/schema.ts";
 import { createSignalWorker, type SignalWorker } from "../signals/worker.ts";
@@ -59,9 +62,7 @@ import { createSignatures } from "../signatures/index.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
-import type { UserRecord } from "../users/routes.ts";
 import * as usersSchema from "../users/schema.ts";
-import type { ScryptParameters } from "../users/secrets.ts";
 import { createUsers } from "../users/users.ts";
 import { createDecisions, type DecisionRecord, type Decisions } from "./decisions.ts";
 import * as decisionsSchema from "./schema.ts";
@@ -72,10 +73,10 @@ let db: Db;
 let decisions: Decisions;
 let worker: SignalWorker;
 /** Both servers, as an Operator constructs them: bare Fastify instances in a start order. */
-let agentServer: Component & { readonly fastify: FastifyInstance };
-let publicServer: Component & { readonly fastify: FastifyInstance };
+let agentServer: ServerComponent<FastifyInstance>;
+let publicServer: ServerComponent<FastifyInstance>;
 
-/** Where the constructor put both route groups, and the login route of Users. */
+/** Where the constructor put both route groups, and the login route of Password Auth. */
 const prefix = "/decisions";
 const auth = "/auth";
 
@@ -113,33 +114,41 @@ before(async () => {
     agentServer,
     logger: silent,
   });
-  // Both servers, so that `POST /users` and the login under `/auth` exist. Construction order
+  // Users for the identity and Password Auth for the login under `/auth`, which is what makes
+  // `publicServer.requireUser` able to authenticate the one read below. Construction order
   // against Decisions is free, unlike the Messenger's, there being no foreign key here
   // (ADR-0043).
-  const users = createUsers({ db, tokenTtl: hour, scrypt: cheap, agentServer, publicServer });
+  const users = createUsers({ db, agentServer, publicServer });
+  const passwordAuth = createPasswordAuth({
+    db,
+    users,
+    publicServer,
+    tokenTtl: hour,
+    scrypt: cheap,
+  });
   const { privateKey } = generateKeyPairSync("ed25519");
   const signatures = createSignatures({
     signingKey: privateKey,
     agentServer,
     publicServer,
-    users,
     logger: silent,
   });
   // And held, which this file is the first to have a reason to do.
-  decisions = createDecisions({ db, signatures, users, agentServer, publicServer });
+  decisions = createDecisions({ db, signatures, agentServer, publicServer });
 
-  await applySchema(db, signalsSchema, usersSchema, decisionsSchema);
+  await applySchema(db, signalsSchema, usersSchema, passwordAuthSchema, decisionsSchema);
 
-  const created = await agentServer.fastify.inject({
-    method: "POST",
-    url: "/users",
-    payload: { password },
+  // Admitted from trusted code, in one transaction: there is no route that creates a User
+  // (ADR-0052).
+  const created = await db.tx(async (tx) => {
+    const user = await users.create(tx);
+    await passwordAuth.setPassword(tx, user.id, password);
+    return user;
   });
-  assert.equal(created.statusCode, 201, `admitting a User should have answered: ${created.body}`);
   const issued = await publicServer.fastify.inject({
     method: "POST",
     url: `${auth}/tokens`,
-    payload: { user: created.json<UserRecord>().id, password },
+    payload: { user: created.id, password },
   });
   assert.equal(issued.statusCode, 201, `logging in should have answered: ${issued.body}`);
   token = issued.json<{ token: string }>().token;

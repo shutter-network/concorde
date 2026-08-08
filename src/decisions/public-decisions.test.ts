@@ -24,23 +24,24 @@ import { createPublicKey, generateKeyPairSync, type JsonWebKey, verify } from "n
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { Db } from "../db/index.ts";
-import { type Component, serverComponent } from "../gateway/components.ts";
+import { type ServerComponent, serverComponent } from "../gateway/components.ts";
+import { createPasswordAuth } from "../password-auth/password-auth.ts";
+import * as passwordAuthSchema from "../password-auth/schema.ts";
+import type { ScryptParameters } from "../password-auth/secrets.ts";
 import { createSignatures } from "../signatures/index.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
-import type { UserRecord } from "../users/routes.ts";
 import * as usersSchema from "../users/schema.ts";
-import type { ScryptParameters } from "../users/secrets.ts";
 import { createUsers } from "../users/users.ts";
 import { createDecisions, type DecisionRecord } from "./decisions.ts";
 import * as decisionsSchema from "./schema.ts";
 
 let database: TestDatabase;
 let db: Db;
-let agentServer: Component & { readonly fastify: FastifyInstance };
-let publicServer: Component & { readonly fastify: FastifyInstance };
+let agentServer: ServerComponent<FastifyInstance>;
+let publicServer: ServerComponent<FastifyInstance>;
 
-/** Where the constructor put both route groups, and the login route of Users. */
+/** Where the constructor put both route groups, and the login route of Password Auth. */
 const prefix = "/decisions";
 const auth = "/auth";
 
@@ -76,7 +77,17 @@ before(async () => {
   // No Signal Worker anywhere in this file, and that is worth noticing rather than reading as
   // an omission: neither part here is a Producer and neither holds one, so unlike every
   // messaging suite there is nothing to construct and nothing that could wake (ADR-0043).
-  const users = createUsers({ db, tokenTtl: hour, scrypt: cheap, agentServer, publicServer });
+  const users = createUsers({ db, agentServer, publicServer });
+  // The scheme this file logs in with. It registers itself with the Public server, which is
+  // what makes `publicServer.requireUser` able to authenticate anybody at all: Decisions holds
+  // no credential and this component is where the Token comes from (ADR-0052).
+  const passwordAuth = createPasswordAuth({
+    db,
+    users,
+    publicServer,
+    tokenTtl: hour,
+    scrypt: cheap,
+  });
   // The keypair is generated here, which is where a keypair may be generated: the framework
   // generates none, because a fresh key per restart leaves every artifact ever published
   // unverifiable with nothing saying so (ADR-0041).
@@ -85,23 +96,23 @@ before(async () => {
     signingKey: privateKey,
     agentServer,
     publicServer,
-    users,
     logger: silent,
   });
-  createDecisions({ db, signatures, users, agentServer, publicServer });
+  createDecisions({ db, signatures, agentServer, publicServer });
 
-  await applySchema(db, usersSchema, decisionsSchema);
+  await applySchema(db, usersSchema, passwordAuthSchema, decisionsSchema);
 
-  const created = await agentServer.fastify.inject({
-    method: "POST",
-    url: "/users",
-    payload: { password },
+  // Admitted from trusted code, in one transaction, which is the only way a User with a
+  // password exists: there is no route that creates one (ADR-0052).
+  const created = await db.tx(async (tx) => {
+    const user = await users.create(tx);
+    await passwordAuth.setPassword(tx, user.id, password);
+    return user;
   });
-  assert.equal(created.statusCode, 201, `admitting a User should have answered: ${created.body}`);
   const issued = await publicServer.fastify.inject({
     method: "POST",
     url: `${auth}/tokens`,
-    payload: { user: created.json<UserRecord>().id, password },
+    payload: { user: created.id, password },
   });
   assert.equal(issued.statusCode, 201, `logging in should have answered: ${issued.body}`);
   token = issued.json<{ token: string }>().token;
@@ -130,10 +141,10 @@ describe("a User reading the log", () => {
     assert.deepEqual(agentRead.json<{ decisions: DecisionRecord[] }>().decisions, read);
   });
 
-  it("is refused without a Token, in the single 401 of Users", async () => {
-    // This part authenticates nobody: the hook belongs to Users, taken as one option on the
-    // route, so a missing header, a header in another scheme, an unknown Token and an expired
-    // one are one status and one message (ADR-0030).
+  it("is refused without a Token, in the single 401 the Public server answers", async () => {
+    // This part authenticates nobody: the hook belongs to the Public server, taken as one
+    // option on the route, so a missing header, a header in another scheme, an unknown Token
+    // and an expired one are one status and one message (ADR-0030, ADR-0052).
     for (const headers of [{}, { authorization: "Basic nope" }, { authorization: "Bearer nope" }]) {
       const refused = await publicServer.fastify.inject({ url: prefix, headers });
       assert.equal(refused.statusCode, 401, refused.body);
@@ -172,7 +183,7 @@ describe("a User citing a Decision by number", () => {
 
     // The Gateway is not a public bulletin board: a Decision is public because a *User* takes
     // one away and hands it on, not because a stranger can fetch one (ADR-0043). The refusal is
-    // the Users component's, so it is byte for byte the one the log read answers with.
+    // the server's, so it is byte for byte the one the log read answers with.
     const refused = await publicServer.fastify.inject({ url: `${prefix}/${published.seq}` });
     assert.equal(refused.statusCode, 401, refused.body);
     const log = await publicServer.fastify.inject({ url: prefix });

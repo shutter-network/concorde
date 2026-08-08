@@ -15,9 +15,9 @@
  *    re-made against the new assignment site. The User is assigned by a plain
  *    property write, and the Operator's plugin is exactly the sibling a
  *    `decorateRequest` would not have reached.
- *  - `answers the 401 the Users component already answered, byte for byte` is why
- *    this aggregate may write its own refusal instead of importing one. Two
- *    producers of one body only stay one body if something compares them.
+ *  - `answers the 401 Password Auth already answered, byte for byte` is why this
+ *    aggregate may write its own refusal instead of importing one. Two producers of
+ *    one body only stay one body if something compares them.
  *  - `authenticates a route that was registered before it` is the late binding. The
  *    route, the server's readiness and the Auth arrive in the order a deployment
  *    puts them in, which is the wrong one.
@@ -26,8 +26,8 @@
  *    route on it fails every request.
  *
  * A database of this file's own, because no two test files may share one, and a
- * deliberately cheap scrypt cost, because the Users component insists on one and
- * nothing here logs in.
+ * deliberately cheap scrypt cost, because the one login attempt in it is expected to
+ * fail and only exists to produce the refusal this file compares against.
  */
 
 import assert from "node:assert/strict";
@@ -35,6 +35,8 @@ import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance, type FastifyPluginAsync } from "fastify";
 import type { Db } from "../db/index.ts";
 import type { LogFields, Logger } from "../logging/logging.ts";
+import { createPasswordAuth } from "../password-auth/password-auth.ts";
+import * as passwordAuthSchema from "../password-auth/schema.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { type FakeAuth, fakeAuth } from "../test-support/fake-auth.ts";
@@ -46,7 +48,7 @@ import { type ServerComponent, serverComponent } from "./components.ts";
 
 const hour = 60 * 60 * 1000;
 
-/** A cost nobody should deploy, and nothing in this file derives a password anyway. */
+/** A cost nobody should deploy, legitimate because each digest carries its own. */
 const cheap = { logN: 12, blockSize: 8, parallelism: 1 } as const;
 
 /** Where the Operator put routes of their own: a sibling of everything else on the server. */
@@ -55,7 +57,7 @@ const ops = "/ops";
 /** Where a server that is never started would have listened, had it been. */
 const nowhere = { port: 0, host: "127.0.0.1" } as const;
 
-/** What the composed 401 answers with, which is what the Users component answers with. */
+/** What the composed 401 answers with, which is what Password Auth answers with. */
 const refusalBody = { statusCode: 401, error: "Unauthorized", message: "authentication failed" };
 
 let database: TestDatabase;
@@ -64,8 +66,9 @@ let db: Db;
 let admitted: UserRecord;
 let other: UserRecord;
 /**
- * The 401 the framework answered before there were Auths: the Users component's own
- * hook, on its own route, refusing a request that presented nothing.
+ * The other producer of this body: Password Auth's login route, refusing a password
+ * nobody holds. That route runs before any hook and writes its own 401, so it is the
+ * one refusal in the framework this aggregate does not compose.
  */
 let existingRefusal: string;
 
@@ -157,18 +160,26 @@ function admits(scheme: string, user: UserRecord): FakeAuth {
 before(async () => {
   database = await createTestDatabase("gateway_auths");
   db = database.db;
-  await applySchema(db, usersSchema);
+  await applySchema(db, usersSchema, passwordAuthSchema);
 
-  // The Users component, built for two things only: the Users the fake Auths answer
-  // with are real rows, and its own routes answer the refusal this file compares
-  // against. Nothing here registers an Auth with the server it is on.
+  // Users, so that the Users the fake Auths answer with are real rows, and Password
+  // Auth beside it on a server of its own, so that the refusal this file compares
+  // against is written by the other producer of that body rather than by this one.
   const reference = serverComponent(Fastify(), nowhere);
   built.push(reference);
-  const users = createUsers({ db, tokenTtl: hour, scrypt: cheap, publicServer: reference });
+  const users = createUsers({ db });
+  createPasswordAuth({ db, users, publicServer: reference, tokenTtl: hour, scrypt: cheap });
   admitted = await db.tx((tx) => users.create(tx));
   other = await db.tx((tx) => users.create(tx));
 
-  const refused = await reference.fastify.inject({ method: "GET", url: "/auth/me" });
+  // A well-formed id nobody holds, at the login route, which refuses before any hook
+  // has run: the 401 comes from that component's own `unauthorized` and from nothing
+  // this file is testing.
+  const refused = await reference.fastify.inject({
+    method: "POST",
+    url: "/auth/tokens",
+    payload: { user: "00000000-0000-4000-8000-000000000000", password: "not anybody's" },
+  });
   assert.equal(refused.statusCode, 401, refused.body);
   existingRefusal = refused.body;
   // The refusal this framework has always sent carries no challenge, which is the
@@ -257,7 +268,7 @@ describe("the walk", () => {
 });
 
 describe("the refusal", () => {
-  it("answers the 401 the Users component already answered, byte for byte", async () => {
+  it("answers the 401 Password Auth already answered, byte for byte", async () => {
     const { server } = await guarded();
     const bearer = fakeAuth("Bearer");
     server.registerAuth(bearer);

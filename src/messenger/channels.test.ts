@@ -61,7 +61,7 @@ before(async () => {
   servers = [];
 
   worker = createSignalWorker({ db, runtime: fakeRuntime(), handlers: {} });
-  users = createUsers({ db, tokenTtl: 60 * 60 * 1000 });
+  users = createUsers({ db });
 
   await applySchema(db, signalsSchema, usersSchema, messengerSchema);
 });
@@ -194,7 +194,7 @@ describe("a Messenger and the one Channel registered with it", () => {
 
     // There is no `name` in these options, and there is nowhere else to put one: the name is a
     // constant of the Channel's type, which is what makes it useless to lie about.
-    const channel = createHttpChannel({ db, messenger: log, users, publicServer });
+    const channel = createHttpChannel({ db, messenger: log, publicServer });
     assert.equal(channel.name, "http");
 
     // And its `send` is the no-op the type argues for, because HTTP delivery is the User asking:

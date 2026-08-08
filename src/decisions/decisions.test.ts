@@ -27,7 +27,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { Db } from "../db/index.ts";
-import { type Component, serverComponent } from "../gateway/components.ts";
+import { type ServerComponent, serverComponent } from "../gateway/components.ts";
 import type { SignalRecord } from "../signals/routes.ts";
 import * as signalsSchema from "../signals/schema.ts";
 import { createSignalWorker } from "../signals/worker.ts";
@@ -35,23 +35,19 @@ import { createSignatures } from "../signatures/index.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
-import * as usersSchema from "../users/schema.ts";
-import { createUsers } from "../users/users.ts";
 import { createDecisions, type DecisionRecord } from "./decisions.ts";
 import * as decisionsSchema from "./schema.ts";
 
 let database: TestDatabase;
 let db: Db;
-let agentServer: Component & { readonly fastify: FastifyInstance };
-let publicServer: Component & { readonly fastify: FastifyInstance };
+let agentServer: ServerComponent<FastifyInstance>;
+let publicServer: ServerComponent<FastifyInstance>;
 
 /** Where the constructor put both route groups. */
 const prefix = "/decisions";
 
 /** Where a server that is never started would have listened, had it been. */
 const nowhere = { port: 0, host: "127.0.0.1" } as const;
-
-const hour = 60 * 60 * 1000;
 
 /** A logger with nothing to say: one line per signing is not this file's subject. */
 const silent = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
@@ -66,10 +62,9 @@ before(async () => {
   // Constructed and never started, so nothing drains and nothing dispatches. Its Agent server
   // routes are what this file asks about the queue, which is a higher seam than a table.
   createSignalWorker({ db, runtime: fakeRuntime(), handlers: {}, agentServer });
-  // Required by Decisions for its Public read's 401 and by nothing else here. Construction
-  // order against it is free, unlike the Messenger's, there being no foreign key
-  // (ADR-0043).
-  const users = createUsers({ db, tokenTtl: hour, agentServer, publicServer });
+  // No Users and no Auth anywhere here: neither part references a User, and the Public read
+  // is not this file's subject. What that costs is that a request to the Public read would
+  // throw `NoAuthRegisteredError`, which `public-decisions.test.ts` is where it is answered.
   const { privateKey } = generateKeyPairSync("ed25519");
   // Its own routes are registered on both servers and are not this file's subject; what
   // Decisions wants of it is the in-process `sign`.
@@ -77,14 +72,13 @@ before(async () => {
     signingKey: privateKey,
     agentServer,
     publicServer,
-    users,
     logger: silent,
   });
   // Nothing is held: everything under test is a route the constructor registered itself
   // (ADR-0032).
-  createDecisions({ db, signatures, users, agentServer, publicServer });
+  createDecisions({ db, signatures, agentServer, publicServer });
 
-  await applySchema(db, signalsSchema, usersSchema, decisionsSchema);
+  await applySchema(db, signalsSchema, decisionsSchema);
 });
 
 after(async () => {

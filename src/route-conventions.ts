@@ -230,3 +230,40 @@ export function refused(why: string) {
 /** What a route says in the document about a query parameter it does not have. */
 export const unknownParameter =
   "An unknown query parameter is a **400**, not a filter that did nothing and a request answered with everything.";
+
+/**
+ * What every route that acts as somebody says about the credential it wants.
+ *
+ * A sentence per route rather than one in `info.description`, because the useful thing to know is
+ * which route is the exception. It lived in the Users component while that component owned the
+ * login; the login is Password Auth's now and the hook is the Public server's, so the sentence
+ * belongs to neither and sits here with the other shared wording
+ * ([ADR-0052](../docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)).
+ *
+ * It names the Token because every route interpolating it is reached with one in the deployments
+ * that exist. `GET /users/me` deliberately does not interpolate it: that route echoes the
+ * authenticated User whichever scheme named them, and it says so in its own words instead.
+ */
+export const bearerRequired =
+  "**Requires a bearer Token**, presented as `Authorization: Bearer <token>` and obtained from `POST /auth/tokens`. The User acted on is the one the Gateway authenticated, and no parameter anywhere names another.";
+
+/**
+ * The one thing a 401 says, wherever it is answered.
+ *
+ * Every authentication failure is one status and one message. Enumeration is refused because
+ * Attributes govern authorization and nothing rate limits the guessing. Here for the reason
+ * `bearerRequired` is.
+ */
+export const authenticationFailed =
+  "Authentication failed, which is the whole of what is said: a wrong password, an id nobody holds, a User with no password, and a Token that is missing, malformed, unknown or expired are one status and one message, so nothing here answers who exists.";
+
+/**
+ * What a component whose routes take the server's hook says about its own 401.
+ *
+ * Interpolated by Signatures, Decisions and the HTTP Channel, none of which authenticates anybody:
+ * each takes `publicServer.requireUser` as one route option, so the refusal is the server's and is
+ * the same on every protected route it serves. It does **not** say which component or which scheme
+ * refused, because more than one scheme can, and a sentence naming one would be false in a
+ * deployment running another (ADR-0052).
+ */
+export const notAuthenticated = `${authenticationFailed} This part authenticates nobody: the refusal is \`publicServer.requireUser\`, taken as one option on the route, so it is the same 401 every protected route on this server answers, whichever scheme the deployment accepts.`;
