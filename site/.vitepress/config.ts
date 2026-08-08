@@ -1,4 +1,10 @@
 import { defineConfig } from "vitepress";
+// Written beside the pages by `../scripts/reference/render.ts`, which runs after TypeDoc in
+// `npm run generate`. Static for the same reason as the line above, and load-bearing for a second
+// one: TypeDoc empties `reference/` on every run, so this file exists only if the renderer ran,
+// and a pipeline that dropped that step fails here rather than serving a sidebar with a section
+// missing from it.
+import generatedSidebar from "../reference/generated-sidebar.json";
 // Generated beside the pages by `typedoc-vitepress-theme`. This is a static import of a file
 // that does not exist in a fresh clone, which is why `dev` and `build` both generate before
 // they start VitePress: without that, loading this config is a hard resolve error.
@@ -21,7 +27,7 @@ export default defineConfig({
   // Not published anywhere ([the site runs locally](../README.md)), so no base path and no
   // sitemap.
   themeConfig: {
-    sidebar: typedocSidebar,
+    sidebar: [...typedocSidebar, ...generatedSidebar],
     outline: "deep",
     socialLinks: [{ icon: "github", link: "https://github.com/jannikluhn/shared-agent-framework" }],
   },

@@ -1,7 +1,8 @@
 # The API reference site
 
 TypeDoc reads the doc comments out of `../src`, its markdown plugin and VitePress theme write
-one page per entry point into `reference/`, and VitePress serves them. The reference is the
+one page per entry point into `reference/`, `../scripts/reference/render.ts` writes the table
+pages into `reference/tables/` after it, and VitePress serves them all. The reference is the
 whole site: no landing page, no glossary, no guides, and no decision record as a page of its
 own. Run it from the repository root:
 
@@ -25,9 +26,18 @@ of a doc-comment change has to run the site to see the rendered result. Nothing 
 Change the doc comment in `../src` and regenerate. `node_modules`, `.vitepress/cache` and
 `.vitepress/dist` are gitignored for reasons of their own, which `.gitignore` gives.
 
-**So a clone holds no pages at all.** `.vitepress/config.ts` imports the generated sidebar, and
+**So a clone holds no pages at all.** `.vitepress/config.ts` imports both generated sidebars, and
 VitePress reads its config before anything else, so both `dev` and `build` generate first.
 Neither is a script to skip.
+
+**`generate` is two generators and the order is load-bearing.** `typedoc && node
+../scripts/reference/render.ts`: TypeDoc empties `reference/`, so the table pages are written
+after it or not at all. This is also why `dev` passes `--cleanOutputDir false` to the watching
+TypeDoc. Without it every rebuild in a dev session empties the directory again, the table pages
+and the sidebar they are listed in go with it, and the running site serves eight links to
+nothing. What that flag costs in a dev session is that a page TypeDoc stops writing lingers until
+the next `generate`, and that a `schema.ts` edited during a session does not reach the table
+pages, because TypeDoc's watch is what triggers a rebuild and it is not watching for that.
 
 **Every declaration block and every signature block is HTML rather than a fence**, so that
 the type references in it can be links: `expanded-object-methods.mjs` writes the declaration

@@ -5,8 +5,8 @@
   "type": "module",
   "description": "The API reference site. A package of its own because TypeDoc peers a TypeScript up to 6.0.x while the root pins 7; README.md states the exit condition for that.",
   "scripts": {
-    "generate": "typedoc",
-    "dev": "npm run generate && concurrently --kill-others --names typedoc,vitepress \"typedoc --watch --preserveWatchOutput\" \"vitepress dev\"",
+    "generate": "typedoc && node ../scripts/reference/render.ts",
+    "dev": "npm run generate && concurrently --kill-others --names typedoc,vitepress \"typedoc --watch --preserveWatchOutput --cleanOutputDir false\" \"vitepress dev\"",
     "build": "npm run generate && vitepress build"
   },
   "devDependencies": {

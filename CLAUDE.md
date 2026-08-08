@@ -145,8 +145,9 @@ linked signature block, and builds the site. CI runs it as its own step too. So
 there are four commands in CI and three of them are not the inner loop.
 
 `npm run docs:dev` and `npm run docs:build` are the API reference: TypeDoc reads the doc
-comments out of `src`, writes one markdown page per entry point, and VitePress serves or builds
-them. The pages are the fifteen subpaths of the export map
+comments out of `src`, writes one markdown page per entry point, a second generator writes the
+table pages after it, and VitePress serves or builds them all. TypeDoc's pages are the fifteen
+subpaths of the export map
 ([ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md),
 [ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)), titled with the specifier a
 Developer imports from, and `example/` is not among them. The Messenger and each Channel are
@@ -176,9 +177,9 @@ and this package pins 7. `site/README.md` argues that and states the **exit cond
 TypeDoc supports the compiler the root pins, the sub-package collapses into the root. All three
 root scripts `npm ci` that tree themselves, so a fresh clone needs no separate step.
 
-**`site/reference` is not committed, and it was.** Sixteen generated markdown pages, fifteen of
-them one per entry point plus the `index.md` that lists them and is the site root, and
-`.gitignore` covers the directory in full. Committing them bought one thing: a change to the
+**`site/reference` is not committed, and it was.** Twenty-four generated markdown pages: fifteen
+one per entry point, the `index.md` that lists them and is the site root, and eight table pages
+under `tables/`, described below. `.gitignore` covers the directory in full. Committing them bought one thing: a change to the
 public API arrived as a readable diff in review. A signature block is HTML now, and a diff over
 `<span>`s and `<a href>`s does not do that, so what was bought is no longer for sale. Three
 reduced forms were declined on the same ground. Markup shaped to diff well is still a large
@@ -192,6 +193,67 @@ oversight, and do not restore it. `typedoc.jsonc` keeps `disableSources: true` f
 that outlived the diff: the repository is private, so the file path, line number and commit hash
 under every symbol resolve for nobody. Nothing under `reference/` is authored, so a page is never
 edited: change the doc comment and regenerate.
+
+**Eight of those pages are not TypeDoc's, and they describe tables.** A doc comment cannot say
+what a component creates in a database: `excludeExternals` empties drizzle's type parameter, so
+`const tokens: PgTableWithColumns<{}>` is the whole of what TypeDoc knows. A second generator runs
+after it. `npm run extract:schema` prints one JSON document to stdout and chooses no file,
+`scripts/reference/render.ts` turns it into one page per component that owns tables, and `site/`'s
+own `generate` is `typedoc && node ../scripts/reference/render.ts`, which is what puts the two in
+one command and in that order: TypeDoc empties `site/reference` before it writes. `docs:dev`'s
+watching TypeDoc runs with `--cleanOutputDir false` for the same reason, because otherwise the
+first rebuild of a dev session deletes the table pages and the sidebar that lists them
+(`site/README.md`). The pages land
+in `site/reference/tables/`, are gitignored with everything else in there, and are **generated and
+never authored**: a page is changed by changing a `schema.ts` and regenerating.
+`site/.vitepress/config.ts` composes their sidebar section, which the renderer writes beside them,
+with the one TypeDoc writes. Extraction needs no database, no Docker and no network, and
+`npm run typecheck` reads it, which is why it lives in `scripts/` rather than in `site/`. Each page
+states the PostgreSQL schema the component writes into and, per table, every column with its SQL
+type, its nullability and its default, the primary key, the indexes, the unique and check
+constraints, and the foreign keys with the schema-qualified table and column they point at. **A
+foreign key that leaves the component's own schema gets a sentence at the top of the page**,
+naming the columns and the subpath that creates what they point at: there are six of them onto
+`saf_users.users.id` from four components, and a barrel carrying any of those four without
+`shared-agent-framework/users` generates a constraint onto a table nobody creates.
+
+**The structure comes from `generateDrizzleJson`**, `drizzle-kit`'s own snapshot generator and the
+same code path an Operator's generation runs (ADR-0046), so a page cannot disagree with the DDL
+they apply. Four fields of each snapshot are dropped: `id` and `prevId` are a fresh random pair per
+call and would make two runs over an unchanged tree differ, and `version` and `dialect` describe
+the format. `schemas`, `tables`, `enums`, `sequences` and `views` are kept. **`drizzle-kit`'s own
+types do not survive the trip.** Its snapshot is declared as an inference over a zod this tree does
+not resolve to the same major version of, so the whole return type is `any`, and deriving the kept
+shape with `Pick` would type-check against nothing. The shape is written out by hand in
+`scripts/reference/schema-extraction.ts`, and the five kept names are read off the raw object at
+runtime, because a rename inside `drizzle-kit` is the one thing `any` lets through and it would
+empty the pages rather than fail.
+
+**The schema modules are listed, and the list is held against `src` both ways.** The spec declined
+that guard and asked for the cost to be recorded instead, that a component missing from the list is
+silently missing from the reference. It is closed rather than recorded, because both things it was
+priced against have moved. It assumed a committed reference, where a page that stopped being
+generated at least showed up once as a deleted file in review, and there is none. And the guard it
+declined derived the list from the export map, which needs a hand-written list of the components
+that legitimately own no tables and so moves the drift one file over. `src/<component>/schema.ts`
+needs no exemption, because owning that file is what owning tables is, and the scan is not new
+machinery: `src/schemas.test.ts` already holds the same list against the same files. Two more
+refusals ride with it, each guarding a page that would otherwise be complete-looking and wrong. A
+listed module exporting no table a snapshot can see fails, because that is the `*Tables` wrapper
+trap (ADR-0046) and a component with no tables correctly has no page, so the absence would look
+intended. And a snapshot carrying something the renderer does not describe fails, which today is
+enums, sequences, views, row policies and row level security.
+
+**`check:docs` reads none of these pages, and a per-page assertion for them was declined.** The one
+it makes about TypeDoc's pages exists because a renderer wired to another package's internals by
+name fails silently and beautifully. Nothing here reads another package's internals. The
+extractor's refusals fail the generation; a page and its sidebar entry come out of one loop over
+one extraction, so they cannot disagree; and a pipeline that skipped the renderer fails at
+`config.ts`, which statically imports a sidebar file only the renderer writes, into a directory
+TypeDoc has just emptied. Three components correctly have no page at all: `/pi`, `/signatures` and
+`/http-channel` declare no `schema.ts`, the first because it is one function and two defaults, the
+second because a Signed Statement is never kept (ADR-0042), and the third because the log is the
+Messenger's (ADR-0048).
 
 `npm run check:docs` is the third command, and it is separate from `npm run check` for exactly
 the reason `check:package` is: it installs `site/`'s tree, so it needs the network and the

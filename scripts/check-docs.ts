@@ -11,6 +11,20 @@
  * Every step below is terminal: it reports and exits. Nothing is collected, because the drift
  * comparison that used to be the second independent finding is gone with the committed pages.
  *
+ * **The table pages are not read here, and they need no reading.** `npm run generate` inside
+ * `site/` now runs `scripts/reference/render.ts` after TypeDoc, which writes one page per
+ * component that owns tables into `site/reference/tables/`. They carry no signature block, so the
+ * assertion below would fail on them, and `generatedPages` therefore keeps to the flat directory
+ * TypeDoc writes into. Nothing replaces that assertion for them: the failure it guards against is
+ * a renderer wired to another package's internals by name, and these pages come out of a renderer
+ * we own end to end from JSON we extracted. What could go wrong there is loud already. The
+ * extractor holds its list of schema modules against `src` both ways and refuses a snapshot
+ * holding anything it does not describe, so a missing or short page fails the generation; and a
+ * page and its sidebar entry come out of one loop, so the sidebar cannot point at a page that was
+ * not written. A run that skipped the renderer altogether fails at `site/.vitepress/config.ts`,
+ * which statically imports a sidebar file only that renderer writes into a directory TypeDoc has
+ * just emptied.
+ *
  * Run with `npm run check:docs`. Deliberately not part of `npm run check`, for the same
  * reason `check:package` is not: regenerating needs TypeDoc and the TypeScript 6 it peers,
  * and a dependency tree of its own is exactly how `site/` keeps that second compiler out of
@@ -72,6 +86,9 @@ const HYPERLINK = /<a[\s>]/;
  *
  * `index.md` is excluded and is the only exclusion: it is the generated list of the other
  * pages, it carries no declaration, and it therefore has no block for a link to be in.
+ *
+ * The read is of one directory and not of the tree below it, which is what keeps the table pages
+ * in `tables/` out of an assertion about TypeDoc's rendering. See the note at the top.
  */
 function generatedPages(): string[] {
   let entries: string[];
@@ -138,8 +155,9 @@ if (unlinked.length > 0) {
 console.log(`${pages.length} pages, each with a linked signature block on it.`);
 
 // `site/`'s own `build`, and not `vitepress build` spelled again here, so that building the
-// site has one definition. It generates first, which is a second TypeDoc run costing a few
-// seconds: regeneration is byte-identical, so it cannot disturb the pages just read, and
+// site has one definition. It generates first, which is a second run of TypeDoc and of the
+// renderer after it, costing a few seconds: both are byte-identical on a second run, which is
+// what the dropped snapshot fields buy, so neither can disturb the pages just read, and
 // paying for it is cheaper than a step added to that script and silently skipped by this one.
 console.log("\n> building the site\n");
 run("npm", ["run", "build"], siteRoot, "The site did not build. The log is above.");
