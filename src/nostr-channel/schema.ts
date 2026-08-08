@@ -11,6 +11,12 @@
  * `saf_users.users.id`, and it re-exports nothing of it. That is the second such import in the
  * framework, after the Messenger's, and it costs the same thing: a barrel carrying this component
  * without that one generates a reference to a table nothing creates.
+ *
+ * The schema is `saf_nostr_channel` and was `saf_nostr`, named for the protocol rather than for the
+ * component. That rule held while one component spoke Nostr, and Nostr Auth is the second, so the
+ * protocol name would have belonged to whichever of the two arrived first
+ * ([ADR-0053](../../docs/adr/0053-nostr-auth-verifies-nip-98-per-request.md)). Renaming it back is
+ * the thing to refuse in review.
  */
 
 import { sql } from "drizzle-orm";
@@ -18,14 +24,16 @@ import { pgSchema, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { users } from "../users/schema.ts";
 
 /**
- * The PostgreSQL schema every table below lives in, `saf_nostr`, named for the protocol rather than
- * for the component.
+ * The PostgreSQL schema every table below lives in, `saf_nostr_channel`.
  *
  * Prefixed because the framework is installed into a database it does not own, and not
  * configurable: the tables are compiled against this object, and the same object is what a
  * generation reads.
+ *
+ * It was `saf_nostr` while this was the only component that spoke Nostr, so a deployment upgrading
+ * across that split renames the schema.
  */
-export const nostrChannelSchema = pgSchema("saf_nostr");
+export const nostrChannelSchema = pgSchema("saf_nostr_channel");
 
 /**
  * Which Nostr public key belongs to which User, and the whole of admission over this medium.
@@ -106,8 +114,8 @@ export const received = nostrChannelSchema.table("received", {
  * carrying a `reason` is one the Relay refused, and it is never attempted again; recovering it is an
  * Operator replaying the row by hand.
  *
- * So `select * from saf_nostr.outbox where reason is not null` is the whole answer to "why did she
- * not get it", and it needs no API.
+ * So `select * from saf_nostr_channel.outbox where reason is not null` is the whole answer to "why
+ * did she not get it", and it needs no API.
  */
 export const outbox = nostrChannelSchema.table("outbox", {
   /**

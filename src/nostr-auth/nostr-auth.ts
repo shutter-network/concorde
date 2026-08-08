@@ -7,9 +7,9 @@
  * component registers **no route on either server**, and a route added here is the thing to refuse
  * in review, whatever it does.
  *
- * **Nothing here reads `saf_nostr.pubkeys`.** The Channel's table says "the agent writes to this
- * key"; this one says "this key acts as this User". ADR-0048 refused a shared identity table on the
- * argument that an Authenticator would keep a copy, and it turns out not to be a copy: the
+ * **Nothing here reads `saf_nostr_channel.pubkeys`.** The Channel's table says "the agent writes to
+ * this key"; this one says "this key acts as this User". ADR-0048 refused a shared identity table
+ * on the argument that an Authenticator would keep a copy, and it turns out not to be a copy: the
  * cardinalities are opposite and so are the directions. Making one read the other is the thing to
  * refuse in review after the route.
  *

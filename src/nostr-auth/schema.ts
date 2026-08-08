@@ -10,7 +10,7 @@
  * barrel carrying this component without that one generates a constraint onto a table nothing
  * creates.
  *
- * **`grants` is not a copy of `saf_nostr.pubkeys` and must not be kept in step with it**
+ * **`grants` is not a copy of `saf_nostr_channel.pubkeys` and must not be kept in step with it**
  * ([ADR-0053](../../docs/adr/0053-nostr-auth-verifies-nip-98-per-request.md)). The two tables hold
  * the same kind of value with opposite cardinalities and for opposite purposes: the Channel picks
  * exactly one key to *send* to, so its primary key is the User; this table admits any number of
