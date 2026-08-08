@@ -421,7 +421,7 @@ async function withGateway(
     },
   };
 
-  // The reference deployment's order, minus the three parts this test has no use for: the
+  // An example deployment's order, minus the three parts this test has no use for: the
   // Db first so it stops last, the Agent server before the Worker so it closes after the
   // drain, and `start` in one call that binds the port the agent was already told about
   // (ADR-0037, ADR-0038).

@@ -1,5 +1,28 @@
 # The reference deployment runs in a Compose stack
 
+> **Amended: the decision holds four times over, and there is no longer *the* reference
+> deployment.** A deployment of ours runs as a Compose stack, the Gateway is a container holding
+> the host's socket, and running a `main.ts` with `node` on your host is unsupported. Every
+> argument below for all three is untouched. What is gone is the singular: `example/` was deleted
+> and `examples/` holds four of them, `00_minimal`, `01_scheduler`, `02_decisions` and
+> `03_nostr`, each about one concern and none a subset of another. "Reference deployment" is
+> retired as a term with it, having meant something only while there was one.
+>
+> Read every `example/` path below as four paths, and three consequences differently. The
+> `${PWD}` constraint is now four constraints of the same shape, one per directory, and `cd`ing
+> into the right one is four instructions rather than one, which is the mitigation getting weaker
+> in exactly the way this ADR said a line of instruction is weaker than a mechanism. The layout
+> is flat, so there is no `gateway/Dockerfile` and no `migrate/Dockerfile`: one `Dockerfile` per
+> example serves both services, differing by command. And **an example no longer builds the
+> framework**. Each installs `shared-agent-framework` from the registry, so its build context is
+> its own directory, the `.dockerignore` beside it is what keeps that context sane, the root
+> `.dockerignore` this ADR asked for is deleted, and the dev-dependency consequence is answered
+> rather than accepted: `drizzle-orm` and `fastify` are ordinary dependencies of an example, so
+> the two peers arrive by being named once in its `package.json` and no image ships this
+> repository's dev dependencies to get them. The last consequence expected a published base
+> image and a one-line `FROM`; what arrived was a published package and an `npm install`, which
+> is the same relief bought one layer lower.
+
 The Gateway of `example/` is a container in `example/compose.yml`, built from this
 repository by `example/gateway/Dockerfile`, holding the host's Docker socket. `cd example &&
 docker compose up -d --build` is the whole of running it, from a clean clone, with no host

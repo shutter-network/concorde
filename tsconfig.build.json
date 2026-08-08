@@ -6,13 +6,13 @@
     // No source maps: `src` is not shipped, so maps in the tarball would dangle.
     // Adding both together is a deliberate decision, not a default.
     "rootDir": "src",
-    "outDir": "dist",
-    // Dropped rather than inherited. The base config maps the package's own name at
-    // `example/`'s benefit, and nothing shipped may resolve through it: a module under
-    // `src` importing `shared-agent-framework` would type-check against `src/index.ts`
-    // here and emit that bare specifier into `dist`, where it would resolve to the
-    // consumer's copy of the package or to nothing.
-    "paths": {}
+    "outDir": "dist"
+    // No `"paths": {}` here any more. It was an override, dropping the fifteen the base
+    // config carried for the deployment that used to live in this tree, because a module
+    // under `src` importing the package by name would have type-checked against `src` and
+    // emitted that bare specifier into `dist`. The base carries none to drop: every example
+    // is its own npm application now and resolves the package out of its own
+    // `node_modules`, and the argument against putting one back is stated where they were.
     // No `composite`, and so no build-info file: this is one project with no
     // references, so incremental mode bought nothing and cost the guarantee that
     // matters. `tsc --build` trusted a build info whose outputs had been deleted

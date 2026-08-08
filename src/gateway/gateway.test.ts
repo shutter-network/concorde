@@ -435,7 +435,7 @@ after(async () => {
 });
 
 /**
- * The reference deployment's Handler, shortened to what this file is about: one Prompt per
+ * An example deployment's Handler, shortened to what this file is about: one Prompt per
  * Message, a note in the Operator's own Component, a failure notice sent from the post phase,
  * and the Decision that failure was reached about published from the same phase.
  *

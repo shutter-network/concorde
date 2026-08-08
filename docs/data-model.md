@@ -89,7 +89,7 @@ Nothing reaps expired rows, so this table grows with every login. That is an ope
 
 ## Nostr Auth (`saf_nostr_auth`)
 
-Two tables, and **no Token among them**: this Auth issues nothing at all. It verifies a NIP-98 event on every request instead, so what it keeps is who may sign and what has already been signed ([ADR-0053](./adr/0053-nostr-auth-verifies-nip-98-per-request.md)). It registers no route on either server, and it has no entry in the reference deployment either.
+Two tables, and **no Token among them**: this Auth issues nothing at all. It verifies a NIP-98 event on every request instead, so what it keeps is who may sign and what has already been signed ([ADR-0053](./adr/0053-nostr-auth-verifies-nip-98-per-request.md)). It registers no route on either server, and no example builds it: the one deployment under `examples/` that speaks Nostr serves nothing over HTTP for a NIP-98 credential to authenticate.
 
 ### Grant (`grants`)
 
@@ -158,7 +158,7 @@ The payload **is** the record every other surface returns, not a projection of i
 
 ## Nostr Channel (`saf_nostr_channel`)
 
-Three tables, and **no Message among them**: the log is the Messenger's whichever medium a Message travelled by. What this part keeps is the three things only it can know ([ADR-0049](./adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)). It has no section above because it has no entry in the reference deployment either — one Channel per Messenger, and the example runs HTTP.
+Three tables, and **no Message among them**: the log is the Messenger's whichever medium a Message travelled by. What this part keeps is the three things only it can know ([ADR-0049](./adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)). One Channel per Messenger, so a deployment holding these three tables holds them **instead of** running HTTP and never beside it: `examples/03_nostr` is the worked case.
 
 ### Public key (`pubkeys`)
 

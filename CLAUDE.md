@@ -1,73 +1,109 @@
 # Shared Agent Framework
 
-[`docs/quickstart.md`](./docs/quickstart.md) takes a reader from a clone to a completed
-agent Run, and [`example/`](./example/) is the reference deployment it describes:
-`main.ts` is the worked entry point, `compose.yml` the whole stack, `gateway/Dockerfile`
-the Gateway image, `agent/Dockerfile` the agent image, and `schema.ts` +
-`drizzle.config.ts` + `migrate/Dockerfile` the migration step it owns itself
-([ADR-0046](./docs/adr/0046-the-operator-owns-migrations.md)): the framework applies no
-DDL and there is nothing in `main.ts` asking it to, so a one-shot `migrate` service
-pushes the barrel before the Gateway starts. It is a **consumer** of
-`createGateway`, which builds the irreducible infrastructure and hands it to the Operator's
-`extend`
+**[`examples/`](./examples/) holds four deployments and this repository builds none of them.**
+Each is an npm application of its own, with its own `package.json`, its own `tsconfig.json`, a
+flat directory and a Compose stack, and each resolves `shared-agent-framework` from the
+**registry** at `^0.2.0` rather than from this tree. So an example's import lines are the lines a
+consumer writes, and a copy of the directory taken anywhere else still runs. They are
+independent and not a ladder: `00_minimal` is Users, Password Auth, the Messenger and the HTTP
+Channel with one seeded person and the terminal client; `01_scheduler` is the Scheduler alone,
+with no Users component anywhere in it, and the only place a Gateway is shown with components
+left out; `02_decisions` adds Signatures and Decisions and seeds two people, so two private
+Message logs sit beside the one signed log both of them read; and `03_nostr` runs the Nostr
+Channel against a strfry Relay in its own stack, driven by `nak`. **There is no longer *the*
+reference deployment, and the phrase is retired**: it said something while there was exactly one,
+and four numbered directories are examples.
+
+Each `main.ts` is a **consumer** of `createGateway`, which builds the irreducible infrastructure
+and hands it to the Operator's `extend`
 ([ADR-0045](./docs/adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md)), so
-what is left in it is the Runtime, the seven components built by hand in `extend`, two
-Signal Handlers and shutdown. Seven because messaging is two parts and authentication is a part
-again: the Messenger owns the log and reaches nobody, a **Channel** is what reaches a person over
-one medium
-([ADR-0048](./docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)), and an
-**Auth** owns one scheme's secret and turns a request carrying it into a User
+what is in one is the Runtime, the components that deployment picked built by hand in `extend`,
+one Signal Handler and shutdown. Which components those are is the whole difference between the
+four. Messaging is two parts: the Messenger owns the log and reaches nobody, and a **Channel** is
+what reaches a person over one medium
+([ADR-0048](./docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)).
+Authentication is a part again: an **Auth** owns one scheme's secret and turns a request carrying
+it into a User
 ([ADR-0052](./docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)).
-The example builds the HTTP Channel and Password Auth, and **two components have no entry in the
-reference deployment at all**, the Nostr Channel and Nostr Auth. The Channel is left out because
-one Channel per Messenger is refused at registration, so a deployment runs one medium and the
-example keeps the one the quickstart's spine is written in
-([ADR-0049](./docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)). Nostr Auth is left
-out for no such rule: Auths are plural and the example could accept both schemes, but its Users
-hold passwords and no Nostr key, so a second scheme nobody there can present would be in the
-stack for the documentation rather than for the deployment
-([ADR-0053](./docs/adr/0053-nostr-auth-verifies-nip-98-per-request.md)). The quickstart
-therefore gains no Nostr section of either kind, because a section for something the stack does
-not run would mislead by placement. `createBareGateway` is the escape one layer down, for a
-deployment whose infrastructure shape itself differs.
+One Channel per Messenger is refused at registration, so no deployment runs both Channels and
+`03_nostr` is the one that runs the Nostr one
+([ADR-0049](./docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)). **Nostr Auth is
+the one component no example builds**, and for no such rule: Auths are plural, but the deployment
+that speaks Nostr serves nothing over HTTP for a NIP-98 credential to authenticate, and the two
+that authenticate anybody at all hold passwords and no Nostr key, so a second scheme nobody there
+can present would be in the stack for the documentation rather than for the deployment
+([ADR-0053](./docs/adr/0053-nostr-auth-verifies-nip-98-per-request.md)).
+`createBareGateway` is the escape one layer down, for a deployment whose infrastructure shape
+itself differs, and no example reaches for it.
 
-**It runs only as a Compose stack**, `cd example && docker compose up -d --build`, from
-that directory and not the repository root
-([ADR-0039](./docs/adr/0039-the-reference-deployment-runs-in-a-compose-stack.md)). The
-Gateway is a container holding the host's Docker socket, so `main.ts` requires
-`BASE_DIR_GATEWAY` and `BASE_DIR_HOST` (the two sides of `hostRoot`, both set in
-`compose.yml` beside the binds they must agree with), and running it with `node` is not
-supported. It also
-requires `SIGNING_KEY_FILE`, a PEM private key it loads itself and hands to
-`createSignatures` in `extend`: the framework parses nothing and generates nothing, so a
-deployment brings its own identity or does not start
-([ADR-0041](./docs/adr/0041-the-shared-agent-has-a-signing-identity.md)). It reads
-`DATABASE_URL` itself for the same reason the framework reads no environment at all:
-`createGateway` takes a required `databaseUrl` with no `DATABASE_URL` fallback, so where the
-Db connects is stated at the call site
-([ADR-0045](./docs/adr/0045-the-framework-builds-only-the-irreducible-infrastructure.md)). **Where the stack
-gets that file is settled**: a throwaway PKCS8 keypair,
-`example/insecure-example-only-signing-key.pem`, is committed to the example, `compose.yml`
-passes `SIGNING_KEY_FILE` and mounts it read-only, and `docker compose up -d --build` comes up
-from a fresh clone with no manual signing-key step, so the one-command promise holds. The key is
-a decoy that signs nothing anyone verifies, and it shouts as much at every point of contact: its
-filename, `compose.yml`, `main.ts` and the quickstart each mark it worthless and each say a real
-deployment generates its own. The quickstart's arc now runs through a Decision published,
-fetched, and verified offline against the key set.
-The image builds the framework itself, from a context that is the repository root, which is
-what `.dockerignore` is for. Nothing in `example/` ships in the tarball; `tsconfig.json`
-type-checks it against `src` through a `paths` mapping, while the image resolves the same
-imports to the `dist` it just built.
+**Each runs only as a Compose stack and only from its own directory**
+([ADR-0039](./docs/adr/0039-the-reference-deployment-runs-in-a-compose-stack.md)):
+`cp .env.example .env`, a model key in it, `docker compose up -d --build`. The Gateway is a
+container holding the host's Docker socket, so every `main.ts` requires `BASE_DIR_GATEWAY` and
+`BASE_DIR_HOST`, the two sides of `hostRoot`, and `BASE_DIR_HOST` is `${PWD}` in every
+`compose.yml`: brought up from anywhere else the stack resolves the agent's mounts against a tree
+nobody is looking at. Running one with `node` on your host is not supported. That is one
+constraint stated four times now rather than once, which is what four directories cost.
+Each owns its migration step
+([ADR-0046](./docs/adr/0046-the-operator-owns-migrations.md)): the framework applies no DDL and
+nothing in a `main.ts` asks it to, so a one-shot `migrate` service runs the same image with
+`drizzle-kit push --force` and the Gateway waits on it with
+`condition: service_completed_successfully`. An example's `schema.ts` is also where it says which
+components own tables, and the comment at the top of each says so in those words: `00_minimal`'s
+is four specifiers wide for five components, the HTTP Channel being the one that owns nothing.
 
-**`examples/` is a second directory and not a rename of the first.** It holds two standalone
-applications today, `01_scheduler` and `03_nostr`, each with its own `package.json`,
-`tsconfig.json` and Compose stack, and each resolving `shared-agent-framework` from the
-**registry** at `^0.1.0` rather than from this tree. So they read exactly as a consumer's project
-reads, and the price is that they describe a published version rather than the working tree: a
-change made here is invisible to them until it is published. `tsconfig.json` does not include
-them and `npm run check` neither builds nor type-checks them. The numbering has gaps, and
-`00_minimal` and `02_decisions` do not exist. The singular `example/` is still the reference
-deployment the quickstart describes and the only one that compiles against `src`.
+The framework reads no environment at all, so each `main.ts` reads its own. `createGateway` takes
+a required `databaseUrl` with no `DATABASE_URL` fallback, so where the Db connects is stated at
+the call site (ADR-0045), and `02_decisions` loads its PEM itself and hands the key to
+`createSignatures`: the framework parses nothing and generates nothing, so a deployment brings
+its own identity or does not start
+([ADR-0041](./docs/adr/0041-the-shared-agent-has-a-signing-identity.md)). **The key material two
+examples carry is committed and worthless, and shouts it at every point of contact.**
+`02_decisions/insecure-example-only-signing-key.pem` is a throwaway Ed25519 keypair;
+`03_nostr/.env.example` carries three secp256k1 keypairs, the agent's and one per person. Both
+exist so that `docker compose up` is the whole setup from a fresh clone, and each is marked
+worthless wherever it is met: the PEM's own filename and the two lines of `compose.yml` that pass
+and mount it, the block of capitals above the hex in `.env.example`, and both READMEs, every one
+of them saying to generate your own. Generating at first boot was the alternative and fails
+worse: `docker compose down -v`
+mints a fresh signing key, and every Decision published under the old one silently stops
+verifying.
+
+**`npm run check` does not know an example exists**, with one exception that is the shape of the
+rule rather than a hole in it. `tsconfig.json` includes `src` and `scripts`, and it has no
+`paths`, so nothing here type-checks an example and nothing can resolve an example's imports back
+into `src` by accident. The one thing under `examples/` the suite reads is the committed key
+material: `src/example-signing-key.test.ts` loads `02_decisions`' PEM and `03_nostr`'s hex secret
+exactly as those deployments load them, because a decoy that stopped parsing is a worse outcome
+than an unmarked one. Everything else is CI's, one step per directory, `npm install && npx tsc
+--noEmit` inside it. **That checks an example against the version it pins and not against this
+tree.** A change made here is invisible to all four until it is published, and nothing catches
+what it broke in between; what those four steps catch is editing rot, and a pin bumped to a
+version the example does not work against. **Nothing checks that an example comes up at all.**
+
+**The package is published and publishing is a hand act**: `npm version patch && npm publish &&
+git push --follow-tags`, at `0.2.0` today, with `prepublishOnly` building so that a stale `dist`
+is not something to remember. **No example commits a lockfile** and each installs
+with `npm install` rather than `npm ci`, so a patch publish flows into all four with nothing
+edited, and a breaking change bumps the minor and forces a deliberate four-place sweep, which is
+when each example wants opening anyway. `/examples/*/package-lock.json` is in `.gitignore` for
+that reason and not by oversight. What it costs is that an example is not reproducible: each
+directory installs whatever satisfies the caret on the day it is built. **At `1.0.0` that stops
+being acceptable**, and the fix is a committed lockfile per example with `npm ci` in the four CI
+steps and the four Dockerfiles.
+
+**[`docs/api-docs.md`](./docs/api-docs.md) governs the doc comments in `src` and governs nothing
+under `examples/`. That is a reversal, and it is written down here because it will otherwise be
+applied back by habit.** The single deployment these four replaced was about half comment by
+volume with ADR cross-references throughout. A README says what the example demonstrates and how
+to run it, briefly, and stops. A code comment is minimal, never repeats the README, and describes
+only what is unique to that example, which in practice is the thing a reader would otherwise get
+wrong: why a seeding block is one transaction, why `01_scheduler` writes its Handler by hand, why
+`03_nostr` builds no Auth. The calibration is the files themselves. `00_minimal/main.ts` is 104
+lines carrying 5 comment lines, `01_scheduler/main.ts` 116 and 5, `02_decisions/main.ts` 126 and
+10, and `03_nostr/main.ts` 117 and 11. A comment that would fit any of the four belongs in none
+of them. The terminal client the two HTTP examples run is a `bin` on this package rather than a
+subpath of it, and the convention below is where that lives.
 
 ## Toolchain and checks
 
@@ -150,11 +186,11 @@ table pages and the route pages after it, and VitePress serves or builds them al
 are the fifteen subpaths of the export map
 ([ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md),
 [ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)), titled with the specifier a
-Developer imports from, and `example/` is not among them. The Messenger and each Channel are
-separate pages for the reason they are separate subpaths, and each Auth is a page for the same
-reason: a Developer reads the one they are using. Two of those pages are the only documentation
-of their component anywhere in the deliverable, `/nostr-channel` and `/nostr-auth`, the reference
-deployment running neither. **Two words the reference is written in are now defined
+Developer imports from, and nothing under `examples/` is among them. The Messenger and each
+Channel are separate pages for the reason they are separate subpaths, and each Auth is a page for
+the same reason: a Developer reads the one they are using. `/nostr-auth`'s page is the only
+documentation of that component in the deliverable, no example building it. **Two words the
+reference is written in are now defined
 nowhere in it.** **Operator** and **Shared Agent** appear on every page and belong to no
 component, and the deleted root page's module comment was the only place the rendered reference
 defined them. `site/reference/index.md` is generated from the entry point list and cannot be
@@ -248,7 +284,7 @@ enums, sequences, views, row policies and row level security.
 **Eight more of those pages describe the HTTP API, and the same pipeline writes them.** The route
 descriptions already *are* the API documentation (ADR-0040), and until now the only way to read
 them was `GET /openapi.json` against a Gateway that is up, so a Developer deciding whether to adopt
-the framework had to build and start the reference deployment first. `npm run extract:routes`
+the framework had to build and start an example first. `npm run extract:routes`
 prints one JSON document to stdout and chooses no file, and `scripts/reference/route-pages.ts`
 turns it into one page per component that serves routes, under `site/reference/routes/`. Each page
 carries every route's summary and its description **word for word**, the query and path parameters,
@@ -437,9 +473,11 @@ from its own subpath, `shared-agent-framework/<component>`, beside its construct
 reached the same way everything else about it is. A deployment `export *`s the
 components it runs into one barrel, points its own `drizzle.config.ts` at that barrel, and
 applies it with its own `drizzle-kit`: `push` to prototype, `generate` + `migrate` in
-production. `example/schema.ts`, `example/drizzle.config.ts` and
-`example/migrate/Dockerfile` are the worked version, run as a one-shot container the
-Gateway waits on with `condition: service_completed_successfully`.
+production. Each example under `examples/` is a worked version of that, four of them: a
+`schema.ts`, a `drizzle.config.ts` deriving its `schemaFilter` from the barrel rather than
+listing it, and a `migrate` service running the deployment's own image with
+`drizzle-kit push --force`, which the Gateway waits on with
+`condition: service_completed_successfully`.
 
 The tests set their tables up the same way, through `src/test-support/apply-schema.ts`,
 which hands the same schema objects to `drizzle-kit`'s `pushSchema`. Nothing in the suite
@@ -485,12 +523,11 @@ Conventions the build depends on:
   `src/logging/index.ts`, and the same shape holds for all fifteen. The package root exports
   nothing, so a module written at `src/index.ts` would ship and resolve to nowhere
   ([ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)). A new subpath is a new
-  directory, its `index.ts`, an `exports` entry, a `paths` entry in `tsconfig.json`, an entry
-  point in `site/typedoc.jsonc` and a block in `scripts/check-package.ts`. Only two of those five
-  are enforced: `site/specifier-titles.mjs` compares the entry points against `exports` both
-  ways. The `paths` entry is the quiet one, because it is needed only when `example/` imports the
-  specifier, so a component the reference deployment does not run can ship without one and
-  nothing says so.
+  directory, its `index.ts`, an `exports` entry, an entry point in `site/typedoc.jsonc` and a
+  block in `scripts/check-package.ts`. Two of those four are enforced:
+  `site/specifier-titles.mjs` compares the entry points against `exports` both ways. There is no
+  fifth any more, `tsconfig.json` having lost the fifteen `paths` that existed for one reader,
+  the deployment that used to live in this tree and import the package by name.
 - **`src/http-client-tui/` is the one shipped directory that is not a subpath.** It is a
   `bin`, `http-client-tui`, a line-oriented terminal client for the HTTP Channel's two routes
   and Password Auth's login. A `bin` is not importable, so the export map is untouched and there
@@ -623,8 +660,8 @@ Conventions the build depends on:
   worker-before-Messenger cycle — migration registration order used to be a third and went
   with the subsystem (ADR-0046). So a route arrives with
   `tags`, a `summary`, a `description` and a `response` schema per status it can answer,
-  or it arrives half-described: those sentences *are* the API documentation now, and
-  `example/AGENTS.md` holds a URL and no route table. An Operator's own route is described
+  or it arrives half-described: those sentences *are* the API documentation now, and each
+  example's `AGENTS.md` holds a URL and no route table. An Operator's own route is described
   only if it was `register`ed: one written straight onto the instance after the
   constructor returns is served and absent from the document, and both spellings are
   pinned in `src/gateway/gateway.test.ts`.

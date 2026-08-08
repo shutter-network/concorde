@@ -1,6 +1,6 @@
 # An image with `pi` in it, for the one opt-in end-to-end test.
 #
-# Not the reference deployment's Dockerfile — that is a deliverable of its own, and
+# Not an example's Dockerfile: each of those is a deliverable of its own, and
 # an Operator's image is theirs to build. This one exists so the test has something
 # real to start, and it says out loud what a `pi` deployment needs of any image:
 #
