@@ -11,8 +11,9 @@
  * Two ways a set can be wrong, and they fail differently enough to need a test each.
  *
  * **A cross-schema foreign key names a part outside the set** is the loud one.
- * `messages.user_id`, `pubkeys.user_id` and Password Auth's two columns all reference
- * `saf_users.users.id` in code (ADR-0036, ADR-0046, ADR-0049, ADR-0052), so
+ * `messages.user_id`, `pubkeys.user_id`, `outbox.user_id`, Password Auth's two columns and Nostr
+ * Auth's `grants.user_id` all reference
+ * `saf_users.users.id` in code (ADR-0036, ADR-0046, ADR-0049, ADR-0052, ADR-0053), so
  * the set is coherent only while Users is in it, and a set without it throws
  * on the `ADD CONSTRAINT` — `schema "saf_users" does not exist`. Pushing is enough to
  * catch that, and the first test pushes. What that test cannot do by itself is keep
@@ -58,6 +59,7 @@ import { getTableConfig, PgTable, pgSchema, text } from "drizzle-orm/pg-core";
 import type { Db } from "./db/index.ts";
 import * as decisionsSchema from "./decisions/schema.ts";
 import * as messengerSchema from "./messenger/schema.ts";
+import * as nostrAuthSchema from "./nostr-auth/schema.ts";
 import * as nostrChannelSchema from "./nostr-channel/schema.ts";
 import * as passwordAuthSchema from "./password-auth/schema.ts";
 import * as schedulerSchema from "./scheduler/schema.ts";
@@ -73,6 +75,7 @@ import * as usersSchema from "./users/schema.ts";
 const parts: Record<string, PartSchema> = {
   decisions: decisionsSchema,
   messenger: messengerSchema,
+  "nostr-auth": nostrAuthSchema,
   "nostr-channel": nostrChannelSchema,
   "password-auth": passwordAuthSchema,
   scheduler: schedulerSchema,

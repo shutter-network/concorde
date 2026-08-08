@@ -37,6 +37,7 @@
         "!src/db/**",
         "!src/signatures/**",
         "!src/nostr-channel/**",
+        "!src/nostr-auth/**",
         "!src/test-support/**"
       ],
       "linter": {
@@ -52,7 +53,7 @@
                 "patterns": [
                   {
                     "group": ["nostr-tools", "nostr-tools/**", "@nostrify/**"],
-                    "message": "Nostr is the Nostr Channel's alone, the way pg is the Db's: nothing from either library crosses this framework's API boundary, so they are ordinary dependencies rather than peers, and a second part reaching for one would make them something a consumer has to install (ADR-0049). src/test-support/** is exempt too, because a real client is the only thing that proves the fake Relay is a Relay."
+                    "message": "Nostr belongs to the two parts that speak it, the Nostr Channel and Nostr Auth, the way pg belongs to the Db: nothing from either library crosses this framework's API boundary, so they are ordinary dependencies rather than peers, and a third part reaching for one would make them something a consumer has to install (ADR-0049, ADR-0053). src/test-support/** is exempt too, because a real client is the only thing that proves the fake Relay is a Relay and a real signer the only thing that proves a NIP-98 forgery is refused."
                   }
                 ]
               }
