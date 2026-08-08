@@ -113,8 +113,8 @@ credentials: the model is a scripted OpenAI-compatible server on localhost, and
 everything else about the Run is real.
 
 `npm run check:docs` is the third, and it is described with the site below, since what it needs
-is what the site needs. It regenerates the committed API reference, fails when that reference
-has fallen behind the doc comments, and builds the site. CI runs it as its own step too. So
+is what the site needs. It regenerates the API reference, asserts that every page still holds a
+linked signature block, and builds the site. CI runs it as its own step too. So
 there are four commands in CI and three of them are not the inner loop.
 
 `npm run docs:dev` and `npm run docs:build` are the API reference: TypeDoc reads the doc
@@ -137,6 +137,10 @@ is not part of what a Developer is handed.
 fact goes in a module comment, which in a constructor, which in a method, and which belongs in a
 comment that never renders. It governs the OpenAPI `description` strings too, since those are
 the other thing an Operator reads. Prose style is `/simple-english` and is not its subject.
+**Signature blocks becoming clickable changed nothing in it, and that is deliberate.** An
+automatic link in a block is a second door to a symbol, not a replacement for a link a sentence
+wants to make, so `{@link}` on the first occurrence of a symbol a reader will want to jump to
+stays the rule it was.
 
 **`site/` is an npm package of its own, with its own lockfile and its own `node_modules`**, and
 it buys exactly one thing: a second TypeScript, because TypeDoc peers a compiler up to `6.0.x`
@@ -144,19 +148,31 @@ and this package pins 7. `site/README.md` argues that and states the **exit cond
 TypeDoc supports the compiler the root pins, the sub-package collapses into the root. All three
 root scripts `npm ci` that tree themselves, so a fresh clone needs no separate step.
 
-**`site/reference` is committed**, fourteen markdown pages: one per entry point, plus the `index.md`
-that lists them and is the site root. That is what makes a change to the public API arrive as a
-readable diff in review rather than as something to notice in a source diff, and it only works
-because `typedoc.jsonc` sets `disableSources: true`. A file path, a line number and a commit
-hash under every symbol would churn the diff on edits that changed no API at all. Nothing under
-`reference/` is authored, so a page is never edited: change the doc comment and regenerate.
+**`site/reference` is not committed, and it was.** Fourteen generated markdown pages, thirteen of
+them one per entry point plus the `index.md` that lists them and is the site root, and
+`.gitignore` covers the directory in full. Committing them bought one thing: a change to the
+public API arrived as a readable diff in review. A signature block is HTML now, and a diff over
+`<span>`s and `<a href>`s does not do that, so what was bought is no longer for sale. Three
+reduced forms were declined on the same ground. Markup shaped to diff well is still a large
+artifact whose diff is mostly markup. A second plain-text digest of the signatures is the same
+facts rendered twice out of the same code, which is the artifact that goes stale first. One page
+kept as a golden fixture owes an explanation for why that page is worth what all of them were
+not. **What is given up is real and is not glossed here**: a reviewer of a doc-comment change can
+no longer see the rendered result without running the site locally, which is where the site was
+before the reference was committed. Read the missing drift check as that trade rather than as an
+oversight, and do not restore it. `typedoc.jsonc` keeps `disableSources: true` for the argument
+that outlived the diff: the repository is private, so the file path, line number and commit hash
+under every symbol resolve for nobody. Nothing under `reference/` is authored, so a page is never
+edited: change the doc comment and regenerate.
 
 `npm run check:docs` is the third command, and it is separate from `npm run check` for exactly
 the reason `check:package` is: it installs `site/`'s tree, so it needs the network and the
-second compiler. It regenerates `site/reference`, **fails on any difference against what is
-committed and names the files that differ**, and then builds the site so a broken configuration
-fails in a check rather than in a browser. It reports both failures rather than stopping at the
-first. It is also what makes the guard in `site/specifier-titles.mjs` unattended: that guard
+second compiler. It regenerates `site/reference`, **asserts page by page that the page still
+holds a preformatted block with a link inside it, and names every page that does not**, and then
+builds the site so a broken configuration fails in a check rather than in a browser. Every step
+of it is terminal now. It collected two independent findings while one of them was the drift
+comparison against the committed pages; with one kind of failure left there is nothing to
+collect. It is also what makes the guard in `site/specifier-titles.mjs` unattended: that guard
 compares `typedoc.jsonc`'s entry points against `package.json` `exports` both ways and fails
 the generation if they disagree, and before this command nothing but a human running TypeDoc
 fired it. CI runs it as its own step. TypeDoc's *warnings* fail it, through
@@ -166,49 +182,100 @@ gets to force at an unrelated moment; that reference went away and a tolerance w
 it hides only the next one. The dangling name was `CursorWindow`, and how it was answered is worth
 carrying: it reached the package root to silence this warning, which is the reason ADR-0051 gives
 for the root having become a bag of things. It is inlined at both `history` signatures now and
-exported nowhere. The comparison against
-the committed pages cannot cover that case, because a page naming a type no specifier exports is
-honestly rendered rather than stale: it is committed, it matches, the check passes, and a
-Developer reads a name they cannot type into an import. What the strictness costs is that the
+exported nowhere. The per-page assertion cannot cover that case either, because a page naming a
+type no specifier exports is honestly rendered rather than unlinked: its blocks still carry
+links, the assertion passes, and a Developer reads a name they cannot type into an import. What
+the strictness costs is that the
 export map is now something a CI step can force, at whatever moment a doc comment reaches for a
 symbol that is on no subpath.
 
-**`expandObjects` and `site/expanded-object-methods.mjs` are one change and have to stay one.**
-The setting makes the block above an object type print its members instead of the word `object`.
-That block is the first thing on a page and it is what a reader takes the shape from, and most of
-this public API is object literals, so collapsed it left the shape to be assembled by hand out of
-the sections below on every one of the thirteen pages. Set on its own, though, it is worse than
-leaving it off: `typedoc-plugin-markdown` renders each member as `name: <type>` and takes that
-type from `helpers.getDeclarationType`, which answers a member carrying signatures with the
-**return type of its first signature**, so dozens of methods across `Db`, `Component`,
-`Runtime`, `Users`, `Decisions`, `Scheduler`, `Messenger`, `Channel` and `NostrChannel` print as
-properties holding their own return value, and `tx: Promise<T>` binds `T` to nothing at all. The word `object` said nothing
-and misled nobody; that block would mislead. So the plugin travels with the setting. It defines a
-theme, named on `typedoc.jsonc`'s `theme` line because defining one is how a render-context
-override is installed, and it widens that one helper for members reached from inside an expanded
-object. Two constraints bind any rewrite of it, and the file argues both: the widening applies
-only inside an expanded object, because the sections below the block would otherwise print their
-parameters twice, and what tracks "inside" counts rather than flips, because an expanded object
-can hold another one.
+**The signature block at the top of every page is HTML this repository writes**, and
+`site/expanded-object-methods.mjs` writes it. `useCodeBlocks` wraps a rendered declaration in a
+fence, markdown does not parse the inside of a fence, and the plugin's own working links are
+stripped out again on the way in. Turning the setting off gives the links back and takes the block
+with it: a twenty-member object type arrives as one escaped blockquote line. Most of this public
+API is object literals, so for as long as the block was fenced the reference was choosing between
+two halves of one thing. The way out is that **a signature block is not source text**. It is a
+rendering of a type tree in which every reference is already resolved, so nothing has to
+rediscover that `Component` is a type alias with a page of its own. The renderer writes the
+declaration into a text buffer, records the character range of each identifier it writes and the
+URL the plugin's own router answers with, and hands the characters and the ranges to Shiki. Colour
+is a function of the characters. **A link never is.** Shiki is a declared dependency of `site/`
+rather than one reached through VitePress, `site/shiki-themes.mjs` names the two themes both
+callers use, and no colour value is written down anywhere in this repository.
 
-Four costs, recorded rather than solved. **A parameter prints without its type**, so `Runtime`
-reads `run: (prompt) => Promise<RunOutcome>` and the reader takes `RunPrompt` from the Methods
-section below. That is `expandParameters`, off by default, and it is how every function type in
-the reference already printed; turning it on widens far more than these blocks and was not asked
-for. **`readonly` is dropped from an expanded member** and stays visible in the section a few
-lines below it; restoring it means reimplementing the whole declaration partial instead of
-wrapping one helper, which is a much larger patch surface bought for one modifier. **A `*Tables`
-variable prints as `{ runs: PgTableWithColumns<{ }>; signals: PgTableWithColumns<{ }> }`**, where
-naming the two tables is the gain and the empty braces are drizzle's own type under
-`excludeExternals`. And **`SignalHandler.handle` wraps its return union raggedly** across three
-lines of one page. The
-plugin reads two names out of the render context, `partials.declarationType` and
-`helpers.getDeclarationType`, and a future `typedoc-plugin-markdown` that renamed either one, or
-that stopped asking the helper for a member's type, would leave the widening wired to nothing and
-the methods quietly printing return types again. Nothing here guards against that on purpose:
-`check:docs` regenerates and diffs against the committed reference on every CI run, so a
-generation that moved fails and names the pages, which is the second thing committing the
-reference buys.
+**Three partials are wrapped and nothing else is**: `declarationTitle`, `signatureTitle` and
+`typeAndParent`. The type walk beside them is a hand-written stand-in for the plugin's `someType`
+family rather than an override of it, which is what leaves the parameter and property sections
+below a block exactly as they were: those sections call the plugin's own partials, and the
+plugin's own partials are never touched. Two larger boundaries were refused. Converting the
+plugin's emitted markdown back to HTML inside the two wrappers couples to another package's
+output text, which is the worse thing to depend on. Owning the whole output through TypeDoc's
+custom-output API inherits page structure, anchors, group ordering, the index page and the
+sidebar, none of which has anything to do with links.
+
+**A highlighter is not asked to find the links, and a Shiki transformer is the rewrite to refuse
+in review.** A transformer sees a token's string and nothing else, so attaching a link there
+means resolving a name back to a declaration, and the same name is not always the same thing:
+`runStates` is a link inside `type RunState = typeof runStates[number]` and is the declared name
+in `const runStates: readonly [...]` further down the same page. Decorations take character ranges
+and never need to know what is inside them. The published alternative for fenced markdown,
+`expressive-code-links`, fails from the other side for the same reason: it documents that a link
+breaks when it spans more than one highlight token, and `Promise<string>` is several. A hyperlink
+is not a property of the characters, which is why nothing is encoded into the text.
+
+**The buffer must be valid TypeScript, and that is why parameters carry their types.** Shiki
+colours with a TextMate grammar, and a grammar handed text outside the language classifies it
+however it falls: `sign(typ, claims): Promise<string>;` colours the whole parameter list as plain
+text and `Promise` as a value. So parameters print their types, and a block that is one member
+rather than a program is highlighted with `grammarContextCode` set to an opening type literal, so
+the fragment is tokenized in the state it belongs to. Narrowing a block by taking the parameter
+types out would answer a real complaint about width and silently degrade the colouring of every
+page. That is the second thing to refuse in review.
+
+Every option around this gates less than it used to. `expandObjects` stays on and now buys one
+thing: an object type prints its members instead of the word `object`. It no longer needs a
+widening applied over `helpers.getDeclarationType`, which answers a member carrying signatures
+with the return type of its first signature; that helper is never asked, because a member
+carrying signatures is rendered as a method here. `useCodeBlocks` stays on and gates the
+declaration keyword, the multi-line layout and whether this renderer runs at all; with it off the
+plugin's blockquote rendering already links and has no block to lose, so that branch is left
+alone. `expandParameters` stays off, because the plugin option widens the parameter tables below
+the block as well and only the block was meant to widen.
+
+Four costs were recorded against the widening this renderer replaced, and **three of them are
+gone**. A parameter carries its type, so `Runtime` reads `run: (prompt: RunPrompt) =>
+Promise<RunOutcome>`. `readonly` is printed on a member of an expanded object rather than dropped
+and left to the section below. And `SignalHandler.handle` prints its return union on one line,
+because a union only wraps past seventy characters and this one is not; when a union does wrap it
+takes one member per line behind its own bar, and a member several lines long carries on under
+that bar rather than falling back to the margin.
+**One cost stands, because it was never the renderer's.** A `*Tables` variable names its
+tables against empty braces, `usersTables` printing `tokens` and `users` as
+`PgTableWithColumns<{}>`, where naming the tables is the gain and `{}` is drizzle's own type under
+`excludeExternals`. What replaces the three is one new cost, accepted rather than missed:
+**width**. The widest members went from about seventy characters to about a hundred and twenty and
+scroll sideways on the method-heavy pages. That is the price of the annotation, not of the
+colouring.
+
+**The names read out of another package are what a plugin upgrade breaks.**
+`partials.declarationTitle`, `partials.signatureTitle` and `partials.typeAndParent` are wrapped;
+`ctx.router` (`getFullUrl`, `hasUrl`), `ctx.urlTo` and `ctx.page.model` answer where a reference
+points; `ctx.helpers.getKeyword` and `ctx.helpers.isGroupKind` answer what a block is. Rename any
+of them and the override is never called, the plugin's own wrapper runs, and the page renders as a
+fenced code block: correctly coloured, entirely unlinked, and indistinguishable from the reference
+before this renderer existed. That is the one quiet failure, and the per-page assertion in
+`check:docs` is what scans for it. Every other way this design breaks is loud. An overlapping
+character range throws during generation, because Shiki verifies that decorations do not
+intersect; broken escaping is visible on sight; and a reference that resolves to nothing fails
+through TypeDoc's warnings.
+
+**One gap is left uncovered and recorded rather than guarded.** A type kind the walk does not
+handle falls through to `String(type)`: a mapped type, a template literal, a type predicate. Every
+reference inside one of those renders unlinked, wherever that kind occurs, and the per-page
+assertion still passes because other references on those pages still link. Nothing catches it.
+Somebody opening a page after touching the renderer does. Same trade as the names above, written
+down so that it is a known cost rather than a surprise.
 
 **The one command must stay ignorant of the second compiler.** `npm run check` installs none of
 `site/` and **must keep passing on a checkout where `site/node_modules` was never created** —
@@ -216,14 +283,13 @@ that is the test, and it is run by moving that directory aside, not by reading t
 configuration. `tsconfig.json` does not include `site`, the test glob is `src/**`, and Biome
 ignores markdown entirely, which is what lets thousands of lines of generated markdown sit in
 the tree without touching `npm run lint`. Verified by running it, not by reading Biome's
-configuration. **The one exception is JSON, and it is why `site/reference/typedoc-sidebar.json`
-stays gitignored**: Biome formats JSON, TypeDoc's theme writes that file as one minified line,
-and committing it would fail the one command over a file nobody reads. Every command that reads
-it regenerates it first, so what leaving it out costs is that a change to the sidebar alone goes
-uncaught, and that is a theme upgrade rather than an API change. What `npm run check` *does*
-cover is the authored files in
-`site/`, because `biome check .` lints the whole tree; that is wanted, and it costs no
-documentation toolchain.
+configuration. **The exception is JSON, and the generated sidebar is JSON**: Biome formats it,
+TypeDoc's theme writes `site/reference/typedoc-sidebar.json` as one minified line, and that file
+would fail the one command over something nobody reads. It does not, because `biome.json` sets
+`vcs.useIgnoreFile` and `.gitignore` now covers `site/reference` in full. The rule that named that
+one file went with the committed pages, and nothing argues an exception inside an ignored
+directory. What `npm run check` *does* cover is the authored files in `site/`, because
+`biome check .` lints the whole tree; that is wanted, and it costs no documentation toolchain.
 
 `npm run format` applies Biome's fixes; `npm run check` fails on unformatted code
 rather than warning.

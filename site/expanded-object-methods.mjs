@@ -75,8 +75,8 @@
 // declaration out is a change this file does not follow.
 //
 // The failure is quiet by construction: an override left uncalled means the plugin's wrapper runs,
-// and the page renders as a correct-looking unlinked fence. Issue 03 adds the per-page assertion
-// that closes it.
+// and the page renders as a correct-looking unlinked fence. `scripts/check-docs.ts` is what scans
+// for it, one assertion per page, and a rename in this list is the checklist for a plugin upgrade.
 
 import { createHighlighter } from "shiki";
 import {

@@ -28,6 +28,10 @@
 
 # The generated reference, in full, sidebar included. It was committed so that a change to the
 # public API arrived as a readable diff; a signature block is HTML now, and a diff over `<span>`s
-# and `<a href>`s does not do that. `npm run check:docs` regenerates it and asserts that every
-# page still has a linked signature block on it.
+# and `<a href>`s does not do that. What that costs a reviewer is argued in `CLAUDE.md`.
+# `npm run check:docs` regenerates it and asserts that every page still has a linked signature
+# block on it. This line also decides what Biome sees, because `biome.json` sets
+# `vcs.useIgnoreFile`: the sidebar TypeDoc writes here is one minified line of JSON, and it used
+# to need a rule of its own to keep it out of `npm run lint`. A directory nobody commits needs no
+# exception inside it.
 /site/reference

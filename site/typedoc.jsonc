@@ -50,16 +50,16 @@
   "docsRoot": "./reference",
 
   // One file per entry point rather than one per exported symbol, so the whole public
-  // surface is ten files and a diff of it is readable. `flattenOutputFiles` is what keeps
-  // the nine subpath modules from nesting inside a directory named after the root module.
+  // surface is thirteen pages a reader can hold. `flattenOutputFiles` is what keeps those
+  // thirteen from nesting inside a directory named after the module they are reached through.
   "outputFileStrategy": "modules",
   "flattenOutputFiles": true,
 
   // No `Defined in` line under every symbol. TypeDoc writes those with a file path, a line
-  // number and a commit hash, and the plan is to commit the rendered reference so that a
-  // change to the public API arrives as a readable diff. Line numbers and a hash would churn
-  // that diff on edits which changed no public API, which is the one thing committing it is
-  // for. The repository is private, so the links resolve for nobody anyway.
+  // number and a commit hash pointing into the repository, and the repository is private, so
+  // every one of those links resolves for nobody. The other argument for this line, that a hash
+  // under every symbol would churn the diff of the committed reference, went with the committed
+  // reference: `reference/` is gitignored now and there is no diff to churn.
   "disableSources": true,
 
   // Nothing but the reference. No README page, and no page for a symbol this package did not
@@ -83,15 +83,24 @@
   // TypeDoc's default grouping by kind is kept and no custom group is declared: a component's
   // tables land under Variables and its constructor under Functions, which separates them
   // without hiding either. The page header and breadcrumb are dropped because the title is
-  // already the specifier and there are only ten pages to be lost among.
+  // already the specifier and there are only thirteen pages to be lost among.
   "hidePageHeader": true,
   "hideBreadcrumbs": true,
+
+  // What a declaration block is at all. The plugin's own meaning of this option is "wrap the
+  // rendered declaration in a fence", and that wrapper is the one thing the theme below replaces,
+  // because markdown does not parse the inside of a fence and a link cannot survive there. What
+  // is left of the option here is everything else it decides: the leading keyword, `type` or
+  // `const` or `function`, and the multi-line layout that puts one member of an object on each
+  // line. Turned off, the theme steps aside entirely and the plugin's blockquote rendering runs,
+  // which already links and has no block to lose. So it stays on, and it is read rather than
+  // assumed: `expanded-object-methods.mjs` asks for it at every point where it matters.
   "useCodeBlocks": true,
 
   // The block above an object type prints its members rather than the word `object`. It is the
   // first thing on a page and it is what a reader takes the shape from, and most of this public
   // API is object literals, so collapsed it left the shape to be assembled by hand out of the
-  // sections below on all ten pages.
+  // sections below on all thirteen pages.
   //
   // **It cannot be set without the theme on the next line.** The plugin renders each member from
   // `getDeclarationType`, which answers a method with the return type of its first signature, so
@@ -99,6 +108,10 @@
   // value. `expanded-object-methods.mjs` never asks that helper anything: it renders a member
   // carrying signatures as a method. Setting this and dropping that plugin ships a block a reader
   // is wrong to trust.
+  //
+  // `expandParameters` is deliberately absent and stays at its default of off. Parameters do
+  // carry their types in a block, because the theme writes them; the plugin option would widen
+  // the parameter tables below the block too, and only the block was meant to widen.
   "expandObjects": true,
   "theme": "expanded-objects"
 }
