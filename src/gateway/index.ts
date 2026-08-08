@@ -15,6 +15,13 @@
  * and only the ones a deployment wants. `extend` runs first and `handlers` reads its result, so a
  * Signal Handler closes over a component of your own and never the reverse.
  *
+ * A server is also where authentication is composed. Each scheme a deployment accepts is an
+ * {@link Auth}, a Component with one more member that registers itself with the Public server at
+ * construction, and {@link AuthOutcome} is what one answers about a request.
+ * {@link ServerComponent} holds the registered Auths and composes them into the one `requireUser`
+ * every protected route takes, so a route reading `request.safUser` does not care which scheme
+ * named the User.
+ *
  * Two of the four are documented on subpaths of their own: `shared-agent-framework/db` holds the
  * Db, and `shared-agent-framework/signals` holds the Signal Worker and the whole Signal Handler
  * vocabulary. The other two are plain Fastify instances, each reached on `.fastify`. This subpath
@@ -50,7 +57,15 @@
  * @module
  */
 
-export type { Component, Gateway, ListeningServer } from "./components.ts";
+export type { Auth, AuthOutcome } from "./auth.ts";
+export { NoAuthRegisteredError } from "./auth.ts";
+export type {
+  Component,
+  Gateway,
+  ListeningServer,
+  ServerComponent,
+  ServerComponentOptions,
+} from "./components.ts";
 export { createBareGateway, serverComponent } from "./components.ts";
 export type { GatewayExtension, GatewayOptions, InfraComponents } from "./gateway.ts";
 export { createGateway } from "./gateway.ts";

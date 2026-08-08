@@ -20,7 +20,13 @@ import { type Db, openDb } from "../db/index.ts";
 import type { Logger } from "../logging/logging.ts";
 import type { Runtime, SignalHandler, SignalHandlers, SignalWorker } from "../signals/index.ts";
 import { createSignalWorker } from "../signals/index.ts";
-import { type Component, createBareGateway, type Gateway, serverComponent } from "./components.ts";
+import {
+  type Component,
+  createBareGateway,
+  type Gateway,
+  type ServerComponent,
+  serverComponent,
+} from "./components.ts";
 
 /**
  * The four parts every deployment has, under the keys they are filed under.
@@ -30,8 +36,21 @@ import { type Component, createBareGateway, type Gateway, serverComponent } from
  */
 export type InfraComponents = {
   db: Db;
-  agentServer: Component & { readonly fastify: FastifyInstance };
-  publicServer: Component & { readonly fastify: FastifyInstance };
+  /**
+   * Where the agent's routes go, and the server nothing authenticates on.
+   *
+   * It carries `registerAuth` and `requireUser` like the Public one, and nobody should use either.
+   * Every caller here is trusted, so no Auth is meant to register, and a route on this server that
+   * takes `requireUser` throws on every request instead of serving one.
+   */
+  agentServer: ServerComponent<FastifyInstance>;
+  /**
+   * The exposed server, and where every Auth registers itself.
+   *
+   * It is built before `extend` runs and holds no component, so an Auth registers with it from its
+   * own constructor and the order they are asked in is the order they were constructed in.
+   */
+  publicServer: ServerComponent<FastifyInstance>;
   worker: SignalWorker;
 };
 
@@ -95,9 +114,11 @@ export type GatewayOptions<E extends GatewayExtension> = {
    */
   readonly handlers: (components: InfraComponents & E) => SignalHandlers;
   /**
-   * Where the Signal Worker logs. Defaults to a `pino` instance on stdout.
+   * Where the Signal Worker logs, and where a refused request's `detail` is written. Defaults to a
+   * `pino` instance on stdout.
    *
-   * It reaches the Worker and nothing else. A component built in `extend` takes its own.
+   * It reaches the Worker and both servers, which are the parts this call builds. A component built
+   * in `extend` takes its own.
    */
   readonly logger?: Logger;
   /**
@@ -164,8 +185,12 @@ export function createGateway<E extends GatewayExtension = Record<string, never>
   // deployment that needs Fastify options of its own, such as `trustProxy`, leaves this
   // constructor for `createBareGateway`. Everything after construction is still reachable,
   // because the instances are on `.fastify`.
-  const agentServer = serverComponent(Fastify(), options.agentListen);
-  const publicServer = serverComponent(Fastify(), options.publicListen);
+  //
+  // The Logger is spread rather than passed, because `exactOptionalPropertyTypes` distinguishes
+  // an absent option from one that is `undefined`, and only the absent one gets pino.
+  const logging = options.logger === undefined ? {} : { logger: options.logger };
+  const agentServer = serverComponent(Fastify(), options.agentListen, logging);
+  const publicServer = serverComponent(Fastify(), options.publicListen, logging);
 
   // Before `extend`, and see the file header for why that cannot move.
   describeSurface(
