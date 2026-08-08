@@ -54,7 +54,7 @@ jobs:
       # Separate for the same reason: it installs `site/`'s own dependency tree, which
       # carries the TypeScript 6 that TypeDoc peers, and keeping that compiler out of the
       # inner loop is the whole reason `site/` is a package of its own (site/README.md). It
-      # regenerates the committed reference, fails if it has fallen behind the doc comments,
+      # regenerates the reference, fails if a page has lost the links in its signature blocks,
       # and builds the site so a broken configuration fails here rather than in a browser.
       # It needs the network and no database.
       - run: npm run check:docs

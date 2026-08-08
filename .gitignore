@@ -26,10 +26,8 @@
 /site/.vitepress/cache
 /site/.vitepress/dist
 
-# `site/reference` itself is committed, so a change to the public API arrives as a readable
-# diff, and `npm run check:docs` fails when it falls behind the doc comments. Its sidebar is
-# the exception: `biome check .` formats JSON and would reject the minified line TypeDoc's
-# theme writes, which would break the one command over a file nobody reads. All three commands
-# above regenerate it before anything reads it, so what leaving it out costs is that a change
-# to the sidebar alone is not caught, and that is a theme upgrade rather than an API change.
-/site/reference/typedoc-sidebar.json
+# The generated reference, in full, sidebar included. It was committed so that a change to the
+# public API arrived as a readable diff; a signature block is HTML now, and a diff over `<span>`s
+# and `<a href>`s does not do that. `npm run check:docs` regenerates it and asserts that every
+# page still has a linked signature block on it.
+/site/reference

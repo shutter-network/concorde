@@ -1,16 +1,15 @@
 /**
- * Verifies the two claims the committed API reference rests on:
+ * Verifies the two claims the generated API reference rests on:
  *
- *  - **the committed reference is what the doc comments say today.** `site/reference` is
- *    regenerated from `../src` and compared against what is in git. Any difference is a
- *    failure, and the files that differ are named: a change to the public API is meant to
- *    arrive as a readable diff in review, and it cannot do that if the rendered pages lag
- *    behind the declarations they were rendered from.
- *  - **the site still builds.** A broken VitePress configuration or a dead link between
- *    pages should fail here rather than in somebody's browser.
+ *  - **every page still has a linked signature block in it.** `site/reference` is regenerated
+ *    from `../src`, and every page it wrote is read back and asked for one preformatted block
+ *    with a hyperlink inside it. The reference is not committed, so nothing else looks at these
+ *    pages between one generation and the next.
+ *  - **the site still builds.** A broken VitePress configuration or a dead link between pages
+ *    should fail here rather than in somebody's browser.
  *
- * Both failures are collected and reported together, because a stale reference and a broken
- * build are independent and finding one should not hide the other.
+ * Every step below is terminal: it reports and exits. Nothing is collected, because the drift
+ * comparison that used to be the second independent finding is gone with the committed pages.
  *
  * Run with `npm run check:docs`. Deliberately not part of `npm run check`, for the same
  * reason `check:package` is not: regenerating needs TypeDoc and the TypeScript 6 it peers,
@@ -20,112 +19,129 @@
  *
  * **TypeDoc's warnings fail this check**, through `treatWarningsAsErrors` in `typedoc.jsonc`,
  * which is where the argument for that is written. What matters here is only the consequence: a
- * failing generation stops the run before there is anything to compare against, and the
- * comparison below would not have caught what the warning does. A page rendering a type nobody
- * can import is honestly rendered rather than stale, so it is committed, it matches, and this
+ * failing generation stops the run before there is anything to read, and the assertion below
+ * would not have caught what the warning does. A page rendering a type nobody can import is
+ * honestly rendered rather than unlinked, so every block on it still carries links and this
  * check passes.
  */
 
 import { execFileSync } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const siteRoot = path.join(repoRoot, "site");
+const referenceRoot = path.join(siteRoot, "reference");
 
 /**
  * Runs a command with its output on our own stdio, so TypeDoc's warnings and VitePress's
- * build log are read by whoever is watching rather than swallowed and re-printed.
+ * build log are read by whoever is watching rather than swallowed and re-printed. A non-zero
+ * exit ends the run with `whenItFails` printed after the log that explains it.
  *
  * **`cwd` is load-bearing for VitePress.** It takes its project root from the working
  * directory, so run from the repository root it treats every markdown file in the tree as a
  * page and fails compiling a decision record. `npm --prefix` does not help: it moves where
  * `npm` looks for the package, not where the command runs.
- *
- * Named as `check-package.ts` names its own: a `run` there answers with output and throws,
- * and this one answers with the exit status because a failing step here is a finding to
- * collect rather than the end of the run.
- *
- * @returns Whether it exited zero.
  */
-function exitsZero(command: string, args: string[], cwd: string): boolean {
+function run(command: string, args: string[], cwd: string, whenItFails: string): void {
   try {
     execFileSync(command, args, { cwd, stdio: "inherit" });
-    return true;
   } catch {
-    return false;
+    console.error(`\n${whenItFails}\n`);
+    process.exit(1);
   }
 }
 
 /**
- * The generated pages that differ from what is committed, as git sees them.
- * `--untracked-files=all` is what makes a *new* page count: a ninth entry point, or a
- * directory TypeDoc copied in of its own accord, is a file nobody committed rather than a
- * modification to one.
- *
- * The status is compared against the working tree rather than against `HEAD` alone, so a
- * regenerated page that is staged and not yet committed is still a difference. That is the
- * question being asked: what is committed is what a reviewer reads.
- *
- * Porcelain v1 is parsed by dropping the two status columns and the space. Every path here is
- * a page named after an import specifier, so none of them is quoted or renamed, and the worst
- * a surprise could do is print an odd path beside a failure that is real anyway.
- *
- * `site/reference/typedoc-sidebar.json` is gitignored and so invisible here; `.gitignore` says
- * why. It is regenerated from the doc comments before every build, so nothing reads a stale
- * one. What that costs is a sidebar the pages do not reflect, which is a theme upgrade rather
- * than an API change, and no reviewer was going to read that file.
- *
- * @returns One relative path per differing file, in git's order.
+ * One preformatted block, however many attributes it carries. `<pre>` does not nest, so the
+ * lazy body is the whole of one block and never runs into the next.
  */
-function differingFiles(): string[] {
-  const status = execFileSync(
-    "git",
-    ["status", "--porcelain=v1", "--untracked-files=all", "--", "site/reference"],
-    { cwd: repoRoot, encoding: "utf8" },
-  );
-  return status
-    .split("\n")
-    .filter((line) => line.length > 0)
-    .map((line) => line.slice(3).trim());
+const PREFORMATTED_BLOCK = /<pre[^>]*>[\s\S]*?<\/pre>/g;
+
+/** An opening anchor tag, which is the only thing a hyperlink can be written as here. */
+const HYPERLINK = /<a[\s>]/;
+
+/**
+ * The pages the generation above wrote, as absolute paths.
+ *
+ * TypeDoc removes `out` before it writes (`cleanOutputDir` is on by default), so a page read
+ * here is a page this run produced and there is no stale directory to pass against. A missing
+ * directory answers with nothing rather than throwing, because the caller treats an empty
+ * answer as the failure it is.
+ *
+ * `index.md` is excluded and is the only exclusion: it is the generated list of the other
+ * pages, it carries no declaration, and it therefore has no block for a link to be in.
+ */
+function generatedPages(): string[] {
+  let entries: string[];
+  try {
+    entries = readdirSync(referenceRoot);
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((name) => name.endsWith(".md") && name !== "index.md")
+    .sort()
+    .map((name) => path.join(referenceRoot, name));
 }
 
-const failures: string[] = [];
+/**
+ * Whether a page has at least one preformatted block with a hyperlink in it.
+ *
+ * This is the one thing about these pages that can stop being true without looking wrong.
+ * `site/expanded-object-methods.mjs` writes a signature block by overriding partials it reads
+ * off another package's render context by name, and an upgrade that renamed one leaves the
+ * override uncalled: the plugin's own wrapper runs, and the page renders as a fenced code
+ * block that is correctly coloured, entirely unlinked, and indistinguishable from the
+ * reference before that renderer existed. Every other way the design breaks is loud. A bad
+ * character range throws during generation, broken escaping is visible on sight, and a type
+ * reference resolving to nothing already fails through TypeDoc's warnings.
+ */
+function hasLinkedBlock(page: string): boolean {
+  const markup = readFileSync(page, "utf8");
+  return (markup.match(PREFORMATTED_BLOCK) ?? []).some((block) => HYPERLINK.test(block));
+}
 
 console.log("\n> installing the site's own dependency tree\n");
-if (!exitsZero("npm", ["ci", "--no-audit", "--no-fund"], siteRoot)) {
-  console.error("\nInstalling site/node_modules failed. Nothing below could run.\n");
-  process.exit(1);
-}
+run(
+  "npm",
+  ["ci", "--no-audit", "--no-fund"],
+  siteRoot,
+  "Installing site/node_modules failed. Nothing below could run.",
+);
 
 console.log("\n> regenerating site/reference from the doc comments\n");
-if (!exitsZero("npm", ["run", "generate"], siteRoot)) {
-  console.error("\nTypeDoc failed. There is nothing to compare against.\n");
+run("npm", ["run", "generate"], siteRoot, "TypeDoc failed. There are no pages to read.");
+
+console.log("\n> checking that every page has a linked signature block\n");
+const pages = generatedPages();
+if (pages.length === 0) {
+  console.error(
+    `\nTypeDoc wrote no page into site/reference, so there is nothing to check and a pass ` +
+      `here would mean nothing.\n`,
+  );
   process.exit(1);
 }
 
-const differing = differingFiles();
-if (differing.length > 0) {
-  failures.push(
-    `The committed reference is not what your working tree's doc comments render to. ` +
-      `These files differ:\n${differing.map((file) => `  ${file}`).join("\n")}\n\n` +
-      `The regenerated pages are in your working tree now. Commit them with the change that ` +
-      `moved them.`,
+const unlinked = pages.filter((page) => !hasLinkedBlock(page));
+if (unlinked.length > 0) {
+  console.error(
+    `\nNo preformatted block on these pages contains a link:\n` +
+      `${unlinked.map((page) => `  ${path.relative(repoRoot, page)}`).join("\n")}\n\n` +
+      `A page renders that way when the renderer in site/expanded-object-methods.mjs is no ` +
+      `longer wired into the partials it overrides by name, so the plugin's own fenced blocks ` +
+      `are written instead: correctly coloured, entirely unlinked, and impossible to click.\n`,
   );
+  process.exit(1);
 }
+console.log(`${pages.length} pages, each with a linked signature block on it.`);
 
 // `site/`'s own `build`, and not `vitepress build` spelled again here, so that building the
 // site has one definition. It generates first, which is a second TypeDoc run costing a few
-// seconds: regeneration is byte-identical, so it cannot disturb the comparison just made, and
+// seconds: regeneration is byte-identical, so it cannot disturb the pages just read, and
 // paying for it is cheaper than a step added to that script and silently skipped by this one.
 console.log("\n> building the site\n");
-if (!exitsZero("npm", ["run", "build"], siteRoot)) {
-  failures.push("The site did not build. The log is above.");
-}
+run("npm", ["run", "build"], siteRoot, "The site did not build. The log is above.");
 
-if (failures.length > 0) {
-  console.error(`\n${failures.join("\n\n")}\n`);
-  process.exit(1);
-}
-
-console.log("\nThe committed reference matches the doc comments, and the site builds.\n");
+console.log("\nEvery page in the reference has a linked signature block, and the site builds.\n");
