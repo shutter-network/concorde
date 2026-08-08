@@ -70,9 +70,7 @@ await gateway.start();
 
 ### createPiRuntime()
 
-```ts
-function createPiRuntime(container): AgentContainerRuntime;
-```
+<div class="language-ts vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">ts</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0" v-pre=""><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">function</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0"> createPiRuntime</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">(</span><span style="--shiki-light:#E36209;--shiki-dark:#FFAB70">container</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">:</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0"> </span><a href="./shared-agent-framework.agent-container.html#agentcontainer" class="saf-signature-link"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">AgentContainer</span></a><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">)</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">:</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0"> </span><a href="./shared-agent-framework.agent-container.html#agentcontainerruntime" class="saf-signature-link"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">AgentContainerRuntime</span></a><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">;</span></span></code></pre></div>
 
 Builds a Runtime that runs `pi` as one fresh container per Run, of the image the container names.
 
@@ -100,9 +98,7 @@ If the container names no image, or if its Mount Table cannot mean what it says.
 
 ### interpretPiOutput()
 
-```ts
-function interpretPiOutput(source, session): Promise<RunOutcome>;
-```
+<div class="language-ts vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">ts</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0" v-pre=""><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">function</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0"> interpretPiOutput</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">(</span><span style="--shiki-light:#E36209;--shiki-dark:#FFAB70">source</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">:</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0"> AsyncIterable</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">&#x3C;</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">Uint8Array</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">&#x3C;</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">ArrayBufferLike</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">>>, </span><span style="--shiki-light:#E36209;--shiki-dark:#FFAB70">session</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">:</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> string</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">)</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">:</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0"> Promise</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">&#x3C;</span><a href="./shared-agent-framework.signals.html#runoutcome" class="saf-signature-link"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">RunOutcome</span></a><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">>;</span></span></code></pre></div>
 
 Reads one Run's `pi --mode json` output and reports how the Run ended.
 
@@ -142,9 +138,7 @@ timeout here or anywhere else, so a stream that never ends never returns.
 
 ### piRun()
 
-```ts
-function piRun(prompt): RunPlan;
-```
+<div class="language-ts vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">ts</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0" v-pre=""><code><span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">function</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0"> piRun</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">(</span><span style="--shiki-light:#E36209;--shiki-dark:#FFAB70">prompt</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">:</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0"> </span><a href="./shared-agent-framework.signals.html#runprompt" class="saf-signature-link"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">RunPrompt</span></a><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">)</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">:</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0"> </span><a href="./shared-agent-framework.agent-container.html#runplan" class="saf-signature-link"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">RunPlan</span></a><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">;</span></span></code></pre></div>
 
 Plans one Run as `pi` needs it performed: three flags, the Prompt on stdin, and a reader for the
 JSONL that comes back. The flags are `--mode json`, `--session-id <session>` and `--no-approve`,

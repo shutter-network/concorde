@@ -5,8 +5,9 @@
 
   // Two local plugins. `specifier-titles.mjs` is what makes a page name the specifier it is
   // reached through; see the file for why TypeDoc's own module names will not do.
-  // `expanded-object-methods.mjs` defines the theme named below, and it is what `expandObjects`
-  // needs to be honest; see the file, and the `theme` line at the bottom.
+  // `expanded-object-methods.mjs` defines the theme named below, and it writes every declaration
+  // and every signature block in the reference itself; see the file, and the `theme` line at the
+  // bottom.
   "plugin": [
     "typedoc-plugin-markdown",
     "typedoc-vitepress-theme",
@@ -95,9 +96,9 @@
   // **It cannot be set without the theme on the next line.** The plugin renders each member from
   // `getDeclarationType`, which answers a method with the return type of its first signature, so
   // `expandObjects` alone prints about forty methods as properties holding their own return
-  // value. `expanded-object-methods.mjs` widens that one helper inside an expanded object and
-  // says why at length; setting this and dropping that plugin ships a block a reader is wrong to
-  // trust.
+  // value. `expanded-object-methods.mjs` never asks that helper anything: it renders a member
+  // carrying signatures as a method. Setting this and dropping that plugin ships a block a reader
+  // is wrong to trust.
   "expandObjects": true,
   "theme": "expanded-objects"
 }
