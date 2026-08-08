@@ -79,9 +79,9 @@ const logger: Logger = {
 };
 
 /**
- * The shape the quickstart documents: an ordinary encapsulated plugin, registered under a prefix
- * of its own, reading `request.safUser` with **no cast**. The augmentation the package ships is
- * what makes those lines compile.
+ * The shape an Operator writes their own routes in: an ordinary encapsulated plugin, registered
+ * under a prefix of its own, reading `request.safUser` with **no cast**. The augmentation the
+ * package ships is what makes those lines compile.
  */
 const operatorRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get("/whoami", { preHandler: publicServer.requireUser }, async (request) => ({

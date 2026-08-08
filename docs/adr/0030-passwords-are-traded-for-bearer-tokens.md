@@ -106,7 +106,7 @@ verifying at theirs.
 - **Tokens accumulate forever.** `expires_at` is not nullable, so no token is immortal,
   but nothing reaps expired rows. A background sweeper was refused as disproportionate —
   the framework has no scheduled machinery of its own — so a deployment that cares runs
-  a periodic delete, documented in the quickstart as an operational note.
+  a periodic delete.
 - **Revocation is the User's, and it is the only removal there is.** Logging out drops
   the presented token; a second route drops all of a User's tokens. Since ADR-0029
   removes Users never, these routes are the sole mechanism by which any credential in

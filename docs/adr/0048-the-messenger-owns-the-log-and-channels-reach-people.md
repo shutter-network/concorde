@@ -114,10 +114,10 @@ both directions, and the channel name in the Signal payload. None of them is har
 unnecessary now, and a `channel` column that is constant in every row is a column that answers no
 question.
 
-**A deployment therefore picks HTTP or Nostr, not both**, and `example/` keeps HTTP: the
-quickstart's spine is `POST /auth/tokens`, `POST /messages`, `GET /messages?after=1`. So the Nostr
-Channel is the first component with no entry in `example/main.ts`, a pattern held for eight
-components before it, and that is recorded here as a cost rather than defended.
+**A deployment therefore picks HTTP or Nostr, not both**, and an example runs one or the other:
+the HTTP spine is `POST /auth/tokens`, `POST /messages`, `GET /messages?after=1`. So the Nostr
+Channel is the first component that cannot be shown beside the rest in one deployment, a pattern
+held for eight components before it, and that is recorded here as a cost rather than defended.
 
 ## The servers split, and the split is the interesting part
 

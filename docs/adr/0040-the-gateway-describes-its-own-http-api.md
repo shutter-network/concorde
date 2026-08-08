@@ -172,11 +172,10 @@ groups rather than as one list.
   hook and never reaches the document; the same route inside a `register` call is declared at
   boot, by which time the hook is there. The route is served either way and only the
   description differs, which is what makes it quiet. `register` is already the door
-  [ADR-0032](./0032-components-wire-themselves-at-construction.md) points at and the
-  quickstart's first spelling, so what this costs is one sentence there rather than a
-  mechanism; `default-gateway.test.ts` pins both spellings so the difference cannot change
-  unnoticed. Closing it would mean running the plugin's body synchronously, which is reaching
-  inside a package to save a sentence.
+  [ADR-0032](./0032-components-wire-themselves-at-construction.md) points at, so what this
+  costs is one sentence of documentation rather than a mechanism; `default-gateway.test.ts`
+  pins both spellings so the difference cannot change unnoticed. Closing it would mean running
+  the plugin's body synchronously, which is reaching inside a package to save a sentence.
 - **`docs/quickstart.md` stops carrying the third copy.** Its route table and field shapes
   were a second hand-made transcription, and its section headed "This copy can go stale"
   described a problem that is now answered. Both shrink to a pointer, or the trade is two

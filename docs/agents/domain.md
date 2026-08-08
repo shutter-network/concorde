@@ -22,13 +22,12 @@ terms or decisions actually get resolved.
 /
 ├── CONTEXT.md          ← the glossary
 ├── docs/
-│   ├── quickstart.md   ← the Operator's walkthrough, which mirrors example/
 │   ├── architecture.md
 │   ├── data-model.md
 │   ├── adr/            ← 0001-…  numbered, kebab-case titles
 │   └── agents/         ← this file, plus issue-tracker.md and triage-labels.md
 ├── src/                ← one directory per part of the Gateway
-├── example/            ← the reference deployment the quickstart describes
+├── examples/           ← standalone deployments, one per concern, each with a README
 └── .scratch/           ← issues and specs (see issue-tracker.md)
 ```
 

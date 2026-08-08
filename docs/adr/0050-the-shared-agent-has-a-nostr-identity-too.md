@@ -75,18 +75,18 @@ and a User with a Nostr client are asking different questions of different compo
 
 ## The example needs a second decoy
 
-`example/insecure-example-only-signing-key.pem` is a committed throwaway PKCS8 Ed25519 key whose
+`insecure-example-only-signing-key.pem` is a committed throwaway PKCS8 Ed25519 key whose
 worthlessness is shouted at four points of contact: its filename, `compose.yml`, `main.ts`, and the
-quickstart. A committed throwaway Nostr secret gets the same four, so that
+example's README. A committed throwaway Nostr secret gets the same four, so that
 `docker compose up -d --build` still comes up from a fresh clone with no manual key step.
 
 It is committed **hex-encoded** rather than as an `nsec`, so `main.ts` reads it with one line and no
 import, which mirrors the PEM read and avoids the example depending on `nip19` to demonstrate a
 constructor that takes bytes.
 
-This lands only when the Nostr Channel reaches `example/`, which
-[ADR-0048](./0048-the-messenger-owns-the-log-and-channels-reach-people.md) defers: one channel per
-Messenger means the example keeps HTTP.
+This lands in `examples/03_nostr`, and in an example of its own because
+[ADR-0048](./0048-the-messenger-owns-the-log-and-channels-reach-people.md) allows one channel per
+Messenger: a deployment running the HTTP Channel cannot also run this one.
 
 ## Considered and rejected
 

@@ -253,7 +253,7 @@ async function placeModels(paths: Paths, baseUrl: string): Promise<void> {
  * scripted model at all is the proof that it works (ADR-0025, ADR-0033).
  *
  * Written **outside** the agent directory and mounted read-only into it, which is what
- * `example/main.ts` does and is the arrangement worth proving: `pi` takes a lock beside
+ * every example does and is the arrangement worth proving: `pi` takes a lock beside
  * this file even to read it, so a Run against a settings file it cannot write is a claim
  * that only a real container settles.
  */
@@ -274,9 +274,9 @@ function settingsEntry(paths: Paths): Mount {
 /**
  * The instructions file, as an Operator writes one: their own words, then the address.
  *
- * Nothing of the framework's is in it, and nothing of the framework's produced it — the
- * quickstart is where an Operator gets this text, and a copy of it can go stale when the
- * Signal Worker's routes change (ADR-0025).
+ * Nothing of the framework's is in it, and nothing of the framework's produced it — an
+ * Operator writes this text themselves, as each example's `AGENTS.md` does, and a copy of it
+ * can go stale when the Signal Worker's routes change (ADR-0025).
  */
 async function placeInstructions(paths: Paths, agentServerUrl: string): Promise<void> {
   await writeFile(

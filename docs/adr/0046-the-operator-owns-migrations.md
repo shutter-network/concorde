@@ -73,9 +73,9 @@ now openly imports `users/schema.ts` to declare it: with one folder there is no 
 that makes the constraint free. `drizzle-kit` orders the statements within the single
 generation, so ADR-0036's "construction order is load-bearing at `migrate`" is retired too.
 
-**The example applies through an init container.** A one-shot `migrate` service —
-`example/migrate/Dockerfile`, carrying the framework, `drizzle-kit`, the barrel and the config
-— runs `drizzle-kit push` against the database, gated `postgres: service_healthy`. The gateway
+**The example applies through an init container.** A one-shot `migrate` service — an example's
+own `Dockerfile`, carrying the framework, `drizzle-kit`, the barrel and the config — runs
+`drizzle-kit push` against the database, gated `postgres: service_healthy`. The gateway
 gains `migrate: condition: service_completed_successfully`, mirroring the `agent-image` service
 that already uses that condition. `push` is the prototype flow, legitimate here precisely
 because the Operator owns this database; a production deployment changes one line —

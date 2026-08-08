@@ -115,7 +115,7 @@ reached only when the infrastructure and not merely the parts is what differs.
   "default" described the assembly this ADR removes. It stays the one shipped module that
   imports a value from `fastify`, and `scripts/check-package.ts` names it under the new name
   in place of the old.
-- **`example/main.ts` shows the four parts in `extend`.** The reference deployment becomes
+- **An example's `main.ts` shows the four parts in `extend`.** The reference deployment becomes
   the worked example of the common case rather than a consumer of a call that hid it, and a
   reader sees the wiring and the order ADR-0038 had folded away. That reading cost is the
   point, not a regression: the order and the wiring are the Operator's now, so they are where

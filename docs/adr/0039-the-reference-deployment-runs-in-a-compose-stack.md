@@ -43,19 +43,17 @@ The two ways to change the answer were both considered:
 - **Rootless Docker, or Podman.** This genuinely shrinks the hole rather than relocating it,
   and the framework already supports it: `containerCommand` on the Agent Container takes
   `["podman"]`. It is rejected *for the reference deployment only*, because it makes the
-  quickstart's first command fail on a stock Docker Desktop install, and the quickstart's
-  entire claim is clone-to-Run.
+  first command fail on a stock Docker Desktop install, and the whole claim of a demo
+  deployment is clone-to-Run.
 
-So the demo stack takes the host's socket, and the quickstart says so before the first
-command, next to the sentence telling you not to run it on a machine whose root you care
-about. A deployment that is not a demo answers this differently, and rootless is the answer
-it should reach for first.
+So the demo stack takes the host's socket. A deployment that is not a demo answers this
+differently, and rootless is the answer it should reach for first.
 
 **`example/` carries no comments**, and the socket is the one exception: a single line beside
-that mount, pointing at the quickstart section. Everything the four files used to explain
-about themselves now lives in the documentation, which is where a reader of a reference
-deployment is going anyway, and the files are short enough to read whole. The cost is that a
-reader who opens `compose.yml` alone learns nothing about why any of it is the way it is.
+that mount. Everything the four files used to explain about themselves now lives in the
+documentation, which is where a reader of a reference deployment is going anyway, and the
+files are short enough to read whole. The cost is that a reader who opens `compose.yml` alone
+learns nothing about why any of it is the way it is.
 
 ## `hostRoot` stops being hypothetical
 

@@ -9,7 +9,7 @@
  * one thing faked, as everywhere else (ADR-0022).
  *
  * The infrastructure comes from `createGateway`; the four opinionated parts are built by hand in
- * `extend`, exactly as `example/main.ts` builds them, so the fixture is a mirror of the reference
+ * `extend`, exactly as an example's `main.ts` builds them, so the fixture is a mirror of a real
  * deployment (ADR-0045). What the framework still settles is the key order:
  *
  *     db -> agentServer -> publicServer -> <extend's parts> -> worker
@@ -208,7 +208,7 @@ type Stack = {
 
 /**
  * The four parts, built by hand from the infrastructure `createGateway` hands `extend`, exactly
- * as `example/main.ts` does it — which is what makes this fixture a mirror of the reference
+ * as an example's `main.ts` does it — which is what makes this fixture a mirror of a real
  * deployment (ADR-0045). Users is constructed **before** the HTTP Messenger, which
  * takes it; Signatures before Decisions, which holds it and signs through it in process
  * (ADR-0043). Neither order is a migration order any more: `messages.user_id`'s foreign key
@@ -384,7 +384,7 @@ before(async () => {
       // a Handler would be a Component that wanted to be a Signal Worker (ADR-0045).
       assert.deepEqual(Object.keys(infra), theInfra);
       // The four parts, plus the Operator's own notebook keyed last of them: this is a mirror of
-      // `example/main.ts` with one Component added, which is what proves `extend` reaches the
+      // an example's `main.ts` with one Component added, which is what proves `extend` reaches the
       // infrastructure and returns Components of its own.
       return { ...fullStack(infra), notes: notebook() };
     },
@@ -2113,8 +2113,8 @@ describe("the description both servers serve", () => {
     // the constructor and these two lines, which is what makes the difference between them
     // observable at all.
     //
-    // Through `register`, which is the door ADR-0032 already points at and the one the
-    // quickstart names first. The plugin's body runs at boot, by which time the description
+    // Through `register`, which is the door ADR-0032 already points at. The plugin's body
+    // runs at boot, by which time the description
     // plugin has added its `onRoute` hook, so this route is discovered.
     publicServer.fastify.register(async (fastify) => {
       fastify.get("/ask", async () => ({ ok: true }));
@@ -2161,10 +2161,10 @@ describe("the description both servers serve", () => {
 
   /**
    * A whole stack, constructed and left alone: no pool opened, no port bound and no Handler that
-   * could do anything if one were. The four parts are built in `extend`, exactly as
-   * `example/main.ts` builds them, because that is where their routes are registered now — and
-   * the description this suite reads has to describe those routes, which it does only because the
-   * plugin is registered ahead of `extend` (ADR-0040, ADR-0045).
+   * could do anything if one were. The four parts are built in `extend`, exactly as an
+   * example's `main.ts` builds them, because that is where their routes are registered now — and
+   * the description this suite reads has to describe those routes, which it does only because
+   * the plugin is registered ahead of `extend` (ADR-0040, ADR-0045).
    *
    * Called twice: once for the pair every test below reads, and once by the test that
    * needs a Gateway of its own, since a route has to be registered before the instance

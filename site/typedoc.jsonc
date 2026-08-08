@@ -18,8 +18,8 @@
   // The fifteen entry points of the export map, in the order `package.json` lists them
   // ([ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md)). There is no `.` among them:
   // the package root exports nothing, so nothing lands on it by default
-  // ([ADR-0051](../docs/adr/0051-the-package-root-exports-nothing.md)). `example/` is absent too:
-  // it is the reference deployment, not public API.
+  // ([ADR-0051](../docs/adr/0051-the-package-root-exports-nothing.md)). `examples/` is absent too:
+  // those are deployments that consume the package, not public API.
   // `specifier-titles.mjs` compares this list against `exports` both ways and fails the
   // generation if they disagree, so an entry point added to one and not the other is loud.
   "entryPoints": [

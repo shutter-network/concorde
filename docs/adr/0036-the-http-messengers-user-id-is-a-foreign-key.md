@@ -76,7 +76,7 @@ descriptor's schema immediately before applying that descriptor's folder, so a U
 that has not been reached yet has no schema either. `relation "saf_users.users" does not
 exist` is the same mistake against a database where that schema is already there and its
 table is not. Either message names the missing thing plainly enough to leave alone, and
-both are recorded in the part's own header and in the quickstart. Before this ADR,
+both are recorded in the part's own header. Before this ADR,
 construction order in an entry point was pure narrative.
 
 **3. This part requires *our* User Manager**, at the schema level rather than the type

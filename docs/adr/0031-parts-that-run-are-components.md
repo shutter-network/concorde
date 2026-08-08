@@ -89,7 +89,7 @@ Nesting has no use here and would force it to carry a `name` that nothing reads.
 - **The list is a second order, it is load-bearing, and nothing checks it.** The Db
   starts first because everything queries it and the drain queries it on the way down.
   **The Agent server starts before the Signal Worker**, so that it closes after the
-  drain: the agent calls it mid-Run (`example/AGENTS.md` gives the agent those URLs), and
+  drain: the agent calls it mid-Run (an example's `AGENTS.md` gives the agent those URLs), and
   closing it first would refuse the agent its own API while a Run is still in flight. The
   Public server goes last so that it stops accepting submissions first. The framework
   cannot know any of this, so it is a comment in the reference deployment and nothing
