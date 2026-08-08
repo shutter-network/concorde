@@ -1,17 +1,11 @@
 /**
  * Two plugins, because they go on two Fastify instances. Neither is exported and neither prefix is
- * configurable. The paths below are relative to the prefix the constructor supplies, `/decisions`.
+ * configurable. Every path they declare is relative to the prefix the constructor supplies,
+ * `/decisions`.
  *
- * | Agent server | Answers |
- * | --- | --- |
- * | `POST /` | 201, the published `DecisionRecord`; 400 |
- * | `GET /?after=&before=&limit=` | `{ decisions: [...] }`, ascending by `seq`; 400 |
- * | `GET /:seq` | one `DecisionRecord`; 400; 404 |
- *
- * | Public server | Answers |
- * | --- | --- |
- * | `GET /?after=&before=&limit=` | the same read; 400; 401 |
- * | `GET /:seq` | the same one record; 400; 401; 404 |
+ * The routes themselves are not listed here. `scripts/reference/route-pages.ts` renders them into
+ * the reference out of the declarations below, so a table beside them would be a second list to
+ * keep true and nothing would compare the two.
  *
  * The four reads are one query. The log is global, so there is no `?user=` and no Token-derived
  * subject. The two surfaces differ in nothing but the hook. The by-number pair is that same read,

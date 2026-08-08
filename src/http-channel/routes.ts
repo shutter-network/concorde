@@ -2,13 +2,12 @@
  * One plugin, on the Public server, and it is what HTTP as a Channel actually is: a User
  * submitting, and a User polling their own log by cursor (ADR-0035, ADR-0048). The agent's own two
  * routes are acts on the log rather than acts of a medium, so they are the Messenger's and live in
- * `../messenger/routes.ts`. The plugin is not exported and the prefix is not configurable. The
- * paths below are relative, because the constructor supplies it.
+ * `../messenger/routes.ts`. The plugin is not exported and the prefix is not configurable. Every
+ * path it declares is relative, because the constructor supplies that prefix.
  *
- * | Public server | Answers |
- * | --- | --- |
- * | `POST /messages` | 201, the stored inbound `MessageRecord`, and a Signal; 400; 401; 503 |
- * | `GET /messages?after=&before=&limit=` | `{ messages: [...] }`, ascending by `seq`; 400; 401 |
+ * The routes themselves are not listed here. `scripts/reference/route-pages.ts` renders them into
+ * the reference out of the declarations below, so a table beside them would be a second list to
+ * keep true and nothing would compare the two.
  *
  * The serializers, the shared sentences, the read helper and both refusal helpers are imported
  * from the Messenger's own route module rather than restated. A `MessageRecord` has one shape on every surface, and a

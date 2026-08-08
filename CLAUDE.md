@@ -145,9 +145,9 @@ linked signature block, and builds the site. CI runs it as its own step too. So
 there are four commands in CI and three of them are not the inner loop.
 
 `npm run docs:dev` and `npm run docs:build` are the API reference: TypeDoc reads the doc
-comments out of `src`, writes one markdown page per entry point, a second generator writes the
-table pages after it, and VitePress serves or builds them all. TypeDoc's pages are the fifteen
-subpaths of the export map
+comments out of `src`, writes one markdown page per entry point, two more generators write the
+table pages and the route pages after it, and VitePress serves or builds them all. TypeDoc's pages
+are the fifteen subpaths of the export map
 ([ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md),
 [ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)), titled with the specifier a
 Developer imports from, and `example/` is not among them. The Messenger and each Channel are
@@ -177,9 +177,10 @@ and this package pins 7. `site/README.md` argues that and states the **exit cond
 TypeDoc supports the compiler the root pins, the sub-package collapses into the root. All three
 root scripts `npm ci` that tree themselves, so a fresh clone needs no separate step.
 
-**`site/reference` is not committed, and it was.** Twenty-four generated markdown pages: fifteen
-one per entry point, the `index.md` that lists them and is the site root, and eight table pages
-under `tables/`, described below. `.gitignore` covers the directory in full. Committing them bought one thing: a change to the
+**`site/reference` is not committed, and it was.** Thirty-two generated markdown pages: fifteen
+one per entry point, the `index.md` that lists them and is the site root, eight table pages under
+`tables/` and eight route pages under `routes/`, both described below. `.gitignore` covers the
+directory in full. Committing them bought one thing: a change to the
 public API arrived as a readable diff in review. A signature block is HTML now, and a diff over
 `<span>`s and `<a href>`s does not do that, so what was bought is no longer for sale. Three
 reduced forms were declined on the same ground. Markup shaped to diff well is still a large
@@ -196,8 +197,8 @@ edited: change the doc comment and regenerate.
 
 **Eight of those pages are not TypeDoc's, and they describe tables.** A doc comment cannot say
 what a component creates in a database: `excludeExternals` empties drizzle's type parameter, so
-`const tokens: PgTableWithColumns<{}>` is the whole of what TypeDoc knows. A second generator runs
-after it. `npm run extract:schema` prints one JSON document to stdout and chooses no file,
+`const tokens: PgTableWithColumns<{}>` is the whole of what TypeDoc knows. A generator of our own
+runs after it. `npm run extract:schema` prints one JSON document to stdout and chooses no file,
 `scripts/reference/render.ts` turns it into one page per component that owns tables, and `site/`'s
 own `generate` is `typedoc && node ../scripts/reference/render.ts`, which is what puts the two in
 one command and in that order: TypeDoc empties `site/reference` before it writes. `docs:dev`'s
@@ -244,16 +245,58 @@ trap (ADR-0046) and a component with no tables correctly has no page, so the abs
 intended. And a snapshot carrying something the renderer does not describe fails, which today is
 enums, sequences, views, row policies and row level security.
 
+**Eight more of those pages describe the HTTP API, and the same pipeline writes them.** The route
+descriptions already *are* the API documentation (ADR-0040), and until now the only way to read
+them was `GET /openapi.json` against a Gateway that is up, so a Developer deciding whether to adopt
+the framework had to build and start the reference deployment first. `npm run extract:routes`
+prints one JSON document to stdout and chooses no file, and `scripts/reference/route-pages.ts`
+turns it into one page per component that serves routes, under `site/reference/routes/`. Each page
+carries every route's summary and its description **word for word**, the query and path parameters,
+the request body, and the shape it answers with per status code. A shape is a nested list and not a
+table, because a table cannot nest and a response is an envelope holding an array of records
+holding an object with two spellings. The **Agent server and the Public server are separate sections
+on the page**, which is the difference between what the agent can call and what a User's client
+can. **No page names a mount point**: the extraction registers no prefix, so a path is printed as
+its plugin declares it, and the constructor stays the one place a prefix is stated. That is also
+what the hand-maintained tables in the `routes.ts` module comments used to do, badly: they were
+compared against the routes by nothing, and two of them, the Messenger's and the HTTP Channel's,
+had drifted into naming `/messages` for a plugin whose declared path is `/`. They are deleted. Each module comment now says only what a
+reader of the source needs and points at the renderer.
+
+**The structure comes from `@fastify/swagger`**, through the same `onRoute` hook a running Gateway
+collects its document with. One bare Fastify per plugin, so two plugins cannot collide on a path
+and the server is a property of the instance; the plugin registered; `app.ready()`; and
+`app.swagger()`. Nothing calls a handler, so the operations ports are one `Proxy` and no Db,
+Docker, model or network is involved. **The type checker is what makes those stubs honest, and this
+is load-bearing rather than tidy**: a plugin called with one argument too few registers anyway,
+with every route present and its `preHandler` `undefined`, and the document looks complete. Only
+`npm run typecheck` fails it, which is why the extractor lives in `scripts/` and each plugin is
+constructed with its real arguments. Three refusals ride with it, in the shape the table
+extractor's have. The plugin list is held against every `src/<component>/routes.ts` both ways. A
+document carrying a `$ref` or a JSON Schema keyword the renderer does not print fails the
+generation with the keyword named, which is why `SchemaNode` holds fifteen keywords rather than the
+whole of JSON Schema: a route that starts declaring `format` fails loudly instead of rendering a
+page that is silent about the constraint. And **a route with no summary, no description, no tag or
+no response at all fails**, which is ADR-0040's own rule getting a check for the first time, and is
+also what covers the one way `@fastify/swagger` could break this quietly: `responses` is read off
+the document by name, and renamed it would leave every route rendered with no status codes and the
+page looking finished. **One gap is left rather than closed**: the scan counts a `routes.ts` once
+however many plugins it exports, so a *second* plugin added to a listed module is absent from the
+reference and nothing says so.
+
 **`check:docs` reads none of these pages, and a per-page assertion for them was declined.** The one
 it makes about TypeDoc's pages exists because a renderer wired to another package's internals by
-name fails silently and beautifully. Nothing here reads another package's internals. The
-extractor's refusals fail the generation; a page and its sidebar entry come out of one loop over
+name fails silently and beautifully. Nothing in either generator reads another package's internals.
+The extractors' refusals fail the generation; a page and its sidebar entry come out of one loop over
 one extraction, so they cannot disagree; and a pipeline that skipped the renderer fails at
 `config.ts`, which statically imports a sidebar file only the renderer writes, into a directory
-TypeDoc has just emptied. Three components correctly have no page at all: `/pi`, `/signatures` and
-`/http-channel` declare no `schema.ts`, the first because it is one function and two defaults, the
-second because a Signed Statement is never kept (ADR-0042), and the third because the log is the
-Messenger's (ADR-0048).
+TypeDoc has just emptied. Three components correctly have no table page at all: `/pi`,
+`/signatures` and `/http-channel` declare no `schema.ts`, the first because it is one function and
+two defaults, the second because a Signed Statement is never kept (ADR-0042), and the third because
+the log is the Messenger's (ADR-0048). Seven correctly have no route page: `/gateway`, `/logging`,
+`/db` and `/agent-container` are infrastructure rather than components, `/pi` serves nothing,
+`/nostr-channel` speaks to a Relay (ADR-0049), and `/nostr-auth` verifies a credential on every
+request and registers no route on either server (ADR-0053).
 
 `npm run check:docs` is the third command, and it is separate from `npm run check` for exactly
 the reason `check:package` is: it installs `site/`'s tree, so it needs the network and the

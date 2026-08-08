@@ -2,12 +2,9 @@
  * One plugin, registered by the Worker on the Agent server at no prefix, and exported on
  * `worker.agentRoutes` as well so that a deployment can place it itself.
  *
- * | Route | Answers |
- * | --- | --- |
- * | `/signals?limit=&kind=` | `{ signals: SignalRecord[] }`, newest first |
- * | `/signals/:id` | `SignalRecord`, or 404 |
- * | `/runs?limit=&signalId=` | `{ runs: RunRecord[] }`, newest first |
- * | `/runs/:id` | `RunRecord`, or 404 |
+ * The routes themselves are not listed here. `scripts/reference/route-pages.ts` renders them into
+ * the reference out of the declarations below, so a table beside them would be a second list to
+ * keep true and nothing would compare the two.
  *
  * Unscoped by decision and not by omission: the agent reads every Signal and every Run whatever
  * Session it is in, because Session routing organises context and was never a confidentiality

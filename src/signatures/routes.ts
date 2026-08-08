@@ -4,14 +4,9 @@
  * and expects RFC 7517's container back. Neither path nor prefix is configurable, and neither
  * plugin is exported.
  *
- * | Agent server | Answers |
- * | --- | --- |
- * | `POST /sign` | 200, the Signed Statement; 400 |
- *
- * | Public server | Answers |
- * | --- | --- |
- * | `POST /verify` | 200, the verdict; 400; 401 |
- * | `GET /jwks.json` | 200, the JWK Set. **No Token**; 400 |
+ * The routes themselves are not listed here. `scripts/reference/route-pages.ts` renders them into
+ * the reference out of the declarations below, so a table beside them would be a second list to
+ * keep true and nothing would compare the two.
  *
  * `GET /jwks.json` is the stated exception to the single 401 of Users on the Public server,
  * and the exception is the point: the whole audience for this identity is a third party with no

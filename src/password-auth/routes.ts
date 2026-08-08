@@ -1,13 +1,11 @@
 /**
  * One plugin, on the Public server, carrying no prefix of its own. The constructor's prefix is
- * `/auth`, so the paths below are relative to it.
+ * `/auth`, so every path it declares is relative to that.
  *
- * | Public server | Answers |
- * | --- | --- |
- * | `POST /tokens` | 201, an `IssuedToken`. **No Token required**; 400; 401 |
- * | `PUT /password` | 204; 400; 401 |
- * | `DELETE /tokens/current` | 204, the presented Token revoked; 400; 401 |
- * | `DELETE /tokens` | 204, every Token of the presented User revoked; 400; 401 |
+ * The routes themselves are not listed here. `scripts/reference/route-pages.ts` renders them into
+ * the reference out of the declarations below, so a table beside them would be a second list to
+ * keep true and nothing would compare the two. `POST /tokens` is the one that requires no Token,
+ * and it says so in its own description.
  *
  * **There is no `GET /me` here.** It only echoes `request.safUser`, so it is scheme-independent
  * and cannot live under one scheme's prefix

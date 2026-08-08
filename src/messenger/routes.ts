@@ -4,12 +4,12 @@
  * log; a User's own submission and cursored poll are what HTTP as a Channel *is*, and they live in
  * `../http-channel/routes.ts`
  * ([ADR-0048](../../docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)).
- * Neither plugin is exported and neither prefix is configurable.
+ * Neither plugin is exported and neither prefix is configurable, so every path this one declares is
+ * relative to the prefix the constructor supplies, `/messages`.
  *
- * | Agent server | Answers |
- * | --- | --- |
- * | `POST /messages` | 201, the created outbound `MessageRecord`; 404 if no such User; 503 |
- * | `GET /messages?user=&after=&before=&limit=` | `{ messages: [...] }`, ascending by `seq`; 400 |
+ * The routes themselves are not listed here. `scripts/reference/route-pages.ts` renders them into
+ * the reference out of the declarations below, so a table beside them would be a second list to
+ * keep true and nothing would compare the two.
  *
  * Half of this module is exported for the HTTP Channel to import, and that is deliberate: the
  * serializer both surfaces answer a `MessageRecord` through, the cursor sentences both reads carry,

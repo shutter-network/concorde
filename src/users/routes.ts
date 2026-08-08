@@ -1,16 +1,11 @@
 /**
  * Two plugins, because they go on two Fastify instances and either can be left out. Neither
- * carries a prefix of its own, so the paths below are relative to the prefix they are registered
- * under. The constructor's prefix is `/users` on both servers.
+ * carries a prefix of its own, so every path they declare is relative to the prefix they are
+ * registered under. The constructor's prefix is `/users` on both servers.
  *
- * | Agent server | Answers |
- * | --- | --- |
- * | `GET /?limit=` | `{ users: UserRecord[] }`, newest first; 400 |
- * | `GET /:id` | one `UserRecord`; 400; 404 |
- *
- * | Public server | Answers |
- * | --- | --- |
- * | `GET /me` | the authenticated User; 400; 401 |
+ * The routes themselves are not listed here. `scripts/reference/route-pages.ts` renders them into
+ * the reference out of the declarations below, so a table beside them would be a second list to
+ * keep true and nothing would compare the two.
  *
  * **The agent's routes are reads and there is no create among them**
  * ([ADR-0052](../../docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)).

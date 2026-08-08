@@ -14,13 +14,15 @@
  * imports that file statically.
  *
  * The pages are gitignored with the rest of `site/reference` and are never edited. A page is
- * changed by changing the `schema.ts` it came from and regenerating.
+ * changed by changing the `schema.ts` or the `routes.ts` it came from and regenerating.
  */
 
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PageSet, SidebarSection } from "./pages.ts";
+import { extractRoutes } from "./route-extraction.ts";
+import { routePages } from "./route-pages.ts";
 import { extractSchemas } from "./schema-extraction.ts";
 import { schemaPages } from "./schema-pages.ts";
 
@@ -35,8 +37,11 @@ if (!existsSync(referenceRoot)) {
   process.exit(1);
 }
 
-/** Every renderer. The HTTP route pages join this list and change nothing below it. */
-const pageSets: readonly PageSet[] = [schemaPages(extractSchemas())];
+/** Every renderer. A third one is a third entry here and changes nothing below it. */
+const pageSets: readonly PageSet[] = [
+  routePages(await extractRoutes()),
+  schemaPages(extractSchemas()),
+];
 
 const sections: SidebarSection[] = [];
 for (const { directory, pages, section } of pageSets) {

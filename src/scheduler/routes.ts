@@ -4,12 +4,9 @@
  * answers two worries at once: a self-waking agent loads the one serial worker lane, and a
  * prompt-injectable one reaches the Operator's own Schedules.
  *
- * | Route | Answers |
- * | --- | --- |
- * | `PUT /schedules/:name` | Upsert. 201 with the read model on create, 200 on update, 400 on a spec that will not fire. |
- * | `GET /schedules` | Every live Schedule, ascending by `nextFireAt`, capped envelope, no cursor. 200. |
- * | `GET /schedules/:name` | 200 with the read model, or 404. |
- * | `DELETE /schedules/:name` | Cancel. 204, or 404 on an unknown name. |
+ * The routes themselves are not listed here. `scripts/reference/route-pages.ts` renders them into
+ * the reference out of the declarations below, so a table beside them would be a second list to
+ * keep true and nothing would compare the two.
  *
  * Addressing is by name, and this is the one family in the framework that does it. A Schedule's
  * identity is a key its caller chose, so `PUT` on that key is the honest verb for create-or-update
