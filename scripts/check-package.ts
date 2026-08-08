@@ -587,8 +587,8 @@ try {
   // the Users component holds no credential now, so nothing else declares that name and `export *`
   // has nothing to drop. Its two columns reference `saf_users.users.id`, so it needs Users in this
   // barrel for the reason the Messenger does (ADR-0052). `/nostr-auth` is here beside it and
-  // needs Users for the same reason again: `grants.user_id` is the fourth reference onto that
-  // column (ADR-0053).
+  // needs Users for the same reason again: `grants.user_id` is the sixth and last reference onto
+  // that column (ADR-0053).
   writeFileSync(
     path.join(consumer, "schema.ts"),
     [

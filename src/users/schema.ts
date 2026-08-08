@@ -4,11 +4,14 @@
  * [ADR-0047](../../docs/adr/0047-a-component-is-one-subpath.md)). Keep it to the tables and the
  * values that define them, and import no other component's schema.
  *
- * Three other components import this one and point a foreign key at `users.id`: the Messenger's
- * `messages.user_id` (ADR-0036), the Nostr Channel's `pubkeys.user_id` and `outbox.user_id`
- * ([ADR-0049](../../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)), and Password
+ * Four other components import this one, and six columns point a foreign key at `users.id`: the
+ * Messenger's `messages.user_id` (ADR-0036), the Nostr Channel's `pubkeys.user_id` and
+ * `outbox.user_id`
+ * ([ADR-0049](../../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)), Password
  * Auth's `passwords.user_id` and `tokens.user_id`
- * ([ADR-0052](../../docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)).
+ * ([ADR-0052](../../docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)),
+ * and Nostr Auth's `grants.user_id`
+ * ([ADR-0053](../../docs/adr/0053-nostr-auth-verifies-nip-98-per-request.md)).
  * A barrel carrying any of those without this one generates a constraint onto a table it never
  * creates. `schemas.test.ts` pushes every part's schema together, which is what keeps the
  * assembled set honest.

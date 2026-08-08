@@ -22,6 +22,10 @@
  * public keys belong to Users. A Messenger accepts at most one Channel and refuses a second at
  * registration, so a deployment runs Nostr or HTTP and not both.
  *
+ * A key recorded here decides where the agent writes and nothing else. It grants no access to the
+ * HTTP API: that is `shared-agent-framework/nostr-auth`, which keeps a table of its own that this
+ * one never reads. A deployment wanting both writes both, and nothing checks that they agree.
+ *
  * The subpath exports the three tables, `pubkeys`, `received` and `outbox`, beside the constructor,
  * for the schema an Operator generates their migrations from. Put `shared-agent-framework/users`
  * into that same schema, because two of those tables reference the Users component's table, and a
@@ -48,8 +52,10 @@
  *   // Not loopback: the agent reaches this server from a container of its own.
  *   agentListen: { host: "0.0.0.0", port: 8081 },
  *   publicListen: { host: "0.0.0.0", port: 8080 },
- *   extend: ({ db, agentServer, publicServer, worker }) => {
- *     const users = createUsers({ db, tokenTtl: 86_400_000, agentServer, publicServer });
+ *   extend: ({ db, agentServer, worker }) => {
+ *     // No Public server here: this deployment accepts no HTTP scheme at all, and
+ *     // `GET /users/me` is unbuildable without one.
+ *     const users = createUsers({ db, agentServer });
  *     const messenger = createMessenger({ db, users, worker, agentServer });
  *     return {
  *       users,

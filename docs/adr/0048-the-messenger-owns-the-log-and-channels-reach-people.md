@@ -1,5 +1,24 @@
 # The Messenger owns the log and Channels reach people
 
+> **Confirmed by [ADR-0053](./0053-nostr-auth-verifies-nip-98-per-request.md), and nothing here
+> is superseded.** The last paragraph below rejects a shared identity table and says a future
+> Authenticator would keep a copy of the Nostr Channel's public keys. That Authenticator exists,
+> it is **Nostr Auth**, and it keeps its own table. The rejection came out stronger than the
+> argument made for it, because the two tables are **not one fact stored twice**:
+> `saf_nostr_channel.pubkeys` says where to send, is keyed by the User and holds one key each,
+> while `saf_nostr_auth.grants` says who may act as a User over HTTP, is keyed by the key and
+> holds as many as a person has signers. Two grants, two cardinalities, two directions, sharing a
+> value. Unifying them was never available at any price, so the paragraph's *"one duplicated row"*
+> understates what full separation bought. The recorded cost is paid all the same, and for the
+> first time: two calls write the two tables and nothing checks that they agree, so a person may
+> be reachable over Nostr and refused on `GET /decisions`.
+>
+> Two names below moved. The Channel's schema is **`saf_nostr_channel`**, renamed once a second
+> component spoke the protocol, and the HTTP Channel no longer takes the Users component's hook,
+> that hook being the Public server's now
+> ([ADR-0052](./0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)).
+> The Channel still owns no tables.
+
 A generic **Messenger** owns the Message log: the table, the per-User `seq`, the cursored read,
 `send`, `history`, the one Signal `kind`, and the Agent server routes. A **Channel** owns reaching
 one person over one medium. The HTTP Messenger becomes the **HTTP Channel**, keeps only its Public

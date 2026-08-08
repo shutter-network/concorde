@@ -1,5 +1,31 @@
 # Passwords are traded for bearer tokens
 
+> **Superseded in part** by
+> [ADR-0052](./0052-authentication-is-a-component-again-and-the-public-server-aggregates.md).
+> The password hashes, the Token table, the login and the routes around it leave the Users
+> component for a component of their own, **Password Auth**. Two claims below fall with them:
+>
+> 1. *"The Authenticator is deleted"*, the heading and the section under it. Authentication is a
+>    component again, and it is plural. That section's other argument survives and is the reason
+>    the new one works: `verify(request)` alone **was** the wrong seam, because an implementation
+>    of it still has to answer where the credential lives. The seam is who owns the secret, and an
+>    Auth can answer because it is the thing that put the secret there.
+> 2. *"The useful extension point is issuance, not verification."* Not of Users. `issueToken` is
+>    Password Auth's, so a deployment establishing identity its own way still mints an ordinary
+>    Token and is borrowing another component's credential to do it. *"`password_hash` is nullable
+>    so such a User need never have one"* goes too: there is no such column, and a User who
+>    authenticates some other way simply has no row in Password Auth.
+>
+> Everything this ADR decides about the two secrets stands, and stands in Password Auth: 32 random
+> bytes hashed once with unsalted SHA-256 for the Token, PHC-style scrypt with per-hash parameters
+> for the password, no rehash on login, and the scrypt verify against a fixed dummy hash when no
+> User matches. So do the consequences. **Nothing is rate limited and no lockout exists**,
+> **nothing reaps an expired Token**, and the Gateway **runs no account-recovery flow**.
+> *"Failures are indistinguishable"* is narrowed rather than reversed: it holds exactly where it
+> was aimed, at enumeration. A wrong password, an unknown Token and an id that is not a User stay
+> one answer, and a refusal may now say which mechanical check failed, because a bad signature or
+> a stale timestamp tells a stranger nothing about who exists here.
+
 A User authenticates by presenting a password once, at a login route, and receives a
 Gateway-issued **bearer token** which accompanies every request thereafter. The token
 stays what [ADR-0014](./0014-users-are-opaque-ids-and-authentication-is-pluggable.md)

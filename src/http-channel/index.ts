@@ -9,9 +9,10 @@
  * reading belong to the Messenger, and HTTP needs no identity of its own beyond the Token a User
  * already presents, so an Operator's own code calls the Messenger and never this.
  *
- * Construct the Messenger and Users first. The constructor registers itself with the Messenger,
- * which accepts at most one Channel, so a deployment that registers this one gives up every other
- * medium.
+ * Construct the Messenger first. The constructor registers itself with it, and a Messenger
+ * accepts at most one Channel, so a deployment that registers this one gives up every other
+ * medium. Nothing else is taken: both routes run behind the Public server's own hook, so a
+ * deployment with no Auth registered on that server refuses every submission and every poll.
  *
  * It does not use the Db and exports no schema. It stores nothing, and it queues nothing either:
  * HTTP delivery is the User asking, so an outbound Message is already in the Messenger's log and
@@ -25,6 +26,7 @@
  * import { createHttpChannel } from "shared-agent-framework/http-channel";
  * import type { MessageRecord } from "shared-agent-framework/messenger";
  * import { createMessenger, messageReceivedKind } from "shared-agent-framework/messenger";
+ * import { createPasswordAuth } from "shared-agent-framework/password-auth";
  * import { createPiRuntime } from "shared-agent-framework/pi";
  * import { templateHandler } from "shared-agent-framework/signals";
  * import { createUsers } from "shared-agent-framework/users";
@@ -36,12 +38,14 @@
  *   agentListen: { host: "0.0.0.0", port: 8081 },
  *   publicListen: { host: "0.0.0.0", port: 8080 },
  *   extend: ({ db, agentServer, publicServer, worker }) => {
- *     const users = createUsers({ db, tokenTtl: 86_400_000, agentServer, publicServer });
+ *     const users = createUsers({ db, agentServer, publicServer });
  *     const messenger = createMessenger({ db, users, worker, agentServer });
  *     return {
  *       users,
+ *       // Some scheme has to be registered, or both routes below refuse every request.
+ *       passwordAuth: createPasswordAuth({ db, users, publicServer, tokenTtl: 86_400_000 }),
  *       messenger,
- *       http: createHttpChannel({ db, messenger, users, publicServer }),
+ *       http: createHttpChannel({ db, messenger, publicServer }),
  *     };
  *   },
  *   handlers: ({ messenger }) => ({

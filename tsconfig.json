@@ -35,7 +35,7 @@
     // checker at the sources instead. Nothing in `src` imports the package by name,
     // so nothing else is affected.
     //
-    // The fourteen below are the whole export map, and a component is one subpath: its
+    // The fifteen below are the whole export map, and a component is one subpath: its
     // constructor, its types and its tables arrive together
     // ([ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md)). That is why there are
     // no `/schema` entries any more — `example/` is the reference Operator and its
@@ -50,6 +50,7 @@
       "shared-agent-framework/pi": ["./src/pi/index.ts"],
       "shared-agent-framework/users": ["./src/users/index.ts"],
       "shared-agent-framework/password-auth": ["./src/password-auth/index.ts"],
+      "shared-agent-framework/nostr-auth": ["./src/nostr-auth/index.ts"],
       "shared-agent-framework/messenger": ["./src/messenger/index.ts"],
       "shared-agent-framework/http-channel": ["./src/http-channel/index.ts"],
       "shared-agent-framework/nostr-channel": ["./src/nostr-channel/index.ts"],

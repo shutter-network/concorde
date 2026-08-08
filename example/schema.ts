@@ -52,6 +52,7 @@
 
 export * from "shared-agent-framework/decisions";
 export * from "shared-agent-framework/messenger";
+export * from "shared-agent-framework/password-auth";
 export * from "shared-agent-framework/scheduler";
 export * from "shared-agent-framework/signals";
 export * from "shared-agent-framework/users";

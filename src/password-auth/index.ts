@@ -15,9 +15,10 @@
  * presented Token and every Token of the User. Reading back which User is authenticated is not
  * here: it is scheme-independent, so it belongs to the Users component.
  *
- * Construct Users first, whose record every outcome carries. **Construct it without a Public
- * server**, because the Users component registers a route group at `/auth` of its own and Fastify
- * refuses the second registration of one path.
+ * Construct Users first, whose record every outcome carries. Nothing else takes this: a component
+ * with a protected route reads the Public server's hook, so which schemes a deployment accepts is
+ * which Auths it constructs, and construction order inside `extend` only decides the order they
+ * are asked in.
  *
  * The subpath exports the `passwords` and `tokens` tables beside the constructor, for the schema
  * an Operator generates their migrations from. Both point a foreign key at the `users` table, so a
@@ -39,8 +40,7 @@
  *   agentListen: { host: "0.0.0.0", port: 8081 },
  *   publicListen: { host: "0.0.0.0", port: 8080 },
  *   extend: ({ db, agentServer, publicServer }) => {
- *     // No `publicServer` here: this login is the one at `/auth`.
- *     const users = createUsers({ db, tokenTtl: 86_400_000, agentServer });
+ *     const users = createUsers({ db, agentServer, publicServer });
  *     return {
  *       users,
  *       passwordAuth: createPasswordAuth({ db, users, publicServer, tokenTtl: 86_400_000 }),

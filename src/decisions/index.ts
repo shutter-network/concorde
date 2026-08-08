@@ -8,8 +8,10 @@
  * with, and `jws` is the field that matters: the artifact is the Decision, and the other three
  * fields can be read back out of it by anybody holding the public key.
  *
- * Construct Signatures and Users first. Every Decision is signed, so there is no degraded mode in
- * which rows arrive without artifacts.
+ * Construct Signatures first. Every Decision is signed, so there is no degraded mode in
+ * which rows arrive without artifacts. Nothing else is taken: the two Public reads run behind the
+ * Public server's own hook, so a deployment with no Auth registered on that server refuses both on
+ * every request.
  *
  * Publishing notifies nobody. It emits no Signal and wakes no Handler, so a User discovers a
  * Decision by polling, and the largest `seq` they hold is the whole resume mechanism.
@@ -25,6 +27,7 @@
  * import { readFileSync } from "node:fs";
  * import { createGateway } from "shared-agent-framework/gateway";
  * import { createDecisions } from "shared-agent-framework/decisions";
+ * import { createPasswordAuth } from "shared-agent-framework/password-auth";
  * import { createPiRuntime } from "shared-agent-framework/pi";
  * import { createSignatures } from "shared-agent-framework/signatures";
  * import { createUsers } from "shared-agent-framework/users";
@@ -36,17 +39,18 @@
  *   agentListen: { host: "0.0.0.0", port: 8081 },
  *   publicListen: { host: "0.0.0.0", port: 8080 },
  *   extend: ({ db, agentServer, publicServer }) => {
- *     const users = createUsers({ db, tokenTtl: 86_400_000, agentServer, publicServer });
+ *     const users = createUsers({ db, agentServer, publicServer });
  *     const signatures = createSignatures({
  *       signingKey: createPrivateKey(readFileSync("./signing-key.pem")),
  *       agentServer,
  *       publicServer,
- *       users,
  *     });
  *     return {
  *       users,
+ *       // Some scheme has to be registered, or both reads refuse every request.
+ *       passwordAuth: createPasswordAuth({ db, users, publicServer, tokenTtl: 86_400_000 }),
  *       signatures,
- *       decisions: createDecisions({ db, signatures, users, agentServer, publicServer }),
+ *       decisions: createDecisions({ db, signatures, agentServer, publicServer }),
  *     };
  *   },
  *   handlers: () => ({}),

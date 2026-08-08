@@ -33,6 +33,7 @@
  * import { createHttpChannel } from "shared-agent-framework/http-channel";
  * import type { MessageRecord } from "shared-agent-framework/messenger";
  * import { createMessenger, messageReceivedKind } from "shared-agent-framework/messenger";
+ * import { createPasswordAuth } from "shared-agent-framework/password-auth";
  * import { createPiRuntime } from "shared-agent-framework/pi";
  * import { templateHandler } from "shared-agent-framework/signals";
  * import { createUsers } from "shared-agent-framework/users";
@@ -44,13 +45,15 @@
  *   agentListen: { host: "0.0.0.0", port: 8081 },
  *   publicListen: { host: "0.0.0.0", port: 8080 },
  *   extend: ({ db, agentServer, publicServer, worker }) => {
- *     const users = createUsers({ db, tokenTtl: 86_400_000, agentServer, publicServer });
+ *     const users = createUsers({ db, agentServer, publicServer });
  *     const messenger = createMessenger({ db, users, worker, agentServer });
  *     return {
  *       users,
+ *       // Some scheme has to be registered, or the Channel's routes refuse every request.
+ *       passwordAuth: createPasswordAuth({ db, users, publicServer, tokenTtl: 86_400_000 }),
  *       messenger,
  *       // The Channel takes the Messenger and registers itself with it.
- *       http: createHttpChannel({ db, messenger, users, publicServer }),
+ *       http: createHttpChannel({ db, messenger, publicServer }),
  *     };
  *   },
  *   handlers: ({ messenger }) => ({

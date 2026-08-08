@@ -5,10 +5,10 @@
  * values that define them.
  *
  * The import of the schema of Users is what lets `grants.user_id` reference `saf_users.users.id`,
- * and it re-exports nothing of it. That is the fourth such reference in the framework, after the
- * Messenger's, the Nostr Channel's two and Password Auth's two, and it costs the same thing: a
- * barrel carrying this component without that one generates a constraint onto a table nothing
- * creates.
+ * and it re-exports nothing of it. This is the fourth such import in the framework and the sixth
+ * such reference, after the Messenger's one, the Nostr Channel's two and Password Auth's two, and
+ * it costs the same thing: a barrel carrying this component without that one generates a
+ * constraint onto a table nothing creates.
  *
  * **`grants` is not a copy of `saf_nostr_channel.pubkeys` and must not be kept in step with it**
  * ([ADR-0053](../../docs/adr/0053-nostr-auth-verifies-nip-98-per-request.md)). The two tables hold
