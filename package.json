@@ -39,6 +39,10 @@
       "types": "./dist/users/index.d.ts",
       "default": "./dist/users/index.js"
     },
+    "./password-auth": {
+      "types": "./dist/password-auth/index.d.ts",
+      "default": "./dist/password-auth/index.js"
+    },
     "./messenger": {
       "types": "./dist/messenger/index.d.ts",
       "default": "./dist/messenger/index.js"

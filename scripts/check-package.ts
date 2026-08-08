@@ -11,10 +11,10 @@
  * ([ADR-0046](../docs/adr/0046-the-operator-owns-migrations.md)). That is
  * a recorded cost of that ADR and not an oversight — we no longer author the bytes
  * applied to anybody's production database, so no check here can vouch for them.
- *  - **all thirteen** entry points resolve there, both to the type checker and to Node at
- *    runtime, and thirteen is the whole map: `/gateway`, `/logging`, `/db`, `/agent-container`,
- *    `/signals`, `/pi`, `/users`, `/messenger`, `/http-channel`, `/nostr-channel`,
- *    `/signatures`, `/decisions` and `/scheduler`. A component is
+ *  - **all fourteen** entry points resolve there, both to the type checker and to Node at
+ *    runtime, and fourteen is the whole map: `/gateway`, `/logging`, `/db`, `/agent-container`,
+ *    `/signals`, `/pi`, `/users`, `/password-auth`, `/messenger`, `/http-channel`,
+ *    `/nostr-channel`, `/signatures`, `/decisions` and `/scheduler`. A component is
  *    one subpath, carrying its constructor, its types **and its tables**
  *    ([ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md)), so there is no `/schema`
  *    specifier to resolve any more. `/messenger` was reserved and unreachable until the log was
@@ -23,6 +23,10 @@
  *    is a real specifier now, and `/nostr-channel` is the second Channel and the one Channel
  *    that owns tables
  *    ([ADR-0049](../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)).
+ *  - **the fourteenth is an Auth**, so the whole of what a deployment accepts is which of them it
+ *    constructs. `main.ts` below constructs Password Auth and writes an Auth of the consumer's
+ *    own beside it, and both register themselves with the Public server
+ *    ([ADR-0052](../docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)).
  *  - **there is no `.` in that map, and the last step below reads Node saying so.** Every value
  *    the root used to carry now sits on `/gateway`, `/logging`, `/db` or `/agent-container`, and
  *    a bare `shared-agent-framework` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`. What that buys
@@ -69,12 +73,20 @@ import { fileURLToPath } from "node:url";
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 /**
- * The consumer's imports, spelled once: the type checker and Node see the same thirteen.
+ * The consumer's imports, spelled once: the type checker and Node see the same fourteen.
  *
- * **Thirteen lines, one per entry point, and a component's tables ride on the same line as its
+ * **Fourteen lines, one per entry point, and a component's tables ride on the same line as its
  * constructor** — which is the whole of ADR-0047. No line names the bare package, because there is
  * no `.` export left: the four infrastructure specifiers at the top carry what the root used to,
  * and the last step in this script is what proves the root itself resolves to nothing.
+ *
+ * **Two lines import a table called `tokens`, and they are aliased apart here rather than in the
+ * barrel below.** Password Auth owns the credential now (ADR-0052), and the Users component keeps
+ * its own login working through the expand half of that move, so two components declare a
+ * `saf_*.tokens` at once. That is the one case the barrel cannot carry: `export *` drops a name
+ * resolving to two bindings, so a barrel with both subpaths in it would export neither table.
+ * `/password-auth` is therefore absent from `schema.ts` below and its tables are asserted here
+ * instead. Ticket 03 deletes the Users component's table and the specifier joins the barrel.
  *
  * The four infrastructure lines own no tables. `/gateway` carries the two assembly constructors
  * and the server adapter, `/logging` the default Logger, `/db` the one call that opens a pool, and
@@ -108,6 +120,7 @@ const consumerImports = [
   'import { createSignalWorker, runs as runsTable, runStates, signals as signalsTable, signalStates, templateHandler, workerSchema } from "shared-agent-framework/signals";',
   'import { createPiRuntime, interpretPiOutput, piRun } from "shared-agent-framework/pi";',
   'import { createUsers, tokens as tokensTable, users as usersTable, usersSchema } from "shared-agent-framework/users";',
+  'import { createPasswordAuth, passwordAuthSchema, passwords as passwordsTable, tokens as passwordTokensTable } from "shared-agent-framework/password-auth";',
   'import { createMessenger, messageDirections, messageReceivedKind, messages as messagesTable, messengerSchema } from "shared-agent-framework/messenger";',
   'import { createHttpChannel } from "shared-agent-framework/http-channel";',
   'import { createNostrChannel, MalformedPublicKeyError, MessageTooLargeError, NoSuchUserError, nostrChannelSchema, outbox as outboxTable, pubkeys as pubkeysTable, PublicKeyConflictError, received as receivedTable, UnrecordedPublicKeyError } from "shared-agent-framework/nostr-channel";',
@@ -261,6 +274,20 @@ try {
     "dist/users/secrets.js",
     "dist/users/users.js",
     "dist/users/users.d.ts",
+    // Password Auth, under its own subpath, with a `schema.js` beside it: the third module in the
+    // framework whose schema imports the Users component's, because both of its columns
+    // reference `saf_users.users.id` (ADR-0036, ADR-0049, ADR-0052). `secrets.js` is the copy of
+    // the Users component's that survives ticket 03, and it ships for the same reason that one
+    // does: `password-auth.js` imports it.
+    "dist/password-auth/index.js",
+    "dist/password-auth/index.d.ts",
+    "dist/password-auth/password-auth.js",
+    "dist/password-auth/password-auth.d.ts",
+    "dist/password-auth/routes.js",
+    "dist/password-auth/routes.d.ts",
+    "dist/password-auth/schema.js",
+    "dist/password-auth/schema.d.ts",
+    "dist/password-auth/secrets.js",
     // The Messenger, under its own subpath. Its `schema.js` is where the foreign key
     // onto `saf_users.users.id` is declared now, so an Operator's generation writes the
     // constraint that used to be hand-edited into a shipped folder (ADR-0034, ADR-0036,
@@ -539,6 +566,10 @@ try {
   // Users for the same one, `pubkeys.user_id` being the second such foreign key
   // (ADR-0049). `/http-channel` is **not** here and must not be: that Channel
   // owns no log and no tables at all, so barrelling it would say nothing (ADR-0048).
+  // `/password-auth` is not here either, and that one is temporary: it declares a `tokens` table
+  // and so does `/users` until ticket 03 deletes theirs, and `export *` drops a name resolving to
+  // two bindings, so a barrel with both in it would carry neither table. Its two tables are
+  // proven by name in `main.ts` instead, which is where the aliases are (ADR-0052).
   writeFileSync(
     path.join(consumer, "schema.ts"),
     [
@@ -644,6 +675,16 @@ try {
       "  Users,",
       "  UsersOptions,",
       '} from "shared-agent-framework/users";',
+      // Password Auth's own types, from the eighth specifier. `IssuedToken` and
+      // `ScryptParameters` are named on both this line and the one above, aliased apart here
+      // because the two components hold the credential at once through the expand half of
+      // ADR-0052. Ticket 03 deletes the Users component's pair and the aliases with them.
+      "import type {",
+      "  IssuedToken as MintedToken,",
+      "  PasswordAuth,",
+      "  PasswordAuthOptions,",
+      "  ScryptParameters as PasswordCost,",
+      '} from "shared-agent-framework/password-auth";',
       // The Messenger's own types, from its own subpath, for the same reason: a
       // deployment with no messaging in it imports nothing from there, and one that does is
       // stating that it accepts this part's declined freedoms (ADR-0034). No route plugin
@@ -742,11 +783,12 @@ try {
       "// the two Drizzle types the exporter actually filters on, so a component that stopped",
       "// exporting a table fails here rather than at an Operator's first `generate`.",
       "export const partTables: readonly PgTable[] = [",
-      "  signalsTable, runsTable, usersTable, tokensTable, messagesTable, pubkeysTable, receivedTable, outboxTable,",
-      "  decisionsTable, schedulesTable,",
+      "  signalsTable, runsTable, usersTable, tokensTable, passwordsTable, passwordTokensTable,",
+      "  messagesTable, pubkeysTable, receivedTable, outboxTable, decisionsTable, schedulesTable,",
       "];",
       "export const partSchemas: readonly PgSchema[] = [",
-      "  workerSchema, usersSchema, messengerSchema, nostrChannelSchema, decisionsSchema, schedulerSchema,",
+      "  workerSchema, usersSchema, passwordAuthSchema, messengerSchema, nostrChannelSchema,",
+      "  decisionsSchema, schedulerSchema,",
       "];",
       "",
       "// The consequence the ADR records rather than mitigates: an exported table object is",
@@ -849,6 +891,25 @@ try {
       "// exist, and not registering it is how a deployment replaces our authentication",
       "// with its own (ADR-0030).",
       "const loginRoutes: FastifyPluginAsync = users.publicRoutes;",
+      "",
+      "// Password Auth: the credential this framework ships, as an Auth. It takes Users for the",
+      "// record every outcome carries, and the Public server for both of its acts of wiring: the",
+      "// route group at `/auth`, and the registration that makes the server accept this scheme",
+      "// (ADR-0052). On a server of its own here, which is not a deployment shape but the only way",
+      "// one project can name this and the Users component's own login at once: both register a",
+      "// route group at `/auth`, and Fastify refuses the second.",
+      "export const passwordServer: FastifyInstance = Fastify();",
+      "const passwordComponent: ServerComponent<FastifyInstance> =",
+      '  serverComponent(passwordServer, { port: 8082, host: "0.0.0.0" });',
+      "const passwordCost: PasswordCost = { logN: 15, blockSize: 8, parallelism: 3 };",
+      "const passwordAuthOptions: PasswordAuthOptions = {",
+      "  db, users, publicServer: passwordComponent,",
+      "  tokenTtl: 30 * 24 * 60 * 60 * 1000, scrypt: passwordCost,",
+      "};",
+      "export const passwordAuth: PasswordAuth = createPasswordAuth(passwordAuthOptions);",
+      "// An Auth like any other, so it satisfies the one member a server walks and goes in a",
+      "// Gateway's record beside every other part.",
+      "export const passwordAsAuth: Auth = passwordAuth;",
       "",
       "// An Operator's own routes, on Fastify's mechanism and no contract of ours —",
       "// including one that requires a User. This is the whole integration surface and",
@@ -1439,6 +1500,18 @@ try {
       "  // nothing removes a User (ADR-0029).",
       "  await db.tx((tx: Transaction) => users.revoke(tx, admitted.id));",
       '  shipped.info({ expiresAt: minted.expiresAt, of: minted.user.id }, "a Token was issued");',
+      "  // Password Auth's three trusted-code methods, and the same split for the same reason: each",
+      "  // takes the caller's transaction, so creating a User and giving them a credential cannot",
+      "  // come apart. `setPassword` proves nothing and is the whole of account recovery here;",
+      "  // `issueToken` mints for a User who presented nothing; `revoke` is the only way a credential",
+      "  // stops working before it expires. None of the three has a route (ADR-0052).",
+      "  const credentialled: MintedToken = await db.tx(async (tx: Transaction) => {",
+      "    const person: UserRecord = await users.create(tx);",
+      '    await passwordAuth.setPassword(tx, person.id, "chosen by the Operator, proving nothing");',
+      "    return passwordAuth.issueToken(tx, person.id);",
+      "  });",
+      "  await db.tx((tx: Transaction) => passwordAuth.revoke(tx, credentialled.user.id));",
+      '  shipped.info({ scheme: passwordAuth.scheme, expiresAt: credentialled.expiresAt }, "a password bought a Token");',
       '  shipped.info({ admitted, sameUser, everyone: everyone.length }, "a User exists");',
       "  // The Messenger's two write-and-read methods, which are what trusted code has and no request",
       "  // does. `send` takes the consumer's own transaction, so telling somebody something and",
@@ -1533,8 +1606,8 @@ try {
       "  // producing before the drain, and last in the record is what buys that. Nothing in the",
       "  // framework checks any of it.",
       "  const gateway = createBareGateway({",
-      "    db, agentServer: agentComponent, publicServer: publicComponent, users, signatures,",
-      "    decisions, messenger, httpChannel, nostrMessenger, nostrChannel,",
+      "    db, agentServer: agentComponent, publicServer: publicComponent, users, passwordAuth,",
+      "    signatures, decisions, messenger, httpChannel, nostrMessenger, nostrChannel,",
       "    worker: workerComponent, ownLoop,",
       "  });",
       "  // The record comes back with its types intact, so a part is reached by the key it was",
@@ -1647,6 +1720,14 @@ try {
         // effects, like every other part's.
         "const scratch = openDb('postgres://nobody@example.invalid/none');",
         "const directory = createUsers({ db: scratch, tokenTtl: 60000 });",
+        // And Password Auth off the eighth subpath, constructed the way an Operator constructs
+        // it: the Db, the Users component whose record every outcome carries, and the Public
+        // server it puts four routes on and registers itself with. Nothing connects and nothing
+        // listens. What this proves is that the specifier resolves at runtime, that an Auth
+        // wires itself with no line in an entry point, and that the object it answers with is a
+        // scheme, the one member a server walks, and three trusted-code methods (ADR-0052).
+        "const passwordComponent = serverComponent(Fastify(), { port: 0 });",
+        "const passwordAuth = createPasswordAuth({ db: scratch, users: directory, publicServer: passwordComponent, tokenTtl: 60000 });",
         // And the Messenger, constructed after it and the way an Operator constructs
         // it: all four arguments required, the Agent server among them, and the two nominal
         // types satisfied by the objects the two calls above returned. Nothing connects and
@@ -1796,7 +1877,7 @@ try {
         // because the module that used to hold one is gone from the package, and the
         // composed command line names no file for the agent to read either — the
         // Operator's `AGENTS.md` above is a mount and `pi` discovers it (ADR-0025).
-        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), mountArgs[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersSchema.schemaName, String(Object.keys(directory).sort()), messengerSchema.schemaName, String(Object.keys(messenger).sort()), 'channel ' + httpChannel.name + ' ' + String(Object.keys(httpChannel).sort()), 'channel ' + nostrChannel.name + ' ' + String(Object.keys(nostrChannel).sort()) + ' as ' + nostrChannel.publicKey + ' in ' + nostrChannelSchema.schemaName, messageReceivedKind, decisionsSchema.schemaName, String(Object.keys(signatures).sort()), String(Object.keys(decisions).sort()), jws.split('.').length + ' segments, ' + Buffer.from(jwsSignature, 'base64url').length + ' signature bytes, verified ' + checked + ', private member ' + Object.hasOwn(keySet.keys[0], 'd'), String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(','), 'cron ' + cronNext + ' zone ' + zoneKnown, 'scheduler ' + String(Object.keys(scheduler).sort()) + ' fires ' + scheduleFiredKind + ' in ' + schedulerSchema.schemaName, 'barrel ' + barrelled.join(' ') + ' in ' + barrelledSchemas.join(' ') + ', wrappers seen ' + wrappersSeen, 'schemas ' + distinctSchemas];",
+        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), mountArgs[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersSchema.schemaName, String(Object.keys(directory).sort()), 'password auth ' + passwordAuth.scheme + ' ' + String(Object.keys(passwordAuth).sort()) + ' in ' + passwordAuthSchema.schemaName, messengerSchema.schemaName, String(Object.keys(messenger).sort()), 'channel ' + httpChannel.name + ' ' + String(Object.keys(httpChannel).sort()), 'channel ' + nostrChannel.name + ' ' + String(Object.keys(nostrChannel).sort()) + ' as ' + nostrChannel.publicKey + ' in ' + nostrChannelSchema.schemaName, messageReceivedKind, decisionsSchema.schemaName, String(Object.keys(signatures).sort()), String(Object.keys(decisions).sort()), jws.split('.').length + ' segments, ' + Buffer.from(jwsSignature, 'base64url').length + ' signature bytes, verified ' + checked + ', private member ' + Object.hasOwn(keySet.keys[0], 'd'), String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(','), 'cron ' + cronNext + ' zone ' + zoneKnown, 'scheduler ' + String(Object.keys(scheduler).sort()) + ' fires ' + scheduleFiredKind + ' in ' + schedulerSchema.schemaName, 'barrel ' + barrelled.join(' ') + ' in ' + barrelledSchemas.join(' ') + ', wrappers seen ' + wrappersSeen, 'schemas ' + distinctSchemas];",
         "process.stdout.write(built.join(':'));",
       ].join("\n"),
     ],
@@ -1804,8 +1885,8 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword,start,stop:saf_messenger:history,register,send,start,stop:channel http name,send,start,stop:channel nostr drain,name,publicKey,recordPublicKey,send,start,stop as 1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f in saf_nostr:message.received:saf_decisions:sign,start,stop:history,publish,start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,signatures,decisions,messenger,httpChannel,ownLoop,worker:Shared Agent Gateway: Agent server describes 10 paths:by hand /healthz:cron 2030-06-02T09:00:00.000Z zone true:scheduler cancel,list,schedule,start,stop,tick fires saf_schedule_fired in saf_scheduler:barrel saf_decisions.decisions saf_messenger.messages saf_nostr.outbox saf_nostr.pubkeys saf_nostr.received saf_scheduler.schedules saf_signals.runs saf_signals.signals saf_users.tokens saf_users.users in saf_decisions saf_messenger saf_nostr saf_scheduler saf_signals saf_users, wrappers seen 0:schemas 6 of 6 distinct, every one collected true",
-    "all thirteen subpaths should resolve at runtime and none of them is the bare package, the Signal Worker's constructor and the template Handler both arriving off `/signals`, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from `/agent-container` without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and Users should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and the Messenger should construct into a schema of its own from all four of its required arguments and answer with an object carrying exactly its three trusted-code methods, because every other capability it has is a route it registered itself, and the HTTP Channel should construct off the ninth subpath, register itself with that Messenger and answer with a name fixed by its type and the three methods a Channel is and no trusted-code method at all, and the Nostr Channel should construct off the tenth from 32 raw bytes and a Relay address with no server anywhere, register itself with a second Messenger because one Channel per Messenger is refused at registration, derive the agent's public key from those bytes inside the installed package, and answer with the one trusted-code method that records a public key, the drain that is the half of a send a transaction cannot hold, and no route plugin beside them, and all of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the five parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone, and the Scheduler itself should construct from the installed `/scheduler` subpath and carry its management surface and its Component lifecycle, filing its table under a schema of its own, and an Operator's barrel — `export *` of all six **component** subpaths, which is the whole of what ADR-0046 asks them to write and where ADR-0047 puts the tables — should hand `drizzle-kit`'s own collection rule every one of the ten tables and all six schemas — the HTTP Channel absent from it because that Channel owns no log and no tables, and the Nostr Channel present because the two things only it can know are its own —, and none of the `*Tables` wrappers, because a table reachable only through a wrapper object is dropped in silence and generates an empty migration, and those six schema objects should be six distinct values that the barrel carries under six distinct prefixed names, because a bare `schema` on each component is a name `export *` drops for ambiguity and an Operator whose `schemaFilter` comes back empty gets a push that creates nothing and exits 0",
+    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,issueToken,list,publicRoutes,requireUser,revoke,setAttributes,setPassword,start,stop:password auth Bearer authenticate,issueToken,revoke,scheme,setPassword,start,stop in saf_password_auth:saf_messenger:history,register,send,start,stop:channel http name,send,start,stop:channel nostr drain,name,publicKey,recordPublicKey,send,start,stop as 1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f in saf_nostr:message.received:saf_decisions:sign,start,stop:history,publish,start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,signatures,decisions,messenger,httpChannel,ownLoop,worker:Shared Agent Gateway: Agent server describes 10 paths:by hand /healthz:cron 2030-06-02T09:00:00.000Z zone true:scheduler cancel,list,schedule,start,stop,tick fires saf_schedule_fired in saf_scheduler:barrel saf_decisions.decisions saf_messenger.messages saf_nostr.outbox saf_nostr.pubkeys saf_nostr.received saf_scheduler.schedules saf_signals.runs saf_signals.signals saf_users.tokens saf_users.users in saf_decisions saf_messenger saf_nostr saf_scheduler saf_signals saf_users, wrappers seen 0:schemas 6 of 6 distinct, every one collected true",
+    "all fourteen subpaths should resolve at runtime and none of them is the bare package, the Signal Worker's constructor and the template Handler both arriving off `/signals`, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from `/agent-container` without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and Users should construct into its own schema with its routes, its preHandler and its seven operations — the three of them the agent's surface has no route for included — and Password Auth should construct off the eighth subpath into a schema of its own from the Users component and a Public server, register its four routes and itself as an Auth with that server in its own constructor, and answer with the scheme a challenge names, the one member the server walks and its three trusted-code methods and no route plugin, and the Messenger should construct into a schema of its own from all four of its required arguments and answer with an object carrying exactly its three trusted-code methods, because every other capability it has is a route it registered itself, and the HTTP Channel should construct off the ninth subpath, register itself with that Messenger and answer with a name fixed by its type and the three methods a Channel is and no trusted-code method at all, and the Nostr Channel should construct off the tenth from 32 raw bytes and a Relay address with no server anywhere, register itself with a second Messenger because one Channel per Messenger is refused at registration, derive the agent's public key from those bytes inside the installed package, and answer with the one trusted-code method that records a public key, the drain that is the half of a send a transaction cannot hold, and no route plugin beside them, and all of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the five parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone, and the Scheduler itself should construct from the installed `/scheduler` subpath and carry its management surface and its Component lifecycle, filing its table under a schema of its own, and an Operator's barrel — `export *` of all six **component** subpaths, which is the whole of what ADR-0046 asks them to write and where ADR-0047 puts the tables — should hand `drizzle-kit`'s own collection rule every one of the ten tables and all six schemas — the HTTP Channel absent from it because that Channel owns no log and no tables, and the Nostr Channel present because the two things only it can know are its own —, and none of the `*Tables` wrappers, because a table reachable only through a wrapper object is dropped in silence and generates an empty migration, and those six schema objects should be six distinct values that the barrel carries under six distinct prefixed names, because a bare `schema` on each component is a name `export *` drops for ambiguity and an Operator whose `schemaFilter` comes back empty gets a push that creates nothing and exits 0",
   );
 
   // And the claim nothing above can see, because everything above imports a subpath: **the bare

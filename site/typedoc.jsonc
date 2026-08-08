@@ -15,7 +15,7 @@
     "./expanded-object-methods.mjs"
   ],
 
-  // The thirteen entry points of the export map, in the order `package.json` lists them
+  // The fourteen entry points of the export map, in the order `package.json` lists them
   // ([ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md)). There is no `.` among them:
   // the package root exports nothing, so nothing lands on it by default
   // ([ADR-0051](../docs/adr/0051-the-package-root-exports-nothing.md)). `example/` is absent too:
@@ -30,6 +30,7 @@
     "../src/signals/index.ts",
     "../src/pi/index.ts",
     "../src/users/index.ts",
+    "../src/password-auth/index.ts",
     "../src/messenger/index.ts",
     "../src/http-channel/index.ts",
     "../src/nostr-channel/index.ts",

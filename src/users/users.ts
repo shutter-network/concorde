@@ -25,11 +25,25 @@
  * `insertToken` is the one place a Token row is written. A Token bought with a password and one
  * minted by an Operator's OIDC callback have to stay the same row, or something downstream
  * eventually learns to tell them apart.
+ *
+ * **`requireUser` is scaffolding, and `.scratch/auth/issues/03-*` deletes it.** The credential is
+ * the Password Auth component's now
+ * ([ADR-0052](../../docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)),
+ * and Signatures, Decisions and the HTTP Channel still take this hook off this component. So it
+ * asks the Public server's aggregate first, which is where a Password Auth Token is verified, and
+ * falls back to the Token lookup below when that server has no Auth registered, which is every
+ * deployment still running this component's own login, and there is no third case. `logIn`,
+ * `GET /me` and both revocations keep the lookup outright and are not routed through the
+ * aggregate, so this component's own surface behaves the same whatever is registered with the
+ * server it is on. Ticket 03 moves the three dependents onto `publicServer.requireUser` and takes
+ * the whole of this with it: the member, the fallback, the `requireUser` in `UsersOptions`, and
+ * the import of the error class the fallback branches on.
  */
 
 import { and, desc, eq, gt, sql } from "drizzle-orm";
 import type { FastifyInstance, FastifyPluginAsync, preHandlerAsyncHookHandler } from "fastify";
 import type { Db, Handle } from "../db/index.ts";
+import { NoAuthRegisteredError } from "../gateway/auth.ts";
 import type { Component } from "../gateway/components.ts";
 import { limitSchema } from "../route-conventions.ts";
 import {
@@ -85,14 +99,23 @@ export type UsersOptions = {
    * Given one, the constructor registers `publicRoutes` on it under `/auth`, which is where
    * `POST /auth/tokens` comes from.
    *
-   * Omit it to replace this password login with a scheme of your own, which can be OIDC, a wallet
-   * signature or a corporate header. `issueToken` is a method, so that scheme still mints ordinary
-   * Tokens and nothing else about this component changes.
+   * Omit it to replace this password login with a scheme of your own, which can be an Auth, OIDC,
+   * a wallet signature or a corporate header. `issueToken` is a method, so that scheme still mints
+   * ordinary Tokens and nothing else about this component changes.
    *
    * Structural, on the same terms as `agentServer`.
    */
   readonly publicServer?: {
     readonly fastify: FastifyInstance;
+    /**
+     * The schemes that server accepts, composed, which is what {@link Users.requireUser} asks
+     * before it reads a Token of its own.
+     *
+     * Optional so that a bare Fastify instance still satisfies this option. A server that carries
+     * one and has an Auth registered is a deployment whose credentials are somebody else's, and
+     * this component then verifies none of them.
+     */
+    readonly requireUser?: preHandlerAsyncHookHandler;
   };
   /**
    * What a password derivation costs. Defaults to OWASP's 32 MiB row, around 200ms of one core.
@@ -151,11 +174,18 @@ export type Users = Component & {
   readonly publicRoutes: FastifyPluginAsync;
 
   /**
-   * The preHandler that requires a Token, as one option on any route.
+   * The preHandler that requires an authenticated User, as one option on any route.
    *
-   * `publicServer.post("/ask", { preHandler: users.requireUser }, handler)`. It reads the
-   * `Authorization: Bearer …` header, then assigns the User to `request.safUser` or answers the
-   * single 401 that every authentication failure gets.
+   * **Temporary, and it will be removed.** Authentication is an Auth's and the composition of the
+   * Auths is the Public server's, so a protected route takes `publicServer.requireUser` and this
+   * member exists only until the components that still read it here have been moved onto that one.
+   * Write new routes against the server.
+   *
+   * It asks the Public server this component was given, so a Token any registered Auth accepts
+   * authenticates the route. With no Auth registered there, and with no Public server at all, it
+   * reads the `Authorization: Bearer …` header and verifies a Token of this component's own
+   * instead. Either way the User is assigned to `request.safUser`, or the single 401 that every
+   * authentication failure gets is answered.
    *
    * A hook rather than a plugin, so it works on either server, inside any plugin, at any depth.
    * Nothing is protected by default, and a route that does not take it reads `request.safUser` as
@@ -271,9 +301,10 @@ export function createUsers(options: UsersOptions): Users {
   const tokenTtl = checkedTokenTtl(options.tokenTtl);
   const parameters = checkedScryptParameters(options.scrypt ?? defaultScryptParameters);
   const dummy = dummyDigest(parameters);
-  // One hook, built once and shared by `GET /me` and by every route of the Operator's. The
-  // documented surface and the Public plugin's own route are the same object.
+  // This component's own hook, which its own Public routes take directly. See the file header.
   const presentedUser = requireUser({ authenticate: (token) => userForToken(handle, token) });
+  // And the scaffolding the three dependents still take, which ticket 03 deletes whole.
+  const throughTheServer = forwarding(options.publicServer?.requireUser, presentedUser);
 
   const agentRoutes = agentUserRoutes({
     // The route's create runs on the component's own handle. One insert is atomic by itself, and
@@ -308,7 +339,7 @@ export function createUsers(options: UsersOptions): Users {
 
     publicRoutes,
 
-    requireUser: presentedUser,
+    requireUser: throughTheServer,
 
     create: (tx) => insertUser(tx, undefined, parameters),
     setAttributes: (tx, user, attributes) => updateUser(tx, user, { attributes }),
@@ -323,6 +354,28 @@ export function createUsers(options: UsersOptions): Users {
     // and nothing else.
     start: async () => {},
     stop: async () => {},
+  };
+}
+
+// The scaffolding named in the file header, and the whole of it. Ticket 03 deletes this function,
+// its call site, and the import of the error class it branches on.
+//
+// The server's aggregate throws before it has read the request or touched the reply, so catching
+// that one class and running the old hook after it costs a request nothing and cannot answer
+// twice. Any other failure is a failure and is rethrown. Called with `request.server` because a
+// Fastify hook is declared with a `this` of the instance, and neither of these two reads it.
+function forwarding(
+  aggregate: preHandlerAsyncHookHandler | undefined,
+  ownTokens: preHandlerAsyncHookHandler,
+): preHandlerAsyncHookHandler {
+  if (aggregate === undefined) return ownTokens;
+  return async (request, reply) => {
+    try {
+      return await aggregate.call(request.server, request, reply);
+    } catch (failure) {
+      if (!(failure instanceof NoAuthRegisteredError)) throw failure;
+      return ownTokens.call(request.server, request, reply);
+    }
   };
 }
 
