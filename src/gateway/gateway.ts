@@ -136,7 +136,7 @@ export type GatewayOptions<E extends GatewayExtension> = {
  * document covers is a deployment's HTTP API rather than this framework's releases, and the two
  * are free to move apart. The test asserts they have not yet.
  */
-export const describedVersion = "0.2.0";
+export const describedVersion = "0.3.0";
 
 /**
  * Registers one server's description: the OpenAPI document at `/openapi.json`, and the browsable
