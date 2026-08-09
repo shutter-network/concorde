@@ -1,4 +1,3 @@
-import path from "node:path";
 import { createGateway } from "shared-agent-framework/gateway";
 import { createPiRuntime } from "shared-agent-framework/pi";
 import {
@@ -7,9 +6,6 @@ import {
   scheduleFiredKind,
 } from "shared-agent-framework/scheduler";
 import type { SignalHandler } from "shared-agent-framework/signals";
-
-const baseDirGateway = process.env.BASE_DIR_GATEWAY!;
-const baseDirHost = process.env.BASE_DIR_HOST!;
 
 function taskOf(data: unknown): string | undefined {
   if (typeof data !== "object" || data === null) return undefined;
@@ -44,27 +40,13 @@ const runtime = createPiRuntime({
   },
   networks: [process.env.AGENT_NETWORK!],
   mounts: {
+    runtimeDir: process.env.RUNTIME_DIR_HOST!,
     entries: [
-      {
-        agentPath: "/workspace",
-        gatewayPath: path.join(baseDirGateway, "state", "workspace"),
-      },
-      {
-        agentPath: "/home/agent/.pi/agent",
-        gatewayPath: path.join(baseDirGateway, "state", "agent"),
-      },
-      {
-        agentPath: "/workspace/AGENTS.md",
-        gatewayPath: path.join(baseDirGateway, "AGENTS.md"),
-        readOnly: true,
-      },
-      {
-        agentPath: "/home/agent/.pi/agent/settings.json",
-        gatewayPath: path.join(baseDirGateway, "settings.json"),
-        readOnly: true,
-      },
+      { agentPath: "/workspace", path: "state/workspace" },
+      { agentPath: "/home/agent/.pi/agent", path: "state/agent" },
+      { agentPath: "/workspace/AGENTS.md", path: "AGENTS.md", readOnly: true },
+      { agentPath: "/home/agent/.pi/agent/settings.json", path: "settings.json", readOnly: true },
     ],
-    hostRoot: { gatewayPath: baseDirGateway, hostPath: baseDirHost },
   },
 });
 
