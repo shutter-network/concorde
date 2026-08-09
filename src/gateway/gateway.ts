@@ -139,7 +139,7 @@ export type GatewayOptions<E extends GatewayExtension> = {
  * time. It is not hand-maintained either: `npm version` runs `scripts/stamp-version.ts`, which
  * writes this line and stages it, so the release commit carries both numbers or neither.
  */
-export const describedVersion = "0.3.0";
+export const describedVersion = "0.3.1";
 
 /**
  * Registers one server's description: the OpenAPI document at `/openapi.json`, and the browsable

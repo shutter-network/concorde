@@ -1,6 +1,6 @@
 {
   "name": "shared-agent-framework",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "A framework for building AI agents that serve several parties at once, where no single party may control the agent or reach it privately.",
   "repository": {
     "type": "git",
