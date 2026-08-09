@@ -73,9 +73,11 @@ services:
     networks: [agent]
 
   tui:
-    image: node:24-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile
     profiles: [cli]
-    entrypoint: ["npx", "-y", "-p", "shared-agent-framework@0.3", "http-client-tui"]
+    entrypoint: ["npx", "http-client-tui"]
     environment:
       SAF_GATEWAY_URL: http://gateway:8081
       SAF_PASSWORD: ${USER_PASSWORD:?copy .env.example to .env}

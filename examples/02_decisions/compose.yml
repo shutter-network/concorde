@@ -3,9 +3,11 @@ name: saf-example-02-decisions
 x-database-url: &database-url postgres://saf:saf@postgres:5432/saf
 
 x-tui: &tui
-  image: node:24-alpine
+  build:
+    context: .
+    dockerfile: Dockerfile
   profiles: [cli]
-  entrypoint: ["npx", "-y", "-p", "shared-agent-framework@0.3", "http-client-tui"]
+  entrypoint: ["npx", "http-client-tui"]
   networks: [public]
 
 services:
