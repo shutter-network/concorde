@@ -1,4 +1,24 @@
+---
+status: partially superseded
+---
+
 # Prompts are Handlebars templates, read per Run, unescaped
+
+> **Amended, and the title's middle clause is now false.** `templateHandler` reads no file at all:
+> `TemplateHandlerOptions.template` is the template **source**, and it is compiled once, in the
+> constructor. Two things below fall with the per-Run reading. **The iteration it bought is gone**:
+> an edit to a prompt reaches no Signal until the process starts again, so changing wording is a
+> rebuild, and a deployment that keeps its wording in a file reads the file itself. And **a
+> malformed template is no longer a permanent failure**: it throws from `templateHandler` before
+> the Gateway listens, which is the whole of the gain. What a helper says about its own arguments
+> is the part that stays a Signal failure, because a helper runs only with a context. Everything
+> else stands unchanged: Handlebars over a fifteen-line substitution and the dependency that costs,
+> `noEscape` and `strict` and both arguments for them, the isolated environment per Handler, and
+> `strict` disabling inverse sections, including its consequence, since a variable `data` did not
+> supply is found at render and fails that Signal exactly as described. **This amendment carries no
+> ADR of its own**, deliberately: it is one option's type, reversed by changing it back, so it
+> fails the hard-to-reverse test. The `TemplateHandlerOptions.template` doc comment and
+> `CLAUDE.md`'s refuse-in-review list are where the reasoning lives.
 
 The framework ships a Signal Handler that renders a Prompt from a **Handlebars** template on disk. The template file is read and compiled **per Run**, so an Operator can iterate on prompt wording without restarting the Gateway.
 

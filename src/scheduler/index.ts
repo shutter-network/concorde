@@ -25,6 +25,7 @@
  * @example
  * A Gateway that wakes itself every morning, and the Handler each fire reaches.
  * ```ts
+ * import { readFileSync } from "node:fs";
  * import { createGateway } from "shared-agent-framework/gateway";
  * import { createPiRuntime } from "shared-agent-framework/pi";
  * import type { ScheduleFiredRecord } from "shared-agent-framework/scheduler";
@@ -43,7 +44,7 @@
  *   }),
  *   handlers: () => ({
  *     [scheduleFiredKind]: templateHandler<ScheduleFiredRecord>({
- *       template: new URL("./prompts/digest.hbs", import.meta.url),
+ *       template: readFileSync(new URL("./prompts/digest.hbs", import.meta.url), "utf8"),
  *       session: (signal) => signal.payload.scheduleName,
  *       data: (signal) => signal.payload,
  *     }),

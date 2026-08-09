@@ -29,6 +29,7 @@
  * A Gateway whose agent answers a submitted Message over HTTP, and a send from the Operator's own
  * trusted code.
  * ```ts
+ * import { readFileSync } from "node:fs";
  * import { createGateway } from "shared-agent-framework/gateway";
  * import { createHttpChannel } from "shared-agent-framework/http-channel";
  * import type { MessageRecord } from "shared-agent-framework/messenger";
@@ -58,7 +59,7 @@
  *   },
  *   handlers: ({ messenger }) => ({
  *     [messageReceivedKind]: templateHandler<MessageRecord>({
- *       template: new URL("./prompts/message.hbs", import.meta.url),
+ *       template: readFileSync(new URL("./prompts/message.hbs", import.meta.url), "utf8"),
  *       session: (signal) => `user_${signal.payload.userId}`,
  *       data: async (signal) => ({ log: await messenger.history(signal.payload.userId) }),
  *     }),

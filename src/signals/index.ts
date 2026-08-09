@@ -14,10 +14,10 @@
  * Its programmatic API is `emit`, which a Producer writes a Signal through.
  *
  * {@link templateHandler} is a Handler most deployments start from rather than writing
- * {@link SignalHandler} by hand: it renders one Prompt per Signal from a Handlebars file, and
- * {@link TemplateHandlerOptions} is where the file, the Session and the values it substitutes are
- * stated. It is an ordinary Handler built by an ordinary function, so a deployment that outgrows it
- * returns one of its own from the same place and unwires nothing.
+ * {@link SignalHandler} by hand: it renders one Prompt per Signal from a Handlebars template, and
+ * {@link TemplateHandlerOptions} is where the template source, the Session and the values it
+ * substitutes are stated. It is an ordinary Handler built by an ordinary function, so a deployment
+ * that outgrows it returns one of its own from the same place and unwires nothing.
  *
  * `createGateway` builds a Worker already, so reach for the constructor only when you assemble a
  * Gateway by hand. Either way the Handler map is a construction option, so a Handler that emits

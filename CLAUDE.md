@@ -697,6 +697,26 @@ Conventions the build depends on:
   `src/nostr-auth/authenticating.test.ts`: the same future-dated bytes go to the library's own
   validator, **which returns true**, and then to the server, which refuses. Nothing else in the
   repository would notice a rewrite through that function.
+- **`templateHandler` takes template *source*, never a path, and widening `template` back to
+  `string | URL` is the thing to refuse in review.** A path costs a caller one line,
+  `template: readFileSync(new URL("./prompt.hbs", import.meta.url), "utf8")`, and costs the
+  framework a whole class of failure, because a template read per Signal is a template that first
+  fails a *Signal*, and a failed Signal is never retried
+  ([ADR-0017](./docs/adr/0017-failed-runs-are-not-retried.md)): the person sent a message and
+  nothing comes back. Compiled at construction instead, the same typo fails `createGateway` before
+  the Gateway listens. **`Handlebars.compile` defers the parse *and* the code generation to the
+  first render**, so `src/signals/template-handler.ts` calls `precompile` above it and throws the
+  result away: that is the one entry point which runs both eagerly, and dropping it or reducing it
+  to a parse puts the case back on a Signal. `src/signals/template-handler.test.ts`'s "a template
+  that does not compile" is the test whose whole subject is its absence, and it holds both halves,
+  an unclosed block for the parse and a partial called with two arguments for the code generator.
+  The price is that a template is parsed and compiled twice, once per Handler per process. What
+  stays a render failure is a helper's complaint about its own arguments, which runs only with a
+  context. What the refusal costs is live editing, which the option used to have and the docstring
+  says it has lost: changing a prompt is a rebuild. There is **no ADR**, this failing the
+  hard-to-reverse test; this line and the `template` docstring are the two homes, and
+  [ADR-0027](./docs/adr/0027-prompts-are-handlebars-templates-read-per-run.md) is amended where it
+  said per Run.
 - **Nothing in `src/agent-container/` knows about an Agent Implementation.** That
   directory is the Agent Container, the Mount Table and the process handling —
   what `docker run` takes and what to do with it — and it is exported from

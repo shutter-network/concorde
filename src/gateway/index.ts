@@ -31,6 +31,7 @@
  * @example
  * The smallest Gateway that runs: one Signal Handler, and nothing else of the Operator's own.
  * ```ts
+ * import { readFileSync } from "node:fs";
  * import { createGateway } from "shared-agent-framework/gateway";
  * import { createPiRuntime } from "shared-agent-framework/pi";
  * import { templateHandler } from "shared-agent-framework/signals";
@@ -43,7 +44,7 @@
  *   publicListen: { host: "0.0.0.0", port: 8080 },
  *   handlers: () => ({
  *     "note.written": templateHandler({
- *       template: new URL("./prompts/note-written.hbs", import.meta.url),
+ *       template: readFileSync(new URL("./prompts/note-written.hbs", import.meta.url), "utf8"),
  *       session: () => "notes",
  *       data: (signal) => signal.payload,
  *     }),

@@ -8,29 +8,48 @@
  * with nothing in any log to say so, because a Prompt is text for a model rather than markup for a
  * browser (ADR-0027).
  *
+ * `template` takes source and never a path, and widening it back to accept one is the thing to
+ * refuse. A path costs a caller one `readFileSync` and buys the framework a whole class of
+ * failure: a template read per Signal is a template that first fails a Signal, and a failed Signal
+ * is permanently dead (ADR-0017), so the person who sent the message hears nothing.
+ *
+ * `Handlebars.compile` defers the parse *and* the code generation to the first render, so compiling
+ * alone would leave a malformed template failing that first Signal after all. The discarded
+ * `precompile` below is what moves both to construction: it is the entry point that runs them
+ * eagerly, and its own output, a template spec that would need an `eval` to become a function, is
+ * not what is wanted. So the template is parsed and compiled twice, once per Handler per process,
+ * and that is the price. Parsing alone would be half of it: an unclosed block is a parse error, but
+ * a partial called with two arguments is a code generation error and reaches the same Signal.
+ *
+ * What construction still cannot catch is a helper complaining about its own arguments. A bare
+ * `#if` block with none throws from the built-in helper, which runs only with a context, so it
+ * stays a render failure and there is no place to move it to.
+ *
  * The two Operator callbacks are awaited outside the try/catch below on purpose. An error thrown by
  * one of them is theirs to recognise, and wrapping it in a sentence about a template would put our
  * words on their bug.
  */
 
-import { readFile } from "node:fs/promises";
 import Handlebars from "handlebars";
 import type { Prompt, Signal, SignalHandler } from "./handlers.ts";
 
 export type TemplateHandlerOptions<TPayload = unknown> = {
   /**
-   * The Handlebars file, as a path or a `file:` URL, read and compiled again for every Prompt.
-   * Edit the wording and the next Signal renders through it, with no restart.
+   * The Handlebars source, compiled once when the Handler is built.
    *
-   * A relative path resolves against the process's working directory. For a template beside the
-   * module that names it, write `new URL("./prompt.hbs", import.meta.url)`.
+   * Source, and not a path or a `file:` URL. A deployment that keeps its wording in a file reads
+   * the file itself:
+   * `template: readFileSync(new URL("./prompt.hbs", import.meta.url), "utf8")`. Nothing reads it
+   * again after that, so an edit reaches no Prompt until the process starts again. In exchange a
+   * template Handlebars cannot compile throws from {@link templateHandler}, before the Gateway
+   * listens, instead of failing a Signal that nothing retries.
    *
    * It is compiled with `noEscape`, so nothing substituted is HTML-escaped, and with `strict`,
    * which fails the Signal on a variable `data` did not supply. `strict` also disables inverse
    * sections: a caret block such as `^absent` throws, and the `unless` helper is what to write in
    * its place. The `if`, `each` and `else` helpers behave as usual.
    */
-  readonly template: string | URL;
+  readonly template: string;
 
   /**
    * Which Session this Signal's Prompt continues, or `null` to ask for a fresh one.
@@ -76,9 +95,13 @@ const compileOptions: CompileOptions = { noEscape: true, strict: true };
  * although the Handler contract allows both. It has no post phase either, and gains one by being
  * spread: `{ ...templateHandler(options), post }` is a Handler.
  *
- * A template that cannot be read, and one that does not render, each fail the Signal with a message
- * naming the file. Handlebars names the variable, the line and the column, and never the file,
- * which is the one thing an Operator running several templates needs.
+ * A template that compiles and then does not render fails the Signal, with a message naming the
+ * Signal's kind. Handlebars names the variable, the line and the column, and never says which
+ * Handler was rendering, which is the one thing an Operator running several of them needs.
+ *
+ * @throws if `template` does not compile. The message is Handlebars' own and names the line and
+ * the column. A helper's complaint about its own arguments is not among these, because a helper
+ * runs only with a context.
  */
 export function templateHandler<TPayload = unknown>(
   options: TemplateHandlerOptions<TPayload>,
@@ -94,9 +117,10 @@ export function templateHandler<TPayload = unknown>(
     environment.registerPartial(name, partial);
   }
 
-  // What both failure messages name. `String` on a URL gives the `file:` form, which is the
-  // spelling an Operator wrote and so the one they can search for.
-  const location = String(options.template);
+  // Compiled here and not left to `compile`, which does both its jobs on the first render. The
+  // result is thrown away; what is wanted is the throw. See the file header.
+  environment.precompile(options.template, compileOptions);
+  const render = environment.compile(options.template, compileOptions);
 
   return {
     async handle(signal: Signal<TPayload>): Promise<readonly Prompt[]> {
@@ -104,25 +128,14 @@ export function templateHandler<TPayload = unknown>(
       const session = await options.session(signal);
       const data = await options.data(signal);
 
-      // Read and compiled per Prompt, which is per Run. Separated from rendering because the
-      // two failures want different words. A wrong path and a wrong template are found in
-      // different places.
-      let source: string;
-      try {
-        source = await readFile(options.template, "utf8");
-      } catch (error) {
-        throw new Error(`the prompt template ${location} could not be read: ${reason(error)}`, {
-          cause: error,
-        });
-      }
-
       let text: string;
       try {
-        text = environment.compile(source, compileOptions)(data);
+        text = render(data);
       } catch (error) {
-        // A parse error, or `strict` refusing a variable `data` did not supply. Either way the
-        // library's message is missing the file name, which is what this one adds.
-        throw new Error(`the prompt template ${location} did not render: ${reason(error)}`, {
+        // `strict` refusing a variable `data` did not supply, or a partial this environment does
+        // not hold. Either way the library's message says nothing about which Handler was
+        // rendering, which is what the kind adds.
+        throw new Error(`the prompt template for ${signal.kind} did not render: ${reason(error)}`, {
           cause: error,
         });
       }

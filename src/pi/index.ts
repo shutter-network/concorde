@@ -26,6 +26,7 @@
  * @example
  * A Gateway whose Runtime is `pi`, in a container the Operator declared.
  * ```ts
+ * import { readFileSync } from "node:fs";
  * import { createGateway } from "shared-agent-framework/gateway";
  * import { createPiRuntime } from "shared-agent-framework/pi";
  * import { templateHandler } from "shared-agent-framework/signals";
@@ -55,7 +56,7 @@
  *   publicListen: { host: "0.0.0.0", port: 8080 },
  *   handlers: () => ({
  *     "note.written": templateHandler({
- *       template: new URL("./prompts/note-written.hbs", import.meta.url),
+ *       template: readFileSync(new URL("./prompts/note-written.hbs", import.meta.url), "utf8"),
  *       session: () => "notes",
  *       data: (signal) => signal.payload,
  *     }),
