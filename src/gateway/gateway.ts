@@ -132,9 +132,12 @@ export type GatewayOptions<E extends GatewayExtension> = {
 };
 
 /**
- * The `version` both OpenAPI documents declare. Not read from the package manifest: what the
- * document covers is a deployment's HTTP API rather than this framework's releases, and the two
- * are free to move apart. The test asserts they have not yet.
+ * The `version` both OpenAPI documents declare, which is the version of this package.
+ *
+ * A literal and not a manifest read, because nothing shipped resolves a path out of
+ * `import.meta.url` and `dist/gateway/gateway.js` therefore cannot reach `package.json` at run
+ * time. It is not hand-maintained either: `npm version` runs `scripts/stamp-version.ts`, which
+ * writes this line and stages it, so the release commit carries both numbers or neither.
  */
 export const describedVersion = "0.3.0";
 

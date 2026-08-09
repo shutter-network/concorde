@@ -2149,10 +2149,12 @@ describe("the description both servers serve", () => {
   });
 
   it("declares the version the package is at", () => {
-    // A hand-maintained constant with no reader is the thing that drifts, and this is its
-    // reader. Reading the manifest here rather than in the constructor is the whole of the
-    // trade ADR-0040 makes: the cost of the constant is paid by a test rather than by a
-    // file read inside a constructor documented as doing no I/O.
+    // `npm version` writes the literal through `scripts/stamp-version.ts`, so this is the
+    // backstop rather than the guard: what reaches it is a version edited into the manifest
+    // without that command, or a stamp whose declaration no longer matches. Reading the
+    // manifest here rather than in the constructor is the whole of the trade ADR-0040 makes:
+    // the cost of the constant is paid by a test rather than by a file read inside a
+    // constructor documented as doing no I/O.
     const manifest: unknown = JSON.parse(
       readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
     );

@@ -144,18 +144,25 @@ message round-tripped by hand.
 
 **The package is published and publishing is a hand act**: `npm version patch && npm publish &&
 git push --follow-tags`, at `0.3.0` today, with `prepublishOnly` building so that a stale `dist`
-is not something to remember. **The version number is the one thing `prepublishOnly` does not
-build, and it is a second hand step beside `npm version`.** `src/gateway/gateway.ts` exports
+is not something to remember. **The version number used to be the one thing `prepublishOnly` does
+not build, and `npm version` carries it now.** `src/gateway/gateway.ts` exports
 `describedVersion`, the string both OpenAPI documents announce, written out as a literal because
 nothing shipped resolves a path out of `import.meta.url` any more and the manifest is therefore
-not something `dist/gateway/gateway.js` can read (see the convention below). `npm version` edits
-`package.json` and no source file, so the two are bumped separately, and
-`src/gateway/gateway.test.ts` compares them. **That is what went wrong at `0.3.0`**: the tag was
-cut and published with `describedVersion` still at `0.2.0`, `npm run check` was red on `main` until
-the source caught up one commit later, and every consumer of `0.3.0` serves a document announcing
-`0.2.0` until `0.3.1` goes out. The test is a check and not a gate — `npm publish` runs
-`prepublishOnly`, which builds and does not test — so it fails after the publish rather than
-before it. Bump `describedVersion` in the same commit as `npm version`, before `npm publish`.
+not something `dist/gateway/gateway.js` can read (see the convention below). npm's `version`
+lifecycle runs `scripts/stamp-version.ts`, which reads the just-written manifest, writes that
+literal and `git add`s the file, and npm commits the index — so the release commit carries both
+numbers or neither, and the three-command sequence above is unchanged.
+**It took two releases out of three to buy that.** `0.1.0` was published announcing `0.0.0` and
+`0.3.0` announcing `0.2.0`, each corrected in `src` one commit later, neither corrected on npm,
+and under [ADR-0040](./docs/adr/0040-the-gateway-describes-its-own-http-api.md) that document is
+the API documentation, so both artifacts serve the wrong number to a Developer deciding what they
+are talking to. `src/gateway/gateway.test.ts` compares the literal to the manifest and stays the
+**backstop rather than the guard**: `npm publish` runs `prepublishOnly`, which builds and does not
+test, so that test fails `npm run check` on `main` *after* a publish, which is exactly what it did
+both times. What now reaches it is a version edited into `package.json` without `npm version`, or
+a `describedVersion` declaration the stamp's whole-line match no longer recognises — and the stamp
+refuses that case loudly rather than writing nothing. Gating the publish on the test instead was
+the other option and costs a PostgreSQL server at publish time.
 **No example commits a lockfile** and each installs
 with `npm install` rather than `npm ci`, so a patch publish flows into all four with nothing
 edited, and a breaking change bumps the minor and forces a deliberate four-place sweep, which is
