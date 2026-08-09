@@ -32,6 +32,16 @@
   },
   "overrides": [
     {
+      "includes": ["examples/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNonNullAssertion": "off"
+          }
+        }
+      }
+    },
+    {
       "includes": [
         "**",
         "!src/db/**",

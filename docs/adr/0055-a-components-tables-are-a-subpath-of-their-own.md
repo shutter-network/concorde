@@ -92,6 +92,18 @@ their record types would remove the derivation, and it would take four names a D
 with it. So the overlap stands and is recorded here. What the split is actually for is the tables,
 and no table is on more than one specifier.
 
+**A third way was raised after this ADR shipped, and declined for a reason the other two do not
+have.** Move each array into a module of its own that both `schema.ts` and `index.ts` import: the
+`/schema` subpath keeps `export *` and loses nothing to a silent failure, the unions stay derived,
+and the rule stops needing an exception. It costs three modules, and it costs the thing that put
+these arrays in `schema.ts` to begin with. Each is read **twice in its own file and nowhere else in
+it** — `signalStates` types the column with `$type<SignalState>()` on one line and is the argument
+to `check("signals_state_known", stateIsKnown(table.state, signalStates))` twenty lines later, and
+`runStates`, `messageDirections` and `scheduleKinds` are each the same pair. So the array, the
+column it constrains and the constraint compiled from it are in one file, and the move separates
+them to make one documentation sentence unqualified. The overlap costs a reader two doors to one
+declaration, which cannot drift, because it is one declaration. That is the cheaper of the two.
+
 ## A config resolves the specifiers with `createRequire`, because it runs as CommonJS
 
 `drizzle-kit` reads `drizzle.config.ts` by registering `tsx` and calling `require()` on it, so the

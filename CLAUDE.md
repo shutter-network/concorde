@@ -118,13 +118,19 @@ verifying.
 `tsconfig.json` includes `src` and `scripts`, and it has no
 `paths`, so nothing here type-checks an example and nothing can resolve an example's imports back
 into `src` by accident. `npm run lint` is `biome check .` over the whole tree, so every example is
-formatted and linted by the one command, and since each `main.ts` now reads its environment with
-`!` that is **forty `lint/style/noNonNullAssertion` warnings** — nine, eight, eleven and twelve
-across the four. Nothing fails: a warning is not an error. What they cost is the diagnostic list.
-Biome prints twenty and then says `Diagnostics not shown: 20`, **and which twenty it prints varies
-between runs**, so a warning arriving anywhere in the tree can land in the half nobody sees. The
-summary counts everything and an error still fails the command, so what is hidden is the text and
-not the outcome. That is what the `!` in the environment rule above costs outside the examples.
+formatted and linted by the one command, **and `lint/style/noNonNullAssertion` is off under
+`examples/` alone**, which is the one place a rule is switched off by directory. Each `main.ts`
+reads its environment with `!`, so the rule had forty things to say — nine, eight, eleven and
+twelve across the four — about a spelling the environment rule above chose deliberately and
+priced. None of them failed anything, a warning not being an error. What they cost was **the
+diagnostic list**: Biome prints twenty and then says `Diagnostics not shown: 20`, and which twenty
+it prints **varies between runs**, so any *other* warning arriving anywhere in the tree had a real
+chance of landing in the half nobody sees. Forty known warnings were masking up to twenty unknown
+ones. `biome check .` now reports nothing on a clean tree, so the next diagnostic prints.
+Raising `--max-diagnostics` was the alternative and answers the truncation with forty lines of
+noise on every run forever, which teaches a reader to skim. What the override costs is that `!`
+is unremarked under `examples/` for **any** reason now, not only for an environment read; four
+files of about fifty lines each, read by hand, is what stands in for the rule there.
 The one thing under `examples/` the *test suite* reads is the committed key
 material: `src/example-signing-key.test.ts` loads `02_decisions`' PEM and `03_nostr`'s hex secret
 exactly as those deployments load them, because a decoy that stopped parsing is a worse outcome
@@ -718,8 +724,8 @@ Conventions the build depends on:
   constraint is compiled from, so it lives in `schema.ts`, and `SignalRecord.state`,
   `RunRecord.state`, `MessageRecord.direction` and `ScheduleRecord.kind` are declared with the
   unions and go out on the wire, so a reader of a record has to be able to name them. The overlap
-  is recorded in ADR-0055 with the two ways of ending it that were declined, and it is also held
-  in place by `check:docs`: a record's field declared with a union that no documented specifier
+  is **permanent**, recorded in ADR-0055 with the three ways of ending it that were declined, and
+  it is also held in place by `check:docs`: a record's field declared with a union that no documented specifier
   exports is the dangling reference `treatWarningsAsErrors` fails on, the way `CursorWindow` did.
 - **The schema object is `schema` and the wrapper is `tables`, and the prefixes they used to
   carry are history rather than a rule.** `usersSchema` and `usersTables` existed to survive a
@@ -772,16 +778,22 @@ Conventions the build depends on:
   driving the fake Relay with a real client is the only thing that proves it is a Relay,
   and signing a real NIP-98 event the only thing that proves a forgery is refused.
 
-  **One entry, deliberately.** Biome applies the *last* matching `overrides` entry for a
-  rule and **replaces** its configuration rather than merging it, so `pg` in one entry and
-  `jose` in a second leaves only `jose` live — which is exactly what had happened, silently,
-  for as long as there were two entries. A `//` comment anywhere in `biome.json` disables
-  the overrides too, with no parse error and no warning. Neither says anything on the
-  console, so `src/import-confinement.test.ts` runs the real Biome over a probe at a real
-  path and reads what it says, per library and per specifier — `nostr-tools` ships forty
-  subpaths and the component imports two, so the patterns name the subpaths as well as the
-  bare package. Add a confinement to that entry and to that test, and never as a second
-  entry.
+  **One entry for the confinement, deliberately, and the trap is per rule rather than per
+  entry.** Biome applies the *last* matching `overrides` entry for a **rule** and **replaces**
+  its configuration rather than merging it, so `pg` in one entry and `jose` in a second leaves
+  only `jose` live — which is exactly what had happened, silently, for as long as there were
+  two entries. `biome.json` has a second entry again, the one that turns
+  `style/noNonNullAssertion` off under `examples/`, and an example file matches both. That is
+  safe because the two entries name **different rules**, which is verified rather than read: a
+  probe at `examples/00_minimal/` importing `pg` and asserting `process.env.Y!` is answered with
+  the confinement error and no assertion warning, so both entries are live at once. Same group,
+  `style`, and it makes no difference. A second entry naming a rule the confinement entry
+  already names is the thing that breaks, and it breaks in silence. A `//` comment anywhere in
+  `biome.json` disables the overrides too, with no parse error and no warning. Neither says
+  anything on the console, so `src/import-confinement.test.ts` runs the real Biome over a probe
+  at a real path and reads what it says, per library and per specifier — `nostr-tools` ships
+  forty subpaths and the component imports two, so the patterns name the subpaths as well as
+  the bare package. Add a confinement to that entry and to that test, and never as a third.
 - **Exactly one shipped module imports a *value* from `fastify`, and it is
   `dist/gateway/gateway.js`.** It constructs the two infrastructure servers and
   cannot do it any other way
