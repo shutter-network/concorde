@@ -14,7 +14,7 @@ that both of them read. It shows:
 - **Signatures and Decisions are two components.** Signatures holds the key and signs
   anything; Decisions is the numbered, stored log that signs through it. An agent that only
   needs a receipt builds the first and not the second.
-- **Which components own tables.** `schema.ts` is five specifiers wide for six components.
+- **Which components own tables.** `drizzle.config.ts` names five components for six.
   Signatures owns none, because a Signed Statement is never kept. The HTTP Channel owns none,
   because HTTP delivery is the User asking.
 
@@ -153,13 +153,12 @@ docker compose down -v
 
 ## Look around
 
-- `main.ts` is the whole deployment: the Runtime, six components, one Handler, and the seeding
-  block that creates both people in one transaction.
+- `main.ts` is the whole deployment: the Runtime, six components, one Handler, the prompt that
+  Handler renders, and the seeding block that creates both people in one transaction.
 - `AGENTS.md` is mounted read-only into the agent's Workspace, and it is where the agent is told
   that a commitment is published as a Decision and then messaged to both parties. Publishing
   notifies nobody, so without that second step a Decision sits in a log nobody is watching. It
   is also what keeps the terminal client a client of two routes and nothing else.
-- `message-received.hbs` is the prompt the agent is woken with.
 - The Gateway describes its own HTTP API, and the Public server is published at
   <http://127.0.0.1:8082/docs>. That is 8082 and not 8080, so this stack and the other examples
   can run at the same time.

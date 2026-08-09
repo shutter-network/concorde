@@ -1,6 +1,5 @@
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
-import path from "node:path";
 import { createDecisions } from "shared-agent-framework/decisions";
 import { createGateway } from "shared-agent-framework/gateway";
 import { createHttpChannel } from "shared-agent-framework/http-channel";
@@ -14,9 +13,6 @@ import { createPiRuntime } from "shared-agent-framework/pi";
 import { templateHandler } from "shared-agent-framework/signals";
 import { createSignatures } from "shared-agent-framework/signatures";
 import { createUsers } from "shared-agent-framework/users";
-
-const baseDirGateway = process.env.BASE_DIR_GATEWAY!;
-const baseDirHost = process.env.BASE_DIR_HOST!;
 
 const signingKey = createPrivateKey(readFileSync(process.env.SIGNING_KEY_FILE!));
 
@@ -35,27 +31,13 @@ const runtime = createPiRuntime({
   },
   networks: [process.env.AGENT_NETWORK!],
   mounts: {
+    runtimeDir: process.env.RUNTIME_DIR_HOST!,
     entries: [
-      {
-        agentPath: "/workspace",
-        gatewayPath: path.join(baseDirGateway, "state", "workspace"),
-      },
-      {
-        agentPath: "/home/agent/.pi/agent",
-        gatewayPath: path.join(baseDirGateway, "state", "agent"),
-      },
-      {
-        agentPath: "/workspace/AGENTS.md",
-        gatewayPath: path.join(baseDirGateway, "AGENTS.md"),
-        readOnly: true,
-      },
-      {
-        agentPath: "/home/agent/.pi/agent/settings.json",
-        gatewayPath: path.join(baseDirGateway, "settings.json"),
-        readOnly: true,
-      },
+      { agentPath: "/workspace", path: "state/workspace" },
+      { agentPath: "/home/agent/.pi/agent", path: "state/agent" },
+      { agentPath: "/workspace/AGENTS.md", path: "AGENTS.md", readOnly: true },
+      { agentPath: "/home/agent/.pi/agent/settings.json", path: "settings.json", readOnly: true },
     ],
-    hostRoot: { gatewayPath: baseDirGateway, hostPath: baseDirHost },
   },
 });
 
@@ -75,7 +57,13 @@ const gateway = createGateway({
   },
   handlers: () => ({
     [messageReceivedKind]: templateHandler<MessageRecord>({
-      template: new URL("./message-received.hbs", import.meta.url),
+      template: `A message arrived for you from user {{userId}}. They said:
+
+{{text}}
+
+This message is {{userId}}'s. Your answer goes to {{userId}} and to no one else.
+
+Answer them by sending them a Message. Your final reply here reaches nobody.`,
       session: (signal) => `user_${signal.payload.userId}`,
       data: (signal) => signal.payload,
     }),
