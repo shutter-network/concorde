@@ -14,7 +14,7 @@ Messenger and the HTTP Channel, one seeded person, and a terminal client. It sho
 - **A seeded person, in one transaction.** `main.ts` creates the User and sets their password
   together, so a User nobody can log in as never reaches the table. It is guarded by an empty
   list, so a restart keeps the id you copied.
-- **Which components own tables.** `schema.ts` is four specifiers wide for five components. The
+- **Which components own tables.** `drizzle.config.ts` names four components for five. The
   HTTP Channel has none: it stores nothing and queues nothing, because HTTP delivery is the
   User asking.
 
@@ -47,10 +47,8 @@ docker compose down -v
 
 ## Look around
 
-- `main.ts` is the whole deployment: the Runtime, four components, one Handler, and the seeding
-  block.
-- `message-received.hbs` is the prompt the agent is woken with, and it is where the agent is
-  told to answer by calling the Gateway rather than by replying.
+- `main.ts` is the whole deployment: the Runtime, four components, one Handler, the prompt that
+  Handler renders, and the seeding block.
 - The Gateway describes its own HTTP API, and the Public server is published at
   <http://127.0.0.1:8081/docs>. That is 8081 and not 8080, so this stack and the other examples
   can run at the same time.

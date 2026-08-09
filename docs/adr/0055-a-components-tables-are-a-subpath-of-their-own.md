@@ -92,6 +92,42 @@ their record types would remove the derivation, and it would take four names a D
 with it. So the overlap stands and is recorded here. What the split is actually for is the tables,
 and no table is on more than one specifier.
 
+## A config resolves the specifiers with `createRequire`, because it runs as CommonJS
+
+`drizzle-kit` reads `drizzle.config.ts` by registering `tsx` and calling `require()` on it, so the
+file is transformed to CommonJS before it runs whatever the deployment's `package.json` says. Two
+things an ES module has are therefore not available in it. Top-level `await` fails the transform,
+with `Top-level await is currently not supported with the "cjs" output format`. And
+`import.meta.resolve` is absent at run time, with `import_meta.resolve is not a function`.
+`import.meta.url` does survive: `tsx` substitutes the real file URL.
+
+So an example resolves the export map through a `require` built on that URL, and one handle answers
+both halves of the config:
+
+```ts
+const requireFrom = createRequire(import.meta.url);
+
+const specifiers = ["users", "password-auth", "messenger", "signals"].map(
+  (component) => `shared-agent-framework/${component}/schema`,
+);
+
+const schema = specifiers.map((specifier) => requireFrom.resolve(specifier));
+```
+
+`requireFrom.resolve` answers the file path `schema` takes. `requireFrom(specifier)` loads the same
+module synchronously, which is what lets `schemaFilter` be **derived** from the `PgSchema` objects
+in it rather than listed beside the specifiers as a second list. That second call is `require()` of
+an ES module, which Node does since 22.12 and refuses with `ERR_REQUIRE_ASYNC_MODULE` for a module
+with a top-level `await` in it: a `/schema` subpath is a star of a `schema.ts` and has none, and
+gaining one would break every config in the same loud way. Both failures above are loud, and
+neither is what the derivation guards against: a config with no `schemaFilter` at all filters both
+sides of the diff down to `public`, finds no difference, prints `No changes detected`, creates not
+one table and exits 0 — the same ending as the `--force` below, reached another way.
+
+The whole of this is a fact about how one tool loads one file. It is written here because the four
+examples carry no code comments, and because the shape reads like an old-fashioned spelling of
+`import.meta.resolve` that somebody will helpfully modernise.
+
 ## The `--force` on `push`
 
 `drizzle-kit push --force` is what an Operator's migrate step runs, and the flag is not
