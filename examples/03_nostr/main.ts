@@ -10,36 +10,24 @@ import { createPiRuntime } from "shared-agent-framework/pi";
 import { templateHandler } from "shared-agent-framework/signals";
 import { createUsers } from "shared-agent-framework/users";
 
-function fromEnv(name: string): string {
-  const value = process.env[name];
-  if (value === undefined) {
-    throw new Error(`set ${name}: the framework reads no environment, so this file does`);
-  }
-  return value;
-}
+const baseDirGateway = process.env.BASE_DIR_GATEWAY!;
+const baseDirHost = process.env.BASE_DIR_HOST!;
+const relayUrl = process.env.RELAY_URL!;
 
-const baseDirGateway = fromEnv("BASE_DIR_GATEWAY");
-const baseDirHost = fromEnv("BASE_DIR_HOST");
-const databaseUrl = fromEnv("DATABASE_URL");
-const relayUrl = fromEnv("RELAY_URL");
+const secretKey = Uint8Array.from(Buffer.from(process.env.NOSTR_AGENT_SECRET_KEY!, "hex"));
 
-// The framework parses no key material and generates none, so the hex becomes 32 raw bytes here.
-const secretKey = Uint8Array.from(Buffer.from(fromEnv("NOSTR_AGENT_SECRET_KEY"), "hex"));
-
-// Public keys and no secrets. An Operator records the key they were handed out of band, and the
-// person keeps the half that signs.
 const people = [
-  { name: "alice", pubkey: fromEnv("ALICE_PUBKEY") },
-  { name: "bob", pubkey: fromEnv("BOB_PUBKEY") },
+  { name: "alice", pubkey: process.env.ALICE_PUBKEY! },
+  { name: "bob", pubkey: process.env.BOB_PUBKEY! },
 ];
 
-const publicPort = 8083;
-const agentPort = 7411;
-
 const runtime = createPiRuntime({
-  image: "saf-nostr-agent:0.83.0",
-  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "" },
-  networks: ["saf_nostr_agent"],
+  image: process.env.AGENT_IMAGE!,
+  env: {
+    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY!,
+    AGENT_SERVER_URL: process.env.AGENT_SERVER_URL!,
+  },
+  networks: [process.env.AGENT_NETWORK!],
   mounts: {
     entries: [
       {
@@ -66,18 +54,13 @@ const runtime = createPiRuntime({
 });
 
 const gateway = createGateway({
-  databaseUrl,
+  databaseUrl: process.env.DATABASE_URL!,
   runtime,
-  publicListen: { host: "0.0.0.0", port: publicPort },
-  agentListen: { host: "0.0.0.0", port: agentPort },
+  publicListen: { host: process.env.PUBLIC_HOST!, port: Number(process.env.PUBLIC_PORT) },
+  agentListen: { host: process.env.AGENT_HOST!, port: Number(process.env.AGENT_PORT) },
   extend: ({ db, agentServer, worker }) => {
-    // No Public server and no Auth: nobody reaches this deployment over HTTP. Handing Users the
-    // Public server would register `GET /users/me` behind a `requireUser` no scheme composes,
-    // and that route throws on every request instead of serving one.
     const users = createUsers({ db, agentServer });
     const messenger = createMessenger({ db, users, worker, agentServer });
-    // The Channel registers itself with the Messenger and registers no route anywhere. The
-    // relay is what a person reaches over this medium.
     const nostr = createNostrChannel({ db, messenger, users, secretKey, relayUrl });
     return { users, messenger, nostr };
   },
@@ -94,9 +77,6 @@ await gateway.start();
 
 const { db, users, nostr } = gateway.components;
 
-// One transaction for both people. A User comes into existence, gets whatever the Operator
-// records about them, and is admitted to this medium, and either all of that commits or none of
-// it does. Guarded by an empty list so a restart does not mint a second pair.
 if ((await users.list({ limit: 1 })).length === 0) {
   await db.tx(async (tx) => {
     for (const person of people) {

@@ -1,6 +1,3 @@
-# `nak` publishes no image, so this builds one. It is a third-party NIP-17 implementation by the
-# author of the NIPs, which is the whole point of driving this example with it: a client we wrote
-# talking to a server we wrote would prove only that our two halves agree.
 FROM golang:1.25-alpine
 
 RUN apk add --no-cache bash

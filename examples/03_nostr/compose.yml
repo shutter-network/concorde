@@ -1,9 +1,7 @@
 name: saf-example-03-nostr
 
-# One database, named once: `migrate` applies the schema to it and the Gateway queries it.
 x-database-url: &database-url postgres://saf:saf@postgres:5432/saf
 
-# One relay, named once: the Gateway connects to it and both `nak` containers publish to it.
 x-relay-url: &relay-url ws://relay:7777
 
 services:
@@ -15,27 +13,23 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?copy .env.example to .env and put your model key in it}
       DATABASE_URL: *database-url
       RELAY_URL: *relay-url
-      # WARNING: a throwaway key committed to this repository. Everyone who has read it can be
-      # this agent. A real deployment generates its own and never commits it.
       NOSTR_AGENT_SECRET_KEY: ${NOSTR_AGENT_SECRET_KEY:?copy .env.example to .env}
-      # Public keys only. The Gateway never sees a User's secret.
       ALICE_PUBKEY: ${ALICE_PUBKEY:?copy .env.example to .env}
       BOB_PUBKEY: ${BOB_PUBKEY:?copy .env.example to .env}
-      # The shared tree, named on both sides: BASE_DIR_GATEWAY is where this container sees it,
-      # BASE_DIR_HOST is where it is on the host. The daemon resolves the agent's mounts on the
-      # host, so AGENTS.md and settings.json are read from this directory rather than from the
-      # image, and editing either takes effect on the next Run.
+      PUBLIC_HOST: 0.0.0.0
+      PUBLIC_PORT: "8083"
+      AGENT_HOST: 0.0.0.0
+      AGENT_PORT: "7411"
+      AGENT_SERVER_URL: http://gateway:7411
+      AGENT_IMAGE: saf-nostr-agent:0.83.0
+      AGENT_NETWORK: saf_nostr_agent
       BASE_DIR_GATEWAY: /app
       BASE_DIR_HOST: ${PWD}
     volumes:
-      # The Gateway runs the agent's container itself. This socket is root on the host.
       - /var/run/docker.sock:/var/run/docker.sock
       - ./state/workspace:/app/state/workspace
       - ./state/agent:/app/state/agent
     ports:
-      # The Nostr Channel registers no route and no Auth is built, so the only things on the
-      # Public server are the OpenAPI document at /openapi.json and the page at /docs. The Agent
-      # server is bound but published to nobody.
       - "127.0.0.1:8083:8083"
     networks: [db, agent, nostr]
     depends_on:
@@ -49,9 +43,6 @@ services:
         condition: service_completed_successfully
     stop_grace_period: 300s
 
-  # This deployment owns its database, so this deployment applies its schema: one shot, and gone.
-  # `push` because this database is a volume you throw away. `--force` because a push that finds
-  # no TTY to ask about a destructive statement otherwise applies nothing and exits 0.
   migrate:
     build:
       context: .
@@ -80,33 +71,19 @@ services:
       timeout: 3s
       retries: 20
 
-  # The Operator's own relay, and the whole of what a person reaches over this medium.
-  #
-  # Two things about this image are silent failures. Without a volume at /app/strfry-db it dies
-  # with `mdb_env_open: No such file or directory`, the image creating no directory. Without the
-  # committed strfry.conf it starts, looks healthy, and rejects every write, its shipped config
-  # naming a write-policy script whose whitelist holds placeholder pubkeys.
   relay:
     image: dockurr/strfry:1.1.1
     volumes:
       - relay:/app/strfry-db
-      # Over the template and not over /etc/strfry.conf, which is where strfry reads. The image's
-      # entrypoint copies one to the other on start, and strfry watches what it read: given a
-      # bind mount there it re-reads it ten times a second forever and logs each pass.
       - ./strfry.conf:/etc/strfry.conf.default:ro
     ports:
-      # Published so you can point your own tooling at ws://127.0.0.1:7777. Nothing in this stack
-      # needs it: the Gateway and both `nak` containers reach the relay by service name.
       - "127.0.0.1:7777:7777"
     networks: [nostr]
     healthcheck:
-      # The image's own test, on a shorter clock. Its interval is 60s, which would hold the
-      # Gateway's boot for a minute before the first check ran.
       interval: 3s
       timeout: 3s
       retries: 20
 
-  # Built here so it exists before the first message; the Gateway runs it, compose does not.
   agent-image:
     build:
       context: .
@@ -116,10 +93,6 @@ services:
     restart: "no"
     networks: [agent]
 
-  # The two people, each with their own secret and nobody else's. Held out of `up` by a profile
-  # and reached with `docker compose run --rm nak-alice "your message"`.
-  #
-  # WARNING: both secrets are throwaway keys committed to this repository.
   nak-alice:
     build:
       context: .
@@ -149,7 +122,6 @@ services:
 networks:
   db:
     name: saf_nostr_db
-  # main.ts names this network, so the agent's container can reach the Gateway as `gateway`.
   agent:
     name: saf_nostr_agent
   nostr:

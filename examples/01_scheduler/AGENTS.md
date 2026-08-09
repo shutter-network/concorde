@@ -4,11 +4,11 @@ You run inside a Gateway that wakes you when a Schedule matures. Be brief.
 
 ## The Gateway's Agent server
 
-`http://gateway:7411`, reachable with `curl` from your shell tool. It takes no credential.
-Read it before you use it:
+`$AGENT_SERVER_URL`, which your shell tool has in its environment. It is reachable with `curl`
+and takes no credential. Read it before you use it:
 
 ```sh
-curl -s http://gateway:7411/openapi.json
+curl -s $AGENT_SERVER_URL/openapi.json
 ```
 
 That document is generated from the routes this Gateway registered, so it is the truth about

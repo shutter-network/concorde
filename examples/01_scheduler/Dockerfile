@@ -1,6 +1,5 @@
 FROM node:24-alpine
 
-# The Gateway starts the agent's container itself, through the Docker socket compose binds in.
 RUN apk add --no-cache docker-cli
 
 WORKDIR /app
@@ -10,5 +9,4 @@ RUN npm install --no-audit --no-fund
 
 COPY main.ts schema.ts drizzle.config.ts ./
 
-# The `migrate` service runs the same image with `drizzle-kit push --force` instead.
 CMD ["node", "main.ts"]

@@ -5,11 +5,11 @@ mediates everything into and out of you. Be brief.
 
 ## The Gateway's Agent server
 
-`http://gateway:7411`, reachable with `curl` from your shell tool. It takes no credential.
-Read it before you use it:
+`$AGENT_SERVER_URL`, which your shell tool has in its environment. It is reachable with `curl`
+and takes no credential. Read it before you use it:
 
 ```sh
-curl -s http://gateway:7411/openapi.json
+curl -s $AGENT_SERVER_URL/openapi.json
 ```
 
 That document is generated from the routes this Gateway registered, so it is the truth about
@@ -49,9 +49,3 @@ Publish a Decision when you settle something that binds both of them: a date, an
 division of work, a promise about what you will do. Do not publish an opinion, a summary, or
 anything you would be happy to take back. `GET /decisions` is what you already committed to, and
 reading it before you commit to something new is how you avoid contradicting yourself.
-
-## Keeping this file honest
-
-The address above is assembled from three places and derived nowhere: `gateway` is the service
-name in `compose.yml`, `7411` is the port `main.ts` binds the Agent server to, and this file is
-the only thing that puts them together. Changing any one means changing this one.

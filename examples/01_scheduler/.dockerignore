@@ -1,4 +1,3 @@
-# The build context is this directory, and neither image wants what the host wrote into it.
 node_modules
 state
 .env

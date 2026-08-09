@@ -8,20 +8,8 @@ import {
 } from "shared-agent-framework/scheduler";
 import type { SignalHandler } from "shared-agent-framework/signals";
 
-function fromEnv(name: string): string {
-  const value = process.env[name];
-  if (value === undefined) {
-    throw new Error(`set ${name}: the framework reads no environment, so this file does`);
-  }
-  return value;
-}
-
-const baseDirGateway = fromEnv("BASE_DIR_GATEWAY");
-const baseDirHost = fromEnv("BASE_DIR_HOST");
-const databaseUrl = fromEnv("DATABASE_URL");
-
-const publicPort = 8080;
-const agentPort = 7411;
+const baseDirGateway = process.env.BASE_DIR_GATEWAY!;
+const baseDirHost = process.env.BASE_DIR_HOST!;
 
 function taskOf(data: unknown): string | undefined {
   if (typeof data !== "object" || data === null) return undefined;
@@ -29,9 +17,6 @@ function taskOf(data: unknown): string | undefined {
   return data.task;
 }
 
-// Written by hand rather than with `templateHandler`, so there is no `.hbs` here. Every fire of
-// every Schedule arrives under one fixed kind, whoever arranged it, so the routing is on the
-// `data` each Schedule carried.
 const scheduleFired: SignalHandler<ScheduleFiredRecord> = {
   handle(signal) {
     const { scheduleName, data, scheduledFor, firedAt } = signal.payload;
@@ -52,9 +37,12 @@ const scheduleFired: SignalHandler<ScheduleFiredRecord> = {
 };
 
 const runtime = createPiRuntime({
-  image: "saf-scheduler-agent:0.83.0",
-  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "" },
-  networks: ["saf_scheduler_agent"],
+  image: process.env.AGENT_IMAGE!,
+  env: {
+    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY!,
+    AGENT_SERVER_URL: process.env.AGENT_SERVER_URL!,
+  },
+  networks: [process.env.AGENT_NETWORK!],
   mounts: {
     entries: [
       {
@@ -81,11 +69,10 @@ const runtime = createPiRuntime({
 });
 
 const gateway = createGateway({
-  databaseUrl,
+  databaseUrl: process.env.DATABASE_URL!,
   runtime,
-  publicListen: { host: "0.0.0.0", port: publicPort },
-  agentListen: { host: "0.0.0.0", port: agentPort },
-  // One component. No Users, no Messenger and no Channel: nothing here reaches a person.
+  publicListen: { host: process.env.PUBLIC_HOST!, port: Number(process.env.PUBLIC_PORT) },
+  agentListen: { host: process.env.AGENT_HOST!, port: Number(process.env.AGENT_PORT) },
   extend: ({ db, worker, agentServer }) => ({
     scheduler: createScheduler({ db, worker, agentServer }),
   }),
@@ -94,7 +81,6 @@ const gateway = createGateway({
 
 await gateway.start();
 
-// Both are upserts by name, so a restart converges on these two rather than adding a pair.
 await gateway.components.scheduler.schedule({
   name: "hello-once",
   spec: { kind: "once", at: new Date(Date.now() + 20_000).toISOString() },

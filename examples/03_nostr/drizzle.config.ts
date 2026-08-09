@@ -8,8 +8,6 @@ if (databaseUrl === undefined) {
   throw new Error("set DATABASE_URL to the database this deployment applies its schema to");
 }
 
-// Derived from the barrel rather than listed. Without it `drizzle-kit` filters both sides of the
-// diff down to `public`, finds no difference, creates no table and exits 0.
 const schemaFilter = Object.values(schema)
   .filter((exported) => is(exported, PgSchema))
   .map((pgSchema) => pgSchema.schemaName);

@@ -51,8 +51,11 @@ docker compose down -v
   block that creates both people and admits them in one transaction.
 - `send.sh` is the pipeline `nak-alice` and `nak-bob` run: a kind 14 rumor, sealed and gift
   wrapped, handed to the relay, and then a subscription for wraps coming the other way.
-- `strfry.conf` is the relay image's own template with one line changed. Its header says which
-  line and what happens without the change.
+- `strfry.conf` is the relay image's own `/etc/strfry.conf.default` with one line changed:
+  `writePolicy.plugin` is empty. The shipped value names a script whose whitelist holds
+  placeholder pubkeys, so a relay started on it looks healthy and rejects every write. Read the
+  template it came from with
+  `docker run --rm --entrypoint cat dockurr/strfry:1.1.1 /etc/strfry.conf.default`.
 - The relay is published at `ws://127.0.0.1:7777`, so your own tooling can reach it. Nothing in
   this stack needs that: every container reaches it by service name.
 - The Gateway describes its own HTTP API at <http://127.0.0.1:8083/docs>.

@@ -9,8 +9,6 @@
     "strict": true,
     "verbatimModuleSyntax": true,
 
-    // Node 24 runs these files by stripping types, so there is no build step and an
-    // import may name a `.ts` file.
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
 

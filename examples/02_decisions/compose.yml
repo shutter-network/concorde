@@ -1,12 +1,7 @@
 name: saf-example-02-decisions
 
-# One database, named once: `migrate` applies the schema to it and the Gateway queries it.
 x-database-url: &database-url postgres://saf:saf@postgres:5432/saf
 
-# One terminal client, described once and run as two people below. The client is a bin on the
-# framework package, so this pulls it from the registry rather than building anything, and no path
-# in this file points outside this directory. It joins the same network the Public server is on and
-# reaches the Gateway by service name, so nothing here depends on the published port.
 x-tui: &tui
   image: node:24-alpine
   profiles: [cli]
@@ -21,32 +16,24 @@ services:
     environment:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?copy .env.example to .env and put your model key in it}
       DATABASE_URL: *database-url
-      # The two passwords `main.ts` gives the two seeded Users. A demo affordance: see .env.example.
       ALICE_PASSWORD: ${ALICE_PASSWORD:?copy .env.example to .env}
       BOB_PASSWORD: ${BOB_PASSWORD:?copy .env.example to .env}
-      # The Shared Agent's signing identity, which main.ts loads itself: the framework parses no
-      # PEM and generates no keypair. WARNING: this key is committed to this repository and is
-      # worthless. Everyone who has read the repository can forge every signature it makes.
       SIGNING_KEY_FILE: /app/insecure-example-only-signing-key.pem
-      # The shared tree, named on both sides: BASE_DIR_GATEWAY is where this container sees it,
-      # BASE_DIR_HOST is where it is on the host. The daemon resolves the agent's mounts on the
-      # host, so AGENTS.md and settings.json are read from this directory rather than from the
-      # image, and editing either takes effect on the next Run.
+      PUBLIC_HOST: 0.0.0.0
+      PUBLIC_PORT: "8082"
+      AGENT_HOST: 0.0.0.0
+      AGENT_PORT: "7411"
+      AGENT_SERVER_URL: http://gateway:7411
+      AGENT_IMAGE: saf-decisions-agent:0.83.0
+      AGENT_NETWORK: saf_decisions_agent
       BASE_DIR_GATEWAY: /app
       BASE_DIR_HOST: ${PWD}
     volumes:
-      # The Gateway runs the agent's container itself. This socket is root on the host.
       - /var/run/docker.sock:/var/run/docker.sock
-      # The committed decoy signing key, read-only and never built into the image. WARNING:
-      # worthless and public. A real deployment mounts a key it generated and never committed.
       - ./insecure-example-only-signing-key.pem:/app/insecure-example-only-signing-key.pem:ro
       - ./state/workspace:/app/state/workspace
       - ./state/agent:/app/state/agent
     ports:
-      # The login, the HTTP Channel's two routes, the Decision log, GET /jwks.json, POST /verify,
-      # GET /users/me, the OpenAPI document at /openapi.json and the page at /docs. The Agent
-      # server is bound but published to nobody. 8082 rather than 8080, so this stack and the
-      # other examples can run at the same time.
       - "127.0.0.1:8082:8082"
     networks: [db, agent, public]
     depends_on:
@@ -58,9 +45,6 @@ services:
         condition: service_completed_successfully
     stop_grace_period: 300s
 
-  # This deployment owns its database, so this deployment applies its schema: one shot, and gone.
-  # `push` because this database is a volume you throw away. `--force` because a push that finds
-  # no TTY to ask about a destructive statement otherwise applies nothing and exits 0.
   migrate:
     build:
       context: .
@@ -89,7 +73,6 @@ services:
       timeout: 3s
       retries: 20
 
-  # Built here so it exists before the first message; the Gateway runs it, compose does not.
   agent-image:
     build:
       context: .
@@ -99,9 +82,6 @@ services:
     restart: "no"
     networks: [agent]
 
-  # Two people, two credentials, two terminals. Held out of `up` by a profile and reached with
-  # `docker compose run --rm tui-alice <alice-id>`, the id being one the Gateway printed. Each
-  # service carries one person's password, so handing one the other's id fails at the login.
   tui-alice:
     <<: *tui
     environment:
@@ -117,7 +97,6 @@ services:
 networks:
   db:
     name: saf_decisions_db
-  # main.ts names this network, so the agent's container can reach the Gateway as `gateway`.
   agent:
     name: saf_decisions_agent
   public:

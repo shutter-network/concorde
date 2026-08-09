@@ -11,27 +11,19 @@ import { createPiRuntime } from "shared-agent-framework/pi";
 import { templateHandler } from "shared-agent-framework/signals";
 import { createUsers } from "shared-agent-framework/users";
 
-function fromEnv(name: string): string {
-  const value = process.env[name];
-  if (value === undefined) {
-    throw new Error(`set ${name}: the framework reads no environment, so this file does`);
-  }
-  return value;
-}
+const baseDirGateway = process.env.BASE_DIR_GATEWAY!;
+const baseDirHost = process.env.BASE_DIR_HOST!;
+const password = process.env.USER_PASSWORD!;
 
-const baseDirGateway = fromEnv("BASE_DIR_GATEWAY");
-const baseDirHost = fromEnv("BASE_DIR_HOST");
-const databaseUrl = fromEnv("DATABASE_URL");
-const password = fromEnv("USER_PASSWORD");
-
-const publicPort = 8081;
-const agentPort = 7411;
 const tokenTtl = 30 * 24 * 60 * 60 * 1000;
 
 const runtime = createPiRuntime({
-  image: "saf-minimal-agent:0.83.0",
-  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "" },
-  networks: ["saf_minimal_agent"],
+  image: process.env.AGENT_IMAGE!,
+  env: {
+    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY!,
+    AGENT_SERVER_URL: process.env.AGENT_SERVER_URL!,
+  },
+  networks: [process.env.AGENT_NETWORK!],
   mounts: {
     entries: [
       {
@@ -58,15 +50,12 @@ const runtime = createPiRuntime({
 });
 
 const gateway = createGateway({
-  databaseUrl,
+  databaseUrl: process.env.DATABASE_URL!,
   runtime,
-  publicListen: { host: "0.0.0.0", port: publicPort },
-  agentListen: { host: "0.0.0.0", port: agentPort },
+  publicListen: { host: process.env.PUBLIC_HOST!, port: Number(process.env.PUBLIC_PORT) },
+  agentListen: { host: process.env.AGENT_HOST!, port: Number(process.env.AGENT_PORT) },
   extend: ({ db, agentServer, publicServer, worker }) => {
     const users = createUsers({ db, agentServer, publicServer });
-    // The one scheme this deployment accepts. It registers itself with the Public server, and that
-    // server composes every registered Auth into the one `requireUser` the Channel's two routes
-    // take. Build none and every route on that server refuses every request.
     const passwordAuth = createPasswordAuth({ db, users, publicServer, tokenTtl });
     const messenger = createMessenger({ db, users, worker, agentServer });
     const httpChannel = createHttpChannel({ db, messenger, publicServer });
@@ -85,8 +74,6 @@ await gateway.start();
 
 const { db, users, passwordAuth } = gateway.components;
 
-// One transaction, so a User nobody can log in as never reaches the table. Guarded by an empty
-// list so a restart does not mint a second person and invalidate the id you copied.
 if ((await users.list({ limit: 1 })).length === 0) {
   await db.tx(async (tx) => {
     const user = await users.create(tx);
