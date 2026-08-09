@@ -23,8 +23,7 @@ services:
       AGENT_SERVER_URL: http://gateway:7411
       AGENT_IMAGE: saf-nostr-agent:0.83.0
       AGENT_NETWORK: saf_nostr_agent
-      BASE_DIR_GATEWAY: /app
-      BASE_DIR_HOST: ${PWD}
+      RUNTIME_DIR_HOST: ${PWD}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./state/workspace:/app/state/workspace

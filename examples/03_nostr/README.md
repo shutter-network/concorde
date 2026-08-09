@@ -13,9 +13,10 @@ Two people talking to one agent over Nostr, against a relay this stack runs. It 
   route anywhere admits a stranger.
 - **The Operator never sees a secret.** `main.ts` reads the two **public** keys. Each secret
   goes to that person's own `nak` container and nowhere else.
-- **A Channel with tables of its own.** The other Channel that ships has none. `schema.ts` is
-  four specifiers wide because of the three in `saf_nostr_channel`, two of which reference
-  `saf_users.users.id`.
+- **A Channel with tables of its own.** The other Channel that ships has none.
+  `drizzle.config.ts` is four specifiers wide because of the three in `saf_nostr_channel`, two of
+  which reference `saf_users.users.id`. `users` is in that list although nobody logs in here:
+  leave it out and the push builds a foreign key onto a table nothing creates.
 
 **This example is less pleasant to use than the other three, and that is deliberate.** No
 terminal client does NIP-17, so talking to the agent is a script and a stream of JSON rather
@@ -47,8 +48,9 @@ docker compose down -v
 
 ## Look around
 
-- `main.ts` is the whole deployment: the Runtime, three components, one Handler, and the seeding
-  block that creates both people and admits them in one transaction.
+- `main.ts` is the whole deployment: the Runtime, three components, one Handler, the prompt that
+  Handler renders, and the seeding block that creates both people and admits them in one
+  transaction.
 - `send.sh` is the pipeline `nak-alice` and `nak-bob` run: a kind 14 rumor, sealed and gift
   wrapped, handed to the relay, and then a subscription for wraps coming the other way.
 - `strfry.conf` is the relay image's own `/etc/strfry.conf.default` with one line changed:
