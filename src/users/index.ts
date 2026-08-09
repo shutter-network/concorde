@@ -18,9 +18,10 @@
  * The agent's routes are `GET /users` and `GET /users/:id`, and the one Public route is
  * `GET /users/me`, which echoes the authenticated User whichever scheme named them.
  *
- * The subpath exports the `users` table beside the constructor, for the schema an Operator generates
- * their migrations from. The Messenger, the Nostr Channel, Password Auth and Nostr Auth all point a
- * foreign key at it, so a schema carrying any of them without this subpath generates a constraint
+ * The tables are not here. `shared-agent-framework/users/schema` is the subpath an Operator points
+ * their `drizzle-kit` at, and it is the only place the `users` table is reachable from. The
+ * Messenger, the Nostr Channel, Password Auth and Nostr Auth all point a foreign key at that table,
+ * so a configuration listing any of their schema subpaths without this one generates a constraint
  * onto a table it never creates.
  *
  * Importing this subpath declares `request.safUser` on every `FastifyRequest` in the program,
@@ -67,10 +68,5 @@
  */
 
 export type { UserRecord } from "./routes.ts";
-// A star and not a list, so every table stays a top-level name an Operator's `drizzle-kit` can
-// see. It never looks inside a wrapper object. `usersSchema` keeps its prefix, because `export *`
-// drops a name that resolves to two bindings. Eight components exporting a bare `schema` give a
-// barrel that exports none. That is a push which creates nothing and exits 0.
-export * from "./schema.ts";
 export type { Users, UsersOptions } from "./users.ts";
 export { createUsers } from "./users.ts";

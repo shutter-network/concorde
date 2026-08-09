@@ -23,10 +23,10 @@
  * may be reachable over Nostr without being allowed to drive the HTTP API, and the reverse. A
  * deployment running both writes both, and nothing checks that they agree.
  *
- * The subpath exports the `grants` and `admitted` tables beside the constructor, for the schema an
- * Operator generates their migrations from. `grants.user_id` points a foreign key at the `users`
- * table, so a schema carrying this subpath without `shared-agent-framework/users` generates a
- * constraint onto a table it never creates.
+ * The tables are on `shared-agent-framework/nostr-auth/schema` and nowhere else.
+ * `grants.user_id` points a foreign key at the `users` table, so a configuration listing that
+ * subpath without `shared-agent-framework/users/schema` generates a constraint onto a table it
+ * never creates.
  *
  * @example
  * A Gateway whose Users all hold Nostr keys, with one key granted from the Operator's own code.
@@ -81,9 +81,3 @@
 
 export type { NostrAuth, NostrAuthOptions } from "./nostr-auth.ts";
 export { createNostrAuth } from "./nostr-auth.ts";
-// A star and not a list, so every table stays a top-level name an Operator's `drizzle-kit` can
-// see. It never looks inside a wrapper object. What it does not carry is the Users component's
-// tables. `schema.ts` imports them to declare the foreign key, and re-exports nothing.
-// `nostrAuthSchema` keeps its prefix, because `export *` drops a name that resolves to two
-// bindings, and a barrel exporting a bare `schema` from two components exports none of them.
-export * from "./schema.ts";

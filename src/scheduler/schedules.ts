@@ -20,9 +20,9 @@ import { CronExpressionParser } from "cron-parser";
 import { asc, eq, lte, sql } from "drizzle-orm";
 import { IANAZone } from "luxon";
 import type { Handle } from "../db/index.ts";
-import { type schedulerTables, schedules } from "./schema.ts";
+import { schedules, type tables } from "./schema.ts";
 
-type SchedulerHandle = Handle<typeof schedulerTables>;
+type SchedulerHandle = Handle<typeof tables>;
 
 // Never the server's local zone, so nothing depends on where the Gateway happens to run. Applied
 // at the one place a cron's zone is read, and stored resolved.

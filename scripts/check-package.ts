@@ -11,14 +11,17 @@
  * ([ADR-0046](../docs/adr/0046-the-operator-owns-migrations.md)). That is
  * a recorded cost of that ADR and not an oversight — we no longer author the bytes
  * applied to anybody's production database, so no check here can vouch for them.
- *  - **all fifteen** entry points resolve there, both to the type checker and to Node at
- *    runtime, and fifteen is the whole map: `/gateway`, `/logging`, `/db`, `/agent-container`,
- *    `/signals`, `/pi`, `/users`, `/password-auth`, `/nostr-auth`, `/messenger`, `/http-channel`,
- *    `/nostr-channel`, `/signatures`, `/decisions` and `/scheduler`. A component is
- *    one subpath, carrying its constructor, its types **and its tables**
- *    ([ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md)), so there is no `/schema`
- *    specifier to resolve any more. `/messenger` was reserved and unreachable until the log was
- *    taken out of the HTTP Messenger and the qualifier became a Channel's
+ *  - **all twenty-three** entries resolve there, both to the type checker and to Node at
+ *    runtime, and twenty-three is the whole map. Fifteen are the subpath a Developer imports a
+ *    part from: `/gateway`, `/logging`, `/db`, `/agent-container`, `/signals`, `/pi`, `/users`,
+ *    `/password-auth`, `/nostr-auth`, `/messenger`, `/http-channel`, `/nostr-channel`,
+ *    `/signatures`, `/decisions` and `/scheduler`. The other **eight are `/schema`**, one per
+ *    component that owns tables, because `drizzle-kit`'s config takes file paths and an export
+ *    entry is the only supported way to hand an Operator one
+ *    ([ADR-0055](../docs/adr/0055-a-components-tables-are-a-subpath-of-their-own.md)). A
+ *    component's tables are on exactly one of the two, and the runtime step below is what proves
+ *    the component subpath carries none of them. `/messenger` was reserved and unreachable until
+ *    the log was taken out of the HTTP Messenger and the qualifier became a Channel's
  *    ([ADR-0048](../docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)); it
  *    is a real specifier now, and `/nostr-channel` is the second Channel and the one Channel
  *    that owns tables
@@ -35,22 +38,23 @@
  *    a bare `shared-agent-framework` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`. What that buys
  *    is that nothing lands on the root by accident: a re-export written there resolves to
  *    nowhere, so adding a root export back is a deliberate edit to `exports` and not a slip.
- *  - a component's tables arrive on that same specifier as **top-level named exports**.
+ *  - a component's tables arrive on its `/schema` specifier as **top-level named exports**.
  *    That shape is the whole contract
  *    ([ADR-0046](../docs/adr/0046-the-operator-owns-migrations.md)): `drizzle-kit`'s
  *    exporter takes `Object.values` of a module and keeps what passes `is(x, PgTable)`,
  *    never descending into a plain object, so a table reachable only through a wrapper
  *    is dropped in silence and generates an **empty** migration. The runtime step below
- *    reproduces that collection against a barrel the consumer wrote with `export *`,
- *    which is what an Operator's `drizzle.config.ts` points at.
+ *    reproduces that collection **per module**, which is what `drizzle-kit` does with a list of
+ *    file paths, and resolves each specifier to the file path an Operator's `drizzle.config.ts`
+ *    hands it.
  *  - **the `bin` runs there**, which no import above can reach: `http-client-tui` is a command and
  *    not a specifier, so what an installed package owes is an executable file on the consumer's
  *    `PATH` and the last step below runs it rather than looking for it.
- *  - **that barrel yields one distinct schema object per component**, which is the assertion
- *    ADR-0047's prefixed names exist for. `export *` drops a name that resolves to more than
- *    one binding, so a component whose schema object were renamed to a bare `schema` would be
- *    missing from the barrel, an Operator's derived `schemaFilter` would be short or empty, and
- *    `push` would create nothing and exit 0. Nothing else in the repository notices that.
+ *  - **the eight `/schema` modules yield eight distinct schema objects and thirteen tables, and
+ *    the eight component subpaths yield none of either.** That is the assertion the split exists
+ *    for, and it is the one nothing else in the repository makes: a `schema.ts` re-exported from
+ *    both places would put every table behind two specifiers, and a `/schema` module that stopped
+ *    re-exporting one would leave the table queryable and absent from the DDL.
  *
  * Run with `npm run check:package`. Deliberately not part of `npm run check`: it
  * installs from the registry, so it is far slower than the inner loop should be,
@@ -76,18 +80,19 @@ import { fileURLToPath } from "node:url";
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 /**
- * The consumer's imports, spelled once: the type checker and Node see the same fifteen.
+ * The consumer's imports, spelled once: the type checker and Node see the same twenty-three.
  *
- * **Fifteen lines, one per entry point, and a component's tables ride on the same line as its
- * constructor** — which is the whole of ADR-0047. No line names the bare package, because there is
- * no `.` export left: the four infrastructure specifiers at the top carry what the root used to,
- * and the last step in this script is what proves the root itself resolves to nothing.
+ * **Twenty-three lines, one per entry point, and a component's tables are on a line of their
+ * own.** That is the whole of ADR-0055: `drizzle-kit`'s config takes file paths, so the tables
+ * need an export entry of their own, and having one they are on it and on nothing else. No line
+ * names the bare package, because there is no `.` export left: the four infrastructure specifiers
+ * at the top carry what the root used to, and the last step in this script is what proves the root
+ * itself resolves to nothing.
  *
- * **`tokens` is Password Auth's and nobody else's**, which is what lets the barrel below carry
- * `/users` and `/password-auth` at once. Two components declaring one table name would be the one
- * case `export *` cannot carry: it drops a name resolving to two bindings, so the barrel would
- * export neither and an Operator would get a push that creates nothing. Users keeps identity and
- * holds no credential at all now (ADR-0052), so there is one binding and no alias.
+ * **Every `/schema` line aliases what it imports**, and that is the shape rather than an
+ * inconvenience: eight modules each export a `schema` and a `tables`, so a file naming two of them
+ * says which is which at the import site. The prefixes those names used to carry existed to
+ * survive an `export *` barrel and there is no barrel any more (ADR-0055).
  *
  * The four infrastructure lines own no tables. `/gateway` carries the two assembly constructors
  * and the server adapter, `/logging` the default Logger, `/db` the one call that opens a pool, and
@@ -95,40 +100,55 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
  * Implementation, so a second one needs all of it unchanged (ADR-0033).
  *
  * The HTTP Channel's line carries a constructor
- * and nothing beside it, because it owns no tables at all: the log is the Messenger's, whichever
- * medium a Message travelled by (ADR-0048). The Nostr Channel's carries three tables, because the
- * three things only it can know — which public key is which User, which envelopes it has read, and
- * which replies the Relay has not taken yet — are nobody else's (ADR-0049). It is also the one
- * line carrying error classes: five refusals an Operator branches on with `instanceof`, two from
- * a send and three from recording a key, and `main.ts` below catches every one. The Scheduler's
- * `ScheduleSpecError` is the only other class the package exports, and it is caught there too, so
- * every exported error class is now reached through an `instanceof` rather than only imported.
+ * and nothing beside it, and it has no `/schema` line at all, because it owns no tables: the log is
+ * the Messenger's, whichever medium a Message travelled by (ADR-0048). `/signatures` and `/pi` are
+ * the other two with no `/schema` beside them. The Nostr Channel has one carrying three tables,
+ * because the three things only it can know — which public key is which User, which envelopes it
+ * has read, and which replies the Relay has not taken yet — are nobody else's (ADR-0049). Its
+ * component line is also the one carrying error classes: five refusals an Operator branches on
+ * with `instanceof`, two from a send and three from recording a key, and `main.ts` below catches
+ * every one. The Scheduler's `ScheduleSpecError` is the only other class the package exports, and
+ * it is caught there too, so every exported error class is now reached through an `instanceof`
+ * rather than only imported.
  * Every table is named individually rather than pulled in as a namespace, because naming them is
- * what proves the module flat-exports them: a table that had retreated into `usersTables` would
- * fail to import here, where an `import * as` would resolve and say nothing (ADR-0046). Every
- * schema object is named with its component prefix, because a bare `schema` on each component is
- * a barrel that exports none.
+ * what proves the module flat-exports them: a table that had retreated into `tables` would
+ * fail to import here, where an `import * as` would resolve and say nothing (ADR-0046).
+ *
+ * **The state unions and the arrays behind them are on both subpaths**, and they are the only
+ * names in the package that are. They live in `schema.ts` because the columns' check constraints
+ * are compiled from the arrays, and a `SignalRecord`, a `RunRecord`, a `MessageRecord` and a
+ * `ScheduleRecord` are declared with the unions and go out on the wire, so a reader of a record
+ * reaches them off the component. No table is on both, which is the property that matters
+ * (ADR-0055).
  *
  * `createSignalWorker` and `templateHandler` both come off `/signals`: the Worker owns tables, so
- * it is a component with a subpath of its own (ADR-0047), and the template Handler is written in
- * that component's vocabulary and belongs beside it.
+ * it is a component with a subpath of its own, and the template Handler is written in that
+ * component's vocabulary and belongs beside it.
  */
 const consumerImports = [
   'import { createAgentContainerRuntime, mountArguments } from "shared-agent-framework/agent-container";',
   'import { openDb } from "shared-agent-framework/db";',
   'import { createBareGateway, createGateway, NoAuthRegisteredError, serverComponent } from "shared-agent-framework/gateway";',
   'import { defaultLogger } from "shared-agent-framework/logging";',
-  'import { createSignalWorker, runs as runsTable, runStates, signals as signalsTable, signalStates, templateHandler, workerSchema } from "shared-agent-framework/signals";',
+  'import { createSignalWorker, runStates, signalStates, templateHandler } from "shared-agent-framework/signals";',
+  'import { runs as runsTable, schema as signalsSchema, signals as signalsTable } from "shared-agent-framework/signals/schema";',
   'import { createPiRuntime, interpretPiOutput, piRun } from "shared-agent-framework/pi";',
-  'import { createUsers, users as usersTable, usersSchema } from "shared-agent-framework/users";',
-  'import { createPasswordAuth, passwordAuthSchema, passwords as passwordsTable, tokens as tokensTable } from "shared-agent-framework/password-auth";',
-  'import { admitted as admittedTable, createNostrAuth, grants as grantsTable, nostrAuthSchema } from "shared-agent-framework/nostr-auth";',
-  'import { createMessenger, messageDirections, messageReceivedKind, messages as messagesTable, messengerSchema } from "shared-agent-framework/messenger";',
+  'import { createUsers } from "shared-agent-framework/users";',
+  'import { schema as usersSchema, users as usersTable } from "shared-agent-framework/users/schema";',
+  'import { createPasswordAuth } from "shared-agent-framework/password-auth";',
+  'import { passwords as passwordsTable, schema as passwordAuthSchema, tokens as tokensTable } from "shared-agent-framework/password-auth/schema";',
+  'import { createNostrAuth } from "shared-agent-framework/nostr-auth";',
+  'import { admitted as admittedTable, grants as grantsTable, schema as nostrAuthSchema } from "shared-agent-framework/nostr-auth/schema";',
+  'import { createMessenger, messageDirections, messageReceivedKind } from "shared-agent-framework/messenger";',
+  'import { messages as messagesTable, schema as messengerSchema } from "shared-agent-framework/messenger/schema";',
   'import { createHttpChannel } from "shared-agent-framework/http-channel";',
-  'import { createNostrChannel, MalformedPublicKeyError, MessageTooLargeError, NoSuchUserError, nostrChannelSchema, outbox as outboxTable, pubkeys as pubkeysTable, PublicKeyConflictError, received as receivedTable, UnrecordedPublicKeyError } from "shared-agent-framework/nostr-channel";',
+  'import { createNostrChannel, MalformedPublicKeyError, MessageTooLargeError, NoSuchUserError, PublicKeyConflictError, UnrecordedPublicKeyError } from "shared-agent-framework/nostr-channel";',
+  'import { outbox as outboxTable, pubkeys as pubkeysTable, received as receivedTable, schema as nostrChannelSchema } from "shared-agent-framework/nostr-channel/schema";',
   'import { createSignatures } from "shared-agent-framework/signatures";',
-  'import { createDecisions, decisions as decisionsTable, decisionsSchema } from "shared-agent-framework/decisions";',
-  'import { createScheduler, scheduleFiredKind, scheduleKinds, ScheduleSpecError, schedulerSchema, schedules as schedulesTable } from "shared-agent-framework/scheduler";',
+  'import { createDecisions } from "shared-agent-framework/decisions";',
+  'import { decisions as decisionsTable, schema as decisionsSchema } from "shared-agent-framework/decisions/schema";',
+  'import { createScheduler, scheduleFiredKind, scheduleKinds, ScheduleSpecError } from "shared-agent-framework/scheduler";',
+  'import { schedules as schedulesTable, schema as schedulerSchema } from "shared-agent-framework/scheduler/schema";',
 ];
 
 function run(command: string, args: string[], cwd: string): string {
@@ -245,8 +265,8 @@ try {
     "dist/db/index.d.ts",
     "dist/db/db.js",
     "dist/db/db.d.ts",
-    // The Signal Worker, under its own subpath: it owns tables, and a component that owns
-    // tables has a specifier (ADR-0047).
+    // The Signal Worker, under its own subpath: it is a component and a component is a
+    // specifier, with a second one under it for its tables (ADR-0055).
     "dist/signals/index.js",
     "dist/signals/index.d.ts",
     "dist/signals/worker.js",
@@ -255,24 +275,29 @@ try {
     // scratch project imports it below rather than at an Operator's first Signal.
     "dist/signals/template-handler.js",
     "dist/signals/template-handler.d.ts",
-    // Every component's schema module, `.d.ts` beside `.js`. It has no subpath of its own any
-    // more — the component's `index.js` re-exports it (ADR-0047) — so it ships because that
-    // re-export has to resolve, for Node and for an Operator's type checker both (ADR-0046).
+    // Every component that owns tables ships two things for them: the declarations, which the
+    // component's own modules import, and the `schema/index.js` that re-exports them, which is
+    // what `./<component>/schema` in the export map names (ADR-0055). Both have to resolve, for
+    // Node and for an Operator's type checker (ADR-0046).
     "dist/signals/schema.js",
     "dist/signals/schema.d.ts",
+    "dist/signals/schema/index.js",
+    "dist/signals/schema/index.d.ts",
     // The Signal Worker's Agent server routes: a Fastify plugin, and the only shipped
     // module that names Fastify at all. Fastify is public API rather than an internal
     // (ADR-0021), so the consumer brings the instance and registers this on it.
     "dist/signals/routes.js",
     "dist/signals/routes.d.ts",
-    // Users, under its own subpath, and with a `schema.js` beside it: the
-    // tables are what an Operator barrels now (ADR-0029, ADR-0046).
+    // Users, under its own subpath, with the declarations beside it and the `/schema` door
+    // below it: the tables are what an Operator points a config at now (ADR-0029, ADR-0046).
     "dist/users/index.js",
     "dist/users/index.d.ts",
     "dist/users/routes.js",
     "dist/users/routes.d.ts",
     "dist/users/schema.js",
     "dist/users/schema.d.ts",
+    "dist/users/schema/index.js",
+    "dist/users/schema/index.d.ts",
     "dist/users/users.js",
     "dist/users/users.d.ts",
     // Password Auth, under its own subpath, with a `schema.js` beside it: the third module in the
@@ -288,6 +313,8 @@ try {
     "dist/password-auth/routes.d.ts",
     "dist/password-auth/schema.js",
     "dist/password-auth/schema.d.ts",
+    "dist/password-auth/schema/index.js",
+    "dist/password-auth/schema/index.d.ts",
     "dist/password-auth/secrets.js",
     // Nostr Auth, under its own subpath, with a `schema.js` beside it: the fourth module in the
     // framework whose schema imports the Users component's, because `grants.user_id` references
@@ -305,6 +332,8 @@ try {
     "dist/nostr-auth/grants.d.ts",
     "dist/nostr-auth/schema.js",
     "dist/nostr-auth/schema.d.ts",
+    "dist/nostr-auth/schema/index.js",
+    "dist/nostr-auth/schema/index.d.ts",
     // The Messenger, under its own subpath. Its `schema.js` is where the foreign key
     // onto `saf_users.users.id` is declared now, so an Operator's generation writes the
     // constraint that used to be hand-edited into a shipped folder (ADR-0034, ADR-0036,
@@ -321,9 +350,11 @@ try {
     "dist/messenger/routes.d.ts",
     "dist/messenger/schema.js",
     "dist/messenger/schema.d.ts",
-    // The HTTP Channel, under its own subpath and with **no schema module**: it owns no tables,
-    // so there is no `schema.js` beside these and nothing on its subpath for an Operator to
-    // barrel. The second component of which that is true, after Signatures (ADR-0048).
+    "dist/messenger/schema/index.js",
+    "dist/messenger/schema/index.d.ts",
+    // The HTTP Channel, under its own subpath and with **no schema module and no `/schema`
+    // entry**: it owns no tables, so there is nothing for an Operator to list. The second
+    // component of which that is true, after Signatures (ADR-0048).
     "dist/http-channel/index.js",
     "dist/http-channel/index.d.ts",
     "dist/http-channel/http-channel.js",
@@ -350,9 +381,11 @@ try {
     "dist/nostr-channel/outbound.d.ts",
     "dist/nostr-channel/schema.js",
     "dist/nostr-channel/schema.d.ts",
-    // Signatures, under its own subpath and with **no schema module**: it is the one part of
-    // the framework that stores nothing, so there is no `schema.js` beside these and nothing
-    // on its subpath for an Operator to barrel (ADR-0042). It is also the only module that
+    "dist/nostr-channel/schema/index.js",
+    "dist/nostr-channel/schema/index.d.ts",
+    // Signatures, under its own subpath and with **no schema module and no `/schema` entry**:
+    // it is the one part of the framework that stores nothing, so there is nothing for an
+    // Operator to list (ADR-0042). It is also the only module that
     // imports `jose`, which the runtime step below is what proves is declared rather than
     // merely present in our own tree.
     "dist/signatures/index.js",
@@ -361,8 +394,8 @@ try {
     "dist/signatures/signatures.d.ts",
     "dist/signatures/routes.js",
     "dist/signatures/routes.d.ts",
-    // Decisions, under its own subpath, with its table exported from that same subpath
-    // (ADR-0043, ADR-0047).
+    // Decisions, under its own subpath, with its table exported from the `/schema` subpath
+    // below it (ADR-0043, ADR-0055).
     "dist/decisions/index.js",
     "dist/decisions/index.d.ts",
     "dist/decisions/decisions.js",
@@ -371,6 +404,8 @@ try {
     "dist/decisions/routes.d.ts",
     "dist/decisions/schema.js",
     "dist/decisions/schema.d.ts",
+    "dist/decisions/schema/index.js",
+    "dist/decisions/schema/index.d.ts",
     // The Scheduler, under its own subpath. It is the second Producer and the one part that
     // reaches for `cron-parser` and `luxon`, which the runtime step below is what proves are
     // declared rather than merely present in our own tree (ADR-0018).
@@ -384,6 +419,8 @@ try {
     "dist/scheduler/routes.d.ts",
     "dist/scheduler/schema.js",
     "dist/scheduler/schema.d.ts",
+    "dist/scheduler/schema/index.js",
+    "dist/scheduler/schema/index.d.ts",
     // The `bin`, which is the one shipped module that is neither a subpath nor reached from one.
     // `package.json` names this exact path, so a rename that missed the manifest ships a broken
     // command; the last step below is what runs it.
@@ -565,43 +602,16 @@ try {
           skipLibCheck: true,
           noEmit: true,
         },
-        include: ["main.ts", "schema.ts"],
+        // One file. The barrel an Operator used to write is gone with the `/schema` subpaths
+        // (ADR-0055): a `drizzle.config.ts` names those specifiers as **paths** now, resolved
+        // with `import.meta.resolve`, and there is no module of the consumer's own in between
+        // for a type checker to read. What replaced it is the annotated table and schema lists
+        // in `main.ts` and, at runtime below, the resolution of all eight specifiers to files.
+        include: ["main.ts"],
       },
       null,
       2,
     )}\n`,
-  );
-  // The Operator's migration barrel, which is the whole of what ADR-0046 asks them to
-  // write: `export *` of the components they run, with a `drizzle.config.ts` pointing at it.
-  // Eight **component** specifiers now, not eight `/schema` ones, because a component is one
-  // subpath (ADR-0047). It is a file of its own rather than lines in `main.ts` because that is
-  // the shape — and because `export *` carries names without unwrapping objects, which is the
-  // second half of why the schema modules flat-export their tables. Users is here
-  // beside the Messenger deliberately: `messages.user_id` references
-  // `saf_users.users.id`, so a barrel with one and not the other generates a foreign key
-  // onto a table it never creates — and `/nostr-channel` is here for the same reason and needs
-  // Users for the same one, `pubkeys.user_id` being the second such foreign key
-  // (ADR-0049). `/http-channel` is **not** here and must not be: that Channel
-  // owns no log and no tables at all, so barrelling it would say nothing (ADR-0048).
-  // `/password-auth` **is** here, and it is here because `tokens` resolves to one binding again:
-  // the Users component holds no credential now, so nothing else declares that name and `export *`
-  // has nothing to drop. Its two columns reference `saf_users.users.id`, so it needs Users in this
-  // barrel for the reason the Messenger does (ADR-0052). `/nostr-auth` is here beside it and
-  // needs Users for the same reason again: `grants.user_id` is the sixth and last reference onto
-  // that column (ADR-0053).
-  writeFileSync(
-    path.join(consumer, "schema.ts"),
-    [
-      'export * from "shared-agent-framework/signals";',
-      'export * from "shared-agent-framework/users";',
-      'export * from "shared-agent-framework/password-auth";',
-      'export * from "shared-agent-framework/nostr-auth";',
-      'export * from "shared-agent-framework/messenger";',
-      'export * from "shared-agent-framework/nostr-channel";',
-      'export * from "shared-agent-framework/decisions";',
-      'export * from "shared-agent-framework/scheduler";',
-      "",
-    ].join("\n"),
   );
   writeFileSync(
     path.join(consumer, "main.ts"),
@@ -800,21 +810,21 @@ try {
       'const own = pgSchema("consumer");',
       'const notes = own.table("notes", { body: text("body").notNull() });',
       "",
-      "// And the framework's own, off the six component subpaths — the door ADR-0046 opens and",
-      "// ADR-0047 moves onto the component itself, so that an Operator can generate DDL for the",
-      "// components they run. Each table is imported by name at the top of this file rather than",
-      "// as a namespace, which is what states the shape: `drizzle-kit` reads `Object.values` of a",
-      "// module and keeps what passes `is(x, PgTable)`, so a table that had retreated into a",
-      "// wrapper object would be dropped in silence and generate an empty migration. Annotated as",
-      "// the two Drizzle types the exporter actually filters on, so a component that stopped",
-      "// exporting a table fails here rather than at an Operator's first `generate`.",
+      "// And the framework's own, off the eight `/schema` subpaths, which is the door ADR-0046",
+      "// opens and ADR-0055 puts one level below the component so that a config can name it as a",
+      "// path. Each table is imported by name at the top of this file rather than as a namespace,",
+      "// which is what states the shape: `drizzle-kit` reads `Object.values` of a module and keeps",
+      "// what passes `is(x, PgTable)`, so a table that had retreated into the `tables` wrapper",
+      "// would be dropped in silence and generate an empty migration. Annotated as the two Drizzle",
+      "// types the exporter actually filters on, so a component that stopped exporting a table",
+      "// fails here rather than at an Operator's first `generate`.",
       "export const partTables: readonly PgTable[] = [",
       "  signalsTable, runsTable, usersTable, passwordsTable, tokensTable,",
       "  grantsTable, admittedTable,",
       "  messagesTable, pubkeysTable, receivedTable, outboxTable, decisionsTable, schedulesTable,",
       "];",
       "export const partSchemas: readonly PgSchema[] = [",
-      "  workerSchema, usersSchema, passwordAuthSchema, nostrAuthSchema, messengerSchema,",
+      "  signalsSchema, usersSchema, passwordAuthSchema, nostrAuthSchema, messengerSchema,",
       "  nostrChannelSchema, decisionsSchema, schedulerSchema,",
       "];",
       "",
@@ -1082,8 +1092,8 @@ try {
       "// rather than smaller (ADR-0034). There is no Public server option on it any more: what",
       "// a User reaches is a Channel's, and a Channel that is not HTTP has no route on that",
       "// server at all (ADR-0048). Its construction order against Users no",
-      "// longer matters — the framework applies no DDL — but the **barrel** above",
-      "// must carry both schemas, or generation references a table it never creates",
+      "// longer matters — the framework applies no DDL — but an Operator's config",
+      "// must list both `/schema` subpaths, or generation references a table it never creates",
       "// (ADR-0036, ADR-0046). The server option is satisfied by what `serverComponent`",
       "// returned, as every other part's is.",
       "const messengerOptions: MessengerOptions = {",
@@ -1499,7 +1509,7 @@ try {
       "export async function useEverything(): Promise<void> {",
       "  // Nothing migrates: the Db opens a pool, hands out handles and runs transactions,",
       "  // and the tables these calls need were applied by the Operator's own drizzle-kit",
-      "  // against the barrel above (ADR-0046).",
+      "  // against the `/schema` subpaths this file imports from (ADR-0046, ADR-0055).",
       "  await write(db.handle({ notes }));",
       "  await db.tx(async (tx: Transaction) => write(tx));",
       '  const listening: Listening = db.listen("consumer_channel", watcher);',
@@ -1702,11 +1712,7 @@ try {
         // exercised because the framework reaches for it directly to validate a zone name.
         'import { CronExpressionParser } from "cron-parser";',
         'import { IANAZone } from "luxon";',
-        // The Operator's barrel, imported as a namespace so that the collection below sees
-        // exactly what `drizzle-kit` would: the module's own values, after `export *` has
-        // carried five parts' names into one place.
-        'import * as barrel from "./schema.ts";',
-        // And the two things the exporter filters on, from the peer this project never
+        // The two things the exporter filters on, from the peer this project never
         // installed directly.
         'import { is } from "drizzle-orm";',
         'import { getTableConfig, PgSchema, PgTable } from "drizzle-orm/pg-core";',
@@ -1890,43 +1896,54 @@ try {
         // hold — which is what proves `cron-parser` and `luxon` are declared and resolve here.
         "const cronNext = CronExpressionParser.parse('0 9 * * *', { currentDate: new Date('2030-06-01T12:00:00.000Z'), tz: 'UTC' }).next().toDate().toISOString();",
         "const zoneKnown = IANAZone.isValidZone('Europe/Berlin') && !IANAZone.isValidZone('Mars/Phobos');",
-        // `drizzle-kit`'s `prepareFromExports`, reproduced line for line against the barrel:
-        // `Object.values`, filtered by `is(x, PgTable)` and `is(x, PgSchema)`, with **no
-        // recursion into a plain object**. `drizzle-kit` itself is not installed here and
-        // should not be — it is a development tool, and this is a consumer's runtime tree —
-        // so what runs is the collection rule rather than the tool, against the very
-        // module an Operator's `drizzle.config.ts` names (ADR-0046).
-        "const barrelled = Object.values(barrel).filter((value) => is(value, PgTable)).map((table) => getTableConfig(table).schema + '.' + getTableConfig(table).name).sort();",
-        "const barrelledSchemas = Object.values(barrel).filter((value) => is(value, PgSchema)).map((schema) => schema.schemaName).sort();",
-        // And the assertion the prefixed names exist for, which nothing else in this repository
-        // makes: **one distinct schema object per component, surviving `export *`** (ADR-0047).
-        // `export *` drops a name that resolves to more than one binding, so if the eight names
-        // below were shortened to a bare `schema`, this barrel would carry none of them: the
-        // collected set would be empty, `schemaFilter` would be empty, and `drizzle-kit push`
-        // would compare nothing against nothing, print `No changes detected`, create not one
-        // table and exit 0. Asked two ways, because the two halves fail on different mistakes.
-        // The identity half is what catches a shortened name: shorten one component's and its
-        // prefixed name is `undefined` on the barrel, while the bare `schema` it became is still
-        // collected, so the counts stay `8 of 8` and only `every one collected` turns false.
-        // Shorten all eight and they become ambiguous, so `export *` drops every one and both
-        // halves fail. The counting half catches the other mistake — two components sharing one
-        // schema object, which is eight names over seven distinct values, so both counts read `7`.
-        // The same rule is what makes `tokens` safe to carry here: it is one binding, Password
-        // Auth's, and a second component declaring that name would leave the barrel with neither
-        // table and nothing anywhere saying so (ADR-0052).
-        "const collectedSchemas = new Set(Object.values(barrel).filter((value) => is(value, PgSchema)));",
-        "const namedSchemas = [barrel.workerSchema, barrel.usersSchema, barrel.passwordAuthSchema, barrel.nostrAuthSchema, barrel.messengerSchema, barrel.nostrChannelSchema, barrel.decisionsSchema, barrel.schedulerSchema];",
-        "const distinctSchemas = new Set(namedSchemas).size + ' of ' + collectedSchemas.size + ' distinct, every one collected ' + namedSchemas.every((value) => collectedSchemas.has(value));",
-        // And the failure the flat shape exists to avoid, demonstrated rather than argued:
-        // the `*Tables` wrappers `db.handle` takes ride along in every one of these modules
-        // and the exporter sees **none** of them. A schema module that exported only its
-        // wrapper would collect zero tables and generate an empty migration in silence.
-        "const wrappersSeen = [barrel.workerTables, barrel.usersTables, barrel.passwordAuthTables, barrel.nostrAuthTables, barrel.messengerTables, barrel.nostrChannelTables, barrel.decisionsTables, barrel.schedulerTables].filter((wrapper) => is(wrapper, PgTable) || is(wrapper, PgSchema)).length;",
+        // `drizzle-kit`'s `prepareFromPgImports`, reproduced: it requires **each listed file on
+        // its own** and concatenates what comes back, and what it keeps out of one is
+        // `Object.values` filtered by `is(x, PgTable)` and `is(x, PgSchema)`, with **no recursion
+        // into a plain object**. There is no merge anywhere in that pipeline, which is the whole
+        // reason the schema objects lost their prefixes (ADR-0055). `drizzle-kit` itself is not
+        // installed here and should not be — it is a development tool, and this is a consumer's
+        // runtime tree — so what runs is the collection rule rather than the tool, against the
+        // very modules an Operator's `drizzle.config.ts` names (ADR-0046).
+        //
+        // The component subpath is read in the same loop and asked the opposite question. A
+        // `schema.ts` re-exported from both places is the mistake this catches, and it is a quiet
+        // one: everything keeps working, every table is simply reachable two ways.
+        "const owners = ['signals', 'users', 'password-auth', 'nostr-auth', 'messenger', 'nostr-channel', 'decisions', 'scheduler'];",
+        "const collectedTables = [];",
+        "const collectedSchemas = [];",
+        "const wrappersSeen = [];",
+        "const stillOnTheComponent = [];",
+        "for (const owner of owners) {",
+        "  const onSchema = await import('shared-agent-framework/' + owner + '/schema');",
+        "  for (const value of Object.values(onSchema)) {",
+        "    if (is(value, PgTable)) collectedTables.push(getTableConfig(value).schema + '.' + getTableConfig(value).name);",
+        "    if (is(value, PgSchema)) collectedSchemas.push(value);",
+        "  }",
+        // And the failure the flat shape exists to avoid, demonstrated rather than argued: the
+        // `tables` wrapper `db.handle` takes rides along in every one of these modules and the
+        // exporter sees none of them. A schema module that exported only its wrapper would collect
+        // zero tables and generate an empty migration in silence.
+        "  if (is(onSchema.tables, PgTable) || is(onSchema.tables, PgSchema)) wrappersSeen.push(owner);",
+        "  const onComponent = await import('shared-agent-framework/' + owner);",
+        "  for (const value of Object.values(onComponent)) {",
+        "    if (is(value, PgTable) || is(value, PgSchema)) stillOnTheComponent.push(owner);",
+        "  }",
+        "}",
+        // Eight distinct schema objects, one per module. It was eight distinct *names* on one
+        // barrel until this release, which is a question that no longer exists: the names are all
+        // `schema` now and nothing merges them.
+        "const distinctSchemas = new Set(collectedSchemas).size + ' of ' + collectedSchemas.length + ' distinct';",
+        "const schemaNames = collectedSchemas.map((value) => value.schemaName).sort();",
+        // And the property the export entries exist for at all: each specifier resolves to a
+        // **file path** inside the installed package, which is what an Operator's
+        // `drizzle.config.ts` hands `drizzle-kit` as its `schema` (ADR-0055). Nothing else here
+        // asks that question, every other check being an import.
+        "const resolvesToFiles = owners.every((owner) => { const url = import.meta.resolve('shared-agent-framework/' + owner + '/schema'); return url.startsWith('file:') && url.endsWith('/dist/' + owner + '/schema/index.js'); });",
         // Nothing writes anything: there is no call between composing and interpreting,
         // because the module that used to hold one is gone from the package, and the
         // composed command line names no file for the agent to read either — the
         // Operator's `AGENTS.md` above is a mount and `pi` discovers it (ADR-0025).
-        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), mountArgs[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersSchema.schemaName, String(Object.keys(directory).sort()), 'password auth ' + passwordAuth.scheme + ' ' + String(Object.keys(passwordAuth).sort()) + ' in ' + passwordAuthSchema.schemaName, 'nostr auth ' + nostrAuth.scheme + ' ' + String(Object.keys(nostrAuth).sort()) + ' in ' + nostrAuthSchema.schemaName, messengerSchema.schemaName, String(Object.keys(messenger).sort()), 'channel ' + httpChannel.name + ' ' + String(Object.keys(httpChannel).sort()), 'channel ' + nostrChannel.name + ' ' + String(Object.keys(nostrChannel).sort()) + ' as ' + nostrChannel.publicKey + ' in ' + nostrChannelSchema.schemaName, messageReceivedKind, decisionsSchema.schemaName, String(Object.keys(signatures).sort()), String(Object.keys(decisions).sort()), jws.split('.').length + ' segments, ' + Buffer.from(jwsSignature, 'base64url').length + ' signature bytes, verified ' + checked + ', private member ' + Object.hasOwn(keySet.keys[0], 'd'), String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(','), 'cron ' + cronNext + ' zone ' + zoneKnown, 'scheduler ' + String(Object.keys(scheduler).sort()) + ' fires ' + scheduleFiredKind + ' in ' + schedulerSchema.schemaName, 'barrel ' + barrelled.join(' ') + ' in ' + barrelledSchemas.join(' ') + ', wrappers seen ' + wrappersSeen, 'schemas ' + distinctSchemas];",
+        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), mountArgs[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersSchema.schemaName, String(Object.keys(directory).sort()), 'password auth ' + passwordAuth.scheme + ' ' + String(Object.keys(passwordAuth).sort()) + ' in ' + passwordAuthSchema.schemaName, 'nostr auth ' + nostrAuth.scheme + ' ' + String(Object.keys(nostrAuth).sort()) + ' in ' + nostrAuthSchema.schemaName, messengerSchema.schemaName, String(Object.keys(messenger).sort()), 'channel ' + httpChannel.name + ' ' + String(Object.keys(httpChannel).sort()), 'channel ' + nostrChannel.name + ' ' + String(Object.keys(nostrChannel).sort()) + ' as ' + nostrChannel.publicKey + ' in ' + nostrChannelSchema.schemaName, messageReceivedKind, decisionsSchema.schemaName, String(Object.keys(signatures).sort()), String(Object.keys(decisions).sort()), jws.split('.').length + ' segments, ' + Buffer.from(jwsSignature, 'base64url').length + ' signature bytes, verified ' + checked + ', private member ' + Object.hasOwn(keySet.keys[0], 'd'), String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(','), 'cron ' + cronNext + ' zone ' + zoneKnown, 'scheduler ' + String(Object.keys(scheduler).sort()) + ' fires ' + scheduleFiredKind + ' in ' + schedulerSchema.schemaName, 'tables ' + collectedTables.sort().join(' ') + ' in ' + schemaNames.join(' ') + ', wrappers seen ' + wrappersSeen.length, 'schemas ' + distinctSchemas + ', on a component subpath ' + stillOnTheComponent.length + ', resolving to files ' + resolvesToFiles];",
         "process.stdout.write(built.join(':'));",
       ].join("\n"),
     ],
@@ -1934,12 +1951,12 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,list,setAttributes,start,stop:password auth Bearer authenticate,issueToken,revoke,scheme,setPassword,start,stop in saf_password_auth:nostr auth Nostr authenticate,recordPublicKey,scheme,start,stop in saf_nostr_auth:saf_messenger:history,register,send,start,stop:channel http name,send,start,stop:channel nostr drain,name,publicKey,recordPublicKey,send,start,stop as 1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f in saf_nostr_channel:message.received:saf_decisions:sign,start,stop:history,publish,start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,passwordAuth,signatures,decisions,messenger,httpChannel,ownLoop,worker:Shared Agent Gateway: Agent server describes 10 paths:by hand /healthz:cron 2030-06-02T09:00:00.000Z zone true:scheduler cancel,list,schedule,start,stop,tick fires saf_schedule_fired in saf_scheduler:barrel saf_decisions.decisions saf_messenger.messages saf_nostr_auth.admitted saf_nostr_auth.grants saf_nostr_channel.outbox saf_nostr_channel.pubkeys saf_nostr_channel.received saf_password_auth.passwords saf_password_auth.tokens saf_scheduler.schedules saf_signals.runs saf_signals.signals saf_users.users in saf_decisions saf_messenger saf_nostr_auth saf_nostr_channel saf_password_auth saf_scheduler saf_signals saf_users, wrappers seen 0:schemas 8 of 8 distinct, every one collected true",
-    "all fifteen subpaths should resolve at runtime and none of them is the bare package, the Signal Worker's constructor and the template Handler both arriving off `/signals`, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from `/agent-container` without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and Users should construct into its own schema with its read plugin and its four operations — the two writes the agent's surface has no route for included, and no credential of any kind among them — and Password Auth should construct off the eighth subpath into a schema of its own from the Users component and a Public server, register its four routes and itself as an Auth with that server in its own constructor, and answer with the scheme a challenge names, the one member the server walks and its three trusted-code methods and no route plugin, and Nostr Auth should construct off its own subpath into a schema of its own, register itself with that same server and **no route anywhere**, and answer with the scheme a challenge names, the one member the server walks and the one trusted-code method that grants a public key, and the Messenger should construct into a schema of its own from all four of its required arguments and answer with an object carrying exactly its three trusted-code methods, because every other capability it has is a route it registered itself, and the HTTP Channel should construct off the ninth subpath, register itself with that Messenger and answer with a name fixed by its type and the three methods a Channel is and no trusted-code method at all, and the Nostr Channel should construct off the tenth from 32 raw bytes and a Relay address with no server anywhere, register itself with a second Messenger because one Channel per Messenger is refused at registration, derive the agent's public key from those bytes inside the installed package, and answer with the one trusted-code method that records a public key, the drain that is the half of a send a transaction cannot hold, and no route plugin beside them, and all of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the five parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone, and the Scheduler itself should construct from the installed `/scheduler` subpath and carry its management surface and its Component lifecycle, filing its table under a schema of its own, and an Operator's barrel — `export *` of all eight **component** subpaths, which is the whole of what ADR-0046 asks them to write and where ADR-0047 puts the tables — should hand `drizzle-kit`'s own collection rule every one of the thirteen tables and all eight schemas — the HTTP Channel absent from it because that Channel owns no log and no tables, and the Nostr Channel present because the two things only it can know are its own —, and none of the `*Tables` wrappers, because a table reachable only through a wrapper object is dropped in silence and generates an empty migration, and those eight schema objects should be eight distinct values that the barrel carries under eight distinct prefixed names, because a bare `schema` on each component is a name `export *` drops for ambiguity and an Operator whose `schemaFilter` comes back empty gets a push that creates nothing and exits 0",
+    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,list,setAttributes,start,stop:password auth Bearer authenticate,issueToken,revoke,scheme,setPassword,start,stop in saf_password_auth:nostr auth Nostr authenticate,recordPublicKey,scheme,start,stop in saf_nostr_auth:saf_messenger:history,register,send,start,stop:channel http name,send,start,stop:channel nostr drain,name,publicKey,recordPublicKey,send,start,stop as 1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f in saf_nostr_channel:message.received:saf_decisions:sign,start,stop:history,publish,start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,passwordAuth,signatures,decisions,messenger,httpChannel,ownLoop,worker:Shared Agent Gateway: Agent server describes 10 paths:by hand /healthz:cron 2030-06-02T09:00:00.000Z zone true:scheduler cancel,list,schedule,start,stop,tick fires saf_schedule_fired in saf_scheduler:tables saf_decisions.decisions saf_messenger.messages saf_nostr_auth.admitted saf_nostr_auth.grants saf_nostr_channel.outbox saf_nostr_channel.pubkeys saf_nostr_channel.received saf_password_auth.passwords saf_password_auth.tokens saf_scheduler.schedules saf_signals.runs saf_signals.signals saf_users.users in saf_decisions saf_messenger saf_nostr_auth saf_nostr_channel saf_password_auth saf_scheduler saf_signals saf_users, wrappers seen 0:schemas 8 of 8 distinct, on a component subpath 0, resolving to files true",
+    "all twenty-three entries should resolve at runtime and none of them is the bare package, the Signal Worker's constructor and the template Handler both arriving off `/signals`, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from `/agent-container` without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and Users should construct into its own schema with its read plugin and its four operations — the two writes the agent's surface has no route for included, and no credential of any kind among them — and Password Auth should construct off the eighth subpath into a schema of its own from the Users component and a Public server, register its four routes and itself as an Auth with that server in its own constructor, and answer with the scheme a challenge names, the one member the server walks and its three trusted-code methods and no route plugin, and Nostr Auth should construct off its own subpath into a schema of its own, register itself with that same server and **no route anywhere**, and answer with the scheme a challenge names, the one member the server walks and the one trusted-code method that grants a public key, and the Messenger should construct into a schema of its own from all four of its required arguments and answer with an object carrying exactly its three trusted-code methods, because every other capability it has is a route it registered itself, and the HTTP Channel should construct off the ninth subpath, register itself with that Messenger and answer with a name fixed by its type and the three methods a Channel is and no trusted-code method at all, and the Nostr Channel should construct off the tenth from 32 raw bytes and a Relay address with no server anywhere, register itself with a second Messenger because one Channel per Messenger is refused at registration, derive the agent's public key from those bytes inside the installed package, and answer with the one trusted-code method that records a public key, the drain that is the half of a send a transaction cannot hold, and no route plugin beside them, and all of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the five parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone, and the Scheduler itself should construct from the installed `/scheduler` subpath and carry its management surface and its Component lifecycle, filing its table under a schema of its own, and each of the eight `/schema` subpaths, which is what ADR-0046 asks an Operator to list and where ADR-0055 puts the tables, should hand `drizzle-kit`'s own per-module collection rule its own tables and its own schema, thirteen tables and eight schemas between them — the HTTP Channel absent because that Channel owns no log and no tables, and the Nostr Channel present because the three things only it can know are its own —, and none of the `tables` wrappers, because a table reachable only through a wrapper object is dropped in silence and generates an empty migration, and those eight schema objects should be eight distinct values, and the eight **component** subpaths should carry no table and no schema object at all, because a component's tables are on exactly one specifier, and every one of the eight should resolve to a file inside the installed package, that path being the only thing `drizzle-kit`'s config takes and the whole reason the entries exist",
   );
 
   // And the claim nothing above can see, because everything above imports a subpath: **the bare
-  // specifier resolves to nothing.** `exports` has fourteen entries and no `.`, so Node refuses
+  // specifier resolves to nothing.** `exports` has twenty-three entries and no `.`, so Node refuses
   // `import "shared-agent-framework"` before it reads a byte of any module, and names the refusal
   // `ERR_PACKAGE_PATH_NOT_EXPORTED`. The code is read rather than the exit status, because a
   // module that threw on load would also exit non-zero and would prove the opposite of this.
@@ -1961,9 +1978,9 @@ try {
     "the package has no `.` export and Node should say so; a root that resolves is a door onto the framework that nobody declared",
   );
 
-  // The reserved `/messenger` specifier is gone from the manifest and there is no check where
-  // one used to be: `"./messenger": null` retired with the `/schema` subpaths (ADR-0047), and an
-  // undeclared specifier does not resolve for the same reason a misspelt one does not. Asserting
+  // The reserved `/messenger` specifier is gone from the manifest and there is no check where one
+  // used to be: `"./messenger": null` retired when the log became the Messenger's (ADR-0048), and
+  // an undeclared specifier does not resolve for the same reason a misspelt one does not. Asserting
   // that would be asserting Node's own behaviour.
 
   // And the `bin`, which nothing above reaches: it is on no specifier, so every import in this
@@ -1977,9 +1994,9 @@ try {
   // that failed to resolve from the installed tree fails here. No arguments at all proves the
   // refusal path answers on stderr with the exit code a shell script can branch on.
   //
-  // Nothing here asserts that the export map still has thirteen entries and no fourteenth for this
-  // command. A `bin` is not importable, so ADR-0051 is untouched, and `check:docs` already fails a
-  // subpath that TypeDoc has no entry point for.
+  // Nothing here asserts that the export map still has twenty-three entries and no twenty-fourth
+  // for this command. A `bin` is not importable, so ADR-0051 is untouched, and `check:docs` already
+  // fails a subpath that no generator documents.
   step("checking the bin runs from the installed package");
   const command = path.join(consumer, "node_modules", ".bin", "http-client-tui");
   const help = run(command, ["--help"], consumer);

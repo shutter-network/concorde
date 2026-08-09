@@ -85,7 +85,7 @@ before(async () => {
     publicServer,
   });
 
-  // Three schemas, pushed as one graph the way an Operator's barrel is (ADR-0046).
+  // Three schemas, pushed as one graph the way an Operator's own list is (ADR-0046).
   await applySchema(db, signalsSchema, usersSchema, messengerSchema);
 });
 

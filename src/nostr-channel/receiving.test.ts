@@ -57,7 +57,7 @@ import * as usersSchema from "../users/schema.ts";
 import { createUsers, type Users } from "../users/users.ts";
 import { createNostrChannel, type NostrChannel } from "./nostr-channel.ts";
 import * as nostrChannelSchema from "./schema.ts";
-import { nostrChannelTables, received } from "./schema.ts";
+import { received, tables } from "./schema.ts";
 
 /** Where a server that is never started would have listened, had it been. */
 const nowhere = { port: 0, host: "127.0.0.1" } as const;
@@ -181,7 +181,7 @@ async function messagesSaying(text: string): Promise<MessageRecord[]> {
  */
 async function envelopeWasRead(eventId: string): Promise<boolean> {
   const rows = await db
-    .handle(nostrChannelTables)
+    .handle(tables)
     .select({ eventId: received.eventId })
     .from(received)
     .where(eq(received.eventId, eventId));

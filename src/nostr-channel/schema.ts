@@ -1,6 +1,6 @@
 /**
- * An Operator's `drizzle-kit` reads this file, through the barrel they build out of the component
- * subpaths. Keep it to the tables and the values that define them.
+ * An Operator's `drizzle-kit` reads this file, by the path of the `./schema/index.ts` beside it
+ * (ADR-0046, ADR-0055). Keep it to the tables and the values that define them.
  *
  * No Message is declared here, whichever medium one travelled by: the log is the Messenger's
  * ([ADR-0048](../../docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)). What
@@ -9,8 +9,8 @@
  *
  * The import of the schema of Users is what lets two columns below reference
  * `saf_users.users.id`, and it re-exports nothing of it. That is the second such import in the
- * framework, after the Messenger's, and it costs the same thing: a barrel carrying this component
- * without that one generates a reference to a table nothing creates.
+ * framework, after the Messenger's, and it costs the same thing: a configuration listing this
+ * component's `/schema` subpath without that one generates a reference to a table nothing creates.
  *
  * The schema is `saf_nostr_channel` and was `saf_nostr`, named for the protocol rather than for the
  * component. That rule held while one component spoke Nostr, and Nostr Auth is the second, so the
@@ -33,7 +33,7 @@ import { users } from "../users/schema.ts";
  * It was `saf_nostr` while this was the only component that spoke Nostr, so a deployment upgrading
  * across that split renames the schema.
  */
-export const nostrChannelSchema = pgSchema("saf_nostr_channel");
+export const schema = pgSchema("saf_nostr_channel");
 
 /**
  * Which Nostr public key belongs to which User, and the whole of admission over this medium.
@@ -47,7 +47,7 @@ export const nostrChannelSchema = pgSchema("saf_nostr_channel");
  * recorded cannot be claimed by a second User, which is what stops one person's key becoming a
  * second person's inbox.
  */
-export const pubkeys = nostrChannelSchema.table("pubkeys", {
+export const pubkeys = schema.table("pubkeys", {
   /**
    * The User this key speaks for. The primary key, so one User holds one Nostr key.
    *
@@ -93,7 +93,7 @@ export const pubkeys = nostrChannelSchema.table("pubkeys", {
  * that envelope is harmlessly re-dropped on every connect. The table is therefore the same order of
  * magnitude as the Message log, and nothing prunes it.
  */
-export const received = nostrChannelSchema.table("received", {
+export const received = schema.table("received", {
   // The gift wrap's own event id: 32 bytes as 64 lowercase hex characters.
   eventId: text("event_id").primaryKey(),
   // When this Gateway admitted it, which is not the timestamp the wrap carried.
@@ -117,7 +117,7 @@ export const received = nostrChannelSchema.table("received", {
  * So `select * from saf_nostr_channel.outbox where reason is not null` is the whole answer to "why
  * did she not get it", and it needs no API.
  */
-export const outbox = nostrChannelSchema.table("outbox", {
+export const outbox = schema.table("outbox", {
   /**
    * The gift wrap's own event id: 32 bytes as 64 lowercase hex characters.
    *
@@ -178,4 +178,4 @@ export const outbox = nostrChannelSchema.table("outbox", {
   failedAt: timestamp("failed_at", { withTimezone: true }),
 });
 
-export const nostrChannelTables = { pubkeys, received, outbox };
+export const tables = { pubkeys, received, outbox };

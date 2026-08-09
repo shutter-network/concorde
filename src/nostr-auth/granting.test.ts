@@ -30,7 +30,7 @@ import { createUsers, type Users } from "../users/users.ts";
 import { createNostrAuth, type NostrAuth } from "./nostr-auth.ts";
 import * as nostrAuthSchema from "./schema.ts";
 
-const { admitted, grants, nostrAuthTables } = nostrAuthSchema;
+const { admitted, grants, tables } = nostrAuthSchema;
 
 const externalBaseUrl = "https://agent.example.invalid";
 const nowhere = { port: 0, host: "127.0.0.1" } as const;
@@ -98,7 +98,7 @@ function asking(client: Signer) {
 
 /** Every event id the replay record holds. */
 async function recorded(): Promise<string[]> {
-  const rows = await db.handle(nostrAuthTables).select({ id: admitted.eventId }).from(admitted);
+  const rows = await db.handle(tables).select({ id: admitted.eventId }).from(admitted);
   return rows.map((row) => row.id).sort();
 }
 
@@ -209,7 +209,7 @@ describe("the replay record", () => {
     const stale = `${"1".repeat(63)}a`;
     const recent = `${"2".repeat(63)}b`;
     await db
-      .handle(nostrAuthTables)
+      .handle(tables)
       .insert(admitted)
       .values([
         { eventId: stale, admittedAt: new Date(Date.now() - 60 * 60 * 1000) },
@@ -336,7 +336,7 @@ describe("the surface this component has", () => {
     await db.tx((tx) => nostrAuth.recordPublicKey(tx, id, second.publicKey));
 
     const held = await db
-      .handle(nostrAuthTables)
+      .handle(tables)
       .select({ pubkey: grants.pubkey })
       .from(grants)
       .where(eq(grants.userId, id));

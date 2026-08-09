@@ -16,9 +16,8 @@
  * Publishing notifies nobody. It emits no Signal and wakes no Handler, so a User discovers a
  * Decision by polling, and the largest `seq` they hold is the whole resume mechanism.
  *
- * The subpath exports the one table beside the constructor, for the schema an Operator generates
- * their migrations from. It references no other component's table, so it can go into that schema
- * on its own.
+ * The table is on `shared-agent-framework/decisions/schema` and nowhere else. It references no
+ * other component's table, so that subpath can be listed on its own.
  *
  * @example
  * A Gateway with Decisions, and a Statement committed to from the Operator's own code.
@@ -69,7 +68,3 @@
 
 export type { DecisionRecord, Decisions, DecisionsOptions } from "./decisions.ts";
 export { createDecisions } from "./decisions.ts";
-// A star and not a list, so every table stays a top-level name an Operator's `drizzle-kit` can
-// see. It never looks inside a wrapper object. `decisionsSchema` keeps its prefix, because
-// `export *` drops a name that resolves to two bindings.
-export * from "./schema.ts";

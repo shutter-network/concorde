@@ -40,7 +40,7 @@ import { createUsers, type Users } from "../users/users.ts";
 import { MalformedPublicKeyError, NoSuchUserError, PublicKeyConflictError } from "./identities.ts";
 import { createNostrChannel, type NostrChannel } from "./nostr-channel.ts";
 import * as nostrChannelSchema from "./schema.ts";
-import { nostrChannelTables, pubkeys } from "./schema.ts";
+import { pubkeys, tables } from "./schema.ts";
 
 /** Where a server that is never started would have listened, had it been. */
 const nowhere = { port: 0, host: "127.0.0.1" } as const;
@@ -95,7 +95,7 @@ async function admit(): Promise<string> {
 /** The key recorded for one User, or `undefined`. The only place a row is read directly. */
 async function keyOf(userId: string): Promise<string | undefined> {
   const rows = await db
-    .handle(nostrChannelTables)
+    .handle(tables)
     .select({ pubkey: pubkeys.pubkey })
     .from(pubkeys)
     .where(eq(pubkeys.userId, userId));

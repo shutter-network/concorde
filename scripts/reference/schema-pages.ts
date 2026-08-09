@@ -2,15 +2,16 @@
  * One page per component that owns tables, written from the extracted snapshots.
  *
  * The reader is the Operator who owns generation and application of the DDL
- * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)). They assemble a barrel of
- * component subpaths and point their own `drizzle-kit` at it, and this is where they read what
- * that will create: the PostgreSQL schema, every table, every column with its SQL type, its
- * nullability and its default, the keys, the indexes and the constraints.
+ * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)). They list the `/schema`
+ * subpaths of the components they run in their own `drizzle.config.ts`
+ * ([ADR-0055](../../docs/adr/0055-a-components-tables-are-a-subpath-of-their-own.md)), and this is
+ * where they read what that will create: the PostgreSQL schema, every table, every column with its
+ * SQL type, its nullability and its default, the keys, the indexes and the constraints.
  *
  * **The foreign keys that leave a schema get a sentence of their own at the top of the page.**
- * A barrel carrying the Messenger, the Nostr Channel, Password Auth or Nostr Auth without
- * `shared-agent-framework/users` generates a constraint onto a table nobody creates, and that is
- * the one mistake this page exists to make visible before it is made.
+ * A list carrying the Messenger's, the Nostr Channel's, Password Auth's or Nostr Auth's subpath
+ * without `shared-agent-framework/users/schema` generates a constraint onto a table nobody
+ * creates, and that is the one mistake this page exists to make visible before it is made.
  *
  * **Nothing here is authored and no page is ever edited.** `site/reference` is emptied on every
  * generation, so a page that looked wrong and was fixed by hand would be gone on the next run.
@@ -51,7 +52,7 @@ export function schemaPages(extraction: SchemaExtraction): PageSet {
 
 /**
  * Which specifier creates which PostgreSQL schema, so a foreign key leaving one component can
- * name the component an Operator has to put in the barrel beside it.
+ * name the specifier an Operator has to list beside it.
  */
 function schemaOwners(extraction: SchemaExtraction): ReadonlyMap<string, string> {
   return new Map(extraction.components.map((component) => [component.schema, component.specifier]));
@@ -63,8 +64,8 @@ function page(component: ComponentTables, owners: ReadonlyMap<string, string>): 
 
   return [
     // A title of its own, because the heading below is the specifier and the component's
-    // TypeScript API page carries the same one. The heading is what the ticket asks for and the
-    // browser tab is what would otherwise be ambiguous.
+    // TypeScript API page sits one line away from it in the sidebar. The heading is the specifier
+    // an Operator lists; the browser tab says which of the two pages this is.
     "---",
     `title: ${component.specifier} tables`,
     "---",
@@ -72,7 +73,7 @@ function page(component: ComponentTables, owners: ReadonlyMap<string, string>): 
     `# ${component.specifier}`,
     "",
     `The tables this component creates, and the PostgreSQL schema \`${component.schema}\` it ` +
-      `creates them in. A barrel carrying \`${component.specifier}\` creates all of them.`,
+      `creates them in. A configuration listing \`${component.specifier}\` creates all of them.`,
     "",
     `Generated from the snapshot \`drizzle-kit\` takes of \`src/${component.subpath}/schema.ts\`, ` +
       `which is the snapshot an Operator's own generation reads. Never edited by hand.`,
@@ -86,7 +87,7 @@ function page(component: ComponentTables, owners: ReadonlyMap<string, string>): 
  * The sentence about the foreign keys that leave this component's schema, or nothing.
  *
  * One sentence per schema they point into, naming the columns, so an Operator reads which
- * subpath has to be in the barrel beside this one and why.
+ * subpath has to be listed beside this one and why.
  */
 function crossSchemaWarning(
   component: ComponentTables,
@@ -115,7 +116,7 @@ function crossSchemaWarning(
   });
   return [
     "",
-    `**Foreign keys leave this schema.** ${sentences.join(" ")} A barrel that carries ` +
+    `**Foreign keys leave this schema.** ${sentences.join(" ")} A configuration that lists ` +
       `\`${component.specifier}\` without it generates a constraint onto a table nobody creates.`,
   ];
 }

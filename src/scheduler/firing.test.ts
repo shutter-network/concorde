@@ -60,7 +60,7 @@ const silent: Logger = { debug: () => {}, info: () => {}, warn: () => {}, error:
 before(async () => {
   database = await createTestDatabase("scheduler_firing");
   db = database.db;
-  // The two schemas a deployment with a Scheduler barrels, pushed once up front the way an
+  // The two schemas a deployment with a Scheduler lists, pushed once up front the way an
   // Operator's own `drizzle-kit` applies them (ADR-0046).
   await applySchema(db, signalsSchema, schedulerSchema);
 

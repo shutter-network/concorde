@@ -1,7 +1,8 @@
 /**
- * An Operator's `drizzle-kit` reads this file, through the barrel they build out of the component
- * subpaths. Keep it to the table and the values that define it, and add no import of another
- * component's schema: a Schedule references nobody, which is what lets a barrel carry it alone.
+ * An Operator's `drizzle-kit` reads this file, by the path of the `./schema/index.ts` beside it
+ * (ADR-0046, ADR-0055). Keep it to the table and the values that define it, and add no import of
+ * another component's schema: a Schedule references nobody, so this subpath can be listed on its
+ * own.
  *
  * A Schedule is mutable, unlike a Message or a Decision. A create is an upsert on the name, a fire
  * writes the next one back, and a Schedule with no future fire is deleted. So there is no `state`
@@ -22,7 +23,7 @@ import { check, jsonb, type PgColumn, pgSchema, text, timestamp } from "drizzle-
  * configurable: the table is compiled against this object, and the same object is what a generation
  * reads.
  */
-export const schedulerSchema = pgSchema("saf_scheduler");
+export const schema = pgSchema("saf_scheduler");
 
 export const scheduleKinds = ["once", "cron"] as const;
 
@@ -44,7 +45,7 @@ function kindIsKnown(column: PgColumn, kinds: readonly string[]): SQL {
  * `name` is the primary key and the only identifier. There is no surrogate id beside it, so a
  * create is an upsert on the name and a cancel is a delete of it.
  */
-export const schedules = schedulerSchema.table(
+export const schedules = schema.table(
   "schedules",
   {
     // One flat namespace, shared by the agent and the Operator. Nothing scopes it by creator, so
@@ -86,4 +87,4 @@ export const schedules = schedulerSchema.table(
   ],
 );
 
-export const schedulerTables = { schedules };
+export const tables = { schedules };

@@ -26,10 +26,11 @@
  * HTTP API: that is `shared-agent-framework/nostr-auth`, which keeps a table of its own that this
  * one never reads. A deployment wanting both writes both, and nothing checks that they agree.
  *
- * The subpath exports the three tables, `pubkeys`, `received` and `outbox`, beside the constructor,
- * for the schema an Operator generates their migrations from. Put `shared-agent-framework/users`
- * into that same schema, because two of those tables reference the Users component's table, and a
- * schema without it generates a foreign key onto a table nothing creates.
+ * The three tables, `pubkeys`, `received` and `outbox`, are on
+ * `shared-agent-framework/nostr-channel/schema` and nowhere else. List
+ * `shared-agent-framework/users/schema` beside it, because two of those tables reference the Users
+ * component's table, and a configuration without it generates a foreign key onto a table nothing
+ * creates.
  *
  * @example
  * A Gateway a User reaches over Nostr, with their public key recorded out of band.
@@ -93,7 +94,3 @@ export {
 export type { NostrChannel, NostrChannelOptions } from "./nostr-channel.ts";
 export { createNostrChannel } from "./nostr-channel.ts";
 export { MessageTooLargeError, UnrecordedPublicKeyError } from "./outbound.ts";
-// A star and not a list, so every table stays a top-level name an Operator's `drizzle-kit` can
-// see. It never looks inside a wrapper object. What it does not carry is the Users component's
-// tables. `schema.ts` imports them to declare the foreign key, and re-exports nothing.
-export * from "./schema.ts";

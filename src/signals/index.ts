@@ -60,10 +60,13 @@ export type {
 } from "./handlers.ts";
 export type { RunRecord, SignalRecord } from "./routes.ts";
 export type { RunOutcome, RunPrompt, Runtime } from "./runtime.ts";
-// A star and not a list, so every table stays a top-level name an Operator's `drizzle-kit`
-// can see. It never looks inside a wrapper object. `SignalRecord.state` and `RunRecord.state`
-// take their two unions from here, and both are on the wire.
-export * from "./schema.ts";
+// The tables are on `shared-agent-framework/signals/schema` and on nothing else. These two unions
+// and the arrays they are derived from are the exception and are on both: a check constraint is
+// compiled from the arrays, which is why they live in `schema.ts`, and `SignalRecord.state` and
+// `RunRecord.state` are declared with the unions and are on the wire, so a reader of either record
+// has to be able to name them (ADR-0055).
+export type { RunState, SignalState } from "./schema.ts";
+export { runStates, signalStates } from "./schema.ts";
 export type { TemplateHandlerOptions } from "./template-handler.ts";
 export { templateHandler } from "./template-handler.ts";
 export type { EmittedSignal, SignalWorker, SignalWorkerOptions } from "./worker.ts";

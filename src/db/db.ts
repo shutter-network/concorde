@@ -73,8 +73,8 @@ export type Listening = {
  * transactions, and `LISTEN` registrations.
  *
  * **No migrations, and no DDL of any kind.** Nothing here creates a schema, applies a change or
- * tracks what was applied. The Operator re-exports the components they run into one barrel and
- * pushes it with their own `drizzle-kit` before the Gateway starts.
+ * tracks what was applied. The Operator lists the `/schema` subpaths of the components they run
+ * and pushes them with their own `drizzle-kit` before the Gateway starts.
  */
 export type Db = Component & {
   /**

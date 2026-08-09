@@ -57,11 +57,15 @@ does not unwrap objects. This reverses ADR-0021/0022's "schemas are deliberately
 subpath": they are public API now, on a subpath named `/schema` so the encapsulation-softening
 sits behind one labelled door rather than blurring into each part's main API.
 
-> **The `/schema` subpath is superseded by
-> [ADR-0047](./0047-a-component-is-one-subpath.md).** The tables are public API, flat-exported,
-> and read by `Object.values` exactly as this section says. Only their location moved: they now
-> sit on the component's own subpath, so `shared-agent-framework/users` carries `usersSchema`
-> and `users` beside `createUsers`. Everything else below stands.
+> **The `/schema` subpath left and came back.**
+> [ADR-0047](./0047-a-component-is-one-subpath.md) moved the tables onto the component's own
+> subpath, and [ADR-0055](./0055-a-components-tables-are-a-subpath-of-their-own.md) moved them
+> back, because `drizzle-kit`'s config takes file paths and an export entry is the only supported
+> way to hand an Operator one. So this section reads true again, with two corrections. The names
+> lost their prefixes: `shared-agent-framework/users/schema` exports `schema`, `tables` and
+> `users`, and the paragraph below about the Operator's `export *` is void with the barrel that
+> needed it. And the "labelled door" rationale is not the reason the subpath exists; the reason is
+> the config's type. Everything about the flat shape stands, and it is what `drizzle-kit` reads.
 
 **The deployment writes a barrel and a config.** A `schema.ts` that `export *`s the parts it
 runs, and a `drizzle.config.ts` pointing `schema` at that barrel. `drizzle-kit generate` then

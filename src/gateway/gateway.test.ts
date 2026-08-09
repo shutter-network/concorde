@@ -402,7 +402,7 @@ before(async () => {
   });
   components = gateway.components;
 
-  // Every schema this deployment runs, pushed as one graph — which is exactly the barrel an
+  // Every schema this deployment runs, pushed as one graph, which is exactly the list an
   // Operator writes and points their own `drizzle-kit` at (ADR-0046). The framework applies
   // nothing itself, so this is the whole of how the tables get here, and `messages.user_id`
   // is a live foreign key onto `saf_users.users.id` because both schemas are in the same

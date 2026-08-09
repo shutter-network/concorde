@@ -18,9 +18,8 @@
  * after each fire, so a daily digest arranged before a week of downtime fires once afterwards
  * rather than seven times.
  *
- * The subpath exports the one table beside the constructor, for the schema an Operator generates
- * their migrations from. It references no other component's table, so it can go into that schema on
- * its own.
+ * The table is on `shared-agent-framework/scheduler/schema` and nowhere else. It references no
+ * other component's table, so that subpath can be listed on its own.
  *
  * @example
  * A Gateway that wakes itself every morning, and the Handler each fire reaches.
@@ -75,7 +74,9 @@ export type {
   ScheduleSpec,
 } from "./schedules.ts";
 export { ScheduleSpecError } from "./schedules.ts";
-// A star and not a list, so every table stays a top-level name an Operator's `drizzle-kit` can
-// see. It never looks inside a wrapper object. `schedulerSchema` keeps its prefix, because
-// `export *` drops a name that resolves to two bindings.
-export * from "./schema.ts";
+// The one union this subpath still takes from `schema.ts`, and the array it is derived from. Both
+// are on `/schema` too, which is the one overlap the split leaves: the array is what the column's
+// check constraint is compiled from, and `ScheduleRecord.kind` is declared with the union and is
+// on the wire (ADR-0055).
+export type { ScheduleKind } from "./schema.ts";
+export { scheduleKinds } from "./schema.ts";

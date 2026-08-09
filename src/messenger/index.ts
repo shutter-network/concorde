@@ -21,9 +21,10 @@
  *
  * Construct Users and the Signal Worker before this, which takes both.
  *
- * The subpath exports the one table beside the constructor. Put `shared-agent-framework/users` into
- * the same schema, because `messages.user_id` references the Users component's table, and a schema
- * without it generates a foreign key onto a table nothing creates.
+ * The table is on `shared-agent-framework/messenger/schema` and nowhere else. List
+ * `shared-agent-framework/users/schema` beside it, because `messages.user_id` references the Users
+ * component's table, and a configuration without it generates a foreign key onto a table nothing
+ * creates.
  *
  * @example
  * A Gateway whose agent answers a submitted Message over HTTP, and a send from the Operator's own
@@ -81,7 +82,9 @@
 export type { MessageRecord } from "./messages.ts";
 export type { Channel, Messenger, MessengerHandle, MessengerOptions } from "./messenger.ts";
 export { createMessenger, messageReceivedKind } from "./messenger.ts";
-// A star and not a list, so every table stays a top-level name an Operator's `drizzle-kit` can
-// see. It never looks inside a wrapper object. What it does not carry is the Users component's
-// tables. `schema.ts` imports them to declare the foreign key, and re-exports nothing.
-export * from "./schema.ts";
+// The one union this subpath still takes from `schema.ts`, and the array it is derived from. Both
+// are on `/schema` too, which is the one overlap the split leaves: the array is what the column's
+// check constraint is compiled from, and `MessageRecord.direction` is declared with the union and
+// is on the wire (ADR-0055).
+export type { MessageDirection } from "./schema.ts";
+export { messageDirections } from "./schema.ts";

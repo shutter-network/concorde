@@ -23,14 +23,14 @@
  * ```ts
  * import { sql } from "drizzle-orm";
  * import { openDb } from "shared-agent-framework/db";
- * import { users, usersTables } from "shared-agent-framework/users";
+ * import { tables, users } from "shared-agent-framework/users/schema";
  *
  * const db = openDb(process.env.DATABASE_URL ?? "");
  * // Nothing was on the wire until here, which is what lets every component be constructed first.
  * await db.start();
  *
  * // One handle per component, typed to that component's tables and to no others.
- * const handle = db.handle(usersTables);
+ * const handle = db.handle(tables);
  * const everybody = await handle.select().from(users);
  * console.log(`${everybody.length} users`);
  *

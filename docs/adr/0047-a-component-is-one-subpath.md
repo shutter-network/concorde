@@ -1,4 +1,26 @@
+---
+status: partially superseded by ADR-0055
+---
+
 # A component is one subpath
+
+> **Amended, and the title is now false of the eight components that own tables.**
+> [ADR-0055](./0055-a-components-tables-are-a-subpath-of-their-own.md) puts the tables back on a
+> `/schema` subpath, one per component that has any, and the export map is twenty-three entries.
+> The reason is narrow and weaker than the one below: `drizzle-kit`'s config takes
+> `schema?: string | string[]`, which is file paths and never objects, so an export entry is the
+> only supported way to hand an Operator a path into the package. Two sections fall with it. **"The
+> names keep their prefixes, and that is load-bearing"** is void: the prefixes existed to survive
+> `export *` in an Operator's barrel, `drizzle-kit`'s loader requires each listed file separately
+> and merges no namespace, and there is no barrel any more, so `usersSchema` is `schema` and
+> `usersTables` is `tables`. **"An import line repeats the component's name"** goes with it, and
+> "Short names inside each component, disambiguated in the barrel" is no longer a rejected option
+> but roughly what happened. The rest stands. The Signal Worker keeps `./signals` and is still not
+> an exception; `"./messenger": null` stays retired; ADR-0045's loading property is untouched,
+> the `/schema` modules importing no constructor at all; and ADR-0046's flat-export shape is
+> exactly as load-bearing as it was, because it is what `drizzle-kit` reads. What the reversal
+> costs is the reader-facing half of the argument below, that a component is one page and one line
+> to memorise, and ADR-0055 records that rather than answering it.
 
 Everything a component offers arrives on one subpath: its constructor, its types, and its
 tables. The five `/schema` subpaths retire into the component subpaths they belonged to, the

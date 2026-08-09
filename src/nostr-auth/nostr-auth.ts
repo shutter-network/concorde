@@ -35,7 +35,7 @@ import type { UserRecord } from "../users/routes.ts";
 import type { Users } from "../users/users.ts";
 import { admitEvent, insertGrant, selectGrantFor } from "./grants.ts";
 import { checkNip98, nostrScheme } from "./nip98.ts";
-import { nostrAuthTables } from "./schema.ts";
+import { tables } from "./schema.ts";
 
 // NIP-98's own window, in milliseconds, and the default `windowMs` takes.
 const defaultWindowMs = 60_000;
@@ -161,7 +161,7 @@ export type NostrAuth = Auth & {
  */
 export function createNostrAuth(options: NostrAuthOptions): NostrAuth {
   // The component's own handle, typed to its own tables. `pg` never leaves the Db.
-  const handle = options.db.handle(nostrAuthTables);
+  const handle = options.db.handle(tables);
   const baseUrl = checkedBaseUrl(options.externalBaseUrl);
   const windowMs = checkedWindow(options.windowMs ?? defaultWindowMs);
 
@@ -232,7 +232,7 @@ export function createNostrAuth(options: NostrAuthOptions): NostrAuth {
 // The User a verified author acts as, or `undefined` for an ungranted key and a User that is not
 // there alike. The lookup is by the primary key, so the index does the comparison.
 async function userForKey(
-  handle: Handle<typeof nostrAuthTables>,
+  handle: Handle<typeof tables>,
   directory: Users,
   publicKey: string,
 ): Promise<UserRecord | undefined> {

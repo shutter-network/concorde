@@ -20,10 +20,9 @@
  * which Auths it constructs, and construction order inside `extend` only decides the order they
  * are asked in.
  *
- * The subpath exports the `passwords` and `tokens` tables beside the constructor, for the schema
- * an Operator generates their migrations from. Both point a foreign key at the `users` table, so a
- * schema carrying this subpath without `shared-agent-framework/users` generates a constraint onto
- * a table it never creates.
+ * The tables are on `shared-agent-framework/password-auth/schema` and nowhere else. Both point a
+ * foreign key at the `users` table, so a configuration listing that subpath without
+ * `shared-agent-framework/users/schema` generates a constraint onto a table it never creates.
  *
  * @example
  * A Gateway a person logs into, and one route of the Operator's own behind the server's hook.
@@ -74,9 +73,4 @@
 export type { PasswordAuth, PasswordAuthOptions } from "./password-auth.ts";
 export { createPasswordAuth } from "./password-auth.ts";
 export type { IssuedToken } from "./routes.ts";
-// A star and not a list, so every table stays a top-level name an Operator's `drizzle-kit` can
-// see. It never looks inside a wrapper object. `passwordAuthSchema` keeps its prefix, because
-// `export *` drops a name that resolves to two bindings, and a barrel exporting a bare `schema`
-// from two components exports none of them. That is a push which creates nothing and exits 0.
-export * from "./schema.ts";
 export type { ScryptParameters } from "./secrets.ts";

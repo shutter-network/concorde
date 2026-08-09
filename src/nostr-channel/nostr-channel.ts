@@ -53,7 +53,7 @@ import {
   wireSize,
   wrapOf,
 } from "./outbound.ts";
-import { nostrChannelTables, received } from "./schema.ts";
+import { received, tables } from "./schema.ts";
 
 // Which Channel this is, fixed by its type and not an option: two Channels on one Messenger are
 // unconstructable anyway, so a name a Developer could set would only be a name they could get wrong.
@@ -262,7 +262,7 @@ export type NostrChannel = Channel & {
  */
 export function createNostrChannel(options: NostrChannelOptions): NostrChannel {
   // The component's own handle, typed to its own tables. `pg` never leaves the Db.
-  const handle = options.db.handle(nostrChannelTables);
+  const handle = options.db.handle(tables);
   const log = options.logger ?? defaultLogger();
   const publicKey = getPublicKey(options.secretKey);
 

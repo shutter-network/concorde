@@ -18,9 +18,9 @@ import type { Component } from "../gateway/components.ts";
 import { type CursorWindow, limitSchema } from "../route-conventions.ts";
 import type { Signatures } from "../signatures/index.ts";
 import { agentDecisionRoutes, publicDecisionRoutes } from "./routes.ts";
-import { decisions, decisionsSchema, decisionsTables } from "./schema.ts";
+import { decisions, schema, tables } from "./schema.ts";
 
-type DecisionsHandle = Handle<typeof decisionsTables>;
+type DecisionsHandle = Handle<typeof tables>;
 
 // A constant and not an option: no prefix to configure and no plugin to register elsewhere, so a
 // client written for one deployment's Decisions works against every other one.
@@ -77,8 +77,8 @@ export type DecisionsOptions = {
    *
    * `requireUser` is the server's own composed hook, taken as one route option, so this component
    * holds no credential and authenticates nobody. It is not a schema-level dependency either:
-   * nothing here references a User, so a barrel may carry this component's tables without the
-   * table of Users.
+   * nothing here references a User, so this component's `/schema` subpath may be listed without
+   * the table of Users.
    *
    * Structural, on the same terms as `agentServer`: anything carrying a Fastify instance and a
    * `requireUser` satisfies it, which is what `serverComponent` answers with.
@@ -155,7 +155,7 @@ export type Decisions = Component & {
  */
 export function createDecisions(options: DecisionsOptions): Decisions {
   // The Component's own handle, typed to its own tables. `pg` never leaves the Db.
-  const handle = options.db.handle(decisionsTables);
+  const handle = options.db.handle(tables);
 
   // One read, named once and given to both plugins. The agent's read and a User's read are the
   // same query with nothing to scope it by, and sharing one function is what keeps them from
@@ -264,7 +264,7 @@ async function publishDecision<TSchema extends Record<string, unknown>>(
 async function drawSeq<TSchema extends Record<string, unknown>>(
   tx: Handle<TSchema>,
 ): Promise<number> {
-  const table = `${decisionsSchema.schemaName}.${getTableName(decisions)}`;
+  const table = `${schema.schemaName}.${getTableName(decisions)}`;
   const [drawn] = await tx
     .select({
       seq: sql<number>`nextval(pg_get_serial_sequence(${table}, ${decisions.seq.name}))::int`,

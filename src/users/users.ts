@@ -28,9 +28,9 @@ import type { Db, Handle } from "../db/index.ts";
 import type { Component } from "../gateway/components.ts";
 import { limitSchema } from "../route-conventions.ts";
 import { agentUserRoutes, publicUserRoutes, type UserRecord } from "./routes.ts";
-import { users, usersTables } from "./schema.ts";
+import { tables, users } from "./schema.ts";
 
-type UsersHandle = Handle<typeof usersTables>;
+type UsersHandle = Handle<typeof tables>;
 
 // Where the constructor puts each route group. A constant and not an option, so a client written
 // for one deployment's Users works against every other one.
@@ -159,7 +159,7 @@ export type Users = Component & {
  */
 export function createUsers(options: UsersOptions): Users {
   // The component's own handle, typed to its own tables. `pg` never leaves the Db.
-  const handle = options.db.handle(usersTables);
+  const handle = options.db.handle(tables);
 
   const agentRoutes = agentUserRoutes({
     get: (id) => selectUser(handle, id),

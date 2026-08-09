@@ -1,6 +1,6 @@
 /**
- * An Operator's `drizzle-kit` reads this file, through the barrel they build out of the component
- * subpaths (ADR-0046, ADR-0047). Keep it to the table and the values that define it.
+ * An Operator's `drizzle-kit` reads this file, by the path of the `./schema/index.ts` beside it
+ * (ADR-0046, ADR-0055). Keep it to the table and the values that define it.
  *
  * The one import of another component's schema in here is deliberate and is the mechanism rather
  * than an accident: `user_id` references `saf_users.users.id`
@@ -36,7 +36,7 @@ import { users } from "../users/schema.ts";
  * It was `saf_http_messages` while one component held the log and the only way of reaching a
  * person, so a deployment upgrading across that split renames the schema.
  */
-export const messengerSchema = pgSchema("saf_messenger");
+export const schema = pgSchema("saf_messenger");
 
 /**
  * Which way a Message travelled: `inbound` from the User to the agent, `outbound` from the agent to
@@ -66,11 +66,11 @@ function directionIsKnown(column: PgColumn, directions: readonly string[]): SQL 
  * no column saying which Channel it travelled by. Nothing removes a row and no column is ever
  * updated, so it grows forever.
  *
- * `user_id` is a foreign key onto the `users` table of Users. A barrel carrying this
- * component without `shared-agent-framework/users` generates a reference to a table nothing
- * creates, and dies on `schema "saf_users" does not exist`.
+ * `user_id` is a foreign key onto the `users` table of Users. A configuration listing this
+ * component's `/schema` subpath without `shared-agent-framework/users/schema` generates a reference
+ * to a table nothing creates, and dies on `schema "saf_users" does not exist`.
  */
-export const messages = messengerSchema.table(
+export const messages = schema.table(
   "messages",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -122,4 +122,4 @@ export const messages = messengerSchema.table(
   ],
 );
 
-export const messengerTables = { messages };
+export const tables = { messages };

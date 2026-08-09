@@ -2,11 +2,12 @@
  * Every component's schema, pushed together into one database.
  *
  * This is the assembled question, and it is asked here rather than left to whichever
- * test happens to construct the most parts. An Operator barrels the parts they run
- * into one `schema.ts`, points their own `drizzle-kit` at it and gets a single
- * generation graph ([ADR-0046](../docs/adr/0046-the-operator-owns-migrations.md)), so
- * the only place a *set* of parts can be wrong is at that barrel — and the largest
- * barrel anyone can write is this one.
+ * test happens to construct the most parts. An Operator lists the `/schema` subpaths
+ * of the parts they run in one `drizzle.config.ts` and gets a single generation graph
+ * ([ADR-0046](../docs/adr/0046-the-operator-owns-migrations.md),
+ * [ADR-0055](../docs/adr/0055-a-components-tables-are-a-subpath-of-their-own.md)), so
+ * the only place a *set* of parts can be wrong is that list, and the longest list
+ * anyone can write is this one.
  *
  * Two ways a set can be wrong, and they fail differently enough to need a test each.
  *
@@ -41,12 +42,13 @@
  * whose schema nobody lists here is a part nothing above covers, and it would be
  * uncovered in silence, so the list is held against the source tree.
  *
- * **Every part is reached by file path here, and that is why this file did not change when
- * the tables moved onto the component subpaths**
- * ([ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md)). `src/<part>/schema.ts` is
- * where a table is declared and it stayed there; only the specifier an Operator imports it
- * through moved. The last test scans for those same files, so it keeps covering every part
- * without knowing anything about the export map.
+ * **Every part is reached by file path here, and that is why this file survived the tables
+ * moving onto the component subpaths and off them again**
+ * ([ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md),
+ * [ADR-0055](../docs/adr/0055-a-components-tables-are-a-subpath-of-their-own.md)).
+ * `src/<part>/schema.ts` is where a table is declared and it has never moved; only the
+ * specifier an Operator imports it through has. The last test scans for those same files,
+ * so it keeps covering every part without knowing anything about the export map.
  */
 
 import assert from "node:assert/strict";
@@ -105,7 +107,7 @@ after(() => database.drop());
 
 describe("every component's schema, pushed as one graph", () => {
   it("leaves the database holding exactly the tables and columns the parts declare", async () => {
-    // One call, because one call is what an Operator's barrel is. A cross-schema
+    // One call, because one call is what an Operator's own run is. A cross-schema
     // foreign key resolves only inside a single push, so splitting this per part
     // would be asking an easier question than the one an Operator asks.
     await applySchema(db, ...Object.values(parts));

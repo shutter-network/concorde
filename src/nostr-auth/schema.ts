@@ -1,14 +1,14 @@
 /**
- * An Operator's `drizzle-kit` reads this file, through the barrel they build out of the component
- * subpaths ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md),
- * [ADR-0047](../../docs/adr/0047-a-component-is-one-subpath.md)). Keep it to the tables and the
- * values that define them.
+ * An Operator's `drizzle-kit` reads this file, by the path of the `./schema/index.ts` beside it
+ * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md),
+ * [ADR-0055](../../docs/adr/0055-a-components-tables-are-a-subpath-of-their-own.md)). Keep it to
+ * the tables and the values that define them.
  *
  * The import of the schema of Users is what lets `grants.user_id` reference `saf_users.users.id`,
  * and it re-exports nothing of it. This is the fourth such import in the framework and the sixth
  * such reference, after the Messenger's one, the Nostr Channel's two and Password Auth's two, and
- * it costs the same thing: a barrel carrying this component without that one generates a
- * constraint onto a table nothing creates.
+ * it costs the same thing: a configuration listing this component's `/schema` subpath without
+ * that one generates a constraint onto a table nothing creates.
  *
  * **`grants` is not a copy of `saf_nostr_channel.pubkeys` and must not be kept in step with it**
  * ([ADR-0053](../../docs/adr/0053-nostr-auth-verifies-nip-98-per-request.md)). The two tables hold
@@ -34,7 +34,7 @@ import { users } from "../users/schema.ts";
  * configurable: the tables are compiled against this object, and the same object is what a
  * generation reads.
  */
-export const nostrAuthSchema = pgSchema("saf_nostr_auth");
+export const schema = pgSchema("saf_nostr_auth");
 
 /**
  * One row per Nostr public key that may act as a User over HTTP, and no row for one that may not.
@@ -46,7 +46,7 @@ export const nostrAuthSchema = pgSchema("saf_nostr_auth");
  * cannot grant itself a User's identity. The cost is that nobody enrols themselves: a key nobody
  * recorded authenticates nothing, whatever it signs.
  */
-export const grants = nostrAuthSchema.table(
+export const grants = schema.table(
   "grants",
   {
     /**
@@ -98,7 +98,7 @@ export const grants = nostrAuthSchema.table(
  * The table prunes itself in the transaction that writes it, so its size is a function of the
  * traffic in the last window rather than of the traffic ever.
  */
-export const admitted = nostrAuthSchema.table(
+export const admitted = schema.table(
   "admitted",
   {
     // The event's own id: 32 bytes as 64 lowercase hex characters.
@@ -121,4 +121,4 @@ export const admitted = nostrAuthSchema.table(
   ],
 );
 
-export const nostrAuthTables = { grants, admitted };
+export const tables = { grants, admitted };

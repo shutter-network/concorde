@@ -1,7 +1,7 @@
 /**
- * An Operator's `drizzle-kit` reads this file, through the barrel they build out of the component
- * subpaths (ADR-0046). Keep it to the tables and the values that define them, and import no other
- * component's schema: these two reference nobody, which is what lets a barrel carry them alone.
+ * An Operator's `drizzle-kit` reads this file, by the path of the `./schema/index.ts` beside it
+ * (ADR-0046, ADR-0055). Keep it to the tables and the values that define them, and import no other
+ * component's schema: these two reference nobody, so this subpath can be listed on its own.
  *
  * There is no `user_id` on either table and there must not be one. The Signal Worker authenticates
  * nobody, so who a Signal came from is not a fact it holds; it travels in the payload, written by a
@@ -32,7 +32,7 @@ import {
  * `signals` is a plausible name for something an Operator already has. Not configurable: the tables
  * are compiled against this object, and the same object is what a generation reads.
  */
-export const workerSchema = pgSchema("saf_signals");
+export const schema = pgSchema("saf_signals");
 
 /**
  * A Signal's processing state. One-way: nothing returns to `pending`, and a failed Signal is never
@@ -66,7 +66,7 @@ function stateIsKnown(column: PgColumn, states: readonly string[]): SQL {
  * Nothing deletes one. A Signal a Handler declined leaves a row behind exactly as a Signal that ran
  * does, which is what makes a refusal auditable afterwards.
  */
-export const signals = workerSchema.table(
+export const signals = schema.table(
   "signals",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -104,7 +104,7 @@ export const signals = workerSchema.table(
  * Session included, naming that one after the Run. The column stays nullable because rows written
  * before it did that still hold `null`.
  */
-export const runs = workerSchema.table(
+export const runs = schema.table(
   "runs",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -128,4 +128,4 @@ export const runs = workerSchema.table(
   ],
 );
 
-export const workerTables = { signals, runs };
+export const tables = { signals, runs };

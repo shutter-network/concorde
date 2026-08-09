@@ -34,7 +34,7 @@ import {
   selectMessages,
 } from "./messages.ts";
 import { agentMessageRoutes } from "./routes.ts";
-import { messengerTables } from "./schema.ts";
+import { tables } from "./schema.ts";
 
 // A constant and not an option: no prefix to configure and no plugin to register elsewhere, so an
 // Agent Implementation written for one deployment works against every other's.
@@ -267,7 +267,7 @@ export type Messenger = Component & {
  */
 export function createMessenger(options: MessengerOptions): Messenger {
   // The component's own handle, typed to its own tables. `pg` never leaves the Db.
-  const handle = options.db.handle(messengerTables);
+  const handle = options.db.handle(tables);
 
   // The one Channel, held from its own constructor's call to `register` below. `undefined` until
   // then, and a `send` that arrives first is refused rather than recorded.

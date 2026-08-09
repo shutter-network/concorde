@@ -31,6 +31,10 @@
       "types": "./dist/signals/index.d.ts",
       "default": "./dist/signals/index.js"
     },
+    "./signals/schema": {
+      "types": "./dist/signals/schema/index.d.ts",
+      "default": "./dist/signals/schema/index.js"
+    },
     "./pi": {
       "types": "./dist/pi/index.d.ts",
       "default": "./dist/pi/index.js"
@@ -39,17 +43,33 @@
       "types": "./dist/users/index.d.ts",
       "default": "./dist/users/index.js"
     },
+    "./users/schema": {
+      "types": "./dist/users/schema/index.d.ts",
+      "default": "./dist/users/schema/index.js"
+    },
     "./password-auth": {
       "types": "./dist/password-auth/index.d.ts",
       "default": "./dist/password-auth/index.js"
+    },
+    "./password-auth/schema": {
+      "types": "./dist/password-auth/schema/index.d.ts",
+      "default": "./dist/password-auth/schema/index.js"
     },
     "./nostr-auth": {
       "types": "./dist/nostr-auth/index.d.ts",
       "default": "./dist/nostr-auth/index.js"
     },
+    "./nostr-auth/schema": {
+      "types": "./dist/nostr-auth/schema/index.d.ts",
+      "default": "./dist/nostr-auth/schema/index.js"
+    },
     "./messenger": {
       "types": "./dist/messenger/index.d.ts",
       "default": "./dist/messenger/index.js"
+    },
+    "./messenger/schema": {
+      "types": "./dist/messenger/schema/index.d.ts",
+      "default": "./dist/messenger/schema/index.js"
     },
     "./http-channel": {
       "types": "./dist/http-channel/index.d.ts",
@@ -59,6 +79,10 @@
       "types": "./dist/nostr-channel/index.d.ts",
       "default": "./dist/nostr-channel/index.js"
     },
+    "./nostr-channel/schema": {
+      "types": "./dist/nostr-channel/schema/index.d.ts",
+      "default": "./dist/nostr-channel/schema/index.js"
+    },
     "./signatures": {
       "types": "./dist/signatures/index.d.ts",
       "default": "./dist/signatures/index.js"
@@ -67,9 +91,17 @@
       "types": "./dist/decisions/index.d.ts",
       "default": "./dist/decisions/index.js"
     },
+    "./decisions/schema": {
+      "types": "./dist/decisions/schema/index.d.ts",
+      "default": "./dist/decisions/schema/index.js"
+    },
     "./scheduler": {
       "types": "./dist/scheduler/index.d.ts",
       "default": "./dist/scheduler/index.js"
+    },
+    "./scheduler/schema": {
+      "types": "./dist/scheduler/schema/index.d.ts",
+      "default": "./dist/scheduler/schema/index.js"
     }
   },
   "bin": {

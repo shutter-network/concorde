@@ -1,7 +1,8 @@
 /**
- * An Operator's `drizzle-kit` reads this file, through the barrel they build out of the component
- * subpaths. Keep it to the table and the values that define it, and add no import of another
- * component's schema: this log references nobody, which is what lets a barrel carry it alone.
+ * An Operator's `drizzle-kit` reads this file, by the path of the `./schema/index.ts` beside it
+ * (ADR-0046, ADR-0055). Keep it to the table and the values that define it, and add no import of
+ * another component's schema: this log references nobody, so this subpath can be listed on its
+ * own.
  *
  * A Decision is immutable. No column is ever updated, and nothing removes a row: no delete, no TTL,
  * no sweeper and no supersession field. A reversal is a new Decision whose statement says so.
@@ -16,7 +17,7 @@ import { integer, pgSchema, text, timestamp } from "drizzle-orm/pg-core";
  * configurable: the table is compiled against this object, and the same object is what a
  * generation reads.
  */
-export const decisionsSchema = pgSchema("saf_decisions");
+export const schema = pgSchema("saf_decisions");
 
 /**
  * One Decision: a Signed Statement, numbered and kept.
@@ -24,7 +25,7 @@ export const decisionsSchema = pgSchema("saf_decisions");
  * Four columns, and no `user_id`. The log is global and a Decision is addressed to nobody, which is
  * the whole of why a commitment here is a commitment.
  */
-export const decisions = decisionsSchema.table("decisions", {
+export const decisions = schema.table("decisions", {
   /**
    * The number, global and from 1, and the primary key. There is no `id` beside it, because a
    * global sequence is already unique.
@@ -67,4 +68,4 @@ export const decisions = decisionsSchema.table("decisions", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 });
 
-export const decisionsTables = { decisions };
+export const tables = { decisions };

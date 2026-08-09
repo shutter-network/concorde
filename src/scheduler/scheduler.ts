@@ -47,7 +47,7 @@ import {
   selectSchedules,
   upsertSchedule,
 } from "./schedules.ts";
-import { schedulerTables, type schedules } from "./schema.ts";
+import { type schedules, tables } from "./schema.ts";
 
 /**
  * The `kind` every matured Schedule emits under, and half of the Signal contract. The other half is
@@ -212,7 +212,7 @@ export type Scheduler = Component & {
  */
 export function createScheduler(options: SchedulerOptions): Scheduler {
   // The Component's own handle, typed to its own tables. `pg` never leaves the Db.
-  const handle = options.db.handle(schedulerTables);
+  const handle = options.db.handle(tables);
   const now = options.now ?? (() => new Date());
   const maxSleepMs = options.maxSleepMs ?? defaultMaxSleepMs;
   const log = options.logger ?? defaultLogger();

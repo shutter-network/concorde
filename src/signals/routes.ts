@@ -14,7 +14,7 @@
  * All `GET`. Nothing here writes, a Signal being immutable but for the state the Worker gives it,
  * and a Run being the Worker's record of its own work. This is the agent's read and only the
  * agent's: ADR-0024 expects a Signal Handler to answer "has this arrived before?" for itself, and
- * what it has for that is a handle over `workerTables` rather than a method on the Worker.
+ * what it has for that is a handle over `tables` rather than a method on the Worker.
  */
 
 import { desc, eq } from "drizzle-orm";
@@ -37,11 +37,11 @@ import {
   type SignalState,
   signalStates,
   signals,
-  type workerTables,
+  type tables,
 } from "./schema.ts";
 
 /** A handle typed to the Signal Worker's own tables, and to no other component's. */
-export type WorkerHandle = Handle<typeof workerTables>;
+export type WorkerHandle = Handle<typeof tables>;
 
 /**
  * A Signal as the agent reads it, and the JSON two of these routes answer with.
