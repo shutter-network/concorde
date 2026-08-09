@@ -38,9 +38,11 @@
  *     // Only what is named here reaches the agent. None of the Gateway's own environment does.
  *     env: { MY_AGENT_KEY: process.env.MY_AGENT_KEY ?? "" },
  *     mounts: {
+ *       // The host's path to the shared tree, and every entry written under it.
+ *       runtimeDir: "/srv/saf",
  *       entries: [
- *         { agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
- *         { agentPath: "/workspace/AGENTS.md", gatewayPath: "/srv/saf/AGENTS.md", readOnly: true },
+ *         { agentPath: "/workspace", path: "workspace" },
+ *         { agentPath: "/workspace/AGENTS.md", path: "AGENTS.md", readOnly: true },
  *       ],
  *     },
  *   },

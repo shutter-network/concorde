@@ -32,9 +32,10 @@ const minimal: AgentContainer = {
   image: "saf/pi:latest",
   mounts: {
     entries: [
-      { agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
-      { agentPath: "/home/agent/.pi/agent", gatewayPath: "/srv/saf/agent" },
+      { agentPath: "/workspace", path: "workspace" },
+      { agentPath: "/home/agent/.pi/agent", path: "agent" },
     ],
+    runtimeDir: "/srv/saf",
   },
 };
 

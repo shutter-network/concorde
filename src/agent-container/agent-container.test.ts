@@ -50,13 +50,16 @@ import {
 
 /** The three entries a deployment typically declares, and every test's default. */
 const entries: readonly Mount[] = [
-  { agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
-  { agentPath: "/home/agent/.pi/agent", gatewayPath: "/srv/saf/agent" },
-  { agentPath: "/sessions", gatewayPath: "/srv/saf/sessions" },
+  { agentPath: "/workspace", path: "workspace" },
+  { agentPath: "/home/agent/.pi/agent", path: "agent" },
+  { agentPath: "/sessions", path: "sessions" },
 ];
 
+/** The host's runtime directory those entries are written against, and every test's default. */
+const runtimeDir = "/srv/saf";
+
 /** The least container the Runtime accepts, plus the mounts most tests want. */
-const minimal: AgentContainer = { image: "saf/agent:latest", mounts: { entries } };
+const minimal: AgentContainer = { image: "saf/agent:latest", mounts: { entries, runtimeDir } };
 
 const prompt: RunPrompt = { session: "user_42", text: "what happened?" };
 
@@ -157,10 +160,12 @@ describe("the least an Operator can declare", () => {
   it("takes no Mount Table at all, which is a deployment and not a mistake", () => {
     // An image that bakes in its own configuration and keeps no state between Runs
     // mounts nothing. An empty table says the same thing and is no longer refused: the
-    // rule that forbade it was deleted rather than moved (ADR-0028).
+    // rule that forbade it was deleted rather than moved (ADR-0028). It has to name a
+    // Runtime Directory nothing then reads, which is why the absent table is the one the
+    // Runtime itself falls back on (ADR-0054).
     for (const container of [
       { image: "saf/agent" },
-      { image: "saf/agent", mounts: { entries: [] } },
+      { image: "saf/agent", mounts: { entries: [], runtimeDir } },
     ]) {
       const composed = createAgentContainerRuntime({ container, run: agentRun }).commandFor(prompt);
       assert.ok(!composed.args.includes("--mount"));
@@ -235,7 +240,7 @@ describe("what the container runtime is told", () => {
     // point, then the flags the framework does not model, then the image, then the
     // agent's own. Written out because the order is the part a change silently breaks.
     const composed = commandFor({
-      mounts: { entries: [{ agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" }] },
+      mounts: { entries: [{ agentPath: "/workspace", path: "workspace" }], runtimeDir },
       networks: ["saf-agent", "saf-models"],
       env: { ANTHROPIC_API_KEY: "sk-test", HTTPS_PROXY: "" },
       entrypoint: ["agent"],
@@ -325,10 +330,11 @@ describe("the Mount Table on an Agent Container", () => {
           ...entries,
           {
             agentPath: "/workspace/AGENTS.md",
-            gatewayPath: "/srv/saf/AGENTS.md",
+            path: "AGENTS.md",
             readOnly: true,
           },
         ],
+        runtimeDir,
       },
     });
 
@@ -341,7 +347,7 @@ describe("the Mount Table on an Agent Container", () => {
 
   it("quotes a value containing a comma, which is what --mount splits its fields on", () => {
     const composed = commandFor({
-      mounts: { entries: [{ agentPath: "/work,space", gatewayPath: "/srv/a,b" }] },
+      mounts: { entries: [{ agentPath: "/work,space", path: "a,b" }], runtimeDir: "/srv" },
     });
 
     assert.deepEqual(valuesOf(composed.args, "--mount"), [
@@ -349,56 +355,51 @@ describe("the Mount Table on an Agent Container", () => {
     ]);
   });
 
-  it("leaves every source untranslated with no hostRoot, which is a Gateway on the host", () => {
-    // The common case: the daemon resolves the same strings this process does, so the
-    // Gateway-side path is its own host source and there is nothing to say.
+  it("resolves every entry against the runtime directory, which is the daemon's own", () => {
+    // The daemon resolves a bind source on the *host*, so the runtime directory is the
+    // host's path to the shared tree, however this process reaches it. An entry naming
+    // the directory itself resolves to it whole, and one below it appends (ADR-0054).
     const composed = commandFor({
-      mounts: { entries: [{ agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" }] },
+      mounts: {
+        entries: [
+          { agentPath: "/state", path: "" },
+          { agentPath: "/workspace", path: "workspace" },
+        ],
+        runtimeDir: "/host/gateway/state",
+      },
+    });
+
+    assert.deepEqual(valuesOf(composed.args, "--mount"), [
+      "type=bind,source=/host/gateway/state,target=/state",
+      "type=bind,source=/host/gateway/state/workspace,target=/workspace",
+    ]);
+  });
+
+  it("treats a trailing slash on the runtimeDir as the same directory", () => {
+    // An Operator writing the root with a trailing separator is not making a different
+    // statement, so every entry composes the same way.
+    const composed = commandFor({
+      mounts: { entries, runtimeDir: "/srv/saf/" },
     });
 
     assert.deepEqual(valuesOf(composed.args, "--mount"), [
       "type=bind,source=/srv/saf/workspace,target=/workspace",
+      "type=bind,source=/srv/saf/agent,target=/home/agent/.pi/agent",
+      "type=bind,source=/srv/saf/sessions,target=/sessions",
     ]);
   });
 
-  it("translates every source through the one hostRoot pair for a Gateway in a container", () => {
-    // The daemon resolves a bind source on the *host*, and only a Gateway running on the
-    // host sees the same strings it does. One pair does the whole translation: the entry
-    // that *is* the root resolves to the host value whole, and one below it resolves to
-    // the host value with its remainder appended.
+  it('takes "/" as a runtime directory, which is the escape for a tree on two host mounts', () => {
+    // One directory cannot span two host mounts, so a deployment whose shared tree does
+    // names the host root and writes the rest of each path into the entry. The general
+    // rule with an ordinary value, in place of the accommodation ADR-0028 granted
+    // (ADR-0054).
     const composed = commandFor({
-      mounts: {
-        entries: [
-          { agentPath: "/state", gatewayPath: "/srv/saf" },
-          { agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
-        ],
-        hostRoot: { gatewayPath: "/srv/saf", hostPath: "/host/gateway/state" },
-      },
+      mounts: { entries: [{ agentPath: "/thing", path: "mnt/b/thing" }], runtimeDir: "/" },
     });
 
     assert.deepEqual(valuesOf(composed.args, "--mount"), [
-      "type=bind,source=/host/gateway/state,target=/state",
-      "type=bind,source=/host/gateway/state/workspace,target=/workspace",
-    ]);
-  });
-
-  it("treats a trailing slash on the root's gatewayPath as the same directory", () => {
-    // An Operator writing the root with a trailing separator is not making a different
-    // statement, so the entry equal to it still resolves whole and one below it still
-    // composes.
-    const composed = commandFor({
-      mounts: {
-        entries: [
-          { agentPath: "/state", gatewayPath: "/srv/saf" },
-          { agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
-        ],
-        hostRoot: { gatewayPath: "/srv/saf/", hostPath: "/host/gateway/state" },
-      },
-    });
-
-    assert.deepEqual(valuesOf(composed.args, "--mount"), [
-      "type=bind,source=/host/gateway/state,target=/state",
-      "type=bind,source=/host/gateway/state/workspace,target=/workspace",
+      "type=bind,source=/mnt/b/thing,target=/thing",
     ]);
   });
 });
@@ -516,8 +517,9 @@ describe("the loggable copy of the command line", () => {
 describe("a container that cannot work", () => {
   it("is refused at construction rather than at the first Run", () => {
     // A Run that fails is never retried (ADR-0017), so a deployment refused only at its
-    // first Signal is one whose every Signal becomes a permanently failed Run. These
-    // three are the whole of what is decidable from the value alone (ADR-0028).
+    // first Signal is one whose every Signal becomes a permanently failed Run. These two
+    // and the tests after them are the whole of what is decidable from the value alone
+    // (ADR-0028).
     assert.throws(
       () => createAgentContainerRuntime({ container: { image: "" }, run: agentRun }),
       /no image/,
@@ -527,29 +529,19 @@ describe("a container that cannot work", () => {
         createAgentContainerRuntime({
           container: {
             image: "saf/agent",
-            mounts: { entries: [{ agentPath: "workspace", gatewayPath: "/srv" }] },
+            mounts: { entries: [{ agentPath: "workspace", path: "workspace" }], runtimeDir },
           },
           run: agentRun,
         }),
       /agentPath "workspace".*absolute/s,
     );
-    assert.throws(
-      () =>
-        createAgentContainerRuntime({
-          container: {
-            image: "saf/agent",
-            mounts: { entries: [{ agentPath: "/workspace", gatewayPath: "./srv" }] },
-          },
-          run: agentRun,
-        }),
-      /gatewayPath ".\/srv".*absolute/s,
-    );
   });
 
-  it("refuses an entry that falls outside the hostRoot, naming the entry's path and the root", () => {
-    // A root that does not cover an entry is the mistake this shape exists to catch, and
-    // catching it means refusing: falling back to identity for the stray one would start,
-    // serve, and read an empty directory.
+  it("refuses a leading '/' on an entry's path, naming the entry and the runtime directory", () => {
+    // The old absolute form written into the new field: it does not fail, it resolves
+    // under the runtime directory a second time. `/srv/saf/state` against a runtimeDir of
+    // `/srv/saf` is a plausible-looking `/srv/saf/srv/saf/state` and a daemon refusal at
+    // the first Run, which under ADR-0017 is a permanently dead Signal (ADR-0054).
     assert.throws(
       () =>
         createAgentContainerRuntime({
@@ -557,28 +549,28 @@ describe("a container that cannot work", () => {
             image: "saf/agent",
             mounts: {
               entries: [
-                { agentPath: "/workspace", gatewayPath: "/srv/saf/workspace" },
-                { agentPath: "/elsewhere", gatewayPath: "/opt/other" },
+                { agentPath: "/workspace", path: "workspace" },
+                { agentPath: "/state", path: "/srv/saf/state" },
               ],
-              hostRoot: { gatewayPath: "/srv/saf", hostPath: "/host/gateway" },
+              runtimeDir: "/srv/saf",
             },
           },
           run: agentRun,
         }),
       (error: Error) => {
-        assert.match(error.message, /"\/opt\/other"/);
+        assert.match(error.message, /"\/srv\/saf\/state"/);
         assert.match(error.message, /"\/srv\/saf"/);
         return true;
       },
     );
   });
 
-  it("refuses a '.' or '..' segment in an agentPath, gatewayPath, or the hostRoot's gatewayPath", () => {
-    // Both are decidable from the value with no I/O (ADR-0028). A '..' segment silently
-    // escapes the declared root — string-prefix matching is only sound over normalized
-    // paths — and a '.' straddling the boundary falsely reads as not covered. The table
-    // is refused where it was written, and the Operator is told to normalize the path
-    // rather than having it normalized on their behalf.
+  it("refuses a '.' or '..' segment in an agentPath, an entry's path, or the runtimeDir", () => {
+    // Every one is decidable from the value with no I/O (ADR-0028). A '..' segment is
+    // what makes an entry's path escape the runtime directory it is written against, and
+    // joining the two would resolve it away silently. The table is refused where it was
+    // written, and the Operator is told to normalize the path rather than having it
+    // normalized on their behalf.
     const refuses = (mounts: NonNullable<AgentContainer["mounts"]>, offending: string) =>
       assert.throws(
         () =>
@@ -590,33 +582,29 @@ describe("a container that cannot work", () => {
         },
       );
 
-    refuses({ entries: [{ agentPath: "/work/../etc", gatewayPath: "/srv" }] }, "/work/../etc");
-    refuses({ entries: [{ agentPath: "/work/./here", gatewayPath: "/srv" }] }, "/work/./here");
-    refuses({ entries: [{ agentPath: "/ok", gatewayPath: "/srv/../etc" }] }, "/srv/../etc");
+    refuses({ entries: [{ agentPath: "/work/../etc", path: "a" }], runtimeDir }, "/work/../etc");
+    refuses({ entries: [{ agentPath: "/work/./here", path: "a" }], runtimeDir }, "/work/./here");
+    refuses({ entries: [{ agentPath: "/ok", path: "a/../etc" }], runtimeDir }, "a/../etc");
     refuses(
-      {
-        entries: [{ agentPath: "/state", gatewayPath: "/srv/saf" }],
-        hostRoot: { gatewayPath: "/srv/../saf", hostPath: "/host" },
-      },
+      { entries: [{ agentPath: "/state", path: "state" }], runtimeDir: "/srv/../saf" },
       "/srv/../saf",
     );
   });
 
-  it("allows double slashes, dotted filenames, and dot segments in the hostRoot's hostPath", () => {
-    // A double slash cannot escape the root and the daemon collapses it, so an empty
-    // segment is legal; a filename that merely contains dots is not a dot segment; and
-    // `hostPath` stays an opaque value handed to the daemon unread (ADR-0028), so a '..'
-    // in it is none of resolution's business.
+  it("allows double slashes and dotted filenames, which are not dot segments", () => {
+    // A double slash cannot escape the runtime directory and the daemon collapses one
+    // anyway, so an empty segment is legal; and a filename that merely contains dots is
+    // not a dot segment.
     assert.doesNotThrow(() =>
       createAgentContainerRuntime({
         container: {
           image: "saf/agent",
           mounts: {
             entries: [
-              { agentPath: "/work//nested", gatewayPath: "/srv//a" },
-              { agentPath: "/cfg/..hidden", gatewayPath: "/srv/my.file" },
+              { agentPath: "/work//nested", path: "a//b" },
+              { agentPath: "/cfg/..hidden", path: "my.file" },
             ],
-            hostRoot: { gatewayPath: "/srv", hostPath: "/host/../elsewhere" },
+            runtimeDir: "/srv",
           },
         },
         run: agentRun,
@@ -632,7 +620,7 @@ describe("a container that cannot work", () => {
       assert.throws(
         () =>
           createAgentContainerRuntime({
-            container: { image: "saf/agent", mounts: { entries } },
+            container: { image: "saf/agent", mounts: { entries, runtimeDir } },
             run: agentRun,
           }),
         (error: Error) => {
@@ -642,36 +630,35 @@ describe("a container that cannot work", () => {
       );
 
     refuses([
-      { agentPath: "/workspace", gatewayPath: "/srv/a" },
-      { agentPath: "/workspace", gatewayPath: "/srv/b" },
+      { agentPath: "/workspace", path: "a" },
+      { agentPath: "/workspace", path: "b" },
     ]);
     refuses([
-      { agentPath: "/workspace", gatewayPath: "/srv/a" },
-      { agentPath: "/workspace/", gatewayPath: "/srv/b" },
+      { agentPath: "/workspace", path: "a" },
+      { agentPath: "/workspace/", path: "b" },
     ]);
   });
 
-  it("no longer lets a '..' under a declared root resolve outside it", () => {
-    // The escape this refusal closes: '/srv/saf/../secrets' string-prefixes '/srv/saf'
-    // and once resolved to a host path, so it read as covered while mounting outside
-    // every declared prefix. The '..' segment now refuses the table before it can.
-    assert.throws(
-      () =>
-        createAgentContainerRuntime({
-          container: {
-            image: "saf/agent",
-            mounts: {
-              entries: [{ agentPath: "/secrets", gatewayPath: "/srv/saf/../secrets" }],
-              hostRoot: { gatewayPath: "/srv/saf", hostPath: "/host/gateway" },
-            },
-          },
-          run: agentRun,
-        }),
-      (error: Error) => {
-        assert.match(error.message, /normaliz/i);
-        return true;
-      },
-    );
+  it("lets no entry resolve outside the runtime directory it is written against", () => {
+    // The two ways to leave it, and both are refused rather than resolved: a '..' segment,
+    // which `path.posix.join` would quietly collapse into a host path above the root, and
+    // a leading '/', which would land under it twice (ADR-0054).
+    const refuses = (entry: Mount, reason: RegExp) =>
+      assert.throws(
+        () =>
+          createAgentContainerRuntime({
+            container: { image: "saf/agent", mounts: { entries: [entry], runtimeDir } },
+            run: agentRun,
+          }),
+        (error: Error) => {
+          assert.ok(error.message.includes(entry.path), error.message);
+          assert.match(error.message, reason);
+          return true;
+        },
+      );
+
+    refuses({ agentPath: "/secrets", path: "../secrets" }, /normaliz/i);
+    refuses({ agentPath: "/secrets", path: "/srv/secrets" }, /relative/);
   });
 
   it("touches no filesystem doing it, so none of these paths need exist", () => {
@@ -681,7 +668,10 @@ describe("a container that cannot work", () => {
       createAgentContainerRuntime({
         container: {
           image: "saf/agent",
-          mounts: { entries: [{ agentPath: "/nowhere", gatewayPath: "/definitely/not/here" }] },
+          mounts: {
+            entries: [{ agentPath: "/nowhere", path: "definitely/not/here" }],
+            runtimeDir: "/nor/is/this",
+          },
         },
         run: agentRun,
       }),

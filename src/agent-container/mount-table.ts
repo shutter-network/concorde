@@ -8,9 +8,12 @@
  * `root`-owned directory, even where a file was meant, where `--mount` refuses and names the path.
  * That is the check this module is allowed not to write.
  *
- * Resolution treats every path as a plain string, which is why a `.` or `..` segment is refused
- * rather than normalized: `..` string-prefixes a root it resolves outside of, so an entry could
- * read as covered while mounting anywhere.
+ * Resolution is one `path.posix.join` of the Runtime Directory and an entry's path, and that is why
+ * the two ways out of that directory are refused rather than resolved (ADR-0054): a `..` segment
+ * joins away into a path above the root with nothing left to see it, and a leading `/` lands under
+ * the root a second time. The second refusal is what catches the shape this replaced, where an
+ * entry named an absolute path of its own; do not soften it into normalization, because the wrong
+ * path it produces is a plausible one and the daemon refuses it at the first Run, not here.
  */
 
 import path from "node:path";
@@ -18,9 +21,9 @@ import path from "node:path";
 /**
  * One entry: a directory or a single file the agent's container can reach.
  *
- * Nothing here says which of the two it is, and nothing needs to. Each path is named for the actor
- * that resolves it: `agentPath` for the agent's own container, `gatewayPath` for the Gateway
- * process.
+ * Nothing here says which of the two it is, and nothing needs to. There are two paths because there
+ * are two namespaces: `agentPath` is the agent's own container, and `path` is the host's, written
+ * against the table's {@link MountTable.runtimeDir}.
  */
 export type Mount = {
   /**
@@ -29,8 +32,13 @@ export type Mount = {
    * Two entries naming one `agentPath` are refused, a trailing slash making no difference.
    */
   readonly agentPath: string;
-  /** Where the Gateway process resolves the same thing, on its own side. Absolute. */
-  readonly gatewayPath: string;
+  /**
+   * Where the same thing sits inside the Runtime Directory, **relative** to it.
+   *
+   * A leading `/` is refused, because an absolute path here would resolve under that directory a
+   * second time rather than fail. The empty string is the Runtime Directory itself.
+   */
+  readonly path: string;
   /**
    * Whether the agent can write it. Defaults to `false`.
    *
@@ -61,36 +69,28 @@ export type MountTable = {
    */
   readonly entries: readonly Mount[];
   /**
-   * How this Gateway's own filesystem maps to the host's, for a Gateway that is itself in a
-   * container.
+   * The **host's** path to the Runtime Directory every entry is written against.
    *
-   * Absent means the Gateway runs on the host, which is the common case: every entry's
-   * `gatewayPath` is then its own bind source, the daemon resolving the same string this process
-   * does. The two part company only for a containerised Gateway, and that is one fact about the
-   * deployment rather than a property of each mount, which is why it is stated once here.
+   * This is the one namespace the table has: the container runtime's daemon resolves a bind source
+   * on the host, so this is the string it is handed, unread. Where the Gateway process itself
+   * reaches that directory is not stated here and, for a Gateway in a container, is not in general
+   * reachable at all, so anything the Gateway reads for itself comes from its own image or from a
+   * path it holds separately. Nothing discovers this value.
    *
-   * Present, it is exhaustive. A `gatewayPath` equal to the root resolves to `hostPath` whole, one
-   * below it resolves to `hostPath` with the remainder appended, and one falling **outside** the
-   * root is refused, naming the entry and the root. Nothing discovers either value, so state both
-   * yourself. A shared tree spanning more than one host mount cannot be expressed through one
-   * pair: write daemon-namespace paths into each `gatewayPath` and declare no root at all, at the
-   * price of paths this process cannot itself list.
+   * `"/"` is how a shared tree spanning more than one host mount is expressed: an entry then reads
+   * `mnt/b/thing` and resolves to `/mnt/b/thing`. It is an ordinary value of the same rule and not
+   * a special case. A trailing separator makes no difference.
    */
-  readonly hostRoot?: {
-    /** Where the shared tree sits inside this Gateway's own container. Absolute. */
-    readonly gatewayPath: string;
-    /** Where the daemon finds that same tree on the host. Absolute, and handed over unread. */
-    readonly hostPath: string;
-  };
+  readonly runtimeDir: string;
 };
 
 /**
  * Turns a Mount Table into one `--mount` and its value per entry, in declaration order, or refuses
  * the table.
  *
- * Pure and total. It applies `hostRoot`, and it refuses a relative path on either side, a `.` or
- * `..` segment in any path it resolves, an entry falling outside the root, and two entries naming
- * one target.
+ * Pure and total. It joins each entry's path onto `runtimeDir`, and it refuses a relative
+ * `agentPath`, a leading `/` on an entry's path, a `.` or `..` segment in any path it resolves, and
+ * two entries naming one target.
  *
  * It performs no I/O, so it cannot say whether any of these paths exists. That answer comes from
  * the daemon at the first Run, as a Run that failed and will not be retried, which is why
@@ -100,10 +100,8 @@ export type MountTable = {
  * @throws On any of those four.
  */
 export function mountArguments(table: MountTable): readonly string[] {
-  if (table.hostRoot !== undefined) {
-    refuseDotSegment("hostRoot's gatewayPath", table.hostRoot.gatewayPath);
-  }
-  const resolved = table.entries.map((entry) => resolveEntry(entry, table.hostRoot));
+  refuseDotSegment("Mount Table's runtimeDir", table.runtimeDir);
+  const resolved = table.entries.map((entry) => resolveEntry(entry, table.runtimeDir));
   refuseDuplicateAgentPath(resolved);
   return resolved.flatMap((entry) => ["--mount", mountArgument(entry)]);
 }
@@ -111,16 +109,12 @@ export function mountArguments(table: MountTable): readonly string[] {
 /** An entry with its defaults settled and its bind source resolved. Internal to this module. */
 type ResolvedEntry = {
   readonly agentPath: string;
-  /**
-   * The bind source the daemon is given: the `gatewayPath` put through `hostRoot`. The same string
-   * under identity mapping, and kept under a second name anyway, because only one of the two is
-   * the daemon's to resolve.
-   */
+  /** The bind source the daemon is given: the entry's path joined onto the Runtime Directory. */
   readonly hostPath: string;
   readonly readOnly: boolean;
 };
 
-function resolveEntry(entry: Mount, hostRoot: MountTable["hostRoot"]): ResolvedEntry {
+function resolveEntry(entry: Mount, runtimeDir: string): ResolvedEntry {
   // A path inside the container. The container runtime requires it to be absolute, and it is
   // POSIX whatever this platform is.
   if (!entry.agentPath.startsWith("/")) {
@@ -129,35 +123,18 @@ function resolveEntry(entry: Mount, hostRoot: MountTable["hostRoot"]): ResolvedE
     );
   }
   refuseDotSegment("mount's agentPath", entry.agentPath);
-  if (!path.isAbsolute(entry.gatewayPath)) {
+  if (entry.path.startsWith("/")) {
     throw new Error(
-      `the mount's gatewayPath ${JSON.stringify(entry.gatewayPath)} is not absolute, so which directory it names would depend on the working directory the Gateway was started from`,
+      `the mount's path ${JSON.stringify(entry.path)} begins with "/", and every entry's path is relative to the runtimeDir ${JSON.stringify(runtimeDir)}; joining the two resolves it under that directory a second time rather than failing, so write it relative`,
     );
   }
-  refuseDotSegment("mount's gatewayPath", entry.gatewayPath);
+  refuseDotSegment("mount's path", entry.path);
   return {
     agentPath: entry.agentPath,
-    hostPath: hostPathFor(entry.gatewayPath, hostRoot),
+    // POSIX whatever this platform is: the daemon this string reaches resolves it as one.
+    hostPath: path.posix.join(runtimeDir, entry.path),
     readOnly: entry.readOnly ?? false,
   };
-}
-
-/**
- * What the daemon is given for a Gateway-side path.
- *
- * Identity while `hostRoot` is absent, which is a Gateway on the host. Otherwise the one pair
- * translates every entry, and a path outside the root is refused.
- */
-function hostPathFor(gatewayPath: string, hostRoot: MountTable["hostRoot"]): string {
-  if (hostRoot === undefined) return gatewayPath;
-
-  const rest = remainderUnder(gatewayPath, hostRoot.gatewayPath);
-  if (rest === undefined) {
-    throw new Error(
-      `the mount's gatewayPath ${JSON.stringify(gatewayPath)} falls outside the hostRoot ${JSON.stringify(hostRoot.gatewayPath)} this Gateway declared, so there is no host path the container runtime's daemon could resolve it to`,
-    );
-  }
-  return `${hostRoot.hostPath}${rest}`;
 }
 
 /**
@@ -193,7 +170,7 @@ function field(name: string, value: string): string {
 function refuseDotSegment(label: string, value: string): void {
   if (value.split("/").some((segment) => segment === "." || segment === "..")) {
     throw new Error(
-      `the ${label} ${JSON.stringify(value)} has a "." or ".." segment; write it as a normalized path, because resolution treats these paths as plain strings and a "." or ".." makes matching one against another unsound`,
+      `the ${label} ${JSON.stringify(value)} has a "." or ".." segment; write it as a normalized path, because resolution joins the runtime directory and an entry's path and a ".." would resolve away silently, out of the one directory this table describes`,
     );
   }
 }
@@ -217,20 +194,7 @@ function refuseDuplicateAgentPath(entries: readonly ResolvedEntry[]): void {
   }
 }
 
-/** A path with one trailing separator removed. This is the one tolerance string matching grants. */
+/** A path with one trailing separator removed. */
 function withoutTrailingSlash(value: string): string {
   return value.endsWith("/") ? value.slice(0, -1) : value;
-}
-
-/**
- * What is left of `candidate` below `prefix`, or `undefined` if it is not below it.
- *
- * `""` where the two name the same thing, and otherwise leading-separated.
- */
-function remainderUnder(candidate: string, prefix: string): string | undefined {
-  const withoutTrailing = withoutTrailingSlash(prefix);
-  if (candidate === withoutTrailing) return "";
-  return candidate.startsWith(`${withoutTrailing}/`)
-    ? candidate.slice(withoutTrailing.length)
-    : undefined;
 }

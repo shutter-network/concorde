@@ -255,8 +255,9 @@ function composeArgv(
 
   // `--mount type=bind` per entry and never `-v`. That is what makes the daemon refuse a missing
   // source, rather than invent it as a `root`-owned directory. An absent table contributes
-  // nothing at all.
-  args.push(...mountArguments(container.mounts ?? { entries: [] }));
+  // nothing at all, and is not stood in for by an empty one: a Mount Table names a Runtime
+  // Directory, and no deployment is made to name a directory it has no entries under (ADR-0054).
+  if (container.mounts !== undefined) args.push(...mountArguments(container.mounts));
 
   const user = ownUser();
   if (user !== undefined) args.push("--user", user);

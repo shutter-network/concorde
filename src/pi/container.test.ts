@@ -174,6 +174,15 @@ type Rig = {
 
 /** Where a test wants the two mounts pointed, given where they really are. */
 type Paths = {
+  /**
+   * The Runtime Directory: what a Mount Table's `runtimeDir` is given, and what every entry's
+   * path below is written relative to.
+   *
+   * This process and the daemon are the same host here, so the one namespace the table has is
+   * also the one this file creates directories in. A containerised Gateway is what makes those
+   * two part company, and nothing on this side would notice (ADR-0054).
+   */
+  readonly root: string;
   readonly workspace: string;
   readonly agentDir: string;
   /**
@@ -192,6 +201,7 @@ async function temporaryPaths(t: TestContext): Promise<Paths> {
   const root = await mkdtemp(path.join(tmpdir(), "saf-container-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   return {
+    root,
     workspace: path.join(root, "workspace"),
     agentDir: path.join(root, "agent"),
     agentsFile: path.join(root, agentsFileName),
@@ -266,7 +276,7 @@ async function placeSettings(paths: Paths): Promise<void> {
 function settingsEntry(paths: Paths): Mount {
   return {
     agentPath: "/home/agent/.pi/agent/settings.json",
-    gatewayPath: paths.settingsFile,
+    path: path.relative(paths.root, paths.settingsFile),
     readOnly: true,
   };
 }
@@ -308,10 +318,11 @@ function runtimeOn(paths: Paths, extraEntries: readonly Mount[] = []): Runtime {
     // mounts by destination depth itself, which is what makes a nested entry work at all.
     mounts: {
       entries: [
-        { agentPath: "/workspace", gatewayPath: paths.workspace },
-        { agentPath: "/home/agent/.pi/agent", gatewayPath: paths.agentDir },
+        { agentPath: "/workspace", path: path.relative(paths.root, paths.workspace) },
+        { agentPath: "/home/agent/.pi/agent", path: path.relative(paths.root, paths.agentDir) },
         ...extraEntries,
       ],
+      runtimeDir: paths.root,
     },
     extraArgs: [addHostToGateway],
   });
@@ -328,7 +339,7 @@ function runtimeOn(paths: Paths, extraEntries: readonly Mount[] = []): Runtime {
 function instructionsEntry(paths: Paths): Mount {
   return {
     agentPath: `/workspace/${agentsFileName}`,
-    gatewayPath: paths.agentsFile,
+    path: path.relative(paths.root, paths.agentsFile),
     readOnly: true,
   };
 }

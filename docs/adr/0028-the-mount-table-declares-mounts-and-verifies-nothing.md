@@ -1,4 +1,24 @@
+---
+status: partially superseded by ADR-0054
+---
+
 # The Mount Table declares mounts and verifies nothing
+
+> **Amended by
+> [ADR-0054](./0054-the-mount-table-takes-one-required-runtime-directory.md).** The Gateway-side
+> namespace is gone. There is no `gatewayPath` on an entry and no `hostRoot` pair: a table takes
+> one required `runtimeDir`, the host's path to the directory, and every entry's `path` is relative
+> to it. Four things below fall with it. **The "three processes, three names" rationale** is the
+> load-bearing one: nothing ever read the Gateway side, because this document's own no-I/O rule is
+> what stopped it, so there were two actors and not three. ADR-0054 rewrites the argument rather
+> than dropping it. **The "falls outside the root" refusal** goes, unrepresentable rather than
+> cheaper, and **the "not absolute" refusal** on a `gatewayPath` goes with the field; one refusal
+> replaces both, on a leading `/` in an entry's path. And **the accommodation for a tree spanning
+> more than one host mount** (declare no root, write daemon-namespace paths) goes, replaced by
+> `runtimeDir: "/"`, which is the same reach as an ordinary value of the general rule. The rest
+> stands unchanged: no I/O of any kind, `--mount` and never `-v`, read-only and single-file
+> entries, no mounts at all being a deployment too, and every other refusal on the list, including
+> the `.` or `..` segment, which keeps its mechanism and is given a new reason.
 
 The directories an agent's container sees are declared in a **Mount Table**: a list of entries and a translation pair for a containerised Gateway. It resolves to `--mount` arguments and nothing else. It creates no directories, writes no files, starts no containers and performs no checks. Nothing in it knows about `pi`, and a second Agent Implementation would use the same one. An Agent Container ([ADR-0025](./0025-the-pi-adapter-spawns-one-confined-process-per-run.md)) carries one or carries none.
 
