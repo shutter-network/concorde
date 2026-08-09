@@ -3,7 +3,7 @@
 **[`examples/`](./examples/) holds four deployments and this repository builds none of them.**
 Each is an npm application of its own, with its own `package.json`, its own `tsconfig.json`, a
 flat directory and a Compose stack, and each resolves `shared-agent-framework` from the
-**registry** at `^0.2.0` rather than from this tree. So an example's import lines are the lines a
+**registry** at `^0.3.0` rather than from this tree. So an example's import lines are the lines a
 consumer writes, and a copy of the directory taken anywhere else still runs. They are
 independent and not a ladder: `00_minimal` is Users, Password Auth, the Messenger and the HTTP
 Channel with one seeded person and the terminal client; `01_scheduler` is the Scheduler alone,
@@ -39,20 +39,65 @@ itself differs, and no example reaches for it.
 **Each runs only as a Compose stack and only from its own directory**
 ([ADR-0039](./docs/adr/0039-the-reference-deployment-runs-in-a-compose-stack.md)):
 `cp .env.example .env`, a model key in it, `docker compose up -d --build`. The Gateway is a
-container holding the host's Docker socket, so every `main.ts` requires `BASE_DIR_GATEWAY` and
-`BASE_DIR_HOST`, the two sides of `hostRoot`, and `BASE_DIR_HOST` is `${PWD}` in every
-`compose.yml`: brought up from anywhere else the stack resolves the agent's mounts against a tree
-nobody is looking at. Running one with `node` on your host is not supported. That is one
-constraint stated four times now rather than once, which is what four directories cost.
+container holding the host's Docker socket, so every `main.ts` requires **`RUNTIME_DIR_HOST`** and
+hands it to a Mount Table as `runtimeDir`, the one required host path every entry's `path` is
+written relative to and the only namespace the declaration has a name for
+([ADR-0054](./docs/adr/0054-the-mount-table-takes-one-required-runtime-directory.md)); a leading
+`/` on an entry is refused, because `join` would resolve it under the root a second time and fail
+at the first Run rather than at construction. The value is `${PWD}` in every `compose.yml`:
+brought up from anywhere else the stack resolves the agent's
+mounts against a tree nobody is looking at. It is the *host's* path and the daemon's to resolve,
+which is what the suffix on the variable is for, and the Gateway process cannot in general reach
+that directory itself — anything the Gateway reads comes from its own image or from a path
+stated separately, as `02_decisions`' `SIGNING_KEY_FILE` is. Running one with `node` on your
+host is not supported. That is one constraint stated four times now rather than once, which is
+what four directories cost.
 Each owns its migration step
 ([ADR-0046](./docs/adr/0046-the-operator-owns-migrations.md)): the framework applies no DDL and
 nothing in a `main.ts` asks it to, so a one-shot `migrate` service runs the same image with
 `drizzle-kit push --force` and the Gateway waits on it with
-`condition: service_completed_successfully`. An example's `schema.ts` is also where it says which
-components own tables, and the comment at the top of each says so in those words: `00_minimal`'s
-is four specifiers wide for five components, the HTTP Channel being the one that owns nothing.
+`condition: service_completed_successfully`. An example's **`drizzle.config.ts`** is also where it
+says which components own tables, as a list of component names it turns into `/schema` specifiers:
+`00_minimal`'s is four names for five components, the HTTP Channel being the one that owns
+nothing. Two facts about that file are recorded in
+[ADR-0055](./docs/adr/0055-a-components-tables-are-a-subpath-of-their-own.md) rather than beside
+the code, the examples carrying no comments. It resolves with `createRequire(import.meta.url)` and
+**not** `import.meta.resolve`, because `drizzle-kit` reads its config by registering `tsx` and
+`require`ing it, so the file runs as CommonJS and `import.meta.resolve` is not a function there —
+the shape reads like an old spelling somebody will helpfully modernise, and modernising it breaks
+all four. And `--force` is not belt-and-braces: `push` asks about a destructive statement on a
+TTY, a Compose one-shot has none, and without the flag it applies nothing and **exits 0**, after
+which the Gateway starts on the strength of that success and every query fails.
 
-The framework reads no environment at all, so each `main.ts` reads its own. `createGateway` takes
+The framework reads no environment at all, so each `main.ts` reads its own, and **one rule decides
+what it reads and one criterion decides what that rule catches.** The rule: *the entry point states
+no fact about its own surroundings.* Facts about the **agent's** execution model stay in the file,
+because a Shared Agent runs its agent in a container and that is the framework's own fact
+([ADR-0033](./docs/adr/0033-an-agent-is-a-container-and-one-function.md)); a `main.ts` does not
+know that **it** is in one. The criterion: *a value moves to the environment when it has a
+counterparty in `compose.yml` that nothing compares it against.* Both listen addresses, the image
+tag, the Docker network, the Agent server's URL and the runtime directory have one, so all of them
+are read. `tokenTtl` does not — nothing in `compose.yml` has to agree with thirty days — so it
+stays a literal, written as `30 * 24 * 60 * 60 * 1000` because the arithmetic is the
+documentation. Apply the criterion to a value this list does not name rather than guessing from
+the list. A listen address is **two flat variables and not one `host:port` string**, so the four
+of them are four of the eleven names a reader of `00_minimal` meets before they meet a component;
+the one string would have to be split on the *last* colon, `[::1]:8081` being a legal value, and
+that is a parser guarding two fields Fastify takes separately. There is **no helper**: each
+variable is `process.env.X` with a `!` where a `string` is
+required and `Number(...)` for a port, and the guard that matters is `compose.yml`'s
+`${VAR:?message}`, which fires before the container exists and names both the variable and the
+fix. Two costs ride with that and are not answered. The `!` is an assertion the file cannot back,
+in a file whose whole purpose is to be copied out: copied elsewhere with `DATABASE_URL` unset,
+`pg` falls back to its own defaults and the crash names no variable this file reads. And an empty
+port string parses to `0`, which binds a random free port, so `compose` publishes to a port
+nothing is on and the only symptom is a connection refused. `AGENT_SERVER_URL` is passed through
+and not constructed, because a `main.ts` does not know its own service name, and each `AGENTS.md`
+refers to `$AGENT_SERVER_URL` rather than to a port — at the cost that the reader of that file is
+a language model, to which a literal URL is unambiguous in a way a variable reference is not, and
+a model that fails to interpolate gets a failure that reads as a network problem.
+
+`createGateway` takes
 a required `databaseUrl` with no `DATABASE_URL` fallback, so where the Db connects is stated at
 the call site (ADR-0045), and `02_decisions` loads its PEM itself and hands the key to
 `createSignatures`: the framework parses nothing and generates nothing, so a deployment brings
@@ -69,21 +114,49 @@ worse: `docker compose down -v`
 mints a fresh signing key, and every Decision published under the old one silently stops
 verifying.
 
-**`npm run check` does not know an example exists**, with one exception that is the shape of the
-rule rather than a hole in it. `tsconfig.json` includes `src` and `scripts`, and it has no
+**Nothing in `npm run check` type-checks an example, and Biome reads all four.**
+`tsconfig.json` includes `src` and `scripts`, and it has no
 `paths`, so nothing here type-checks an example and nothing can resolve an example's imports back
-into `src` by accident. The one thing under `examples/` the suite reads is the committed key
+into `src` by accident. `npm run lint` is `biome check .` over the whole tree, so every example is
+formatted and linted by the one command, and since each `main.ts` now reads its environment with
+`!` that is **forty `lint/style/noNonNullAssertion` warnings** — nine, eight, eleven and twelve
+across the four. Nothing fails: a warning is not an error. What they cost is the diagnostic list.
+Biome prints twenty and then says `Diagnostics not shown: 20`, **and which twenty it prints varies
+between runs**, so a warning arriving anywhere in the tree can land in the half nobody sees. The
+summary counts everything and an error still fails the command, so what is hidden is the text and
+not the outcome. That is what the `!` in the environment rule above costs outside the examples.
+The one thing under `examples/` the *test suite* reads is the committed key
 material: `src/example-signing-key.test.ts` loads `02_decisions`' PEM and `03_nostr`'s hex secret
 exactly as those deployments load them, because a decoy that stopped parsing is a worse outcome
 than an unmarked one. Everything else is CI's, one step per directory, `npm install && npx tsc
 --noEmit` inside it. **That checks an example against the version it pins and not against this
 tree.** A change made here is invisible to all four until it is published, and nothing catches
 what it broke in between; what those four steps catch is editing rot, and a pin bumped to a
-version the example does not work against. **Nothing checks that an example comes up at all.**
+version the example does not work against. **Nothing checks that an example comes up at all**, and
+that surface is seven variables wider per directory than it was: `PUBLIC_HOST`, `PUBLIC_PORT`,
+`AGENT_HOST`, `AGENT_PORT`, `AGENT_IMAGE`, `AGENT_NETWORK` and `AGENT_SERVER_URL` each have a
+counterparty in `compose.yml` that **nothing compares them against**, which is the criterion that
+put them there. A wrong port fails at boot; a wrong network or image tag fails at the **first
+Run**, which under
+[ADR-0017](./docs/adr/0017-failed-runs-are-not-retried.md) is a permanently dead Signal. The only
+thing that reads a variable and its counterparty together is `docker compose up -d --build` and a
+message round-tripped by hand.
 
 **The package is published and publishing is a hand act**: `npm version patch && npm publish &&
-git push --follow-tags`, at `0.2.0` today, with `prepublishOnly` building so that a stale `dist`
-is not something to remember. **No example commits a lockfile** and each installs
+git push --follow-tags`, at `0.3.0` today, with `prepublishOnly` building so that a stale `dist`
+is not something to remember. **The version number is the one thing `prepublishOnly` does not
+build, and it is a second hand step beside `npm version`.** `src/gateway/gateway.ts` exports
+`describedVersion`, the string both OpenAPI documents announce, written out as a literal because
+nothing shipped resolves a path out of `import.meta.url` any more and the manifest is therefore
+not something `dist/gateway/gateway.js` can read (see the convention below). `npm version` edits
+`package.json` and no source file, so the two are bumped separately, and
+`src/gateway/gateway.test.ts` compares them. **That is what went wrong at `0.3.0`**: the tag was
+cut and published with `describedVersion` still at `0.2.0`, `npm run check` was red on `main` until
+the source caught up one commit later, and every consumer of `0.3.0` serves a document announcing
+`0.2.0` until `0.3.1` goes out. The test is a check and not a gate — `npm publish` runs
+`prepublishOnly`, which builds and does not test — so it fails after the publish rather than
+before it. Bump `describedVersion` in the same commit as `npm version`, before `npm publish`.
+**No example commits a lockfile** and each installs
 with `npm install` rather than `npm ci`, so a patch publish flows into all four with nothing
 edited, and a breaking change bumps the minor and forces a deliberate four-place sweep, which is
 when each example wants opening anyway. `/examples/*/package-lock.json` is in `.gitignore` for
@@ -95,15 +168,36 @@ steps and the four Dockerfiles.
 **[`docs/api-docs.md`](./docs/api-docs.md) governs the doc comments in `src` and governs nothing
 under `examples/`. That is a reversal, and it is written down here because it will otherwise be
 applied back by habit.** The single deployment these four replaced was about half comment by
-volume with ADR cross-references throughout. A README says what the example demonstrates and how
-to run it, briefly, and stops. A code comment is minimal, never repeats the README, and describes
-only what is unique to that example, which in practice is the thing a reader would otherwise get
-wrong: why a seeding block is one transaction, why `01_scheduler` writes its Handler by hand, why
-`03_nostr` builds no Auth. The calibration is the files themselves. `00_minimal/main.ts` is 104
-lines carrying 5 comment lines, `01_scheduler/main.ts` 116 and 5, `02_decisions/main.ts` 126 and
-10, and `03_nostr/main.ts` 117 and 11. A comment that would fit any of the four belongs in none
-of them. The terminal client the two HTTP examples run is a `bin` on this package rather than a
-subpath of it, and the convention below is where that lives.
+volume with ADR cross-references throughout. The rule under `examples/` is simpler than a
+calibration and is now stated as one: **an example carries no code comments.** Not fewer, none —
+`main.ts`, `compose.yml`, `drizzle.config.ts`, `tsconfig.json` and every `Dockerfile` in all four
+carry not one. Two files are exceptions and each for its own reason. `.env.example` is prose by
+nature, and its comments are the shouting about a demo password and about worthless key material
+that this file requires at every point of contact. `03_nostr/strfry.conf` is upstream's own
+`/etc/strfry.conf.default` with one line changed, so it keeps upstream's sixty comment lines and
+would stop being that file without them; what was deleted there was the twelve-line header this
+repository wrote.
+
+**A fact that used to live in a comment goes to the README, or to an ADR if no README will have
+it.** Three went to READMEs in this sweep and each is now that fact's only home: `01_scheduler`'s
+two-name schema list, `03_nostr`'s required `users`, and `00_minimal`'s "which components own
+tables". Two went to ADR-0055, having no README home, and they are the two `drizzle.config.ts`
+facts above. A README says what the example demonstrates and how to run it, briefly, and
+stops; with no comment in any of the four to calibrate a new one against, the habit this
+paragraph guards against has more to pull on than it did, not less. **`AGENTS.md` carries what is
+true of every Run and a prompt template carries what is true of this Signal**, which is why there
+is no `.hbs` in any example any more: each template is a string literal in `main.ts`, cut to what
+is true of this Signal, with one extra line naming whose message it is where two people talk to
+one agent, and everything standing that the deleted files said was already in the corresponding
+`AGENTS.md`, more fully. That split lines up
+with editability, `AGENTS.md` being mounted and live where a template is baked into the image.
+**The cost priced against it did not land**, and that is worth knowing because the price was
+recorded before the templates were written: the fear was that a prompt no longer repeating "answer
+by calling, not by replying" leaves a model that skims `AGENTS.md` replying into the void and
+looking like it worked, and all three literals kept that line. What they dropped is the route, the
+body shape, the polling explanation and the formatting rules, every one of which `AGENTS.md`
+states and states better. The terminal client the two HTTP examples run is a `bin` on this package
+rather than a subpath of it, and the convention below is where that lives.
 
 ## Toolchain and checks
 
@@ -128,24 +222,32 @@ share a database, and a test whose subject is what a fresh database ends up
 containing takes one of its own. See `src/test-support/database.ts`.
 
 `npm run check:package` is separate: it builds, packs, installs the tarball into a
-throwaway project, and checks that **all fifteen** subpaths resolve there — to the type checker
-and to Node both. **There is no root among them**: `package.json` `exports` has no `.` entry and
+throwaway project, and checks that **all twenty-three** subpaths resolve there — to the type
+checker and to Node both. **There is no root among them**: `package.json` `exports` has no `.`
+entry and
 `import … from "shared-agent-framework"` resolves to nothing
-([ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)). Eleven are components, because
-a component is one subpath and its tables arrive on it beside its constructor
-([ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md)): `/signals`, `/pi`, `/users`,
+([ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)). Eleven are components:
+`/signals`, `/pi`, `/users`,
 `/password-auth`, `/nostr-auth`, `/messenger`, `/http-channel`, `/nostr-channel`, `/signatures`,
-`/decisions` and `/scheduler`, with no `/schema` specifier among them. Four are what the root
+`/decisions` and `/scheduler`, each carrying a constructor and its types and **none of them
+carrying a table** — which is the half of
+[ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md) that stands and the clause ADR-0055
+reversed. Eight are `/schema`, one below each component that owns tables, and they are
+where the tables are
+([ADR-0055](./docs/adr/0055-a-components-tables-are-a-subpath-of-their-own.md)): `/pi`,
+`/signatures` and `/http-channel` own none and have none. Four are what the root
 used to hold and no component
 owns: `/gateway` the assembly, `/logging` the logging seam, `/db` the PostgreSQL client and
-`/agent-container` the container plumbing. It was eight until messaging split in two and a second
+`/agent-container` the container plumbing. Those fifteen were eight until
+messaging split in two and a second
 medium arrived: `/messenger` was **reserved and unreachable**, held for the day a peer of the HTTP
 Messenger turned up, and what turned up was a Channel rather than a second Producer, so the
 reserved name went to the part that owns the log and `/http-messenger` became `/http-channel`
 ([ADR-0048](./docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)).
 `/nostr-channel` is the only Channel with tables of its own
-([ADR-0049](./docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)). It was thirteen
-until authentication became a component again: `/password-auth` took the scrypt hashes, the Token
+([ADR-0049](./docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)). They were thirteen
+until authentication became a component again, and the eight `/schema` entries are the newest and
+the whole of ADR-0055: `/password-auth` took the scrypt hashes, the Token
 table and the login out of `/users`, and `/nostr-auth` arrived beside it, because a plural
 mechanism with one member answers no question
 ([ADR-0052](./docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md),
@@ -156,10 +258,13 @@ it. `/signals`
 is the Signal Worker's own: its constructor, its options, the vocabulary a Signal
 Handler is written in, and `templateHandler` all come off `shared-agent-framework/signals`. The
 last step of the check proves the root itself resolves to nothing, which is what would notice a
-root export creeping back and making one name reachable two ways. It also assembles an Operator's
-barrel out of eight component specifiers and proves
-it yields **one distinct schema object per component**, which is the assertion the prefixed
-schema names exist for — see the flat-exports convention below. It needs the network, so it stays out
+root export creeping back and making one name reachable two ways. It also collects the exports of
+each `/schema` module the way `drizzle-kit` collects them, and proves that the eight yield **eight
+distinct schema objects and thirteen tables, and that the component subpaths above them yield
+neither** — the assertion the split exists for and the one nothing else in the repository makes,
+because a `schema.ts` re-exported from both places puts every table behind two specifiers, and a
+`/schema` module that stopped re-exporting one leaves that table queryable and absent from the
+DDL. It needs the network, so it stays out
 of the inner loop; it needs no database at all, because nothing in the package applies
 DDL any more ([ADR-0046](./docs/adr/0046-the-operator-owns-migrations.md)). CI runs it
 as its own step.
@@ -183,12 +288,15 @@ there are four commands in CI and three of them are not the inner loop.
 `npm run docs:dev` and `npm run docs:build` are the API reference: TypeDoc reads the doc
 comments out of `src`, writes one markdown page per entry point, two more generators write the
 table pages and the route pages after it, and VitePress serves or builds them all. TypeDoc's pages
-are the fifteen subpaths of the export map
-([ADR-0047](./docs/adr/0047-a-component-is-one-subpath.md),
-[ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)), titled with the specifier a
-Developer imports from, and nothing under `examples/` is among them. The Messenger and each
-Channel are separate pages for the reason they are separate subpaths, and each Auth is a page for
-the same reason: a Developer reads the one they are using. `/nostr-auth`'s page is the only
+are fifteen of the export map's twenty-three entries, the eleven components and the four
+infrastructure subpaths
+([ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)), titled with the specifier a
+Developer imports from, and nothing under `examples/` is among them. **The eight `/schema` entries
+are deliberately not entry points**, and a generated table page is the one generator that
+documents each: for the reason those pages exist at all, below
+([ADR-0055](./docs/adr/0055-a-components-tables-are-a-subpath-of-their-own.md)). The Messenger
+and each Channel are separate pages for the reason they are separate subpaths, and each Auth is a
+page for the same reason: a Developer reads the one they are using. `/nostr-auth`'s page is the only
 documentation of that component in the deliverable, no example building it. **Two words the
 reference is written in are now defined
 nowhere in it.** **Operator** and **Shared Agent** appear on every page and belong to no
@@ -251,8 +359,9 @@ type, its nullability and its default, the primary key, the indexes, the unique 
 constraints, and the foreign keys with the schema-qualified table and column they point at. **A
 foreign key that leaves the component's own schema gets a sentence at the top of the page**,
 naming the columns and the subpath that creates what they point at: there are six of them onto
-`saf_users.users.id` from four components, and a barrel carrying any of those four without
-`shared-agent-framework/users` generates a constraint onto a table nobody creates.
+`saf_users.users.id` from four components, and a `drizzle.config.ts` listing any of those four
+`/schema` subpaths without `shared-agent-framework/users/schema` generates a constraint onto a
+table nobody creates.
 
 **The structure comes from `generateDrizzleJson`**, `drizzle-kit`'s own snapshot generator and the
 same code path an Operator's generation runs (ADR-0046), so a page cannot disagree with the DDL
@@ -276,7 +385,7 @@ that legitimately own no tables and so moves the drift one file over. `src/<comp
 needs no exemption, because owning that file is what owning tables is, and the scan is not new
 machinery: `src/schemas.test.ts` already holds the same list against the same files. Two more
 refusals ride with it, each guarding a page that would otherwise be complete-looking and wrong. A
-listed module exporting no table a snapshot can see fails, because that is the `*Tables` wrapper
+listed module exporting no table a snapshot can see fails, because that is the `tables` wrapper
 trap (ADR-0046) and a component with no tables correctly has no page, so the absence would look
 intended. And a snapshot carrying something the renderer does not describe fails, which today is
 enums, sequences, views, row policies and row level security.
@@ -342,10 +451,12 @@ builds the site so a broken configuration fails in a check rather than in a brow
 of it is terminal now. It collected two independent findings while one of them was the drift
 comparison against the committed pages; with one kind of failure left there is nothing to
 collect. It is also what makes the guard in `site/specifier-titles.mjs` unattended: that guard
-compares `typedoc.jsonc`'s entry points against `package.json` `exports` both ways and fails
-the generation if they disagree, and before this command nothing but a human running TypeDoc
-fired it. CI runs it as its own step. TypeDoc's *warnings* fail it, through
-`treatWarningsAsErrors` in `typedoc.jsonc`. They did not while one dangling reference was known
+holds every entry in `package.json` `exports` against **exactly one generator** — a
+`typedoc.jsonc` entry point or a `src/<component>/schema.ts` a table page is written from — both
+ways, and fails the generation on any disagreement, an entry documented twice included. Before
+this command nothing but a human running TypeDoc fired it. CI runs it as its own step. TypeDoc's
+*warnings* fail it, through `treatWarningsAsErrors` in `typedoc.jsonc`. They did not while one
+dangling reference was known
 and ticketed, on the argument that an export-map change is not something a documentation check
 gets to force at an unrelated moment; that reference went away and a tolerance with nothing behind
 it hides only the next one. The dangling name was `CursorWindow`, and how it was answered is worth
@@ -412,17 +523,21 @@ plugin's blockquote rendering already links and has no block to lose, so that br
 alone. `expandParameters` stays off, because the plugin option widens the parameter tables below
 the block as well and only the block was meant to widen.
 
-Four costs were recorded against the widening this renderer replaced, and **three of them are
-gone**. A parameter carries its type, so `Runtime` reads `run: (prompt: RunPrompt) =>
-Promise<RunOutcome>`. `readonly` is printed on a member of an expanded object rather than dropped
-and left to the section below. And `SignalHandler.handle` prints its return union on one line,
-because a union only wraps past seventy characters and this one is not; when a union does wrap it
-takes one member per line behind its own bar, and a member several lines long carries on under
+Four costs were recorded against the widening this renderer replaced, and **all four are
+gone**, three of them to this renderer. A parameter carries its type, so `Runtime` reads
+`run: (prompt: RunPrompt) => Promise<RunOutcome>`. `readonly` is printed on a member of an
+expanded object rather than dropped and left to the section below. And `SignalHandler.handle`
+prints its return union on one line, because a union only wraps past seventy characters and this
+one is not; when a union does wrap it takes one member per line behind its own bar, and a member
+several lines long carries on under
 that bar rather than falling back to the margin.
-**One cost stands, because it was never the renderer's.** A `*Tables` variable names its
-tables against empty braces, `usersTables` printing `tokens` and `users` as
-`PgTableWithColumns<{}>`, where naming the tables is the gain and `{}` is drizzle's own type under
-`excludeExternals`. What replaces the three is one new cost, accepted rather than missed:
+**The fourth went too, and not to the renderer.** It was a `tables` wrapper naming its tables
+against empty braces, `PgTableWithColumns<{}>` being drizzle's own type under `excludeExternals`,
+and there is no such block on any page now: the tables are on `/schema` subpaths and a `/schema`
+subpath is not a TypeDoc entry point (ADR-0055). What went with it is larger than the cost it
+closed and is recorded in that ADR — every sentence written above a table in a `schema.ts` is now
+a comment for a reader of the source alone, a generated table page carrying structure and not
+prose. What replaces the four is one new cost, accepted rather than missed:
 **width**. The widest members went from about seventy characters to about a hundred and twenty and
 scroll sideways on the method-heavy pages. That is the price of the annotation, not of the
 colouring.
@@ -468,16 +583,23 @@ all** ([ADR-0046](./docs/adr/0046-the-operator-owns-migrations.md)). There is no
 `migrations:generate` script, no shipped migration folder, no descriptor, no
 `db.migrate`, no root `drizzle.*.config.ts` — and therefore neither of the two hand-edits
 that a regeneration used to demand. What a component ships is its `schema.ts`, re-exported
-from its own subpath, `shared-agent-framework/<component>`, beside its constructor
-(ADR-0047): there is no `/schema` specifier any more, and the tables of a component are
-reached the same way everything else about it is. A deployment `export *`s the
-components it runs into one barrel, points its own `drizzle.config.ts` at that barrel, and
-applies it with its own `drizzle-kit`: `push` to prototype, `generate` + `migrate` in
-production. Each example under `examples/` is a worked version of that, four of them: a
-`schema.ts`, a `drizzle.config.ts` deriving its `schemaFilter` from the barrel rather than
-listing it, and a `migrate` service running the deployment's own image with
+from a subpath of its own, `shared-agent-framework/<component>/schema`, below the one carrying
+its constructor (ADR-0055): `drizzle-kit`'s config takes **file paths and never objects**, so an
+export entry is the only supported way to hand a consumer a stable path into the package, and
+the alternative was an Operator writing `node_modules/shared-agent-framework/dist/...` against a
+layout this package never promised. A deployment lists the `/schema` specifiers of the
+components it runs in its own `drizzle.config.ts` and
+applies them with its own `drizzle-kit`: `push` to prototype, `generate` + `migrate` in
+production. **No deployment writes a barrel**, and that is what the subpaths bought: a barrel is a
+second list of the components a deployment runs, compared against the first by nothing, whose own
+first sentence goes stale. Each example under `examples/` is a worked version of that, four of
+them: no `schema.ts` of its own, a `drizzle.config.ts` that resolves each specifier with
+`createRequire(import.meta.url)` and still **derives** `schemaFilter` by importing those same
+specifiers rather than listing it, and a `migrate` service running the deployment's own image with
 `drizzle-kit push --force`, which the Gateway waits on with
-`condition: service_completed_successfully`.
+`condition: service_completed_successfully`. Derived and not listed because a config with no
+`schemaFilter` filters both sides of the diff down to `public`, finds no difference, creates not
+one table and exits 0.
 
 The tests set their tables up the same way, through `src/test-support/apply-schema.ts`,
 which hands the same schema objects to `drizzle-kit`'s `pushSchema`. Nothing in the suite
@@ -494,7 +616,8 @@ because a Signed Statement is never kept
 because the log it used to own is the Messenger's now, and HTTP delivery is the User asking, so
 there is no queue either
 ([ADR-0048](./docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)). Each has
-no schema and no tables, and each subpath carries a constructor and nothing beside it. The Nostr
+no schema and no tables, each subpath carries a constructor and nothing beside it, and neither has
+a `/schema` entry for the same reason `/pi` has none. The Nostr
 Channel is the counter-example that says a Channel is not a tableless kind of thing: it owns
 **three** tables, because the mapping from a Nostr public key to a User, the set of envelopes it
 has already read, and the queue of wraps the Relay has not taken yet are three things only it can
@@ -502,7 +625,7 @@ know (ADR-0049). **Neither Auth is tableless either**, and an Auth is the part o
 most likely to be assumed stateless: Password Auth owns `passwords` and `tokens`, and Nostr Auth
 owns `grants` and `admitted` even though it issues nothing, because a key nobody granted is
 refused and a credential is spent once (ADR-0052, ADR-0053). What an Auth owns is a secret, and a
-secret is a row. The four infrastructure subpaths own no tables and no barrel names them:
+secret is a row. The four infrastructure subpaths own no tables and no config lists them:
 `/gateway`, `/logging`, `/db` and `/agent-container` carry constructors, seams and types
 ([ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)), and `Auth` is on `/gateway`
 among them.
@@ -520,22 +643,29 @@ Conventions the build depends on:
   none (ADR-0046).
 - **Every subpath is a directory with an `index.ts`, and there is no `src/index.ts`.**
   `shared-agent-framework/gateway` is `src/gateway/index.ts`, `/logging` is
-  `src/logging/index.ts`, and the same shape holds for all fifteen. The package root exports
+  `src/logging/index.ts`, and the same shape holds for all twenty-three, a `/schema` subpath
+  included: `shared-agent-framework/users/schema` is `src/users/schema/index.ts`, one line
+  starring `../schema.ts`, and the declarations stay in `src/<component>/schema.ts` where the
+  component's own modules, `src/schemas.test.ts` and the reference extractors all read them
+  (ADR-0055). The package root exports
   nothing, so a module written at `src/index.ts` would ship and resolve to nowhere
   ([ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)). A new subpath is a new
-  directory, its `index.ts`, an `exports` entry, an entry point in `site/typedoc.jsonc` and a
-  block in `scripts/check-package.ts`. Two of those four are enforced:
-  `site/specifier-titles.mjs` compares the entry points against `exports` both ways. There is no
-  fifth any more, `tsconfig.json` having lost the fifteen `paths` that existed for one reader,
+  directory, its `index.ts`, an `exports` entry, a block in `scripts/check-package.ts`, and
+  documentation by exactly one generator — an entry point in `site/typedoc.jsonc`, or, for a
+  `/schema` subpath, the `src/<component>/schema.ts` a table page is written from. Two of those
+  four are enforced: `site/specifier-titles.mjs` holds `exports` against both generators both
+  ways. There is no
+  fifth any more, `tsconfig.json` having lost the `paths` that existed for one reader,
   the deployment that used to live in this tree and import the package by name.
 - **`src/http-client-tui/` is the one shipped directory that is not a subpath.** It is a
   `bin`, `http-client-tui`, a line-oriented terminal client for the HTTP Channel's two routes
   and Password Auth's login. A `bin` is not importable, so the export map is untouched and there
-  are still fifteen subpaths and no root; it is in no `exports` entry and in no `site/typedoc.jsonc`
-  entry point, and the guard in `site/specifier-titles.mjs` compares those two against each
-  other and would fail on either. **It has zero dependencies and must keep them**: native
-  `fetch`, `node:readline/promises` and one hand-written escape sequence. A dependency added
-  here lands in every consumer's install, and the answer to needing one is a second package.
+  are still twenty-three subpaths and no root; it is in no `exports` entry and in no
+  `site/typedoc.jsonc`
+  entry point, and the guard in `site/specifier-titles.mjs` would fail on either. **It has zero
+  dependencies and must keep them**: native `fetch`, `node:readline/promises` and one
+  hand-written escape sequence. A dependency added here lands in every consumer's install, and
+  the answer to needing one is a second package.
   It imports the framework's own record types, as **types**, so a renamed field fails the
   typecheck rather than reaching a reader as an `undefined`. **It ignores `WWW-Authenticate`
   deliberately**, now that a 401 carries one: it speaks the one scheme it can hold a secret for,
@@ -563,31 +693,39 @@ Conventions the build depends on:
 - **Tests and their fixtures live beside the code they exercise and never ship.**
   `src/**/*.test.ts` and `src/test-support/` are excluded from
   `tsconfig.build.json`, which the tarball check asserts.
-- **A component's tables are on the component's own subpath, and they must stay flat.**
-  `shared-agent-framework/<component>` is the door an Operator's `drizzle-kit`
-  reads through (ADR-0046, ADR-0047), and that tool takes `Object.values` of the module and
+- **A component's tables are on the component's `/schema` subpath, and they must stay flat.**
+  `shared-agent-framework/<component>/schema` is the door an Operator's `drizzle-kit`
+  reads through (ADR-0046, ADR-0055), and that tool takes `Object.values` of the module and
   keeps whatever passes `is(x, PgTable)` / `is(x, PgSchema)` — it never looks
   inside a plain object. So gathering the tables up as
-  `export const usersTables = { users }` generates an **empty** migration and says
+  `export const tables = { users }` generates an **empty** migration and says
   nothing about it. `scripts/check-package.ts` imports every table **by name** out
   of the installed tarball for exactly that reason: a namespace import would
-  resolve and prove nothing.
-- **Every schema object and every `*Tables` wrapper keeps its component's prefix.**
-  `usersSchema` and not `schema`, `usersTables` and not `tables`. The tables themselves are
-  named for the tables — `users`, `tokens`, `messages` — and are distinct across components
-  already, because each is `saf_<component>.<its own name>`. The prefix on the other two
-  reads worse at an import site and it is load-bearing (ADR-0047): an Operator's barrel is
-  wildcard re-exports of component subpaths, and **`export *` drops a name that resolves to
-  more than one binding**, so eight components exporting a bare `schema` produce a barrel
-  exporting none, an empty derived `schemaFilter`, and a `push` that compares nothing against
-  nothing, creates not one table and exits 0. Nothing warns, and the Gateway starts on the
-  strength of that success. The prefix keeps the names distinct by construction; the
-  packaging check's "one distinct schema object per component" assertion is what notices if
-  anyone shortens them anyway. **The table names are what the rule does not cover**, and
-  `tokens` is the case that proves it: it was `saf_users.tokens` and is `saf_password_auth.tokens`,
-  and while both existed a barrel carrying `/users` and `/password-auth` would have dropped the
-  name from both. The move is what made the barrel carry the two together, and it is a table
-  name colliding, not a schema object, so nothing above would have caught it.
+  resolve and prove nothing. **No table is reachable two ways**, which is the other half of what
+  that check asserts: a component subpath carries the constructor and the types and yields no
+  table and no schema object at all. Three of the eleven do still re-export something from their
+  `schema.ts` — `/signals` carries `runStates` and `signalStates`, `/messenger`
+  `messageDirections`, `/scheduler` `scheduleKinds`, and each carries the union derived from its
+  arrays. Eight names, each reachable from two specifiers, and no table among them: an array is
+  what a column's check
+  constraint is compiled from, so it lives in `schema.ts`, and `SignalRecord.state`,
+  `RunRecord.state`, `MessageRecord.direction` and `ScheduleRecord.kind` are declared with the
+  unions and go out on the wire, so a reader of a record has to be able to name them. The overlap
+  is recorded in ADR-0055 with the two ways of ending it that were declined, and it is also held
+  in place by `check:docs`: a record's field declared with a union that no documented specifier
+  exports is the dangling reference `treatWarningsAsErrors` fails on, the way `CursorWindow` did.
+- **The schema object is `schema` and the wrapper is `tables`, and the prefixes they used to
+  carry are history rather than a rule.** `usersSchema` and `usersTables` existed to survive a
+  wildcard barrel, because **`export *` drops a name that resolves to more than one binding** and
+  eight components exporting a bare `schema` produced a barrel exporting none, an empty derived
+  `schemaFilter`, and a `push` that created not one table and exited 0; `drizzle-kit` requires
+  each listed schema file separately and merges no namespace, there is no barrel anywhere any
+  more, and so the discipline protects nothing (ADR-0055). The table names — `users`, `tokens`,
+  `messages` — never carried a prefix and never needed one, each being
+  `saf_<component>.<its own name>`, and the near-miss the old rule could not cover is closed with
+  it: `tokens` moved from `saf_users.tokens` to `saf_password_auth.tokens`, and while both existed
+  a barrel carrying `/users` and `/password-auth` would have dropped the name from **both**, which
+  is now impossible rather than uncaught.
 - **Four schema modules import `src/users/schema.ts`, and there are six cross-schema
   foreign keys. Every one of them points at `saf_users.users.id` and nothing points back.**
   `src/messenger/schema.ts` declares `messages.user_id`
@@ -599,11 +737,14 @@ Conventions the build depends on:
   It was forbidden while each part generated a folder of its own,
   because the generator would emit the Users component's `CREATE TABLE` into the
   importing part's folder; with one generation graph it is the whole mechanism, and the
-  constraint is free. What it costs a deployment is that a barrel carrying **any** of those
-  four without Users generates a foreign key onto a table it never creates, and an Auth is the
+  constraint is free. What it costs a deployment is that a `drizzle.config.ts` listing **any** of
+  those four `/schema` subpaths without `shared-agent-framework/users/schema` generates a foreign
+  key onto a table it never creates, and an Auth is the
   new way to make that mistake: a deployment can run Nostr Auth, the Nostr Channel and no
-  Messenger, and still owe Users to its own barrel. `src/schemas.test.ts` pushes all eight
-  parts' schemas together, which is what keeps the assembled set honest.
+  Messenger, and still owe Users to its own list. `03_nostr` is the worked case — nobody logs in
+  there and `users` is in the list anyway — and `01_scheduler` is the one example where a short
+  list is correct rather than an omission, building none of the four. `src/schemas.test.ts` pushes
+  all eight parts' schemas together, which is what keeps the assembled set honest.
 - **Three libraries are confined to the one component that owns each, and the rule is
   asserted rather than read.** `pg` is the Db's: parts obtain a handle with
   `db.handle(schema)`, and the one thing that needs a connection of its own — a `LISTEN`
