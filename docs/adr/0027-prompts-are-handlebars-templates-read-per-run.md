@@ -1,7 +1,3 @@
----
-status: partially superseded
----
-
 # Prompts are Handlebars templates, read per Run, unescaped
 
 > **Amended, and the title's middle clause is now false.** `templateHandler` reads no file at all:
@@ -17,8 +13,10 @@ status: partially superseded
 > `strict` disabling inverse sections, including its consequence, since a variable `data` did not
 > supply is found at render and fails that Signal exactly as described. **This amendment carries no
 > ADR of its own**, deliberately: it is one option's type, reversed by changing it back, so it
-> fails the hard-to-reverse test. The `TemplateHandlerOptions.template` doc comment and
-> `CLAUDE.md`'s refuse-in-review list are where the reasoning lives.
+> fails the hard-to-reverse test. It carries no `status:` line either, and for a narrower reason:
+> every other statused ADR here names the one that overtook it, and there is nothing to name. The
+> `TemplateHandlerOptions.template` doc comment and `CLAUDE.md`'s refuse-in-review list are where
+> the reasoning lives.
 
 The framework ships a Signal Handler that renders a Prompt from a **Handlebars** template on disk. The template file is read and compiled **per Run**, so an Operator can iterate on prompt wording without restarting the Gateway.
 

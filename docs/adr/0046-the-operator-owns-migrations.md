@@ -1,4 +1,20 @@
+---
+status: partially superseded by ADR-0055
+---
+
 # The Operator owns migrations
+
+> **Amended, and the barrel below is a file no deployment writes.**
+> [ADR-0055](./0055-a-components-tables-are-a-subpath-of-their-own.md) put a component's tables on a
+> `/schema` subpath of its own, and the barrel went with them: a deployment lists the `/schema`
+> specifiers of the components it runs in its own `drizzle.config.ts` and **derives** `schemaFilter`
+> by importing those same specifiers. So two things read false. The summary below says a deployment
+> "assembles the ones it runs into a barrel", and the section headed "The deployment writes a barrel
+> and a config" describes a `schema.ts` that `export *`s the parts — which is also what the second
+> banner further down voids, that `export *` being the whole reason the prefixed schema names
+> existed. What a barrel cost is why it is gone, and ADR-0055 has it. **Everything this ADR decides
+> stands**: the framework applies no DDL, an Operator generates and applies it with their own
+> `drizzle-kit`, and the flat-export rule below is unchanged and is the one ADR-0055 quotes.
 
 The framework ships schema definitions and applies nothing. A component exports its tables;
 a deployment assembles the ones it runs into a barrel, generates or pushes with **its own**
