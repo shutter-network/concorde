@@ -855,12 +855,25 @@ describe("wakeup", () => {
     await worker.start();
     try {
       const id = await emit(worker, "woken");
-      // Nothing heard the notification, and the sweep is a minute away, so the only
-      // thing that can find this Signal is the registration completing.
+      // Nothing heard the notification and the sweep is a minute away, so two things
+      // can have found this Signal: the registration completing, or the drain
+      // `wakeup("start")` launched, which is still in flight when `start` returns. That
+      // drain's first look at the queue and this `emit` are four milliseconds apart and
+      // ordered by nothing, so which of them wins is not a fact to assert on: asserting
+      // that the registration drained it is what made this test fail in CI and pass
+      // here. Held instead are the two things that hold either way, and between them
+      // they still fail if `connected` stops waking the worker.
       assert.equal((await settled(id)).state, "done");
       assert.equal(wakeups(entries, "notification"), 0, "nothing was listening when it was sent");
       assert.equal(wakeups(entries, "sweep"), 0);
-      assert.ok(wakeups(entries, "listening") >= 1);
+      // Past the hold, so the registration is in place whatever settled the Signal.
+      await waitUntil("the Signal Worker's registration is in place", async () =>
+        entries.some((entry) => entry.message === listeningMessage),
+      );
+      assert.ok(
+        wakeups(entries, "listening") >= 1,
+        "the registration completing should itself be a wakeup",
+      );
     } finally {
       await worker.stop();
     }
