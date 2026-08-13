@@ -46,6 +46,16 @@ page and never one written in a sidebar, so the failure is found by a reader rat
 `check:docs`. `README.md` is in `srcExclude` for a related reason — it is this note, about the
 toolchain rather than about the framework, and `srcDir` would otherwise serve it as a page.
 
+`public/` is the third thing in here and holds one file, `architecture.svg`, which `index.md` and
+`architecture.md` both show. VitePress copies that directory to the site root untouched and
+rewrites `/architecture.svg` against `base`, which is why the pages reference it with a leading
+slash and not a relative path. It is an Excalidraw export and it is self-contained: the font it
+uses is embedded, so the page makes no external request for it. Its labels are the glossary's, so
+the picture says Signal Worker where the pages do. It has no background of its own, and every
+stroke and every letter in it is `#1e1e1e` against a dark theme's `#1b1b1f`: the boxes stay
+readable, because their text sits on a pastel fill, and the arrows, the dashed Gateway boundary
+and the four labels on the arrows do not.
+
 `reference/` is generated in full on every run and **is not committed**: `.gitignore` covers the
 whole directory, sidebar included. It was committed, so that a change to the public API arrived
 as a readable diff in review. A signature block is HTML now, and that does not diff readably.

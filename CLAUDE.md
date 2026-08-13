@@ -117,7 +117,12 @@ verifying.
 **Nothing in `npm run check` type-checks an example, and Biome reads all four.**
 `tsconfig.json` includes `src` and `scripts`, and it has no
 `paths`, so nothing here type-checks an example and nothing can resolve an example's imports back
-into `src` by accident. `npm run lint` is `biome check .` over the whole tree, so every example is
+into `src` by accident. `npm run lint` is `biome check .` over the whole tree **minus `**/*.svg`**,
+which is the whole of `files.includes` in `biome.json` and is not a style choice: Biome parses an
+`.svg` as HTML, and `site/public/architecture.svg` fails that parse on its `DOCTYPE` and again on
+its root element, so the one command went red over a file Biome has no business reading. Excluded
+tree-wide rather than by directory, because there is nothing for Biome to say about an SVG
+anywhere. So every example is
 formatted and linted by the one command, **and `lint/style/noNonNullAssertion` is off under
 `examples/` alone**, which is the one place a rule is switched off by directory. Each `main.ts`
 reads its environment with `!`, so the rule had forty things to say — nine, eight, eleven and

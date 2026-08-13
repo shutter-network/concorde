@@ -5,8 +5,28 @@ deployment step by step. The [API reference](./reference/) gives exact signature
 
 ## The shape
 
-A Shared Agent is one deployable application, assembled from parts. This is the path that one
-message takes through it:
+A Shared Agent is one deployable application, assembled from parts:
+
+![The parts of a Shared Agent. A dashed boundary encloses the Gateway. Inside it are the
+infrastructure the framework builds, the Db, the Signal Worker and the two servers, and the
+components a deployment builds by hand: the Messenger with a Nostr Channel and an HTTP Channel
+above it, and Users with Nostr Auth and Password Auth below it. Outside it are the Agent
+Implementation, a person's client, and a Nostr Relay.](/architecture.svg)
+
+The dashed boundary is the Gateway, and it is the only path between a person and the agent. What
+is drawn inside it in blue is the infrastructure `createGateway` builds for every deployment. What
+is drawn in green is components, which a deployment builds by hand and picks for itself: these
+four are the messaging and identity half, and **Signatures, Decisions and the Scheduler are not
+drawn**, so read the green boxes as examples of a component rather than as the whole set. What is
+drawn outside is what the Gateway does not own: the Agent Implementation in its container, the
+person's own client, and a Relay.
+
+The wiring the picture is most exact about is Users and the Messenger, and it is worth reading
+twice. Each Channel hands what it received to the one Messenger, and each Auth answers with a
+User from the one Users. Neither pair is a chain of two Messengers or two Users. That is the
+shape [an Auth](#auth) and [a Channel](#the-messenger-and-channels) exist to make.
+
+This is the path that one message takes through the same parts:
 
 ```text
    a person                                time
@@ -238,7 +258,9 @@ Worker is serial.
 
 ### Auth
 
-An **Auth** owns one scheme's secret, and turns a request carrying it into a User:
+An **Auth** owns one scheme's secret, and turns a request carrying it into a User. [The diagram
+above](#the-shape) draws two of them below one Users, which is the same shape the Channels make
+above the Messenger:
 
 ```ts
 type Auth = Component & {
@@ -269,7 +291,8 @@ owns is a secret. A secret is a row.
 
 ### The Messenger and Channels
 
-Messaging is two parts.
+Messaging is two parts, and [the diagram above](#the-shape) draws both: two Channels above one
+Messenger, each handing what it received down to it.
 
 **The Messenger owns the Message log and reaches nobody.** One table, one `text` per Message, and
 one sequence per User across both directions. One cursored read therefore serves both polling and

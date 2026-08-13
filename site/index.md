@@ -18,6 +18,14 @@ An **Operator** is whoever runs and configures a Shared Agent. Every party trust
 The Operator writes the entry point, holds the keys, owns the database, and runs the stack. Most
 of this site is written for that reader.
 
+![The parts of a Shared Agent. A dashed boundary encloses the Gateway, holding the Db, the Signal
+Worker, the Agent server and the Public server, together with the Messenger and its two Channels
+and Users with its two Auths. Outside it are the Agent Implementation, a person's client, and a
+Nostr Relay.](/architecture.svg)
+
+Everything inside the dashed boundary is the Gateway. The [Architecture](./architecture#the-shape)
+page reads the picture part by part.
+
 ## Where to start
 
 | Page | What it answers |
