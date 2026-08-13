@@ -54,7 +54,7 @@
  * puts a context file it discovered. So a Run whose `AGENTS.md` did not reach the
  * container has no URL to find and fails here rather than passing quietly.
  *
- * Skipped unless `SAF_CONTAINER_TESTS` is set — see `../test-support/docker.ts` for why.
+ * Skipped unless `CONCORDE_CONTAINER_TESTS` is set — see `../test-support/docker.ts` for why.
  */
 
 import assert from "node:assert/strict";
@@ -198,7 +198,7 @@ type Paths = {
 
 /** Two fresh directory names under a temporary root, cleaned up with the test. */
 async function temporaryPaths(t: TestContext): Promise<Paths> {
-  const root = await mkdtemp(path.join(tmpdir(), "saf-container-"));
+  const root = await mkdtemp(path.join(tmpdir(), "concorde-container-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   return {
     root,

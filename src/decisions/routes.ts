@@ -11,8 +11,8 @@
  * subject. The two surfaces differ in nothing but the hook. The by-number pair is that same read,
  * with the cursor worked out for the caller. So a citation and a page cannot disagree.
  *
- * Publishing is the Agent server's alone. A Decision is the Shared Agent's commitment, and a User
- * with a Token is not the Shared Agent. Nothing here authenticates anybody: the Public read takes
+ * Publishing is the Agent server's alone. A Decision is the shared agent's commitment, and a User
+ * with a Token is not the shared agent. Nothing here authenticates anybody: the Public read takes
  * the Public server's own `requireUser` as one option, so every refusal is that server's single
  * 401, whichever scheme the deployment accepts.
  */
@@ -106,7 +106,7 @@ const oneSharedLog =
  * party this identity exists for.
  */
 const whatTheArtifactIs =
-  "Each record carries `jws`, a **compact JWS** (RFC 7515) over `{ seq, createdAt, statement }`. It is one URL-safe string, and any off-the-shelf JOSE library in any language verifies it. Take it away and check it against the public key at `GET /jwks.json` on the Public server. That check is offline and asks this Gateway nothing. It is the only verification worth something to somebody who does not trust the Operator. What it proves is narrow. **The Operator committed to this Statement on the Shared Agent's behalf.** It says nothing whatever about how the agent behaved.";
+  "Each record carries `jws`, a **compact JWS** (RFC 7515) over `{ seq, createdAt, statement }`. It is one URL-safe string, and any off-the-shelf JOSE library in any language verifies it. Take it away and check it against the public key at `GET /jwks.json` on the Public server. That check is offline and asks this Gateway nothing. It is the only verification worth something to somebody who does not trust the Operator. What it proves is narrow. **The Operator committed to this Statement on the shared agent's behalf.** It says nothing whatever about how the agent behaved.";
 
 /**
  * The Statement of a Decision: non-empty, and with no upper bound.
@@ -191,7 +191,7 @@ const decisionRecordSchema = {
     jws: {
       type: "string",
       description:
-        'The **Decision itself**: a compact JWS, `header.payload.signature`, base64url. Its payload carries this record\'s `seq`, `createdAt` and `statement`, so everything above can be read back out of it by anybody holding the public key, which is what makes handing this one string to a third party the whole point. Its protected header carries `typ: "saf-decision+jws"`, covered by the signature, so an artifact of another kind cannot be presented as a Decision.',
+        'The **Decision itself**: a compact JWS, `header.payload.signature`, base64url. Its payload carries this record\'s `seq`, `createdAt` and `statement`, so everything above can be read back out of it by anybody holding the public key, which is what makes handing this one string to a third party the whole point. Its protected header carries `typ: "concorde-decision+jws"`, covered by the signature, so an artifact of another kind cannot be presented as a Decision.',
     },
     createdAt: {
       type: "string",
@@ -260,7 +260,7 @@ export function agentDecisionRoutes(log: DecisionOperations): FastifyPluginAsync
         schema: {
           tags: ["Decisions"],
           summary: "Publish a Decision",
-          description: `Commit to something, on the record, to everybody. The Statement is signed with the Shared Agent's key and kept in the one global log. The record answered carries the artifact, so there is no read-back to do, and the agent can quote it to a User in the same Run.\n\nThere is **no field for the number, the timestamp or the signature**. The number is drawn first, the timestamp second and the artifact last. All three happen inside one transaction, because the signature binds the first two. Nothing is notified: publishing wakes no Signal and no Handler. So a Decision published during a Run cannot queue work for the Run that published it. ${whatTheArtifactIs} ${unknownParameter}`,
+          description: `Commit to something, on the record, to everybody. The Statement is signed with the shared agent's key and kept in the one global log. The record answered carries the artifact, so there is no read-back to do, and the agent can quote it to a User in the same Run.\n\nThere is **no field for the number, the timestamp or the signature**. The number is drawn first, the timestamp second and the artifact last. All three happen inside one transaction, because the signature binds the first two. Nothing is notified: publishing wakes no Signal and no Handler. So a Decision published during a Run cannot queue work for the Run that published it. ${whatTheArtifactIs} ${unknownParameter}`,
           body: publishSchema,
           response: {
             201: { ...decisionRecordSchema, description: thePublishedDecision },
@@ -278,7 +278,7 @@ export function agentDecisionRoutes(log: DecisionOperations): FastifyPluginAsync
         schema: {
           tags: ["Decisions"],
           summary: "Read the Decision log",
-          description: `Every Decision this Shared Agent has published. It is the same log a User reads and the same one this agent published into. A Session is a lossy cache, so an agent with no memory of what it decided reads it here. ${oneSharedLog} ${cursorCases} ${fullPageMeansMore} ${capped} ${notSearchable} ${unknownParameter}`,
+          description: `Every Decision this shared agent has published. It is the same log a User reads and the same one this agent published into. A Session is a lossy cache, so an agent with no memory of what it decided reads it here. ${oneSharedLog} ${cursorCases} ${fullPageMeansMore} ${capped} ${notSearchable} ${unknownParameter}`,
           querystring: historySchema,
           response: {
             200: { ...decisionListSchema, description: theWindow },
@@ -336,7 +336,7 @@ export function publicDecisionRoutes(
         schema: {
           tags: ["Decisions"],
           summary: "Read the Decision log",
-          description: `Everything this Shared Agent has committed to. This is what it said on everybody's behalf rather than what it said to you. Reading it is the first half of the only thing this log is for. The second half is taking a \`jws\` away and showing it to somebody who does not trust this Gateway. ${oneSharedLog} ${whatTheArtifactIs} ${cursorCases} ${fullPageMeansMore} ${capped} ${notSearchable} ${bearerRequired} ${unknownParameter}`,
+          description: `Everything this shared agent has committed to. This is what it said on everybody's behalf rather than what it said to you. Reading it is the first half of the only thing this log is for. The second half is taking a \`jws\` away and showing it to somebody who does not trust this Gateway. ${oneSharedLog} ${whatTheArtifactIs} ${cursorCases} ${fullPageMeansMore} ${capped} ${notSearchable} ${bearerRequired} ${unknownParameter}`,
           querystring: historySchema,
           response: {
             200: { ...decisionListSchema, description: theWindow },

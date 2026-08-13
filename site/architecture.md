@@ -5,9 +5,9 @@ deployment step by step. The [API reference](./reference/) gives exact signature
 
 ## The shape
 
-A Shared Agent is one deployable application, assembled from parts:
+A shared agent is one deployable application, assembled from parts:
 
-![The parts of a Shared Agent. A dashed boundary encloses the Gateway. Inside it are the
+![The parts of a shared agent. A dashed boundary encloses the Gateway. Inside it are the
 infrastructure the framework builds, the Db, the Signal Worker and the two servers, and the
 components a deployment builds by hand: the Messenger with a Nostr Channel and an HTTP Channel
 above it, and Users with Nostr Auth and Password Auth below it. Outside it are the Agent
@@ -362,7 +362,7 @@ Signal lane and never empty it.
 
 ### Two identities, held apart
 
-A Shared Agent has two identities and no more.
+A shared agent has two identities and no more.
 
 | | Signing identity | Nostr identity |
 | --- | --- | --- |
@@ -380,7 +380,7 @@ the framework answers
 Each part owns one PostgreSQL schema, named for its subject rather than for the part. No table
 references another part's, with six exceptions that all point one way.
 
-Those six are foreign keys onto `saf_users.users.id`. The Messenger declares one, the Nostr
+Those six are foreign keys onto `concorde_users.users.id`. The Messenger declares one, the Nostr
 Channel declares two, Password Auth declares two, and Nostr Auth declares one. The Users
 component references nobody back.
 
@@ -413,7 +413,7 @@ Each of these is a deliberate decision, not an omission. Read the whole list bef
 - **Key rotation, for either identity.** No record carries a key identifier.
 - **Non-repudiation of the conversation.** No party can prove what the agent was told or replied.
   Signed Statements are not an exception to this.
-- **Isolation of any kind.** A deployment that needs real isolation runs two Shared Agents.
+- **Isolation of any kind.** A deployment that needs real isolation runs two shared agents.
 
 ## Known limits
 

@@ -176,7 +176,7 @@ export function openDb(url: string): Db {
  * connection and cannot see it anywhere in the Db's surface, so it says what it is where they will
  * look, and the tests find and terminate it by the same name.
  */
-export const listenApplicationName = "saf listen";
+export const listenApplicationName = "concorde listen";
 
 /** How long before the first reconnection attempt, and the ceiling it doubles to. */
 const firstRetryMs = 100;

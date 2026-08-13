@@ -20,8 +20,8 @@
  * bypass and nothing to configure.
  *
  * `GET /me` is the one Public route here, and it is here rather than under a scheme's prefix
- * because it only echoes `request.safUser`: whichever Auth named the User, the answer is the same
- * (ADR-0052). It takes the Public server's own composed hook, so this component authenticates
+ * because it only echoes `request.concordeUser`: whichever Auth named the User, the answer is the
+ * same (ADR-0052). It takes the Public server's own composed hook, so this component authenticates
  * nobody.
  *
  * Each route's own `description` is what `/openapi.json` serves, so those strings are the API
@@ -100,9 +100,10 @@ const aQueryParameterWasWritten = "A query parameter was written, and this route
 const authenticationRequired =
   "**Requires authentication.** Present a credential of any scheme this deployment accepts, which is `Authorization: Bearer <token>` wherever the password login is registered. The User answered with is the one the Gateway authenticated, and no parameter anywhere names another.";
 
-// A positive list of the fields that can be answered. A column added to `saf_users.users` reaches
-// no response until somebody writes it here, and a field added to `UserRecord` and forgotten here
-// is missing from every answer. The round trip in `gateway.test.ts` catches the second case.
+// A positive list of the fields that can be answered. A column added to `concorde_users.users`
+// reaches no response until somebody writes it here, and a field added to `UserRecord` and
+// forgotten here is missing from every answer. The round trip in `gateway.test.ts` catches the
+// second case.
 const userRecordSchema = {
   type: "object",
   properties: {
@@ -198,7 +199,7 @@ declare module "fastify" {
      * handler reading it behaves the same under a password, a Nostr key or a scheme of the
      * Operator's own (ADR-0052).
      */
-    safUser: UserRecord;
+    concordeUser: UserRecord;
   }
 }
 
@@ -228,7 +229,7 @@ export function publicUserRoutes(authenticated: preHandlerAsyncHookHandler): Fas
         preHandler: authenticated,
         preValidation: rejectPublicQuery(),
       },
-      async (request) => request.safUser,
+      async (request) => request.concordeUser,
     );
   };
 }

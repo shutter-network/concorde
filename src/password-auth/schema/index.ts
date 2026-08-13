@@ -1,17 +1,17 @@
 /**
- * What `shared-agent-framework/password-auth` creates in a database: the `passwords` and `tokens`
- * tables, and the PostgreSQL schema they live in. Keep it to the tables and the values that define
- * them.
+ * What `@shutter-network/concorde/password-auth` creates in a database: the `passwords` and
+ * `tokens` tables, and the PostgreSQL schema they live in. Keep it to the tables and the values
+ * that define them.
  *
  * The import of the schema of Users is what lets both columns below reference
- * `saf_users.users.id`, and it re-exports nothing of it. That is the third such import in the
+ * `concorde_users.users.id`, and it re-exports nothing of it. That is the third such import in the
  * framework, after the Messenger's and the Nostr Channel's, and it costs the same thing: a
  * configuration listing this component's `/schema` subpath without that one generates a reference
  * to a table nothing creates.
  *
  * **A password is a row rather than a column now**
  * ([ADR-0052](../../../docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)).
- * `saf_users.users.password_hash` is nullable because a User authenticated some other way need
+ * `concorde_users.users.password_hash` is nullable because a User authenticated some other way need
  * never have one; here the absence is the absence of the row, so `password_hash` is `NOT NULL` and
  * nothing has to decide what a null one means. Do not make it nullable to mirror the column this
  * replaces.
@@ -27,13 +27,13 @@ import { index, pgSchema, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { users } from "../../users/schema/index.ts";
 
 /**
- * The PostgreSQL schema both tables below live in, `saf_password_auth`.
+ * The PostgreSQL schema both tables below live in, `concorde_password_auth`.
  *
  * Prefixed because the framework is installed into a database it does not own, and not
  * configurable: the tables are compiled against this object, and the same object is what a
  * generation reads.
  */
-export const passwordAuthSchema = pgSchema("saf_password_auth");
+export const passwordAuthSchema = pgSchema("concorde_password_auth");
 
 /**
  * One row per User who can log in with a password, and no row for a User who cannot.
@@ -45,8 +45,8 @@ export const passwords = passwordAuthSchema.table("passwords", {
   /**
    * The User this password belongs to, and the primary key.
    *
-   * A foreign key onto `saf_users.users.id`. No `onDelete`, because nothing removes a User and no
-   * cascade can fire.
+   * A foreign key onto `concorde_users.users.id`. No `onDelete`, because nothing removes a User and
+   * no cascade can fire.
    */
   userId: uuid("user_id")
     .primaryKey()
@@ -80,7 +80,7 @@ export const tokens = passwordAuthSchema.table(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     /**
-     * The User this Token belongs to, a foreign key onto `saf_users.users.id`.
+     * The User this Token belongs to, a foreign key onto `concorde_users.users.id`.
      *
      * The cascade is carried for a delete that cannot happen: nothing removes a User, so the day
      * one is added the credentials go with them.

@@ -141,7 +141,7 @@ export type ComponentTables = {
    * ([ADR-0055](../../docs/adr/0055-a-components-tables-are-a-subpath-of-their-own.md)).
    */
   readonly specifier: string;
-  /** The single PostgreSQL schema this component writes into, such as `saf_users`. */
+  /** The single PostgreSQL schema this component writes into, such as `concorde_users`. */
   readonly schema: string;
   readonly snapshot: ReferenceSnapshot;
 };
@@ -170,7 +170,7 @@ const schemaModules: Record<string, Record<string, unknown>> = {
   users,
 };
 
-const packageName = "shared-agent-framework";
+const packageName = "@shutter-network/concorde";
 
 /**
  * The tables of every component that owns any, in the order the list above is written.

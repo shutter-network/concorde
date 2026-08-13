@@ -23,7 +23,7 @@ import { promisify } from "node:util";
 const run = promisify(execFile);
 
 /** The variable that opts in. */
-export const containerTestsVariable = "SAF_CONTAINER_TESTS";
+export const containerTestsVariable = "CONCORDE_CONTAINER_TESTS";
 
 /**
  * How the agent's container reaches this process.
@@ -50,7 +50,7 @@ export const hostFromContainer = "host.docker.internal";
 export const addHostToGateway = `--add-host=${hostFromContainer}:host-gateway`;
 
 /** The image the container test runs, built from `./pi-image/Dockerfile`. */
-export const piImageTag = "saf-pi-test:0.83.0";
+export const piImageTag = "concorde-pi-test:0.83.0";
 
 /**
  * Why the container tests are being skipped, or `false` when they are not.
@@ -73,11 +73,11 @@ export async function skipContainerTests(): Promise<string | false> {
 /**
  * Builds the test image and returns its tag, or takes one the environment names.
  *
- * `SAF_PI_IMAGE` is for a machine with no network or a registry of its own; anything it
+ * `CONCORDE_PI_IMAGE` is for a machine with no network or a registry of its own; anything it
  * names has to satisfy what `./pi-image/Dockerfile` documents.
  */
 export async function buildPiImage(): Promise<string> {
-  const given = process.env.SAF_PI_IMAGE;
+  const given = process.env.CONCORDE_PI_IMAGE;
   if (given !== undefined && given !== "") return given;
   const context = fileURLToPath(new URL("./pi-image", import.meta.url));
   // Every time, because the layer cache makes a rebuild of an unchanged Dockerfile

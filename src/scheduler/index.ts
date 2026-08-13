@@ -18,18 +18,18 @@
  * after each fire, so a daily digest arranged before a week of downtime fires once afterwards
  * rather than seven times.
  *
- * The table is on `shared-agent-framework/scheduler/schema` and nowhere else. It references no
+ * The table is on `@shutter-network/concorde/scheduler/schema` and nowhere else. It references no
  * other component's table, so that subpath can be listed on its own.
  *
  * @example
  * A Gateway that wakes itself every morning, and the Handler each fire reaches.
  * ```ts
  * import { readFileSync } from "node:fs";
- * import { createGateway } from "shared-agent-framework/gateway";
- * import { createPiRuntime } from "shared-agent-framework/pi";
- * import type { ScheduleFiredRecord } from "shared-agent-framework/scheduler";
- * import { createScheduler, scheduleFiredKind } from "shared-agent-framework/scheduler";
- * import { templateHandler } from "shared-agent-framework/signals";
+ * import { createGateway } from "@shutter-network/concorde/gateway";
+ * import { createPiRuntime } from "@shutter-network/concorde/pi";
+ * import type { ScheduleFiredRecord } from "@shutter-network/concorde/scheduler";
+ * import { createScheduler, scheduleFiredKind } from "@shutter-network/concorde/scheduler";
+ * import { templateHandler } from "@shutter-network/concorde/signals";
  *
  * const gateway = createGateway({
  *   databaseUrl: process.env.DATABASE_URL ?? "",

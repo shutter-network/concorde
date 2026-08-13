@@ -1,7 +1,7 @@
 /**
- * What `shared-agent-framework/users` creates in a database: the `users` table, and the PostgreSQL
- * schema it lives in. Keep it to the tables and the values that define them, and import no other
- * component's schema.
+ * What `@shutter-network/concorde/users` creates in a database: the `users` table, and the
+ * PostgreSQL schema it lives in. Keep it to the tables and the values that define them, and import
+ * no other component's schema.
  *
  * Four other components import this one, and six columns point a foreign key at `users.id`: the
  * Messenger's `messages.user_id` (ADR-0036), the Nostr Channel's `pubkeys.user_id` and
@@ -29,13 +29,13 @@ import { sql } from "drizzle-orm";
 import { jsonb, pgSchema, timestamp, uuid } from "drizzle-orm/pg-core";
 
 /**
- * The PostgreSQL schema every table below lives in, `saf_users`.
+ * The PostgreSQL schema every table below lives in, `concorde_users`.
  *
  * Prefixed because the framework is installed into a database it does not own, and an unprefixed
  * `users` is a plausible name for a schema an Operator already has. Not configurable: the tables
  * are compiled against this object, and the same object is what a generation reads.
  */
-export const usersSchema = pgSchema("saf_users");
+export const usersSchema = pgSchema("concorde_users");
 
 /**
  * A User: an opaque Gateway-issued id, arbitrary Attributes, and when they were admitted.

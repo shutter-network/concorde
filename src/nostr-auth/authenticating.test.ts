@@ -81,13 +81,13 @@ const logger: Logger = {
 
 const operatorRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get("/whoami", { preHandler: publicServer.requireUser }, async (request) => ({
-    asked: request.safUser.id,
+    asked: request.concordeUser.id,
   }));
 
   fastify.post<{ Body: { text: string } }>(
     "/ask",
     { preHandler: publicServer.requireUser },
-    async (request) => ({ by: request.safUser.id, said: request.body.text }),
+    async (request) => ({ by: request.concordeUser.id, said: request.body.text }),
   );
 };
 

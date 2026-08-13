@@ -1,7 +1,7 @@
 {
   "$schema": "https://typedoc.org/schema.json",
 
-  "name": "shared-agent-framework",
+  "name": "@shutter-network/concorde",
 
   // Two local plugins. `specifier-titles.mjs` is what makes a page name the specifier it is
   // reached through; see the file for why TypeDoc's own module names will not do.

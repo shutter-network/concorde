@@ -32,7 +32,7 @@ type NostrHandle = Handle<typeof nostrChannelTables>;
 // listens on. Prefixed for the reason the schema is, notification channels being per database. Not
 // overridable: a Channel notifying one name and listening on another looks healthy and publishes
 // nothing until the next start.
-export const outboxChannel = "saf_nostr_outbox";
+export const outboxChannel = "concorde_nostr_outbox";
 
 /**
  * The User has no Nostr public key recorded, so there is no address to answer them at.

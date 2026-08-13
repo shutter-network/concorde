@@ -80,12 +80,12 @@ const logger: Logger = {
 
 /**
  * The shape an Operator writes their own routes in: an ordinary encapsulated plugin, registered
- * under a prefix of its own, reading `request.safUser` with **no cast**. The augmentation the
+ * under a prefix of its own, reading `request.concordeUser` with **no cast**. The augmentation the
  * package ships is what makes those lines compile.
  */
 const operatorRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get("/whoami", { preHandler: publicServer.requireUser }, async (request) => ({
-    asked: request.safUser.id,
+    asked: request.concordeUser.id,
   }));
 
   // The same thing one level deeper, because encapsulation nests.
@@ -94,7 +94,7 @@ const operatorRoutes: FastifyPluginAsync = async (fastify) => {
       inner.post<{ Body: { text: string } }>(
         "/ask",
         { preHandler: publicServer.requireUser },
-        async (request) => ({ by: request.safUser.id, said: request.body.text }),
+        async (request) => ({ by: request.concordeUser.id, said: request.body.text }),
       );
     },
     { prefix: "/deep" },
@@ -102,8 +102,8 @@ const operatorRoutes: FastifyPluginAsync = async (fastify) => {
 
   // And two routes that forgot it, which is the failure mode this file records. One answers the
   // property, the other reaches through it.
-  fastify.get("/unguarded", async (request) => request.safUser);
-  fastify.get("/unguarded-id", async (request) => ({ id: request.safUser.id }));
+  fastify.get("/unguarded", async (request) => request.concordeUser);
+  fastify.get("/unguarded-id", async (request) => ({ id: request.concordeUser.id }));
 };
 
 before(async () => {
@@ -226,9 +226,9 @@ describe("a route of the Operator's own", () => {
     // then is measured here rather than assumed, because a guess about this is exactly the guess
     // an Operator would make:
     //
-    //  - answering `request.safUser` is a **200 with an empty body**. It is not a refusal, and it
-    //    is not an authenticated-looking response either: there is no User in it, because there
-    //    was none on the request.
+    // - answering `request.concordeUser` is a **200 with an empty body**. It is not a refusal, and
+    // it is not an authenticated-looking response either: there is no User in it, because there was
+    //    none on the request.
     //  - reaching *through* it is a **500**, because `undefined.id` throws where the type said it
     //    could not.
     //
@@ -284,7 +284,7 @@ describe("the three outcomes", () => {
     try {
       // The second scheme would have authenticated this request. A refusal is this scheme
       // saying its own credential failed, and the walk ends there.
-      const refused = await bearing("saf_not-a-token");
+      const refused = await bearing("concorde_not-a-token");
       assert.equal(refused.statusCode, 401, refused.body);
       assert.equal(secondScheme.asked.length, alreadyAsked);
     } finally {
@@ -311,7 +311,7 @@ describe("the three outcomes", () => {
     // sentence telling an unknown Token from an expired one is a sentence somebody eventually
     // puts on the wire.
     warned.length = 0;
-    const refused = await bearing("saf_not-a-token");
+    const refused = await bearing("concorde_not-a-token");
     assert.equal(refused.headers["www-authenticate"], 'Bearer error="invalid_token", Nostr');
     assert.deepEqual(warned, []);
 
@@ -351,7 +351,7 @@ describe("refusing a request", () => {
       await ask("Bearer not-a-token"),
       // A well-formed Token that was never issued: the prefix is recognisable and the shape is
       // right, and it names nothing.
-      await bearing(`saf_${"A".repeat(43)}`),
+      await bearing(`concorde_${"A".repeat(43)}`),
       // A Token that was issued, to somebody, and has expired.
       await bearing(expired),
       // The same Token that works, with a character changed.
@@ -419,7 +419,7 @@ describe("refusing a request", () => {
     await server.fastify.register(
       async (fastify) => {
         fastify.get("/whoami", { preHandler: server.requireUser }, async (request) => ({
-          asked: request.safUser.id,
+          asked: request.concordeUser.id,
         }));
       },
       { prefix: ops },

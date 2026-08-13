@@ -15,8 +15,8 @@
  * self-contained is exactly the copy that could lose a field here and nowhere else. Do not inline
  * one.
  *
- * Nothing here authenticates anybody. Both routes take the Public server's own `requireUser` as
- * one option and read the User off `request.safUser`, and neither has a parameter naming a User at
+ * Nothing here authenticates anybody. Both routes take the Public server's own `requireUser` as one
+ * option and read the User off `request.concordeUser`, and neither has a parameter naming a User at
  * all, so no User can read another's log.
  *
  * The 401 and the credential are described in the shared words of `route-conventions.ts` rather
@@ -135,9 +135,9 @@ export function publicMessageRoutes(
         try {
           return reply
             .code(201)
-            .send(await messageLog.submit(request.safUser.id, request.body.text));
+            .send(await messageLog.submit(request.concordeUser.id, request.body.text));
         } catch (error) {
-          return refuseSend(reply, error, request.safUser.id);
+          return refuseSend(reply, error, request.concordeUser.id);
         }
       },
     );
@@ -163,7 +163,8 @@ export function publicMessageRoutes(
       },
       // The whole difference from the agent's read is the User id. Theirs comes from a query
       // parameter, and this one from the Token the hook above verified.
-      async (request, reply) => answerHistory(reply, messageLog, request.safUser.id, request.query),
+      async (request, reply) =>
+        answerHistory(reply, messageLog, request.concordeUser.id, request.query),
     );
   };
 }

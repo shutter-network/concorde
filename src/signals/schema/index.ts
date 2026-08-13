@@ -1,8 +1,8 @@
 /**
- * What `shared-agent-framework/signals` creates in a database: the `signals` and `runs` tables, and
- * the PostgreSQL schema they live in. Keep it to the tables and the values that define them, and
- * import no other component's schema: these two reference nobody, so this subpath can be listed on
- * its own.
+ * What `@shutter-network/concorde/signals` creates in a database: the `signals` and `runs` tables,
+ * and the PostgreSQL schema they live in. Keep it to the tables and the values that define them,
+ * and import no other component's schema: these two reference nobody, so this subpath can be listed
+ * on its own.
  *
  * There is no `user_id` on either table and there must not be one. The Signal Worker authenticates
  * nobody, so who a Signal came from is not a fact it holds; it travels in the payload, written by a
@@ -26,14 +26,14 @@ import {
 } from "drizzle-orm/pg-core";
 
 /**
- * The PostgreSQL schema both tables below live in, `saf_signals`, named for its subject rather than
- * for the Component.
+ * The PostgreSQL schema both tables below live in, `concorde_signals`, named for its subject rather
+ * than for the Component.
  *
  * Prefixed because the framework is installed into a database it does not own, where a bare
  * `signals` is a plausible name for something an Operator already has. Not configurable: the tables
  * are compiled against this object, and the same object is what a generation reads.
  */
-export const signalsSchema = pgSchema("saf_signals");
+export const signalsSchema = pgSchema("concorde_signals");
 
 /**
  * A Signal's processing state. One-way: nothing returns to `pending`, and a failed Signal is never

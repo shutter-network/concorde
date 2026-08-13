@@ -1,5 +1,5 @@
 /**
- * The Signatures component holds the Shared Agent's signing identity. A Signed Statement is one
+ * The Signatures component holds the shared agent's signing identity. A Signed Statement is one
  * compact JWS: a string anybody can check against the agent's public key, offline, without reaching
  * this Gateway and without trusting the Operator.
  *
@@ -21,11 +21,11 @@
  * ```ts
  * import { createPrivateKey } from "node:crypto";
  * import { readFileSync } from "node:fs";
- * import { createGateway } from "shared-agent-framework/gateway";
- * import { createPasswordAuth } from "shared-agent-framework/password-auth";
- * import { createPiRuntime } from "shared-agent-framework/pi";
- * import { createSignatures } from "shared-agent-framework/signatures";
- * import { createUsers } from "shared-agent-framework/users";
+ * import { createGateway } from "@shutter-network/concorde/gateway";
+ * import { createPasswordAuth } from "@shutter-network/concorde/password-auth";
+ * import { createPiRuntime } from "@shutter-network/concorde/pi";
+ * import { createSignatures } from "@shutter-network/concorde/signatures";
+ * import { createUsers } from "@shutter-network/concorde/users";
  *
  * const gateway = createGateway({
  *   databaseUrl: process.env.DATABASE_URL ?? "",

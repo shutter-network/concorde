@@ -119,7 +119,7 @@ export type MintedToken = {
 
 // A fixed prefix so a leaked Token is recognizable as this framework's, in a log, in a bug report,
 // or in a secret scanner's output.
-const tokenPrefix = "saf_";
+const tokenPrefix = "concorde_";
 
 // 32 bytes: full entropy, which is what makes the storage above sufficient.
 const tokenBytes = 32;

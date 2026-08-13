@@ -1,6 +1,6 @@
-name: saf-example-00-minimal
+name: concorde-example-00-minimal
 
-x-database-url: &database-url postgres://saf:saf@postgres:5432/saf
+x-database-url: &database-url postgres://concorde:concorde@postgres:5432/concorde
 
 services:
   gateway:
@@ -16,8 +16,8 @@ services:
       AGENT_HOST: 0.0.0.0
       AGENT_PORT: "7411"
       AGENT_SERVER_URL: http://gateway:7411
-      AGENT_IMAGE: saf-minimal-agent:0.83.0
-      AGENT_NETWORK: saf_minimal_agent
+      AGENT_IMAGE: concorde-minimal-agent:0.83.0
+      AGENT_NETWORK: concorde_minimal_agent
       RUNTIME_DIR_HOST: ${PWD}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -51,14 +51,14 @@ services:
   postgres:
     image: postgres:17
     environment:
-      POSTGRES_USER: saf
-      POSTGRES_PASSWORD: saf
-      POSTGRES_DB: saf
+      POSTGRES_USER: concorde
+      POSTGRES_PASSWORD: concorde
+      POSTGRES_DB: concorde
     volumes:
       - db:/var/lib/postgresql/data
     networks: [db]
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "saf", "-d", "saf"]
+      test: ["CMD", "pg_isready", "-U", "concorde", "-d", "concorde"]
       interval: 3s
       timeout: 3s
       retries: 20
@@ -67,7 +67,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.agent
-    image: saf-minimal-agent:0.83.0
+    image: concorde-minimal-agent:0.83.0
     command: ["--version"]
     restart: "no"
     networks: [agent]
@@ -79,17 +79,17 @@ services:
     profiles: [cli]
     entrypoint: ["npx", "http-client-tui"]
     environment:
-      SAF_GATEWAY_URL: http://gateway:8081
-      SAF_PASSWORD: ${USER_PASSWORD:?copy .env.example to .env}
+      CONCORDE_GATEWAY_URL: http://gateway:8081
+      CONCORDE_PASSWORD: ${USER_PASSWORD:?copy .env.example to .env}
     networks: [public]
 
 networks:
   db:
-    name: saf_minimal_db
+    name: concorde_minimal_db
   agent:
-    name: saf_minimal_agent
+    name: concorde_minimal_agent
   public:
-    name: saf_minimal_public
+    name: concorde_minimal_public
 
 volumes:
   db:

@@ -29,13 +29,13 @@ import { createPiRuntime, piRun } from "./runtime.ts";
 
 /** The least container a `pi` deployment declares, plus what one really mounts. */
 const minimal: AgentContainer = {
-  image: "saf/pi:latest",
+  image: "concorde/pi:latest",
   mounts: {
     entries: [
       { agentPath: "/workspace", path: "workspace" },
       { agentPath: "/home/agent/.pi/agent", path: "agent" },
     ],
-    runtimeDir: "/srv/saf",
+    runtimeDir: "/srv/concorde",
   },
 };
 
@@ -187,13 +187,13 @@ describe("the defaults pi contributes to the container", () => {
   it("leaves everything else about the container to the Operator", () => {
     // `pi` contributes no field of its own at all, so the least a deployment can declare
     // is an image — and what comes out is a container line with `pi` on the end of it.
-    const composed = createPiRuntime({ image: "saf/pi:latest" }).commandFor(prompt);
+    const composed = createPiRuntime({ image: "concorde/pi:latest" }).commandFor(prompt);
 
     assert.equal(composed.command, "docker");
     assert.ok(!composed.args.includes("--mount"));
     assert.ok(!composed.args.includes("--network"));
     assert.deepEqual(composed.args.slice(-6), [
-      "saf/pi:latest",
+      "concorde/pi:latest",
       "--mode",
       "json",
       "--session-id",

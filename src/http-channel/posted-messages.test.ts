@@ -442,7 +442,7 @@ describe("a User posting a Message", () => {
           said,
         ),
         await posting(gateway, client.token, said),
-        await posting(gateway, `Bearer saf_${"A".repeat(43)}`, said),
+        await posting(gateway, `Bearer concorde_${"A".repeat(43)}`, said),
       ];
 
       for (const refused of refusals) {

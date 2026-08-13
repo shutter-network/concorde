@@ -47,7 +47,7 @@ describe("db.start", () => {
     // Port 1 on loopback, where nothing listens: the connection is refused rather
     // than left hanging, which is the point — a URL that is wrong is this call's
     // failure and not the first query's, hours later.
-    const unreachable = openDb("postgres://saf:saf@127.0.0.1:1/none");
+    const unreachable = openDb("postgres://concorde:concorde@127.0.0.1:1/none");
     try {
       await assert.rejects(() => unreachable.start(), /ECONNREFUSED/);
     } finally {

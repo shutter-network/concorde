@@ -1,6 +1,6 @@
 /**
  * The Messenger component owns the Message log. A Message is a `text` string travelling one way
- * between the Shared Agent and one User, numbered from 1 inside that User's log across both
+ * between the shared agent and one User, numbered from 1 inside that User's log across both
  * directions, kept forever.
  *
  * {@link createMessenger} makes one. {@link Messenger} is what comes back, and its programmatic API
@@ -11,9 +11,9 @@
  * as `MessageRecord`, declaring neither for itself.
  *
  * The Messenger reaches nobody. A {@link Channel} carries a Message to a person over one medium,
- * and `shared-agent-framework/http-channel` and `shared-agent-framework/nostr-channel` are the two
- * implementations that ship. Construct one with this Messenger and it registers itself, so an entry
- * point wires nothing further.
+ * and `@shutter-network/concorde/http-channel` and `@shutter-network/concorde/nostr-channel` are
+ * the two implementations that ship. Construct one with this Messenger and it registers itself, so
+ * an entry point wires nothing further.
  *
  * A Messenger accepts at most one Channel, and registering a second throws. A deployment therefore
  * runs one medium. Until a Channel registers, `send` throws rather than recording a Message nothing
@@ -21,24 +21,24 @@
  *
  * Construct Users and the Signal Worker before this, which takes both.
  *
- * The table is on `shared-agent-framework/messenger/schema` and nowhere else. List
- * `shared-agent-framework/users/schema` beside it, because `messages.user_id` references the Users
- * component's table, and a configuration without it generates a foreign key onto a table nothing
- * creates.
+ * The table is on `@shutter-network/concorde/messenger/schema` and nowhere else. List
+ * `@shutter-network/concorde/users/schema` beside it, because `messages.user_id` references the
+ * Users component's table, and a configuration without it generates a foreign key onto a table
+ * nothing creates.
  *
  * @example
  * A Gateway whose agent answers a submitted Message over HTTP, and a send from the Operator's own
  * trusted code.
  * ```ts
  * import { readFileSync } from "node:fs";
- * import { createGateway } from "shared-agent-framework/gateway";
- * import { createHttpChannel } from "shared-agent-framework/http-channel";
- * import type { MessageRecord } from "shared-agent-framework/messenger";
- * import { createMessenger, messageReceivedKind } from "shared-agent-framework/messenger";
- * import { createPasswordAuth } from "shared-agent-framework/password-auth";
- * import { createPiRuntime } from "shared-agent-framework/pi";
- * import { templateHandler } from "shared-agent-framework/signals";
- * import { createUsers } from "shared-agent-framework/users";
+ * import { createGateway } from "@shutter-network/concorde/gateway";
+ * import { createHttpChannel } from "@shutter-network/concorde/http-channel";
+ * import type { MessageRecord } from "@shutter-network/concorde/messenger";
+ * import { createMessenger, messageReceivedKind } from "@shutter-network/concorde/messenger";
+ * import { createPasswordAuth } from "@shutter-network/concorde/password-auth";
+ * import { createPiRuntime } from "@shutter-network/concorde/pi";
+ * import { templateHandler } from "@shutter-network/concorde/signals";
+ * import { createUsers } from "@shutter-network/concorde/users";
  *
  * const gateway = createGateway({
  *   databaseUrl: process.env.DATABASE_URL ?? "",

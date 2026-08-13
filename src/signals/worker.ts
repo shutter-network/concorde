@@ -50,8 +50,8 @@ export type EmittedSignal = {
 export type SignalWorkerOptions = {
   readonly db: Db;
   /**
-   * What a Prompt is handed to. `createPiRuntime`, on `shared-agent-framework/pi`, builds the one
-   * this framework ships.
+   * What a Prompt is handed to. `createPiRuntime`, on `@shutter-network/concorde/pi`, builds the
+   * one this framework ships.
    */
   readonly runtime: Runtime;
   /**
@@ -180,7 +180,7 @@ export type SignalWorker = Component & {
  * Not an option. A worker notifying a channel a different one listens on looks healthy and runs
  * nothing until the sweep.
  */
-export const signalChannel = "saf_signals_signal";
+export const signalChannel = "concorde_signals_signal";
 
 /** How long a Signal can sit unnoticed if its notification was lost. */
 const defaultSweepIntervalMs = 5_000;

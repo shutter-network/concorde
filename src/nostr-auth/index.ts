@@ -1,6 +1,6 @@
 /**
  * The Nostr Auth component authenticates a person by a NIP-98 signature on **every** request,
- * using the Nostr key they already message the Shared Agent from. It is an Auth, so the Public
+ * using the Nostr key they already message the shared agent from. It is an Auth, so the Public
  * server holds it beside every other scheme a deployment accepts and composes them into the one
  * hook a protected route takes. There is no login, no Token and no route of any kind: a client
  * signs a kind 27235 event naming the URL and the method, sends it as
@@ -18,23 +18,23 @@
  * is refused rather than holding a credential that never expires.
  *
  * Construct Users first, whose record every outcome carries. A grant here is **not** the Nostr
- * Channel's addressing and neither reads the other: `shared-agent-framework/nostr-channel` records
- * the one key the agent writes to, and this records every key that may act as a User, so a person
- * may be reachable over Nostr without being allowed to drive the HTTP API, and the reverse. A
- * deployment running both writes both, and nothing checks that they agree.
+ * Channel's addressing and neither reads the other: `@shutter-network/concorde/nostr-channel`
+ * records the one key the agent writes to, and this records every key that may act as a User, so a
+ * person may be reachable over Nostr without being allowed to drive the HTTP API, and the reverse.
+ * A deployment running both writes both, and nothing checks that they agree.
  *
- * The tables are on `shared-agent-framework/nostr-auth/schema` and nowhere else.
+ * The tables are on `@shutter-network/concorde/nostr-auth/schema` and nowhere else.
  * `grants.user_id` points a foreign key at the `users` table, so a configuration listing that
- * subpath without `shared-agent-framework/users/schema` generates a constraint onto a table it
+ * subpath without `@shutter-network/concorde/users/schema` generates a constraint onto a table it
  * never creates.
  *
  * @example
  * A Gateway whose Users all hold Nostr keys, with one key granted from the Operator's own code.
  * ```ts
- * import { createGateway } from "shared-agent-framework/gateway";
- * import { createNostrAuth } from "shared-agent-framework/nostr-auth";
- * import { createPiRuntime } from "shared-agent-framework/pi";
- * import { createUsers } from "shared-agent-framework/users";
+ * import { createGateway } from "@shutter-network/concorde/gateway";
+ * import { createNostrAuth } from "@shutter-network/concorde/nostr-auth";
+ * import { createPiRuntime } from "@shutter-network/concorde/pi";
+ * import { createUsers } from "@shutter-network/concorde/users";
  *
  * const gateway = createGateway({
  *   databaseUrl: process.env.DATABASE_URL ?? "",
@@ -72,7 +72,7 @@
  * gateway.components.publicServer.fastify.get(
  *   "/whoami",
  *   { preHandler: gateway.components.publicServer.requireUser },
- *   async (request) => ({ id: request.safUser.id }),
+ *   async (request) => ({ id: request.concordeUser.id }),
  * );
  * ```
  *

@@ -11,7 +11,7 @@
  *
  * Nothing about a container is here. The Agent Container, the Mount Table, the argument assembly,
  * the confinement flags, the process handling and the diagnosis appended to a failure are all on
- * `shared-agent-framework/agent-container`, generic over which agent runs, so a second Agent
+ * `@shutter-network/concorde/agent-container`, generic over which agent runs, so a second Agent
  * Implementation takes them unchanged. Read that subpath for what an Agent Container declares:
  * `createPiRuntime` takes one written exactly as it is written there.
  *
@@ -27,17 +27,17 @@
  * A Gateway whose Runtime is `pi`, in a container the Operator declared.
  * ```ts
  * import { readFileSync } from "node:fs";
- * import { createGateway } from "shared-agent-framework/gateway";
- * import { createPiRuntime } from "shared-agent-framework/pi";
- * import { templateHandler } from "shared-agent-framework/signals";
+ * import { createGateway } from "@shutter-network/concorde/gateway";
+ * import { createPiRuntime } from "@shutter-network/concorde/pi";
+ * import { templateHandler } from "@shutter-network/concorde/signals";
  *
  * const runtime = createPiRuntime({
  *   image: "my-agent:1",
- *   networks: ["saf_default"],
+ *   networks: ["concorde_default"],
  *   // Only what is named here reaches the agent. None of the Gateway's own environment does.
  *   env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "" },
  *   mounts: {
- *     runtimeDir: "/srv/saf",
+ *     runtimeDir: "/srv/concorde",
  *     entries: [
  *       { agentPath: "/workspace", path: "workspace" },
  *       { agentPath: "/workspace/AGENTS.md", path: "AGENTS.md", readOnly: true },

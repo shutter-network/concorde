@@ -122,9 +122,9 @@ describe("the algorithm it derives from the key", () => {
     it(`signs with ${alg} for ${what}, and the artifact checks out against the key it serves`, async () => {
       const { signatures, servedKey } = constructedWith(key);
 
-      const jws = await signatures.sign("saf-decision+jws", { statement });
+      const jws = await signatures.sign("concorde-decision+jws", { statement });
 
-      assert.deepEqual(headerOf(jws), { alg, typ: "saf-decision+jws" });
+      assert.deepEqual(headerOf(jws), { alg, typ: "concorde-decision+jws" });
       // The key set says the same thing about the key in JOSE's vocabulary, which is the
       // vocabulary the derivation read it in. `prime256v1` here would mean the switch had
       // gone through `asymmetricKeyDetails` and OpenSSL's names after all.
@@ -152,7 +152,7 @@ describe("the algorithm it derives from the key", () => {
     // `POST /verify` passes `algorithms: [alg]` to the library, so the derived value is
     // load-bearing in both directions: a wrong one would refuse this Gateway's own artifact.
     const { signatures, publicServer } = constructedWith(keys.p256);
-    const jws = await signatures.sign("saf-receipt+jws", { statement });
+    const jws = await signatures.sign("concorde-receipt+jws", { statement });
 
     const answered = await publicServer.fastify.inject({
       method: "POST",
@@ -164,7 +164,7 @@ describe("the algorithm it derives from the key", () => {
     assert.equal(answered.statusCode, 200, answered.body);
     assert.deepEqual(answered.json(), {
       verified: true,
-      header: { alg: "ES256", typ: "saf-receipt+jws" },
+      header: { alg: "ES256", typ: "concorde-receipt+jws" },
       payload: { statement },
     });
   });
@@ -196,9 +196,9 @@ describe("the keys it refuses to be constructed with", () => {
       // what makes the refusal a real question rather than a preference of ours.
       const { signatures, servedKey } = constructedWith(keys.rsa, alg);
 
-      const jws = await signatures.sign("saf-decision+jws", { statement });
+      const jws = await signatures.sign("concorde-decision+jws", { statement });
 
-      assert.deepEqual(headerOf(jws), { alg, typ: "saf-decision+jws" });
+      assert.deepEqual(headerOf(jws), { alg, typ: "concorde-decision+jws" });
       const served = await servedKey();
       assert.equal(served.kty, "RSA");
       // `n` and `e` survived the response schema, which a positive list of members is
@@ -284,7 +284,7 @@ describe("the refusal that is not the constructor's", () => {
     it(`constructs with ${what}, and refuses at the first signing instead`, async () => {
       const { signatures } = constructedWith(key, signingAlg);
 
-      await assert.rejects(() => signatures.sign("saf-decision+jws", { statement }));
+      await assert.rejects(() => signatures.sign("concorde-decision+jws", { statement }));
     });
   }
 });

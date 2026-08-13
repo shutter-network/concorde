@@ -234,7 +234,7 @@ describe("a third party holding nothing but the public key", () => {
 
     // The header says which algorithm and what kind of thing this is, and both are inside the
     // signature, so neither can be swapped by whoever hands the artifact on (ADR-0042).
-    assert.deepEqual(decoded(header), { alg: "EdDSA", typ: "saf-decision+jws" });
+    assert.deepEqual(decoded(header), { alg: "EdDSA", typ: "concorde-decision+jws" });
     // And the payload says the same as the record: a verifier who was given only the artifact
     // reconstructs the log entry from it, which is why a row is not needed for one to be real.
     assert.deepEqual(decoded(payload), {
@@ -272,7 +272,7 @@ describe("a third party holding nothing but the public key", () => {
 
     // And the type alone, which is what proves the header is signed: a receipt presented as a
     // Decision changes nothing else.
-    const relabelled = encoded({ alg: "EdDSA", typ: "saf-receipt+jws" });
+    const relabelled = encoded({ alg: "EdDSA", typ: "concorde-receipt+jws" });
     assert.equal(await checks(`${relabelled}.${payload}.${signature}`), false);
   });
 });

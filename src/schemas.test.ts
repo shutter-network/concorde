@@ -14,9 +14,9 @@
  * **A cross-schema foreign key names a part outside the set** is the loud one.
  * `messages.user_id`, `pubkeys.user_id`, `outbox.user_id`, Password Auth's two columns and Nostr
  * Auth's `grants.user_id` all reference
- * `saf_users.users.id` in code (ADR-0036, ADR-0046, ADR-0049, ADR-0052, ADR-0053), so
+ * `concorde_users.users.id` in code (ADR-0036, ADR-0046, ADR-0049, ADR-0052, ADR-0053), so
  * the set is coherent only while Users is in it, and a set without it throws
- * on the `ADD CONSTRAINT` — `schema "saf_users" does not exist`. Pushing is enough to
+ * on the `ADD CONSTRAINT` — `schema "concorde_users" does not exist`. Pushing is enough to
  * catch that, and the first test pushes. What that test cannot do by itself is keep
  * "the set" equal to "every part", which is the last test's job.
  *
@@ -26,7 +26,7 @@
  * absent until its first query. Worse, comparing the database against the parts'
  * declarations cannot see it either — that comparison keys by qualified name too, so
  * both sides collapse the same way and agree. So the second test asks it of the schema
- * objects instead, and asks the stronger form: every part has a `saf_<part>` schema of
+ * objects instead, and asks the stronger form: every part has a `concorde_<part>` schema of
  * its own (ADR-0022), which two parts cannot collide on a table without first breaking.
  *
  * The first test therefore compares **what the database ends up holding against what
@@ -118,7 +118,7 @@ describe("every component's schema, pushed as one graph", () => {
 
   it("gives every part a schema of its own, so no part's table can be another's", () => {
     // Asked of the schemas and not of the tables, because it is the stronger question
-    // and the shorter one: ADR-0022's `saf_<part>` per part held as a fact rather than
+    // and the shorter one: ADR-0022's `concorde_<part>` per part held as a fact rather than
     // a naming habit. Two parts cannot collide on a table without first sharing the
     // schema it is in, and a part declaring one table into another part's schema — the
     // collision in its less obvious spelling — is caught here and nowhere else.
@@ -142,7 +142,7 @@ describe("every component's schema, pushed as one graph", () => {
 });
 
 /**
- * What the parts say the database should hold, as `saf_x.y` -> its column names.
+ * What the parts say the database should hold, as `concorde_x.y` -> its column names.
  *
  * Keyed by qualified name, so two parts claiming one table collapse into a single entry
  * here exactly as they do in the push — which is the whole reason the collision is a

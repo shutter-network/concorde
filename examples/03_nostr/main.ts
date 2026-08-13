@@ -1,13 +1,13 @@
-import { createGateway } from "shared-agent-framework/gateway";
+import { createGateway } from "@shutter-network/concorde/gateway";
 import {
   createMessenger,
   type MessageRecord,
   messageReceivedKind,
-} from "shared-agent-framework/messenger";
-import { createNostrChannel } from "shared-agent-framework/nostr-channel";
-import { createPiRuntime } from "shared-agent-framework/pi";
-import { templateHandler } from "shared-agent-framework/signals";
-import { createUsers } from "shared-agent-framework/users";
+} from "@shutter-network/concorde/messenger";
+import { createNostrChannel } from "@shutter-network/concorde/nostr-channel";
+import { createPiRuntime } from "@shutter-network/concorde/pi";
+import { templateHandler } from "@shutter-network/concorde/signals";
+import { createUsers } from "@shutter-network/concorde/users";
 
 const relayUrl = process.env.RELAY_URL!;
 

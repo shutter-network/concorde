@@ -331,7 +331,7 @@ describe("the Agent server", () => {
   });
 
   it("carries no `/me`, having no request it could answer one for", async () => {
-    // The Agent server authenticates nobody at all (ADR-0010), so `request.safUser` is never
+    // The Agent server authenticates nobody at all (ADR-0010), so `request.concordeUser` is never
     // assigned there and there is nothing for such a route to echo. It is on the Public server
     // and only there.
     //

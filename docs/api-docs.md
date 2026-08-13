@@ -98,7 +98,7 @@ Three jobs, and nothing else.
 
 1. **What this subpath is.** A sentence or two. Define any domain term it owns that no exported
    type carries, because there is no glossary and `CONTEXT.md` is not published. Operator and
-   Shared Agent are the exception: they belong to no subpath, and the reference assumes them
+   shared agent are the exception: they belong to no subpath, and the reference assumes them
    rather than defining them on whichever page seemed closest. Name a component
    as "the Users component", and make it the grammatical subject of the first sentence: "The
    Decisions component owns the one global log of Decisions." Not "Decisions, the component that
@@ -144,7 +144,7 @@ code.
  *
  * Other components take that hook rather than authenticating anybody themselves, so construct this
  * one first. The subpath exports the `users` and `tokens` tables beside the constructor, for the
- * schema an Operator generates their migrations from, and importing it declares `request.safUser`
+ * schema an Operator generates their migrations from, and importing it declares `request.concordeUser`
  * on every `FastifyRequest` in the program.
  *
  * @example ...
@@ -249,7 +249,7 @@ Recorded rather than solved.
 - **The reference cannot point a reader at the argument.** Diátaxis prescribes a link out to
   explanation rather than silence, and there is nowhere to link: `docs/` is not published. So a
   reader who wants to know why a key is a `KeyObject` has no route to the answer.
-- **Two terms are used everywhere and defined nowhere.** Operator and Shared Agent belong to no
+- **Two terms are used everywhere and defined nowhere.** Operator and shared agent belong to no
   subpath, and with no root page there is no arbitrary-but-central place to put them. The
   reference assumes both, and a reader who does not know them learns them somewhere else. That is
   a real hole, and it is left open deliberately: handwritten documentation is the thing that will

@@ -1,5 +1,5 @@
 /**
- * What `shared-agent-framework/decisions` creates in a database: the `decisions` table, and the
+ * What `@shutter-network/concorde/decisions` creates in a database: the `decisions` table, and the
  * PostgreSQL schema it lives in. Keep it to the table and the values that define it, and add no
  * import of another component's schema: this log references nobody, so this subpath can be listed
  * on its own.
@@ -11,13 +11,13 @@
 import { integer, pgSchema, text, timestamp } from "drizzle-orm/pg-core";
 
 /**
- * The PostgreSQL schema every table below lives in, `saf_decisions`.
+ * The PostgreSQL schema every table below lives in, `concorde_decisions`.
  *
  * Prefixed because the framework is installed into a database it does not own, and not
  * configurable: the table is compiled against this object, and the same object is what a
  * generation reads.
  */
-export const decisionsSchema = pgSchema("saf_decisions");
+export const decisionsSchema = pgSchema("concorde_decisions");
 
 /**
  * One Decision: a Signed Statement, numbered and kept.

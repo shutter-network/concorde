@@ -124,7 +124,7 @@ before(async () => {
   createHttpChannel({ db, messenger, publicServer });
 
   // The schema of Users alongside the Messenger's, because `messages.user_id` references
-  // `saf_users.users.id` and one push has to see both (ADR-0036, ADR-0046). Password Auth's is
+  // `concorde_users.users.id` and one push has to see both (ADR-0036, ADR-0046). Password Auth's is
   // there because both of its columns reference that table too (ADR-0052).
   await applySchema(db, signalsSchema, usersSchema, passwordAuthSchema, messengerSchema);
 });

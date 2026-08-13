@@ -1,7 +1,7 @@
 /*
  * The one authored style in this site.
  *
- * A type reference in a signature block is an anchor carrying `saf-signature-link`, put there by
+ * A type reference in a signature block is an anchor carrying `concorde-signature-link`, put there by
  * the Shiki decoration in `../../expanded-object-methods.mjs`. This is what a reader sees it by.
  *
  * The underline is always on rather than on hover, because the point of it is that a reader can
@@ -15,14 +15,14 @@
  * a brand-coloured semibold word in the middle of it would read as something other than a type.
  */
 
-.vp-doc a.saf-signature-link {
+.vp-doc a.concorde-signature-link {
   color: inherit;
   font-weight: inherit;
   text-decoration: none;
 }
 
-.vp-doc a.saf-signature-link span,
-.vp-doc a.saf-signature-link:not(:has(span)) {
+.vp-doc a.concorde-signature-link span,
+.vp-doc a.concorde-signature-link:not(:has(span)) {
   text-decoration: underline dotted;
   text-decoration-color: currentcolor;
   text-underline-offset: 0.2em;

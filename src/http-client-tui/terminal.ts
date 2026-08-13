@@ -29,7 +29,7 @@ const eraseLine = "\r\x1b[2K";
 /** What a typist sees when the client is waiting for them. */
 const promptText = "> ";
 
-/** Who said it. `you` is what this User submitted, and `agent` is what the Shared Agent answered. */
+/** Who said it. `you` is what this User submitted, and `agent` is what the shared agent answered. */
 const speakers = { inbound: "you  ", outbound: "agent" } as const;
 
 /** One Message as one line: who said it, when, and what. */

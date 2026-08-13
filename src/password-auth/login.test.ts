@@ -70,7 +70,7 @@ before(async () => {
   await publicServer.fastify.register(
     async (fastify) => {
       fastify.get("/whoami", { preHandler: publicServer.requireUser }, async (request) => ({
-        asked: request.safUser.id,
+        asked: request.concordeUser.id,
       }));
     },
     { prefix: "/ops" },
@@ -116,7 +116,7 @@ describe("POST /auth/tokens", () => {
 
     // 201 and not 200: the Token is a resource this request created.
     assert.deepEqual(issued.user, user);
-    assert.ok(issued.token.startsWith("saf_"), issued.token);
+    assert.ok(issued.token.startsWith("concorde_"), issued.token);
     // ISO 8601 exactly, because JSON has no date and a client has to compare it.
     assert.equal(new Date(issued.expiresAt).toISOString(), issued.expiresAt);
     // The lifetime is the component's, and it is in the future.

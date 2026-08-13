@@ -22,8 +22,8 @@
  * transaction.
  * ```ts
  * import { sql } from "drizzle-orm";
- * import { openDb } from "shared-agent-framework/db";
- * import { users, usersTables } from "shared-agent-framework/users/schema";
+ * import { openDb } from "@shutter-network/concorde/db";
+ * import { users, usersTables } from "@shutter-network/concorde/users/schema";
  *
  * const db = openDb(process.env.DATABASE_URL ?? "");
  * // Nothing was on the wire until here, which is what lets every component be constructed first.

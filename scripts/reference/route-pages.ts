@@ -63,7 +63,7 @@ export function routePages(extraction: RouteExtraction): PageSet {
 
 /** What each server is, said once per page rather than once per route. */
 const whatTheServerIs: Record<ServerName, string> = {
-  agent: `**The Agent server has no authentication of any kind.** Everything below is reachable by the agent, and therefore by an injected prompt ([ADR-0003](https://github.com/jannikluhn/shared-agent-framework/blob/main/docs/adr/0003-prompt-injection-is-an-accepted-risk.md)). Nothing on it names a credential.`,
+  agent: `**The Agent server has no authentication of any kind.** Everything below is reachable by the agent, and therefore by an injected prompt ([ADR-0003](https://github.com/shutter-network/concorde/blob/main/docs/adr/0003-prompt-injection-is-an-accepted-risk.md)). Nothing on it names a credential.`,
   public: `**The Public server is what a User's client calls.** Which credential each route wants, and which wants none, is in that route's own description below.`,
 };
 
@@ -71,8 +71,12 @@ function page(component: ComponentRoutes): string {
   return [
     // A title of its own, because the heading below is the specifier and both the component's
     // TypeScript API page and its table page carry the same one.
+    //
+    // Quoted, and `JSON.stringify` rather than a pair of `"` characters: the package is scoped, so
+    // every specifier begins with `@`, which YAML reserves. Bare, the frontmatter does not parse
+    // and the site build fails on the file rather than on the line (ADR-0056).
     "---",
-    `title: ${component.specifier} routes`,
+    `title: ${JSON.stringify(`${component.specifier} routes`)}`,
     "---",
     "",
     `# ${component.specifier}`,

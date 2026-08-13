@@ -1,10 +1,13 @@
 {
-  "name": "shared-agent-framework",
-  "version": "0.3.1",
+  "name": "@shutter-network/concorde",
+  "version": "0.1.0",
   "description": "A framework for building AI agents that serve several parties at once, where no single party may control the agent or reach it privately.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jannikluhn/shared-agent-framework.git"
+    "url": "git+https://github.com/shutter-network/concorde.git"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "type": "module",
   "engines": {
@@ -118,7 +121,7 @@
     "lint": "biome check .",
     "format": "biome check --write .",
     "test": "node --test \"src/**/*.test.ts\"",
-    "test:container": "SAF_CONTAINER_TESTS=1 node --test \"src/pi/container.test.ts\"",
+    "test:container": "CONCORDE_CONTAINER_TESTS=1 node --test \"src/pi/container.test.ts\"",
     "check": "npm run typecheck && npm run build && npm run lint && npm test",
     "check:package": "node scripts/check-package.ts",
     "extract:routes": "node scripts/reference/extract-routes.ts",

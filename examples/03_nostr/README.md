@@ -14,8 +14,8 @@ Two people talking to one agent over Nostr, against a relay this stack runs. It 
 - **The Operator never sees a secret.** `main.ts` reads the two **public** keys. Each secret
   goes to that person's own `nak` container and nowhere else.
 - **A Channel with tables of its own.** The other Channel that ships has none.
-  `schema.ts` is four specifiers wide because of the three in `saf_nostr_channel`, two of
-  which reference `saf_users.users.id`. `users` is in that list although nobody logs in here:
+  `schema.ts` is four specifiers wide because of the three in `concorde_nostr_channel`, two of
+  which reference `concorde_users.users.id`. `users` is in that list although nobody logs in here:
   leave it out and the push builds a foreign key onto a table nothing creates.
 
 **This example is less pleasant to use than the other three, and that is deliberate.** No

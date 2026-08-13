@@ -51,7 +51,7 @@ let publicServer: ServerComponent<FastifyInstance>;
 
 const operatorRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get("/whoami", { preHandler: publicServer.requireUser }, async (request) => ({
-    asked: request.safUser.id,
+    asked: request.concordeUser.id,
   }));
 };
 
@@ -304,7 +304,7 @@ describe("the surface this component has", () => {
       externalBaseUrl: `${externalBaseUrl}/`,
     });
     slashed.fastify.get("/whoami", { preHandler: slashed.requireUser }, async (request) => ({
-      asked: request.safUser.id,
+      asked: request.concordeUser.id,
     }));
 
     const client = signer();

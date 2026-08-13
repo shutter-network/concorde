@@ -118,7 +118,7 @@ const silent: Logger = { debug: () => {}, info: () => {}, warn: () => {}, error:
 const nobody = "2f1b4d54-1c3a-4f2e-9d7b-8e6a5c4b3a21";
 
 /**
- * The Shared Agent's identity for the duration of this file, generated here because this is
+ * The shared agent's identity for the duration of this file, generated here because this is
  * where a keypair may be generated: the framework generates none, and `signingKey` is required
  * of every deployment including one that publishes nothing
  * ([ADR-0041](../docs/adr/0041-the-shared-agent-has-a-signing-identity.md)).
@@ -212,7 +212,7 @@ type Stack = {
  * deployment (ADR-0045). Users is constructed **before** the HTTP Messenger, which
  * takes it; Signatures before Decisions, which holds it and signs through it in process
  * (ADR-0043). Neither order is a migration order any more: `messages.user_id`'s foreign key
- * onto `saf_users.users.id` is generated from one push that sees both schemas, and the
+ * onto `concorde_users.users.id` is generated from one push that sees both schemas, and the
  * statements inside it are ordered by `drizzle-kit` (ADR-0046). The order the framework used
  * to hide is on display here, which is the whole point of the parts being the Operator's now.
  */
@@ -405,7 +405,7 @@ before(async () => {
   // Every schema this deployment runs, pushed as one graph, which is exactly the list an
   // Operator writes and points their own `drizzle-kit` at (ADR-0046). The framework applies
   // nothing itself, so this is the whole of how the tables get here, and `messages.user_id`
-  // is a live foreign key onto `saf_users.users.id` because both schemas are in the same
+  // is a live foreign key onto `concorde_users.users.id` because both schemas are in the same
   // push rather than because two folders were ordered.
   await applySchema(
     components.db,
@@ -952,7 +952,7 @@ describe("a whole deployment from one call", () => {
     const claimed = "a receipt for the March invoice, which is not a Decision";
     const signed = await postJson(`${agentUrl}/sign`, {
       statement: claimed,
-      typ: "saf-decision+jws",
+      typ: "concorde-decision+jws",
     });
     const signedBody = await signed.text();
     // 200 and not 201: nothing was created, and there is nowhere this could be fetched from
@@ -980,7 +980,7 @@ describe("a whole deployment from one call", () => {
     // The label that was asked for, in the protected header and therefore covered by the
     // signature, and a payload carrying the Statement and **nothing else**: no `seq` and no
     // `createdAt`, both of which are a Decision's and neither of which this route invents.
-    assert.deepEqual(decoded(header), { alg: "EdDSA", typ: "saf-decision+jws" });
+    assert.deepEqual(decoded(header), { alg: "EdDSA", typ: "concorde-decision+jws" });
     assert.deepEqual(decoded(payload), { statement: claimed });
 
     // And the log does not have it, which is the sentence the freedom above costs: `typ` is
@@ -1376,7 +1376,7 @@ describe("the description both servers serve", () => {
     const document = await documentOf(described.components.agentServer.fastify);
 
     assert.equal(document.openapi, "3.0.3");
-    assert.equal(document.info.title, "Shared Agent Gateway: Agent server");
+    assert.equal(document.info.title, "Concorde Gateway: Agent server");
     assert.equal(document.info.version, describedVersion);
     // The one sentence about this surface that is true of every route on it, and the one
     // an Agent Implementation would otherwise be told by hand: there is no credential here
@@ -1404,7 +1404,7 @@ describe("the description both servers serve", () => {
     const document = await documentOf(described.components.publicServer.fastify);
 
     assert.equal(document.openapi, "3.0.3");
-    assert.equal(document.info.title, "Shared Agent Gateway: Public server");
+    assert.equal(document.info.title, "Concorde Gateway: Public server");
     assert.equal(document.info.version, describedVersion);
     assert.match(document.info.description, /bearer Token/);
 
@@ -1534,7 +1534,7 @@ describe("the description both servers serve", () => {
     assert.match(me, /any scheme this deployment accepts/);
 
     // The User as it is answered: exactly three fields, named rather than counted, because
-    // the schema being a **positive list** is what keeps a column added to `saf_users.users`
+    // the schema being a **positive list** is what keeps a column added to `concorde_users.users`
     // off the wire. That no credential reaches one is the first suite's assertion; that the
     // document does not even describe one is this.
     const user = schemaOf(documents.agent, "/users/{id}", "get", "200");
@@ -1833,7 +1833,7 @@ describe("the description both servers serve", () => {
     }
 
     // Tagged as their own group on each page, and there is no publish route on the Public
-    // server for a reader to look for: a User with a Token is not the Shared Agent.
+    // server for a reader to look for: a User with a Token is not the shared agent.
     assert.deepEqual(tagsOf(documents.agent, log, "post"), ["Decisions"]);
     assert.deepEqual(tagsOf(documents.public, log, "get"), ["Decisions"]);
     assert.deepEqual(tagsOf(documents.public, cited, "get"), ["Decisions"]);
@@ -1942,7 +1942,7 @@ describe("the description both servers serve", () => {
 
     // Neither server describes the other's, which on this part is the sharpest version of that
     // separation anywhere: a `POST /sign` in the Public server's document would be advertising
-    // the Shared Agent's key to whoever can reach the port.
+    // the shared agent's key to whoever can reach the port.
     assert.equal(documents.public.paths["/sign"], undefined);
     assert.equal(documents.agent.paths["/verify"], undefined);
     assert.equal(documents.agent.paths["/jwks.json"], undefined);
@@ -1953,7 +1953,10 @@ describe("the description both servers serve", () => {
     const signing = bodyOf(documents.agent, "/sign", "post");
     assert.deepEqual(Object.keys(signing.properties ?? {}).sort(), ["statement", "typ"]);
     assert.deepEqual(signing.required, ["statement"]);
-    assert.match(String(signing.properties?.typ?.description), /Any label, `saf-decision\+jws`/);
+    assert.match(
+      String(signing.properties?.typ?.description),
+      /Any label, `concorde-decision\+jws`/,
+    );
     assert.match(String(documents.agent.paths["/sign"]?.post?.description), /nothing is reserved/);
     const verdict = schemaOf(documents.public, "/verify", "post", "200");
     assert.deepEqual(Object.keys(verdict.properties ?? {}).sort(), [

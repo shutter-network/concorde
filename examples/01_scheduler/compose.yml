@@ -1,6 +1,6 @@
-name: saf-example-01-scheduler
+name: concorde-example-01-scheduler
 
-x-database-url: &database-url postgres://saf:saf@postgres:5432/saf
+x-database-url: &database-url postgres://concorde:concorde@postgres:5432/concorde
 
 services:
   gateway:
@@ -15,8 +15,8 @@ services:
       AGENT_HOST: 0.0.0.0
       AGENT_PORT: "7411"
       AGENT_SERVER_URL: http://gateway:7411
-      AGENT_IMAGE: saf-scheduler-agent:0.83.0
-      AGENT_NETWORK: saf_scheduler_agent
+      AGENT_IMAGE: concorde-scheduler-agent:0.83.0
+      AGENT_NETWORK: concorde_scheduler_agent
       RUNTIME_DIR_HOST: ${PWD}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -50,14 +50,14 @@ services:
   postgres:
     image: postgres:17
     environment:
-      POSTGRES_USER: saf
-      POSTGRES_PASSWORD: saf
-      POSTGRES_DB: saf
+      POSTGRES_USER: concorde
+      POSTGRES_PASSWORD: concorde
+      POSTGRES_DB: concorde
     volumes:
       - db:/var/lib/postgresql/data
     networks: [db]
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "saf", "-d", "saf"]
+      test: ["CMD", "pg_isready", "-U", "concorde", "-d", "concorde"]
       interval: 3s
       timeout: 3s
       retries: 20
@@ -66,16 +66,16 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.agent
-    image: saf-scheduler-agent:0.83.0
+    image: concorde-scheduler-agent:0.83.0
     command: ["--version"]
     restart: "no"
     networks: [agent]
 
 networks:
   db:
-    name: saf_scheduler_db
+    name: concorde_scheduler_db
   agent:
-    name: saf_scheduler_agent
+    name: concorde_scheduler_agent
 
 volumes:
   db:

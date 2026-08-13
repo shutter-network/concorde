@@ -1,2 +1,2 @@
-export * from "shared-agent-framework/scheduler/schema";
-export * from "shared-agent-framework/signals/schema";
+export * from "@shutter-network/concorde/scheduler/schema";
+export * from "@shutter-network/concorde/signals/schema";

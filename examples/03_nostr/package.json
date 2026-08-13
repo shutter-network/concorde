@@ -1,5 +1,5 @@
 {
-  "name": "saf-example-03-nostr",
+  "name": "concorde-example-03-nostr",
   "private": true,
   "type": "module",
   "engines": {
@@ -13,7 +13,7 @@
   "dependencies": {
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.11.0",
-    "shared-agent-framework": "^0.4.0"
+    "@shutter-network/concorde": "^0.1.0"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",

@@ -13,10 +13,10 @@
  */
 
 /** Where the Public server listens. */
-export const gatewayUrlVariable = "SAF_GATEWAY_URL";
+export const gatewayUrlVariable = "CONCORDE_GATEWAY_URL";
 
 /** The password of the User named by the argument. */
-export const passwordVariable = "SAF_PASSWORD";
+export const passwordVariable = "CONCORDE_PASSWORD";
 
 /**
  * Where a Gateway started from the framework's own examples listens.
@@ -41,7 +41,7 @@ export type Invocation =
 
 export const usage = `Usage: http-client-tui <user-id>
 
-A line-oriented client for the HTTP Channel of a Shared Agent Gateway. It logs in as the
+A line-oriented client for the HTTP Channel of a Concorde Gateway. It logs in as the
 User whose id is given, prints that User's Message log, and asks for more once a second.
 A line you type is submitted as a Message, and the agent's answer arrives on the log.
 

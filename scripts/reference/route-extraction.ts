@@ -218,7 +218,7 @@ const routePlugins: readonly ListedPlugin[] = [
   { subpath: "users", server: "public", plugin: publicUserRoutes(requireUser) },
 ];
 
-const packageName = "shared-agent-framework";
+const packageName = "@shutter-network/concorde";
 
 /**
  * The routes of every component that serves any, in the order the list above is written.

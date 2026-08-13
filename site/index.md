@@ -1,11 +1,11 @@
-# shared-agent-framework
+# Concorde
 
 A framework for AI agents that act for more than one party at the same time, and are controlled
 by none of them individually.
 
-## What a Shared Agent is
+## What a shared agent is
 
-A **Shared Agent** is an AI agent that acts for several parties at once. No single party owns it,
+A **shared agent** is an AI agent that acts for several parties at once. No single party owns it,
 and no party can reach it privately. Every message into the agent and out of it goes through a
 **Gateway** that you run.
 
@@ -14,11 +14,11 @@ need to trust that the agent does not take instructions from one of them in secr
 is what makes that structure real. It holds the Message log and the agent's signing key. It is
 the only path between a person and the agent.
 
-An **Operator** is whoever runs and configures a Shared Agent. Every party trusts the Operator.
+An **Operator** is whoever runs and configures a shared agent. Every party trusts the Operator.
 The Operator writes the entry point, holds the keys, owns the database, and runs the stack. Most
 of this site is written for that reader.
 
-![The parts of a Shared Agent. A dashed boundary encloses the Gateway, holding the Db, the Signal
+![The parts of a shared agent. A dashed boundary encloses the Gateway, holding the Db, the Signal
 Worker, the Agent server and the Public server, together with the Messenger and its two Channels
 and Users with its two Auths. Outside it are the Agent Implementation, a person's client, and a
 Nostr Relay.](/architecture.svg)
@@ -30,7 +30,7 @@ page reads the picture part by part.
 
 | Page | What it answers |
 | --- | --- |
-| [Build a Shared Agent](./guide) | How do I get a working deployment from nothing? |
+| [Build a shared agent](./guide) | How do I get a working deployment from nothing? |
 | [Architecture](./architecture) | What are the parts, and why are they separate? |
 | [API reference](./reference/) | What is the exact signature of this function? |
 

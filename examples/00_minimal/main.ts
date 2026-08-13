@@ -1,14 +1,14 @@
-import { createGateway } from "shared-agent-framework/gateway";
-import { createHttpChannel } from "shared-agent-framework/http-channel";
+import { createGateway } from "@shutter-network/concorde/gateway";
+import { createHttpChannel } from "@shutter-network/concorde/http-channel";
 import {
   createMessenger,
   type MessageRecord,
   messageReceivedKind,
-} from "shared-agent-framework/messenger";
-import { createPasswordAuth } from "shared-agent-framework/password-auth";
-import { createPiRuntime } from "shared-agent-framework/pi";
-import { templateHandler } from "shared-agent-framework/signals";
-import { createUsers } from "shared-agent-framework/users";
+} from "@shutter-network/concorde/messenger";
+import { createPasswordAuth } from "@shutter-network/concorde/password-auth";
+import { createPiRuntime } from "@shutter-network/concorde/pi";
+import { templateHandler } from "@shutter-network/concorde/signals";
+import { createUsers } from "@shutter-network/concorde/users";
 
 const password = process.env.USER_PASSWORD!;
 

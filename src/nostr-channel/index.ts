@@ -1,6 +1,6 @@
 /**
  * The Nostr Channel is a Channel implementation for the Messenger, reaching a User in the Nostr
- * client they already use and letting them reach the Shared Agent from it. The Messenger owns the
+ * client they already use and letting them reach the shared agent from it. The Messenger owns the
  * log and reaches nobody; a Channel is what reaches a person over one medium. This one exchanges
  * NIP-17 private direct messages over a single connection to one **Relay** the Operator runs, and a
  * message from a public key the Operator recorded becomes an inbound Message and its Signal in one
@@ -10,7 +10,7 @@
  * {@link createNostrChannel} makes one. {@link NostrChannel} is what comes back. Its programmatic
  * API is `recordPublicKey`, which admits one User to this medium, and `publicKey`, which is the
  * address an Operator tells that User to write to; everything else on it the Messenger and the
- * Relay drive. {@link NostrChannelOptions} takes the Shared Agent's Nostr secret key as 32 raw
+ * Relay drive. {@link NostrChannelOptions} takes the shared agent's Nostr secret key as 32 raw
  * bytes, a second keypair that the signing identity neither is nor can become.
  *
  * It registers no route on either server, a Relay being what a User reaches over this medium, so a
@@ -23,24 +23,24 @@
  * registration, so a deployment runs Nostr or HTTP and not both.
  *
  * A key recorded here decides where the agent writes and nothing else. It grants no access to the
- * HTTP API: that is `shared-agent-framework/nostr-auth`, which keeps a table of its own that this
- * one never reads. A deployment wanting both writes both, and nothing checks that they agree.
+ * HTTP API: that is `@shutter-network/concorde/nostr-auth`, which keeps a table of its own that
+ * this one never reads. A deployment wanting both writes both, and nothing checks that they agree.
  *
  * The three tables, `pubkeys`, `received` and `outbox`, are on
- * `shared-agent-framework/nostr-channel/schema` and nowhere else. List
- * `shared-agent-framework/users/schema` beside it, because two of those tables reference the Users
- * component's table, and a configuration without it generates a foreign key onto a table nothing
- * creates.
+ * `@shutter-network/concorde/nostr-channel/schema` and nowhere else. List
+ * `@shutter-network/concorde/users/schema` beside it, because two of those tables reference the
+ * Users component's table, and a configuration without it generates a foreign key onto a table
+ * nothing creates.
  *
  * @example
  * A Gateway a User reaches over Nostr, with their public key recorded out of band.
  * ```ts
  * import { readFileSync } from "node:fs";
- * import { createGateway } from "shared-agent-framework/gateway";
- * import { createMessenger } from "shared-agent-framework/messenger";
- * import { createNostrChannel } from "shared-agent-framework/nostr-channel";
- * import { createPiRuntime } from "shared-agent-framework/pi";
- * import { createUsers } from "shared-agent-framework/users";
+ * import { createGateway } from "@shutter-network/concorde/gateway";
+ * import { createMessenger } from "@shutter-network/concorde/messenger";
+ * import { createNostrChannel } from "@shutter-network/concorde/nostr-channel";
+ * import { createPiRuntime } from "@shutter-network/concorde/pi";
+ * import { createUsers } from "@shutter-network/concorde/users";
  *
  * // The framework parses no key material: 32 raw bytes, decoded by the deployment.
  * const secretKey = Uint8Array.from(

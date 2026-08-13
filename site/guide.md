@@ -1,4 +1,4 @@
-# Build a Shared Agent
+# Build a shared agent
 
 This guide builds one working deployment from nothing. At the end, a person logs in over HTTP,
 sends a message, and the agent answers.
@@ -44,7 +44,7 @@ Make a directory and write `package.json` into it:
   "dependencies": {
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.11.0",
-    "shared-agent-framework": "^0.3.0"
+    "@shutter-network/concorde": "^0.1.0"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
@@ -95,7 +95,7 @@ with an outcome. This deployment runs `pi` in a container.
 Start `main.ts`:
 
 ```ts
-import { createPiRuntime } from "shared-agent-framework/pi";
+import { createPiRuntime } from "@shutter-network/concorde/pi";
 
 const runtime = createPiRuntime({
   image: process.env.AGENT_IMAGE!,
@@ -119,7 +119,7 @@ const runtime = createPiRuntime({
 Three facts about this block matter.
 
 **The package has no root export.** Every import names a subpath, such as
-`shared-agent-framework/pi`. An import from `"shared-agent-framework"` resolves to nothing.
+`@shutter-network/concorde/pi`. An import from `"@shutter-network/concorde"` resolves to nothing.
 
 **Only the environment you name here reaches the agent.** None of the Gateway's own environment
 is passed through.
@@ -143,7 +143,7 @@ two HTTP servers, and the Signal Worker. It hands those four to you, and you bui
 Add the call to `main.ts`:
 
 ```ts
-import { createGateway } from "shared-agent-framework/gateway";
+import { createGateway } from "@shutter-network/concorde/gateway";
 
 const gateway = createGateway({
   databaseUrl: process.env.DATABASE_URL!,
@@ -198,10 +198,10 @@ Fill in `extend`:
 Add the imports and the token lifetime at the top of `main.ts`:
 
 ```ts
-import { createHttpChannel } from "shared-agent-framework/http-channel";
-import { createMessenger } from "shared-agent-framework/messenger";
-import { createPasswordAuth } from "shared-agent-framework/password-auth";
-import { createUsers } from "shared-agent-framework/users";
+import { createHttpChannel } from "@shutter-network/concorde/http-channel";
+import { createMessenger } from "@shutter-network/concorde/messenger";
+import { createPasswordAuth } from "@shutter-network/concorde/password-auth";
+import { createUsers } from "@shutter-network/concorde/users";
 
 const tokenTtl = 30 * 24 * 60 * 60 * 1000;
 ```
@@ -254,8 +254,8 @@ import {
   createMessenger,
   type MessageRecord,
   messageReceivedKind,
-} from "shared-agent-framework/messenger";
-import { templateHandler } from "shared-agent-framework/signals";
+} from "@shutter-network/concorde/messenger";
+import { templateHandler } from "@shutter-network/concorde/signals";
 ```
 
 `session` decides which conversation the Prompt continues. This one gives each person a Session
@@ -325,10 +325,10 @@ A component's tables live on a `/schema` subpath of their own, one below the com
 ones your deployment runs in a `schema.ts` of your own:
 
 ```ts
-export * from "shared-agent-framework/messenger/schema";
-export * from "shared-agent-framework/password-auth/schema";
-export * from "shared-agent-framework/signals/schema";
-export * from "shared-agent-framework/users/schema";
+export * from "@shutter-network/concorde/messenger/schema";
+export * from "@shutter-network/concorde/password-auth/schema";
+export * from "@shutter-network/concorde/signals/schema";
+export * from "@shutter-network/concorde/users/schema";
 ```
 
 This deployment names four for five: the HTTP Channel owns no tables, because it stores nothing
@@ -375,10 +375,10 @@ finds no difference, creates not one table, and exits 0.
 :::
 
 ::: danger List users/schema whenever you list a component that references it
-Six foreign keys point at `saf_users.users.id`. The Messenger declares one, the Nostr Channel
+Six foreign keys point at `concorde_users.users.id`. The Messenger declares one, the Nostr Channel
 declares two, Password Auth declares two, and Nostr Auth declares one. If you list any of those
 four components without
-`shared-agent-framework/users/schema`, the push builds a foreign key onto a table that nothing
+`@shutter-network/concorde/users/schema`, the push builds a foreign key onto a table that nothing
 creates.
 :::
 
@@ -445,7 +445,7 @@ Gateway, and a terminal client held behind a profile. Write `compose.yml`:
 ```yaml
 name: my-shared-agent
 
-x-database-url: &database-url postgres://saf:saf@postgres:5432/saf
+x-database-url: &database-url postgres://concorde:concorde@postgres:5432/concorde
 
 services:
   gateway:
@@ -496,14 +496,14 @@ services:
   postgres:
     image: postgres:17
     environment:
-      POSTGRES_USER: saf
-      POSTGRES_PASSWORD: saf
-      POSTGRES_DB: saf
+      POSTGRES_USER: concorde
+      POSTGRES_PASSWORD: concorde
+      POSTGRES_DB: concorde
     volumes:
       - db:/var/lib/postgresql/data
     networks: [db]
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "saf", "-d", "saf"]
+      test: ["CMD", "pg_isready", "-U", "concorde", "-d", "concorde"]
       interval: 3s
       timeout: 3s
       retries: 20
@@ -524,8 +524,8 @@ services:
     profiles: [cli]
     entrypoint: ["npx", "http-client-tui"]
     environment:
-      SAF_GATEWAY_URL: http://gateway:8081
-      SAF_PASSWORD: ${USER_PASSWORD:?copy .env.example to .env}
+      CONCORDE_GATEWAY_URL: http://gateway:8081
+      CONCORDE_PASSWORD: ${USER_PASSWORD:?copy .env.example to .env}
     networks: [public]
 
 networks:
@@ -575,7 +575,7 @@ setup. A real deployment sets a password out of band and holds none here.
 agent that the Agent server exists.
 
 ````markdown
-# You are a Shared Agent
+# You are a shared agent
 
 One person talks to you here, and you act for them through a Gateway that mediates everything
 into and out of you. Be brief.
@@ -651,7 +651,7 @@ Now that one deployment works, each of these is a small change to `main.ts`:
 | Add a route of your own | Register a Fastify plugin on either server. |
 
 Remember two rules when you add a component. Add its `/schema` specifier to
-`schema.ts`, unless it owns no tables. Keep `shared-agent-framework/users/schema` in that
+`schema.ts`, unless it owns no tables. Keep `@shutter-network/concorde/users/schema` in that
 list whenever anything references it.
 
 ::: tip Every component is optional

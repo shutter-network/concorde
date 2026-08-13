@@ -29,8 +29,8 @@
  * @example
  * A Signal Handler, and a Producer that emits into it.
  * ```ts
- * import type { Db } from "shared-agent-framework/db";
- * import type { Signal, SignalHandler, SignalWorker } from "shared-agent-framework/signals";
+ * import type { Db } from "@shutter-network/concorde/db";
+ * import type { Signal, SignalHandler, SignalWorker } from "@shutter-network/concorde/signals";
  *
  * const greet: SignalHandler<{ name: string }> = {
  *   handle: (signal: Signal<{ name: string }>) => [
@@ -60,9 +60,9 @@ export type {
 } from "./handlers.ts";
 export type { RunRecord, SignalRecord } from "./routes.ts";
 export type { RunOutcome, RunPrompt, Runtime } from "./runtime.ts";
-// The tables are on `shared-agent-framework/signals/schema` and on nothing else. These two unions
-// and the arrays they are derived from are the exception and are on both: a check constraint is
-// compiled from the arrays, which is why they live in `schema.ts`, and `SignalRecord.state` and
+// The tables are on `@shutter-network/concorde/signals/schema` and on nothing else. These two
+// unions and the arrays they are derived from are the exception and are on both: a check constraint
+// is compiled from the arrays, which is why they live in `schema.ts`, and `SignalRecord.state` and
 // `RunRecord.state` are declared with the unions and are on the wire, so a reader of either record
 // has to be able to name them (ADR-0055).
 export type { RunState, SignalState } from "./schema/index.ts";

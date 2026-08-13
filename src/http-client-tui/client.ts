@@ -85,7 +85,7 @@ export type Client = {
  * Joins a path onto a base URL, keeping any path the base carries.
  *
  * `path` is relative and carries no leading slash for that reason: `/messages` against
- * `http://host/saf` resolves to `http://host/messages` and loses the deployment's prefix.
+ * `http://host/concorde` resolves to `http://host/messages` and loses the deployment's prefix.
  */
 export function urlFor(
   baseUrl: string,

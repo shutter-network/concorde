@@ -149,14 +149,15 @@ export type ServerComponent<S extends ListeningServer = FastifyInstance> = Compo
    * The preHandler a protected route on this server takes, as one route option.
    *
    * `publicServer.requireUser` on a route asks every registered Auth in turn. The first that
-   * authenticates the request has its User assigned to `request.safUser`; the first that refuses
-   * one ends it there, and so does a request no Auth recognised. Every refusal is the same 401 with
-   * the same body, and carries a `WWW-Authenticate` header naming every scheme this server accepts.
+   * authenticates the request has its User assigned to `request.concordeUser`; the first that
+   * refuses one ends it there, and so does a request no Auth recognised. Every refusal is the same
+   * 401 with the same body, and carries a `WWW-Authenticate` header naming every scheme this server
+   * accepts.
    *
    * It reads the registered Auths per request, so a route registered before the Auth that
    * authenticates it works. A hook and not a plugin, so it goes on a route of your own at any depth
    * and under any prefix. Nothing is protected by default, and a route that omits it reads
-   * `request.safUser` as `undefined` despite the type.
+   * `request.concordeUser` as `undefined` despite the type.
    *
    * @throws `NoAuthRegisteredError` if no Auth has registered with this server. A wiring mistake is
    *   a 500 rather than a 401 that every User would read as their own credential failing.

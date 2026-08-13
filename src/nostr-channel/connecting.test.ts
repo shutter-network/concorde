@@ -359,7 +359,7 @@ describe("the agent saying where it can be messaged", () => {
   });
 });
 
-describe("the Shared Agent's Nostr identity", () => {
+describe("the shared agent's Nostr identity", () => {
   it("is derived from the raw bytes it was constructed with, and nothing else", async () => {
     const secretKey = generateSecretKey();
     const messenger = createMessenger({

@@ -10,7 +10,7 @@
  *
  * `GET /jwks.json` is the stated exception to the single 401 of Users on the Public server,
  * and the exception is the point: the whole audience for this identity is a third party with no
- * Token to present. Signing has no public route at all, because only the Shared Agent may make an
+ * Token to present. Signing has no public route at all, because only the shared agent may make an
  * artifact. Checking one is open to any Token holder, since asking reveals nothing they could not
  * work out from the key set themselves.
  *
@@ -63,7 +63,7 @@ export type Verdict =
 // Its own sentence, because the obvious guess here is `?kid=`, which a client's key-set helper can
 // have, and what that caller needs to hear is that there is nothing to select by.
 const rejectKeySetQuery = unknownQueryRefusal(
-  "There is nothing to select here: the Shared Agent has one keypair, with no identifier and no rotation, so the whole set is the whole answer.",
+  "There is nothing to select here: the shared agent has one keypair, with no identifier and no rotation, so the whole set is the whole answer.",
 );
 
 // Shared by the two body routes and naming neither, the two being on different servers. What
@@ -111,7 +111,7 @@ const keySetSchema = {
 
 // Generic on purpose: the framework knows the agent signs things and nothing about what kinds of
 // things they are, so the default says the one true thing.
-const statementTyp = "saf-statement+jws";
+const statementTyp = "concorde-statement+jws";
 
 /**
  * `minLength: 1` so that an empty commitment is a 400 rather than a signed nothing, and no
@@ -126,7 +126,7 @@ const statementSchema = { type: "string", minLength: 1 } as const;
 /**
  * 128 characters: longer than any media type anybody writes, short enough to keep a megabyte out of
  * a protected header. That is the whole of the validation and it is not a policy, so any label of
- * that shape is signed, `saf-decision+jws` included.
+ * that shape is signed, `concorde-decision+jws` included.
  *
  * `default` is applied by Fastify's ajv under `useDefaults`, so the handler reads a `typ` on every
  * request. The same mechanism `limit` uses on every list in the framework.
@@ -136,7 +136,7 @@ const typSchema = {
   minLength: 1,
   maxLength: 128,
   default: statementTyp,
-  description: `What kind of thing this artifact is. It goes into the **protected header**, so the signature covers it. Swapping it invalidates the artifact, which keeps a receipt from being presented as an approval.\n\n**Any label, \`saf-decision+jws\` included.** Domain separation between your *own* categories, such as receipts, votes and approvals, is something only you can express. Give each of them a label of its own, or they collapse into one domain and become replayable as each other. Defaults to \`${statementTyp}\`.`,
+  description: `What kind of thing this artifact is. It goes into the **protected header**, so the signature covers it. Swapping it invalidates the artifact, which keeps a receipt from being presented as an approval.\n\n**Any label, \`concorde-decision+jws\` included.** Domain separation between your *own* categories, such as receipts, votes and approvals, is something only you can express. Give each of them a label of its own, or they collapse into one domain and become replayable as each other. Defaults to \`${statementTyp}\`.`,
 } as const;
 
 // No field for the payload: what is signed is `{ statement }` and the header, so a caller wanting
@@ -184,11 +184,11 @@ const verdictSchema = {
     verified: {
       type: "boolean",
       description:
-        "Whether this artifact carries a valid signature by **this** Shared Agent's key. `false` covers every way of not being ours at once: another identity's artifact, a tampered one, a wrong number of segments, malformed base64url and an unparseable header alike. None of them is an error, so none of them is a 4xx.",
+        "Whether this artifact carries a valid signature by **this** shared agent's key. `false` covers every way of not being ours at once: another identity's artifact, a tampered one, a wrong number of segments, malformed base64url and an unparseable header alike. None of them is an error, so none of them is a 4xx.",
     },
     header: {
       description:
-        "The protected header the signature covers, as it was written: the algorithm, and the `typ` the signer chose. **`typ` is that signer's own claim about its artifact and not a guarantee of this framework's**. A `\"saf-decision+jws\"` here means this identity labelled it a Decision, not that it is shaped like one and not that a row exists. Only an artifact fetched from `GET /decisions` is guaranteed well-formed.",
+        "The protected header the signature covers, as it was written: the algorithm, and the `typ` the signer chose. **`typ` is that signer's own claim about its artifact and not a guarantee of this framework's**. A `\"concorde-decision+jws\"` here means this identity labelled it a Decision, not that it is shaped like one and not that a row exists. Only an artifact fetched from `GET /decisions` is guaranteed well-formed.",
     },
     payload: {
       description:
@@ -202,14 +202,14 @@ const verdictSchema = {
 // consumes. The second says plainly what a signature proves, because a verifier who mistakes a
 // cryptographic artifact for evidence about the agent's conduct has been misled by us.
 const whatTheKeyIsFor =
-  "The Shared Agent's public key, as a JWK Set (RFC 7517). It is what makes a Signed Statement checkable **without trusting this Gateway**. Fetch it once, keep it, and verify artifacts offline with any JOSE library in any language. That is the real verification path, and the only one worth anything to somebody who does not trust the Operator.\n\nOne keypair, always, so the set holds one key. There is no rotation, no key identifier and nothing to select between. What a valid signature proves is narrow. **The Operator committed to this Statement on the Shared Agent's behalf.** It says nothing whatever about how the agent behaved.";
+  "The shared agent's public key, as a JWK Set (RFC 7517). It is what makes a Signed Statement checkable **without trusting this Gateway**. Fetch it once, keep it, and verify artifacts offline with any JOSE library in any language. That is the real verification path, and the only one worth anything to somebody who does not trust the Operator.\n\nOne keypair, always, so the set holds one key. There is no rotation, no key identifier and nothing to select between. What a valid signature proves is narrow. **The Operator committed to this Statement on the shared agent's behalf.** It says nothing whatever about how the agent behaved.";
 
 // There is no version of this route that proves more: the answer comes from the Gateway, so
 // believing it means trusting the Gateway, and the party this identity exists for is the one who
 // does not. Stated in the document because of who most needs to read it, which is the caller who
 // would otherwise hand a third party a screenshot of a `true`.
 const whatTheCheckIsWorth =
-  "A convenience, and **it proves less than it looks like it proves**. It answers one question: is this artifact this Shared Agent's? You have to believe the answer, because a dishonest Gateway says `true` to anything. So it is worth nothing to the party this identity exists for. That party does not trust the Operator. It is genuinely useful to a User, who trusts the Operator already. They want a quick confirmation without embedding a JOSE library.\n\n**Real verification is offline.** Fetch `GET /jwks.json` once, keep the key, and check the artifact yourself in whatever language you are already writing. That asks this Gateway nothing. The path is open to anybody holding the string, needs no Token, and keeps working after this deployment is gone.";
+  "A convenience, and **it proves less than it looks like it proves**. It answers one question: is this artifact this shared agent's? You have to believe the answer, because a dishonest Gateway says `true` to anything. So it is worth nothing to the party this identity exists for. That party does not trust the Operator. It is genuinely useful to a User, who trusts the Operator already. They want a quick confirmation without embedding a JOSE library.\n\n**Real verification is offline.** Fetch `GET /jwks.json` once, keep the key, and check the artifact yourself in whatever language you are already writing. That asks this Gateway nothing. The path is open to anybody holding the string, needs no Token, and keeps working after this deployment is gone.";
 
 /**
  * `POST /sign` and not a key the agent holds. The agent is a container over HTTP, and the key is
@@ -224,7 +224,7 @@ export function agentSignatureRoutes(signing: StatementSigning): FastifyPluginAs
         schema: {
           tags: ["Signatures"],
           summary: "Sign a Statement",
-          description: `Have any string signed with the Shared Agent's key, and receive one compact JWS back. **Nothing is stored.** There is no row afterwards and no route that lists what has been signed, so the artifact answered is the whole of what happened. Losing it means signing again. A commitment worth keeping is a Decision: \`POST /decisions\` signs it too, and numbers it, and keeps it.\n\nThe \`typ\` is yours, and **nothing is reserved**. Asking for \`saf-decision+jws\` here is allowed and is not a forgery. Publishing a Decision is an authority you already hold, so a decision-typed artifact minted here is that same authority exercised without a log row. What it is *not* is a promise to a verifier. \`typ\` is your signed claim about your own artifact, and only an artifact fetched from \`GET /decisions\` is guaranteed to be shaped like one.\n\nThe Statement has no length limit of ours. The server's own body limit is the bound, and it belongs to the Operator. ${unknownParameter}`,
+          description: `Have any string signed with the shared agent's key, and receive one compact JWS back. **Nothing is stored.** There is no row afterwards and no route that lists what has been signed, so the artifact answered is the whole of what happened. Losing it means signing again. A commitment worth keeping is a Decision: \`POST /decisions\` signs it too, and numbers it, and keeps it.\n\nThe \`typ\` is yours, and **nothing is reserved**. Asking for \`concorde-decision+jws\` here is allowed and is not a forgery. Publishing a Decision is an authority you already hold, so a decision-typed artifact minted here is that same authority exercised without a log row. What it is *not* is a promise to a verifier. \`typ\` is your signed claim about your own artifact, and only an artifact fetched from \`GET /decisions\` is guaranteed to be shaped like one.\n\nThe Statement has no length limit of ours. The server's own body limit is the bound, and it belongs to the Operator. ${unknownParameter}`,
           body: signSchema,
           response: {
             200: {
@@ -275,7 +275,7 @@ export function publicSignatureRoutes(
       {
         schema: {
           tags: ["Signatures"],
-          summary: "Check whether an artifact is this Shared Agent's",
+          summary: "Check whether an artifact is this shared agent's",
           description: `${whatTheCheckIsWorth}\n\nAnswers **200 either way**. An artifact that is not ours is a \`false\` and not an error. That covers a foreign identity's artifact, a tampered one and a wrong number of segments. Malformed base64url and an unparseable header get the same answer. All of those arrive from a caller, and none of them is this Gateway failing. ${bearerRequired} ${unknownParameter}`,
           body: verifySchema,
           response: {
@@ -301,13 +301,13 @@ export function publicSignatureRoutes(
       {
         schema: {
           tags: ["Signatures"],
-          summary: "Fetch the Shared Agent's public key",
+          summary: "Fetch the shared agent's public key",
           description: `${whatTheKeyIsFor}\n\n**No Token is required**, a public key being public. Besides the login itself, this is the one route on the Public server that asks for none. ${unknownParameter}`,
           response: {
             200: {
               ...keySetSchema,
               description:
-                "The key set, holding the one key this Shared Agent signs with. It carries **no private member**: the schema is a positive list of public ones, so there is nothing here to keep secret and nothing to send it over TLS for.",
+                "The key set, holding the one key this shared agent signs with. It carries **no private member**: the schema is a positive list of public ones, so there is nothing here to keep secret and nothing to send it over TLS for.",
             },
             400: refused("A query parameter was written, and this route takes none."),
           },

@@ -19,7 +19,7 @@ import { shikiThemes } from "../shiki-themes.mjs";
 // what TypeDoc's own sidebar links start with, and `referenceBase` in
 // `../../scripts/reference/pages.ts`, which decides the same for the table and route pages.
 export default defineConfig({
-  title: "shared-agent-framework",
+  title: "Concorde",
   description: "Build an AI agent that serves several parties at once and is controlled by none.",
   srcDir: ".",
 
@@ -34,7 +34,7 @@ export default defineConfig({
   // named above, and the only one of the four that fails loudly: absent or wrong, the HTML loads
   // and every stylesheet, script and font 404s, so the first page opened says so. A custom domain
   // sets this back to "/". `../scripts/deploy-docs.sh` is what publishes, by hand.
-  base: "/shared-agent-framework/",
+  base: "/concorde/",
 
   // The pair VitePress would have picked anyway, said out loud because the signature blocks are
   // coloured by a second call to the same highlighter and have to be handed the same two themes;
@@ -56,7 +56,7 @@ export default defineConfig({
       {
         text: "Getting started",
         items: [
-          { text: "Build a Shared Agent", link: "/guide" },
+          { text: "Build a shared agent", link: "/guide" },
           { text: "Architecture", link: "/architecture" },
         ],
       },
@@ -65,6 +65,6 @@ export default defineConfig({
       ...generatedSidebar,
     ],
     outline: "deep",
-    socialLinks: [{ icon: "github", link: "https://github.com/jannikluhn/shared-agent-framework" }],
+    socialLinks: [{ icon: "github", link: "https://github.com/shutter-network/concorde" }],
   },
 });

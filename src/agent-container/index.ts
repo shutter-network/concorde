@@ -13,7 +13,7 @@
  * {@link mountArguments} turns a table into container arguments on its own.
  *
  * Reach for this to drive an agent program this package does not adapt. For `pi`,
- * `shared-agent-framework/pi` supplies that one function and two defaults, and takes an
+ * `@shutter-network/concorde/pi` supplies that one function and two defaults, and takes an
  * {@link AgentContainer} written exactly as it is written here. Nothing on this subpath names an
  * agent program or reads a value one of them defines, so what the agent finds in its image and on
  * its command line stays the author's to decide.
@@ -28,18 +28,18 @@
  * A Runtime for an agent program of your own: it takes the Prompt on stdin and prints what it said
  * on stdout.
  * ```ts
- * import { createAgentContainerRuntime } from "shared-agent-framework/agent-container";
- * import { createGateway } from "shared-agent-framework/gateway";
+ * import { createAgentContainerRuntime } from "@shutter-network/concorde/agent-container";
+ * import { createGateway } from "@shutter-network/concorde/gateway";
  *
  * const runtime = createAgentContainerRuntime({
  *   container: {
  *     image: "my-own-agent:1",
- *     networks: ["saf_default"],
+ *     networks: ["concorde_default"],
  *     // Only what is named here reaches the agent. None of the Gateway's own environment does.
  *     env: { MY_AGENT_KEY: process.env.MY_AGENT_KEY ?? "" },
  *     mounts: {
  *       // The host's path to the shared tree, and every entry written under it.
- *       runtimeDir: "/srv/saf",
+ *       runtimeDir: "/srv/concorde",
  *       entries: [
  *         { agentPath: "/workspace", path: "workspace" },
  *         { agentPath: "/workspace/AGENTS.md", path: "AGENTS.md", readOnly: true },

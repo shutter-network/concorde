@@ -29,7 +29,7 @@
     // No `paths`. There were fifteen, one per subpath of the export map, and they existed
     // for one reader: `example/`, which lived in this tree, imported the package by name and
     // had to type-check before `dist` was built. Every example is its own npm application
-    // now and resolves `shared-agent-framework` out of its own `node_modules`, so a mapping
+    // now and resolves `@shutter-network/concorde` out of its own `node_modules`, so a mapping
     // here would serve nothing and cost something: anything that did resolve through it
     // would silently get `src` in place of the installed package, which is the one
     // difference an example exists to not have.

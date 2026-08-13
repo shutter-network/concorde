@@ -50,11 +50,11 @@ describe("reading an invocation", () => {
   it("treats an empty variable as unset, which is what an unfilled .env line writes", () => {
     const env = { [gatewayUrlVariable]: "", [passwordVariable]: password };
     assert.equal(configFrom([user], env).baseUrl, defaultGatewayUrl);
-    assert.match(refusalFrom([user], { [passwordVariable]: "" }), /SAF_PASSWORD is unset/);
+    assert.match(refusalFrom([user], { [passwordVariable]: "" }), /CONCORDE_PASSWORD is unset/);
   });
 
   it("refuses a run with no password rather than asking for one", () => {
-    assert.match(refusalFrom([user], {}), /SAF_PASSWORD is unset/);
+    assert.match(refusalFrom([user], {}), /CONCORDE_PASSWORD is unset/);
   });
 
   it("refuses a URL that is not http", () => {
@@ -65,8 +65,11 @@ describe("reading an invocation", () => {
   });
 
   it("keeps a path on the base URL, since a Gateway can be served under a prefix", () => {
-    const env = { [gatewayUrlVariable]: "https://example.test/saf", [passwordVariable]: password };
-    assert.equal(configFrom([user], env).baseUrl, "https://example.test/saf");
+    const env = {
+      [gatewayUrlVariable]: "https://example.test/concorde",
+      [passwordVariable]: password,
+    };
+    assert.equal(configFrom([user], env).baseUrl, "https://example.test/concorde");
   });
 
   it("refuses no argument and refuses two, one client being one person", () => {

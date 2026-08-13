@@ -19,11 +19,11 @@
  * {@link Auth}, a Component with one more member that registers itself with the Public server at
  * construction, and {@link AuthOutcome} is what one answers about a request.
  * {@link ServerComponent} holds the registered Auths and composes them into the one `requireUser`
- * every protected route takes, so a route reading `request.safUser` does not care which scheme
+ * every protected route takes, so a route reading `request.concordeUser` does not care which scheme
  * named the User.
  *
- * Two of the four are documented on subpaths of their own: `shared-agent-framework/db` holds the
- * Db, and `shared-agent-framework/signals` holds the Signal Worker and the whole Signal Handler
+ * Two of the four are documented on subpaths of their own: `@shutter-network/concorde/db` holds the
+ * Db, and `@shutter-network/concorde/signals` holds the Signal Worker and the whole Signal Handler
  * vocabulary. The other two are plain Fastify instances, each reached on `.fastify`. This subpath
  * owns no tables and exports no schema, so every table a deployment needs comes from a component
  * it constructed in `extend`.
@@ -32,9 +32,9 @@
  * The smallest Gateway that runs: one Signal Handler, and nothing else of the Operator's own.
  * ```ts
  * import { readFileSync } from "node:fs";
- * import { createGateway } from "shared-agent-framework/gateway";
- * import { createPiRuntime } from "shared-agent-framework/pi";
- * import { templateHandler } from "shared-agent-framework/signals";
+ * import { createGateway } from "@shutter-network/concorde/gateway";
+ * import { createPiRuntime } from "@shutter-network/concorde/pi";
+ * import { templateHandler } from "@shutter-network/concorde/signals";
  *
  * const gateway = createGateway({
  *   databaseUrl: process.env.DATABASE_URL ?? "",

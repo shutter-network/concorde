@@ -118,13 +118,13 @@ async function guarded(): Promise<{
 
 /**
  * The shape an Operator writes their own routes in: an ordinary encapsulated plugin,
- * registered under a prefix of its own, reading `request.safUser` with **no cast**. The
+ * registered under a prefix of its own, reading `request.concordeUser` with **no cast**. The
  * augmentation the package ships is what makes those lines compile.
  */
 function operatorRoutes(server: ServerComponent<FastifyInstance>): FastifyPluginAsync {
   return async (fastify) => {
     fastify.get("/whoami", { preHandler: server.requireUser }, async (request) => ({
-      asked: request.safUser.id,
+      asked: request.concordeUser.id,
     }));
 
     // The same thing one level deeper, because encapsulation nests: a plugin inside
@@ -135,7 +135,7 @@ function operatorRoutes(server: ServerComponent<FastifyInstance>): FastifyPlugin
         inner.post<{ Body: { text: string } }>(
           "/ask",
           { preHandler: server.requireUser },
-          async (request) => ({ by: request.safUser.id, said: request.body.text }),
+          async (request) => ({ by: request.concordeUser.id, said: request.body.text }),
         );
       },
       { prefix: "/deep" },

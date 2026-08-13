@@ -57,7 +57,7 @@ before(async () => {
   await publicServer.fastify.register(
     async (fastify) => {
       fastify.get("/whoami", { preHandler: publicServer.requireUser }, async (request) => ({
-        asked: request.safUser.id,
+        asked: request.concordeUser.id,
       }));
     },
     { prefix: "/ops" },

@@ -1,16 +1,16 @@
 /**
- * What `shared-agent-framework/messenger` creates in a database: the `messages` table, and the
+ * What `@shutter-network/concorde/messenger` creates in a database: the `messages` table, and the
  * PostgreSQL schema it lives in. Keep it to the table and the values that define it.
  *
  * The one import of another component's schema in here is deliberate and is the mechanism rather
- * than an accident: `user_id` references `saf_users.users.id`
+ * than an accident: `user_id` references `concorde_users.users.id`
  * ([ADR-0036](../../../docs/adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)), and one
  * generation graph is what makes that legal. Nothing of the Users component's is re-exported. What
  * costs an Operator is stated on the table below, where they can act on it.
  *
  * One table for both directions, whichever medium a Message travelled by, is the whole of
  * [ADR-0048](../../../docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md): the log
- * is the Messenger's and no Channel's, and the HTTP Channel that used to own this table owns none.
+ * is the Messenger's and no Channel's, and the HTTP Channel owns no table at all.
  */
 
 import { type SQL, sql } from "drizzle-orm";
@@ -27,16 +27,16 @@ import {
 import { users } from "../../users/schema/index.ts";
 
 /**
- * The PostgreSQL schema the table below lives in, `saf_messenger`.
+ * The PostgreSQL schema the table below lives in, `concorde_messenger`.
  *
  * Prefixed because the framework is installed into a database it does not own, and not an
  * Operator's to change: the table is compiled against this object, and the same object is what a
  * generation reads.
  *
- * It was `saf_http_messages` while one component held the log and the only way of reaching a
- * person, so a deployment upgrading across that split renames the schema.
+ * Named for the component that owns the log rather than for any medium it travels by, because a
+ * Channel is what reaches a person and there may be more than one.
  */
-export const messengerSchema = pgSchema("saf_messenger");
+export const messengerSchema = pgSchema("concorde_messenger");
 
 /**
  * Which way a Message travelled: `inbound` from the User to the agent, `outbound` from the agent to
@@ -67,8 +67,8 @@ function directionIsKnown(column: PgColumn, directions: readonly string[]): SQL 
  * updated, so it grows forever.
  *
  * `user_id` is a foreign key onto the `users` table of Users. A configuration listing this
- * component's `/schema` subpath without `shared-agent-framework/users/schema` generates a reference
- * to a table nothing creates, and dies on `schema "saf_users" does not exist`.
+ * component's `/schema` subpath without `@shutter-network/concorde/users/schema` generates a
+ * reference to a table nothing creates, and dies on `schema "concorde_users" does not exist`.
  */
 export const messages = messengerSchema.table(
   "messages",

@@ -57,7 +57,7 @@ export type Auth = Component & {
    *
    * The whole request is given, so a credential in a header, in a body field or anywhere else is
    * expressible. It is read and not written: assigning to it decides nothing, because the server
-   * assigns `request.safUser` itself from the User this answers with.
+   * assigns `request.concordeUser` itself from the User this answers with.
    *
    * A thrown error keeps its ordinary meaning. It is not a refusal, and the request is a 500.
    */
@@ -155,7 +155,7 @@ export function createAuthAggregate(logger: Logger) {
       if (outcome.kind === "authenticated") {
         // The one place a User is assigned on this server, whichever scheme named them. Returning
         // nothing is how an async hook says the request carries on to the handler.
-        request.safUser = outcome.user;
+        request.concordeUser = outcome.user;
         return undefined;
       }
 

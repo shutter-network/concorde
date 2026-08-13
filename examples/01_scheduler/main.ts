@@ -1,11 +1,11 @@
-import { createGateway } from "shared-agent-framework/gateway";
-import { createPiRuntime } from "shared-agent-framework/pi";
+import { createGateway } from "@shutter-network/concorde/gateway";
+import { createPiRuntime } from "@shutter-network/concorde/pi";
 import {
   createScheduler,
   type ScheduleFiredRecord,
   scheduleFiredKind,
-} from "shared-agent-framework/scheduler";
-import type { SignalHandler } from "shared-agent-framework/signals";
+} from "@shutter-network/concorde/scheduler";
+import type { SignalHandler } from "@shutter-network/concorde/signals";
 
 function taskOf(data: unknown): string | undefined {
   if (typeof data !== "object" || data === null) return undefined;

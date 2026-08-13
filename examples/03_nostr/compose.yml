@@ -1,6 +1,6 @@
-name: saf-example-03-nostr
+name: concorde-example-03-nostr
 
-x-database-url: &database-url postgres://saf:saf@postgres:5432/saf
+x-database-url: &database-url postgres://concorde:concorde@postgres:5432/concorde
 
 x-relay-url: &relay-url ws://relay:7777
 
@@ -21,8 +21,8 @@ services:
       AGENT_HOST: 0.0.0.0
       AGENT_PORT: "7411"
       AGENT_SERVER_URL: http://gateway:7411
-      AGENT_IMAGE: saf-nostr-agent:0.83.0
-      AGENT_NETWORK: saf_nostr_agent
+      AGENT_IMAGE: concorde-nostr-agent:0.83.0
+      AGENT_NETWORK: concorde_nostr_agent
       RUNTIME_DIR_HOST: ${PWD}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -58,14 +58,14 @@ services:
   postgres:
     image: postgres:17
     environment:
-      POSTGRES_USER: saf
-      POSTGRES_PASSWORD: saf
-      POSTGRES_DB: saf
+      POSTGRES_USER: concorde
+      POSTGRES_PASSWORD: concorde
+      POSTGRES_DB: concorde
     volumes:
       - db:/var/lib/postgresql/data
     networks: [db]
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "saf", "-d", "saf"]
+      test: ["CMD", "pg_isready", "-U", "concorde", "-d", "concorde"]
       interval: 3s
       timeout: 3s
       retries: 20
@@ -87,7 +87,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.agent
-    image: saf-nostr-agent:0.83.0
+    image: concorde-nostr-agent:0.83.0
     command: ["--version"]
     restart: "no"
     networks: [agent]
@@ -96,7 +96,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.nak
-    image: saf-nostr-nak:latest
+    image: concorde-nostr-nak:latest
     profiles: [cli]
     environment:
       RELAY_URL: *relay-url
@@ -109,7 +109,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.nak
-    image: saf-nostr-nak:latest
+    image: concorde-nostr-nak:latest
     profiles: [cli]
     environment:
       RELAY_URL: *relay-url
@@ -120,11 +120,11 @@ services:
 
 networks:
   db:
-    name: saf_nostr_db
+    name: concorde_nostr_db
   agent:
-    name: saf_nostr_agent
+    name: concorde_nostr_agent
   nostr:
-    name: saf_nostr_relay
+    name: concorde_nostr_relay
 
 volumes:
   db:

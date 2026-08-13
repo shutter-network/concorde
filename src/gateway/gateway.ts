@@ -77,8 +77,8 @@ export type GatewayOptions<E extends GatewayExtension> = {
   /**
    * What a Prompt is handed to, and what an outcome comes back from.
    *
-   * `createPiRuntime` on `shared-agent-framework/pi` returns one for `pi`, and
-   * `createAgentContainerRuntime` on `shared-agent-framework/agent-container` builds one for any
+   * `createPiRuntime` on `@shutter-network/concorde/pi` returns one for `pi`, and
+   * `createAgentContainerRuntime` on `@shutter-network/concorde/agent-container` builds one for any
    * other agent program.
    */
   readonly runtime: Runtime;
@@ -139,7 +139,7 @@ export type GatewayOptions<E extends GatewayExtension> = {
  * time. It is not hand-maintained either: `npm version` runs `scripts/stamp-version.ts`, which
  * writes this line and stages it, so the release commit carries both numbers or neither.
  */
-export const describedVersion = "0.3.1";
+export const describedVersion = "0.1.0";
 
 /**
  * Registers one server's description: the OpenAPI document at `/openapi.json`, and the browsable
@@ -198,12 +198,12 @@ export function createGateway<E extends GatewayExtension = Record<string, never>
   // Before `extend`, and see the file header for why that cannot move.
   describeSurface(
     agentServer.fastify,
-    "Shared Agent Gateway: Agent server",
+    "Concorde Gateway: Agent server",
     "The HTTP surface the agent reaches the Gateway on, and nothing else should. It has no authentication of any kind, so reaching this port is read and write access to everything described here. There is no credential to present and none to find.",
   );
   describeSurface(
     publicServer.fastify,
-    "Shared Agent Gateway: Public server",
+    "Concorde Gateway: Public server",
     "The HTTP surface exposed outside the Gateway. Trade a password for a bearer Token at `POST /auth/tokens`, then send it as `Authorization: Bearer …` on every route that acts as somebody. A route that asks for none says so.",
   );
 

@@ -1,6 +1,6 @@
 /**
- * What `shared-agent-framework/nostr-channel` creates in a database: the `pubkeys`, `received` and
- * `outbox` tables, and the PostgreSQL schema they live in. Keep it to the tables and the values
+ * What `@shutter-network/concorde/nostr-channel` creates in a database: the `pubkeys`, `received`
+ * and `outbox` tables, and the PostgreSQL schema they live in. Keep it to the tables and the values
  * that define them.
  *
  * No Message is declared here, whichever medium one travelled by: the log is the Messenger's
@@ -9,15 +9,15 @@
  * ([ADR-0049](../../../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)).
  *
  * The import of the schema of Users is what lets two columns below reference
- * `saf_users.users.id`, and it re-exports nothing of it. That is the second such import in the
+ * `concorde_users.users.id`, and it re-exports nothing of it. That is the second such import in the
  * framework, after the Messenger's, and it costs the same thing: a configuration listing this
  * component's `/schema` subpath without that one generates a reference to a table nothing creates.
  *
- * The schema is `saf_nostr_channel` and was `saf_nostr`, named for the protocol rather than for the
- * component. That rule held while one component spoke Nostr, and Nostr Auth is the second, so the
- * protocol name would have belonged to whichever of the two arrived first
- * ([ADR-0053](../../../docs/adr/0053-nostr-auth-verifies-nip-98-per-request.md)). Renaming it back is
- * the thing to refuse in review.
+ * The schema is `concorde_nostr_channel`, named for the component rather than for the protocol.
+ * Nostr Auth speaks Nostr too, so a protocol name here would belong to whichever of the two a
+ * reader met first
+ * ([ADR-0053](../../../docs/adr/0053-nostr-auth-verifies-nip-98-per-request.md)). Shortening it to
+ * `concorde_nostr` is the thing to refuse in review.
  */
 
 import { sql } from "drizzle-orm";
@@ -25,16 +25,13 @@ import { pgSchema, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { users } from "../../users/schema/index.ts";
 
 /**
- * The PostgreSQL schema every table below lives in, `saf_nostr_channel`.
+ * The PostgreSQL schema every table below lives in, `concorde_nostr_channel`.
  *
  * Prefixed because the framework is installed into a database it does not own, and not
  * configurable: the tables are compiled against this object, and the same object is what a
  * generation reads.
- *
- * It was `saf_nostr` while this was the only component that spoke Nostr, so a deployment upgrading
- * across that split renames the schema.
  */
-export const nostrChannelSchema = pgSchema("saf_nostr_channel");
+export const nostrChannelSchema = pgSchema("concorde_nostr_channel");
 
 /**
  * Which Nostr public key belongs to which User, and the whole of admission over this medium.
@@ -52,8 +49,8 @@ export const pubkeys = nostrChannelSchema.table("pubkeys", {
   /**
    * The User this key speaks for. The primary key, so one User holds one Nostr key.
    *
-   * A foreign key onto `saf_users.users.id`, and the only enforcement that this names a real User:
-   * the refusal is PostgreSQL's `23503` caught, with no lookup in front of the write.
+   * A foreign key onto `concorde_users.users.id`, and the only enforcement that this names a real
+   * User: the refusal is PostgreSQL's `23503` caught, with no lookup in front of the write.
    *
    * No `onDelete`, because nothing removes a User and no cascade can fire.
    */
@@ -115,8 +112,8 @@ export const received = nostrChannelSchema.table("received", {
  * carrying a `reason` is one the Relay refused, and it is never attempted again; recovering it is an
  * Operator replaying the row by hand.
  *
- * So `select * from saf_nostr_channel.outbox where reason is not null` is the whole answer to "why
- * did she not get it", and it needs no API.
+ * So `select * from concorde_nostr_channel.outbox where reason is not null` is the whole answer to
+ * "why did she not get it", and it needs no API.
  */
 export const outbox = nostrChannelSchema.table("outbox", {
   /**
@@ -129,7 +126,7 @@ export const outbox = nostrChannelSchema.table("outbox", {
   /**
    * The User this wrap is addressed to, and the column an Operator filters by.
    *
-   * A foreign key onto `saf_users.users.id`, like `pubkeys.user_id`. It is not the recipient's
+   * A foreign key onto `concorde_users.users.id`, like `pubkeys.user_id`. It is not the recipient's
    * Nostr public key: that is inside the wrap, where the Relay cannot read it either.
    */
   userId: uuid("user_id")
@@ -138,10 +135,10 @@ export const outbox = nostrChannelSchema.table("outbox", {
   /**
    * The Message in the log that this wrap carries, so an Operator can read what was not delivered.
    *
-   * Deliberately not a foreign key onto `saf_messenger.messages.id`. The wrap is opaque, so this id
-   * is the only route from a stuck row back to the words, and a plain column answers that with one
-   * join. A constraint would add a third cross-schema reference to a value written in the same
-   * transaction as the row it names, out of a record this component was just handed.
+   * Deliberately not a foreign key onto `concorde_messenger.messages.id`. The wrap is opaque, so
+   * this id is the only route from a stuck row back to the words, and a plain column answers that
+   * with one join. A constraint would add a third cross-schema reference to a value written in the
+   * same transaction as the row it names, out of a record this component was just handed.
    */
   messageId: uuid("message_id").notNull(),
   /**

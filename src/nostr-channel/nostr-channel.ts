@@ -91,7 +91,7 @@ export type NostrChannelOptions = {
    */
   readonly users: Users;
   /**
-   * The Shared Agent's Nostr secret key: 32 raw bytes, and the second keypair a deployment running
+   * The shared agent's Nostr secret key: 32 raw bytes, and the second keypair a deployment running
    * this holds.
    *
    * Raw bytes because that is both Nostr libraries' own convention, and because the framework parses
@@ -141,7 +141,7 @@ export type NostrChannelOptions = {
  */
 export type NostrChannel = Channel & {
   /**
-   * The Shared Agent's own Nostr public key, in lowercase hex, derived from the secret key it was
+   * The shared agent's own Nostr public key, in lowercase hex, derived from the secret key it was
    * built with.
    *
    * What a User's client shows as the agent, and what an Operator tells a User to message. It is an

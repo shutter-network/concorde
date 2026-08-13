@@ -7,14 +7,14 @@
  * keep true and nothing would compare the two. `POST /tokens` is the one that requires no Token,
  * and it says so in its own description.
  *
- * **There is no `GET /me` here.** It only echoes `request.safUser`, so it is scheme-independent
- * and cannot live under one scheme's prefix
+ * **There is no `GET /me` here.** It only echoes `request.concordeUser`, so it is
+ * scheme-independent and cannot live under one scheme's prefix
  * ([ADR-0052](../../docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)).
  * It is the Users component's, and it stays there.
  *
  * The three routes below `POST /tokens` take the **server's** composed hook and not one of this
- * component's own. That is the whole of ADR-0052's aggregate: `request.safUser` is assigned in one
- * place, and a route reading it does not care which scheme named the User. The consequence is
+ * component's own. That is the whole of ADR-0052's aggregate: `request.concordeUser` is assigned in
+ * one place, and a route reading it does not care which scheme named the User. The consequence is
  * visible on `DELETE /tokens/current`, which is documented where it is answered.
  *
  * `unauthorized` is written here and it is written again in the Users component and a third time
@@ -282,7 +282,7 @@ export function passwordRoutes(
       },
       async (request, reply) => {
         const changed = await directory.changePassword({
-          user: request.safUser.id,
+          user: request.concordeUser.id,
           currentPassword: request.body.currentPassword,
           newPassword: request.body.newPassword,
         });
@@ -314,7 +314,8 @@ export function passwordRoutes(
       },
       async (request, reply) => {
         // The Token is re-read from the header rather than carried on the request. A property
-        // beside `safUser` would put a plaintext credential on every request in every deployment.
+        // beside `concordeUser` would put a plaintext credential on every request in every
+        // deployment.
         const presented = presentedToken(request.headers.authorization);
         if (presented !== undefined) await directory.revokeToken(presented);
         // 204: there is nothing to answer with. This response is about the Token's absence, and
@@ -346,7 +347,7 @@ export function passwordRoutes(
       async (request, reply) => {
         // The authenticated User's id. The route has no parameter naming a User, so a caller
         // cannot write one.
-        await directory.revokeTokens(request.safUser.id);
+        await directory.revokeTokens(request.concordeUser.id);
         return reply.code(204).send();
       },
     );

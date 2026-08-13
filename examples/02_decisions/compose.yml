@@ -1,6 +1,6 @@
-name: saf-example-02-decisions
+name: concorde-example-02-decisions
 
-x-database-url: &database-url postgres://saf:saf@postgres:5432/saf
+x-database-url: &database-url postgres://concorde:concorde@postgres:5432/concorde
 
 x-tui: &tui
   build:
@@ -26,8 +26,8 @@ services:
       AGENT_HOST: 0.0.0.0
       AGENT_PORT: "7411"
       AGENT_SERVER_URL: http://gateway:7411
-      AGENT_IMAGE: saf-decisions-agent:0.83.0
-      AGENT_NETWORK: saf_decisions_agent
+      AGENT_IMAGE: concorde-decisions-agent:0.83.0
+      AGENT_NETWORK: concorde_decisions_agent
       RUNTIME_DIR_HOST: ${PWD}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -62,14 +62,14 @@ services:
   postgres:
     image: postgres:17
     environment:
-      POSTGRES_USER: saf
-      POSTGRES_PASSWORD: saf
-      POSTGRES_DB: saf
+      POSTGRES_USER: concorde
+      POSTGRES_PASSWORD: concorde
+      POSTGRES_DB: concorde
     volumes:
       - db:/var/lib/postgresql/data
     networks: [db]
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "saf", "-d", "saf"]
+      test: ["CMD", "pg_isready", "-U", "concorde", "-d", "concorde"]
       interval: 3s
       timeout: 3s
       retries: 20
@@ -78,7 +78,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.agent
-    image: saf-decisions-agent:0.83.0
+    image: concorde-decisions-agent:0.83.0
     command: ["--version"]
     restart: "no"
     networks: [agent]
@@ -86,22 +86,22 @@ services:
   tui-alice:
     <<: *tui
     environment:
-      SAF_GATEWAY_URL: http://gateway:8082
-      SAF_PASSWORD: ${ALICE_PASSWORD:?copy .env.example to .env}
+      CONCORDE_GATEWAY_URL: http://gateway:8082
+      CONCORDE_PASSWORD: ${ALICE_PASSWORD:?copy .env.example to .env}
 
   tui-bob:
     <<: *tui
     environment:
-      SAF_GATEWAY_URL: http://gateway:8082
-      SAF_PASSWORD: ${BOB_PASSWORD:?copy .env.example to .env}
+      CONCORDE_GATEWAY_URL: http://gateway:8082
+      CONCORDE_PASSWORD: ${BOB_PASSWORD:?copy .env.example to .env}
 
 networks:
   db:
-    name: saf_decisions_db
+    name: concorde_decisions_db
   agent:
-    name: saf_decisions_agent
+    name: concorde_decisions_agent
   public:
-    name: saf_decisions_public
+    name: concorde_decisions_public
 
 volumes:
   db:

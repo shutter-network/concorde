@@ -10,7 +10,7 @@
  *
  * **The foreign keys that leave a schema get a sentence of their own at the top of the page.**
  * A list carrying the Messenger's, the Nostr Channel's, Password Auth's or Nostr Auth's subpath
- * without `shared-agent-framework/users/schema` generates a constraint onto a table nobody
+ * without `@shutter-network/concorde/users/schema` generates a constraint onto a table nobody
  * creates, and that is the one mistake this page exists to make visible before it is made.
  *
  * **Nothing here is authored and no page is ever edited.** `site/reference` is emptied on every
@@ -66,8 +66,12 @@ function page(component: ComponentTables, owners: ReadonlyMap<string, string>): 
     // A title of its own, because the heading below is the specifier and the component's
     // TypeScript API page sits one line away from it in the sidebar. The heading is the specifier
     // an Operator lists; the browser tab says which of the two pages this is.
+    //
+    // Quoted, and `JSON.stringify` rather than a pair of `"` characters: the package is scoped, so
+    // every specifier begins with `@`, which YAML reserves. Bare, the frontmatter does not parse
+    // and the site build fails on the file rather than on the line (ADR-0056).
     "---",
-    `title: ${component.specifier} tables`,
+    `title: ${JSON.stringify(`${component.specifier} tables`)}`,
     "---",
     "",
     `# ${component.specifier}`,

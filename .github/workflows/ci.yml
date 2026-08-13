@@ -73,7 +73,7 @@ jobs:
       - run: npm run test:container
 
       # One step per example under `examples/`. Each is a real npm application: it installs
-      # `shared-agent-framework` from the registry and type-checks against its own
+      # `@shutter-network/concorde` from the registry and type-checks against its own
       # `node_modules`, which is why `npm install` and not `npm ci` (no example commits a
       # lockfile until 1.0.0) and why nothing here points at this checkout.
       #

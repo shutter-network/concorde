@@ -1,21 +1,21 @@
 /**
- * What `shared-agent-framework/nostr-auth` creates in a database: the `grants` and `admitted`
+ * What `@shutter-network/concorde/nostr-auth` creates in a database: the `grants` and `admitted`
  * tables, and the PostgreSQL schema they live in. Keep it to the tables and the values that define
  * them.
  *
- * The import of the schema of Users is what lets `grants.user_id` reference `saf_users.users.id`,
- * and it re-exports nothing of it. This is the fourth such import in the framework and the sixth
- * such reference, after the Messenger's one, the Nostr Channel's two and Password Auth's two, and
- * it costs the same thing: a configuration listing this component's `/schema` subpath without
- * that one generates a constraint onto a table nothing creates.
+ * The import of the schema of Users is what lets `grants.user_id` reference
+ * `concorde_users.users.id`, and it re-exports nothing of it. This is the fourth such import in the
+ * framework and the sixth such reference, after the Messenger's one, the Nostr Channel's two and
+ * Password Auth's two, and it costs the same thing: a configuration listing this component's
+ * `/schema` subpath without that one generates a constraint onto a table nothing creates.
  *
- * **`grants` is not a copy of `saf_nostr_channel.pubkeys` and must not be kept in step with it**
- * ([ADR-0053](../../../docs/adr/0053-nostr-auth-verifies-nip-98-per-request.md)). The two tables hold
- * the same kind of value with opposite cardinalities and for opposite purposes: the Channel picks
- * exactly one key to *send* to, so its primary key is the User; this table admits any number of
- * signers to *act as* one User, so its primary key is the key. A reader who fixes the "duplication"
- * by pointing one at the other has made a person reachable over Nostr into a person who may drive
- * the HTTP API.
+ * **`grants` is not a copy of `concorde_nostr_channel.pubkeys` and must not be kept in step with
+ * it** ([ADR-0053](../../../docs/adr/0053-nostr-auth-verifies-nip-98-per-request.md)). The two
+ * tables hold the same kind of value with opposite cardinalities and for opposite purposes: the
+ * Channel picks exactly one key to *send* to, so its primary key is the User; this table admits any
+ * number of signers to *act as* one User, so its primary key is the key. A reader who fixes the
+ * "duplication" by pointing one at the other has made a person reachable over Nostr into a person
+ * who may drive the HTTP API.
  *
  * `admitted` is written on every authenticated request, which no other table in the framework is.
  * It is pruned in the transaction that writes it, so read the delete in `grants.ts` before changing
@@ -27,13 +27,13 @@ import { index, pgSchema, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { users } from "../../users/schema/index.ts";
 
 /**
- * The PostgreSQL schema both tables below live in, `saf_nostr_auth`.
+ * The PostgreSQL schema both tables below live in, `concorde_nostr_auth`.
  *
  * Prefixed because the framework is installed into a database it does not own, and not
  * configurable: the tables are compiled against this object, and the same object is what a
  * generation reads.
  */
-export const nostrAuthSchema = pgSchema("saf_nostr_auth");
+export const nostrAuthSchema = pgSchema("concorde_nostr_auth");
 
 /**
  * One row per Nostr public key that may act as a User over HTTP, and no row for one that may not.
@@ -60,8 +60,8 @@ export const grants = nostrAuthSchema.table(
     /**
      * The User this key acts as, and an ordinary column rather than a key of any kind.
      *
-     * A foreign key onto `saf_users.users.id`. No `onDelete`, because nothing removes a User and no
-     * cascade can fire.
+     * A foreign key onto `concorde_users.users.id`. No `onDelete`, because nothing removes a User
+     * and no cascade can fire.
      */
     userId: uuid("user_id")
       .notNull()

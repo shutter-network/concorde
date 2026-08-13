@@ -56,10 +56,10 @@ const entries: readonly Mount[] = [
 ];
 
 /** The host's runtime directory those entries are written against, and every test's default. */
-const runtimeDir = "/srv/saf";
+const runtimeDir = "/srv/concorde";
 
 /** The least container the Runtime accepts, plus the mounts most tests want. */
-const minimal: AgentContainer = { image: "saf/agent:latest", mounts: { entries, runtimeDir } };
+const minimal: AgentContainer = { image: "concorde/agent:latest", mounts: { entries, runtimeDir } };
 
 const prompt: RunPrompt = { session: "user_42", text: "what happened?" };
 
@@ -139,7 +139,7 @@ function agentArgsOf(composed: ComposedCommand, image = minimal.image): string[]
 describe("the least an Operator can declare", () => {
   it("is an image, and everything else has a default or is absent", () => {
     const composed = createAgentContainerRuntime({
-      container: { image: "saf/agent:latest" },
+      container: { image: "concorde/agent:latest" },
       run: agentRun,
     }).commandFor(prompt);
 
@@ -150,7 +150,7 @@ describe("the least an Operator can declare", () => {
       "--interactive",
       "--user",
       ownUser(),
-      "saf/agent:latest",
+      "concorde/agent:latest",
       "--session-id",
       "user_42",
       "--answer",
@@ -164,8 +164,8 @@ describe("the least an Operator can declare", () => {
     // Runtime Directory nothing then reads, which is why the absent table is the one the
     // Runtime itself falls back on (ADR-0054).
     for (const container of [
-      { image: "saf/agent" },
-      { image: "saf/agent", mounts: { entries: [], runtimeDir } },
+      { image: "concorde/agent" },
+      { image: "concorde/agent", mounts: { entries: [], runtimeDir } },
     ]) {
       const composed = createAgentContainerRuntime({ container, run: agentRun }).commandFor(prompt);
       assert.ok(!composed.args.includes("--mount"));
@@ -217,8 +217,8 @@ describe("what the container runtime is told", () => {
     // Plural with no default: the runtime's own default is the shared bridge ADR-0025
     // argues against, and no network at all breaks every Run.
     assert.deepEqual(
-      valuesOf(commandFor({ networks: ["saf-agent", "saf-models"] }).args, "--network"),
-      ["saf-agent", "saf-models"],
+      valuesOf(commandFor({ networks: ["concorde-agent", "concorde-models"] }).args, "--network"),
+      ["concorde-agent", "concorde-models"],
     );
     assert.ok(!commandFor().args.includes("--network"));
     assert.ok(!commandFor({ networks: [] }).args.includes("--network"));
@@ -241,7 +241,7 @@ describe("what the container runtime is told", () => {
     // agent's own. Written out because the order is the part a change silently breaks.
     const composed = commandFor({
       mounts: { entries: [{ agentPath: "/workspace", path: "workspace" }], runtimeDir },
-      networks: ["saf-agent", "saf-models"],
+      networks: ["concorde-agent", "concorde-models"],
       env: { ANTHROPIC_API_KEY: "sk-test", HTTPS_PROXY: "" },
       entrypoint: ["agent"],
       extraArgs: ["--memory", "2g"],
@@ -252,13 +252,13 @@ describe("what the container runtime is told", () => {
       "--rm",
       "--interactive",
       "--mount",
-      "type=bind,source=/srv/saf/workspace,target=/workspace",
+      "type=bind,source=/srv/concorde/workspace,target=/workspace",
       "--user",
       ownUser(),
       "--network",
-      "saf-agent",
+      "concorde-agent",
       "--network",
-      "saf-models",
+      "concorde-models",
       "--env",
       "ANTHROPIC_API_KEY=sk-test",
       "--env",
@@ -267,7 +267,7 @@ describe("what the container runtime is told", () => {
       "agent",
       "--memory",
       "2g",
-      "saf/agent:latest",
+      "concorde/agent:latest",
       "--session-id",
       "user_42",
       "--answer",
@@ -276,7 +276,7 @@ describe("what the container runtime is told", () => {
 
   it("puts nothing of the container runtime's after the image, and nothing of the agent's before it", () => {
     const composed = commandFor({
-      networks: ["saf-agent"],
+      networks: ["concorde-agent"],
       env: { A: "1" },
       extraArgs: ["--memory", "2g"],
       entrypoint: ["agent"],
@@ -304,9 +304,9 @@ describe("what the container runtime is told", () => {
 describe("the Mount Table on an Agent Container", () => {
   it("emits one bind mount per entry, in the order they were declared", () => {
     assert.deepEqual(valuesOf(commandFor().args, "--mount"), [
-      "type=bind,source=/srv/saf/workspace,target=/workspace",
-      "type=bind,source=/srv/saf/agent,target=/home/agent/.pi/agent",
-      "type=bind,source=/srv/saf/sessions,target=/sessions",
+      "type=bind,source=/srv/concorde/workspace,target=/workspace",
+      "type=bind,source=/srv/concorde/agent,target=/home/agent/.pi/agent",
+      "type=bind,source=/srv/concorde/sessions,target=/sessions",
     ]);
   });
 
@@ -340,7 +340,7 @@ describe("the Mount Table on an Agent Container", () => {
 
     const mounts = valuesOf(composed.args, "--mount");
     assert.deepEqual(mounts.slice(-1), [
-      "type=bind,source=/srv/saf/AGENTS.md,target=/workspace/AGENTS.md,readonly",
+      "type=bind,source=/srv/concorde/AGENTS.md,target=/workspace/AGENTS.md,readonly",
     ]);
     assert.equal(mounts.filter((value) => value.includes("readonly")).length, 1);
   });
@@ -379,13 +379,13 @@ describe("the Mount Table on an Agent Container", () => {
     // An Operator writing the root with a trailing separator is not making a different
     // statement, so every entry composes the same way.
     const composed = commandFor({
-      mounts: { entries, runtimeDir: "/srv/saf/" },
+      mounts: { entries, runtimeDir: "/srv/concorde/" },
     });
 
     assert.deepEqual(valuesOf(composed.args, "--mount"), [
-      "type=bind,source=/srv/saf/workspace,target=/workspace",
-      "type=bind,source=/srv/saf/agent,target=/home/agent/.pi/agent",
-      "type=bind,source=/srv/saf/sessions,target=/sessions",
+      "type=bind,source=/srv/concorde/workspace,target=/workspace",
+      "type=bind,source=/srv/concorde/agent,target=/home/agent/.pi/agent",
+      "type=bind,source=/srv/concorde/sessions,target=/sessions",
     ]);
   });
 
@@ -528,7 +528,7 @@ describe("a container that cannot work", () => {
       () =>
         createAgentContainerRuntime({
           container: {
-            image: "saf/agent",
+            image: "concorde/agent",
             mounts: { entries: [{ agentPath: "workspace", path: "workspace" }], runtimeDir },
           },
           run: agentRun,
@@ -538,28 +538,28 @@ describe("a container that cannot work", () => {
   });
 
   it("refuses a leading '/' on an entry's path, naming the entry and the runtime directory", () => {
-    // The old absolute form written into the new field: it does not fail, it resolves
-    // under the runtime directory a second time. `/srv/saf/state` against a runtimeDir of
-    // `/srv/saf` is a plausible-looking `/srv/saf/srv/saf/state` and a daemon refusal at
-    // the first Run, which under ADR-0017 is a permanently dead Signal (ADR-0054).
+    // The old absolute form written into the new field: it does not fail, it resolves under the
+    // runtime directory a second time. `/srv/concorde/state` against a runtimeDir of
+    // `/srv/concorde` is a plausible-looking `/srv/concorde/srv/concorde/state` and a daemon
+    // refusal at the first Run, which under ADR-0017 is a permanently dead Signal (ADR-0054).
     assert.throws(
       () =>
         createAgentContainerRuntime({
           container: {
-            image: "saf/agent",
+            image: "concorde/agent",
             mounts: {
               entries: [
                 { agentPath: "/workspace", path: "workspace" },
-                { agentPath: "/state", path: "/srv/saf/state" },
+                { agentPath: "/state", path: "/srv/concorde/state" },
               ],
-              runtimeDir: "/srv/saf",
+              runtimeDir: "/srv/concorde",
             },
           },
           run: agentRun,
         }),
       (error: Error) => {
-        assert.match(error.message, /"\/srv\/saf\/state"/);
-        assert.match(error.message, /"\/srv\/saf"/);
+        assert.match(error.message, /"\/srv\/concorde\/state"/);
+        assert.match(error.message, /"\/srv\/concorde"/);
         return true;
       },
     );
@@ -574,7 +574,10 @@ describe("a container that cannot work", () => {
     const refuses = (mounts: NonNullable<AgentContainer["mounts"]>, offending: string) =>
       assert.throws(
         () =>
-          createAgentContainerRuntime({ container: { image: "saf/agent", mounts }, run: agentRun }),
+          createAgentContainerRuntime({
+            container: { image: "concorde/agent", mounts },
+            run: agentRun,
+          }),
         (error: Error) => {
           assert.ok(error.message.includes(offending), error.message);
           assert.match(error.message, /normaliz/i);
@@ -586,8 +589,8 @@ describe("a container that cannot work", () => {
     refuses({ entries: [{ agentPath: "/work/./here", path: "a" }], runtimeDir }, "/work/./here");
     refuses({ entries: [{ agentPath: "/ok", path: "a/../etc" }], runtimeDir }, "a/../etc");
     refuses(
-      { entries: [{ agentPath: "/state", path: "state" }], runtimeDir: "/srv/../saf" },
-      "/srv/../saf",
+      { entries: [{ agentPath: "/state", path: "state" }], runtimeDir: "/srv/../concorde" },
+      "/srv/../concorde",
     );
   });
 
@@ -598,7 +601,7 @@ describe("a container that cannot work", () => {
     assert.doesNotThrow(() =>
       createAgentContainerRuntime({
         container: {
-          image: "saf/agent",
+          image: "concorde/agent",
           mounts: {
             entries: [
               { agentPath: "/work//nested", path: "a//b" },
@@ -620,7 +623,7 @@ describe("a container that cannot work", () => {
       assert.throws(
         () =>
           createAgentContainerRuntime({
-            container: { image: "saf/agent", mounts: { entries, runtimeDir } },
+            container: { image: "concorde/agent", mounts: { entries, runtimeDir } },
             run: agentRun,
           }),
         (error: Error) => {
@@ -647,7 +650,7 @@ describe("a container that cannot work", () => {
       assert.throws(
         () =>
           createAgentContainerRuntime({
-            container: { image: "saf/agent", mounts: { entries: [entry], runtimeDir } },
+            container: { image: "concorde/agent", mounts: { entries: [entry], runtimeDir } },
             run: agentRun,
           }),
         (error: Error) => {
@@ -667,7 +670,7 @@ describe("a container that cannot work", () => {
     assert.doesNotThrow(() =>
       createAgentContainerRuntime({
         container: {
-          image: "saf/agent",
+          image: "concorde/agent",
           mounts: {
             entries: [{ agentPath: "/nowhere", path: "definitely/not/here" }],
             runtimeDir: "/nor/is/this",
@@ -735,7 +738,7 @@ describe("a Run", () => {
     script: Omit<FakeContainerScript, "reportTo"> = {},
     container: Partial<AgentContainer> = {},
   ) {
-    const root = await mkdtemp(path.join(tmpdir(), "saf-container-"));
+    const root = await mkdtemp(path.join(tmpdir(), "concorde-container-"));
     temporary.push(root);
     const reportTo = path.join(root, "report.json");
     const lines: { level: string; fields: LogFields; message: string }[] = [];
@@ -769,7 +772,7 @@ describe("a Run", () => {
     // the same argv, so an argument test never has to start a container.
     const started = await runtimeOn(
       { stdout: "answered" },
-      { entrypoint: ["agent"], env: { AGENT_OFFLINE: "1" }, networks: ["saf-agent"] },
+      { entrypoint: ["agent"], env: { AGENT_OFFLINE: "1" }, networks: ["concorde-agent"] },
     );
 
     const shown = started.runtime.commandFor(prompt);
@@ -827,10 +830,13 @@ describe("a Run", () => {
 
   it("says so, readably, when the container runtime is not there at all", async () => {
     const missing = createAgentContainerRuntime({
-      container: { ...minimal, containerCommand: ["saf-not-a-container-runtime"] },
+      container: { ...minimal, containerCommand: ["concorde-not-a-container-runtime"] },
       run: agentRun,
     });
 
-    await assert.rejects(missing.run(prompt), /saf-not-a-container-runtime.*could not be started/s);
+    await assert.rejects(
+      missing.run(prompt),
+      /concorde-not-a-container-runtime.*could not be started/s,
+    );
   });
 });

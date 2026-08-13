@@ -29,7 +29,7 @@ const decisionsPrefix = "/decisions";
 // Not reserved. The agent can ask `POST /sign` for this same label, which is an authority it
 // already holds rather than a forgery. What the label buys a verifier is domain separation, the
 // `typ` being in the protected header and therefore covered by the signature.
-const decisionTyp = "saf-decision+jws";
+const decisionTyp = "concorde-decision+jws";
 
 /**
  * A Decision as every surface answers with it: the publish response, both reads, and `history`.

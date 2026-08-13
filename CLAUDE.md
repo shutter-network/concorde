@@ -1,9 +1,12 @@
-# Shared Agent Framework
+# Concorde
 
 **[`examples/`](./examples/) holds four deployments and this repository builds none of them.**
 Each is an npm application of its own, with its own `package.json`, its own `tsconfig.json`, a
-flat directory and a Compose stack, and each resolves `shared-agent-framework` from the
-**registry** at `^0.3.0` rather than from this tree. So an example's import lines are the lines a
+flat directory and a Compose stack, and each resolves `@shutter-network/concorde` from the
+**registry** at `^0.1.0` rather than from this tree. **That version is not on the registry yet**,
+which is what the rename below costs and is not a state to leave standing: until it is published,
+`npm install` in any of the four resolves nothing and all four CI steps are red by construction.
+So an example's import lines are the lines a
 consumer writes, and a copy of the directory taken anywhere else still runs. They are
 independent and not a ladder: `00_minimal` is Users, Password Auth, the Messenger and the HTTP
 Channel with one seeded person and the terminal client; `01_scheduler` is the Scheduler alone,
@@ -76,7 +79,7 @@ which the Gateway starts on the strength of that success and every query fails.
 The framework reads no environment at all, so each `main.ts` reads its own, and **one rule decides
 what it reads and one criterion decides what that rule catches.** The rule: *the entry point states
 no fact about its own surroundings.* Facts about the **agent's** execution model stay in the file,
-because a Shared Agent runs its agent in a container and that is the framework's own fact
+because a shared agent runs its agent in a container and that is the framework's own fact
 ([ADR-0033](./docs/adr/0033-an-agent-is-a-container-and-one-function.md)); a `main.ts` does not
 know that **it** is in one. The criterion: *a value moves to the environment when it has a
 counterparty in `compose.yml` that nothing compares it against.* Both listen addresses, the image
@@ -157,9 +160,17 @@ Run**, which under
 thing that reads a variable and its counterparty together is `docker compose up -d --build` and a
 message round-tripped by hand.
 
-**The package is published and publishing is a hand act**: `npm version patch && npm publish &&
-git push --follow-tags`, at `0.3.0` today, with `prepublishOnly` building so that a stale `dist`
-is not something to remember. **The version number used to be the one thing `prepublishOnly` does
+**Publishing is a hand act**: `npm version patch && npm publish && git push --follow-tags`, with
+`prepublishOnly` building so that a stale `dist` is not something to remember. **The package is
+`@shutter-network/concorde` and nothing is published under that name yet**, at `0.1.0` in the
+manifest and nowhere else ([ADR-0056](./docs/adr/0056-the-framework-is-called-concorde.md)). Two
+things ride with the scope. `publishConfig.access` is `public` in the manifest, because a scoped
+package defaults to **restricted** and the first publish would otherwise go private with no error,
+which is what would make the three-command sequence above quietly wrong rather than the constant it
+is. And the four versions published as `shared-agent-framework`, `0.1.0` through `0.3.1`, stay on
+the registry undeprecated and with nothing pointing at the new name, which is the deliberate
+choice: anybody who installed the old name is on a version that works, and a deprecation notice
+naming a package that does not exist yet is worse than silence. **The version number used to be the one thing `prepublishOnly` does
 not build, and `npm version` carries it now.** `src/gateway/gateway.ts` exports
 `describedVersion`, the string both OpenAPI documents announce, written out as a literal because
 nothing shipped resolves a path out of `import.meta.url` any more and the manifest is therefore
@@ -167,7 +178,8 @@ not something `dist/gateway/gateway.js` can read (see the convention below). npm
 lifecycle runs `scripts/stamp-version.ts`, which reads the just-written manifest, writes that
 literal and `git add`s the file, and npm commits the index — so the release commit carries both
 numbers or neither, and the three-command sequence above is unchanged.
-**It took two releases out of three to buy that.** `0.1.0` was published announcing `0.0.0` and
+**It took two releases out of three to buy that**, all three under the old name: `0.1.0` was
+published announcing `0.0.0` and
 `0.3.0` announcing `0.2.0`, each corrected in `src` one commit later, neither corrected on npm,
 and under [ADR-0040](./docs/adr/0040-the-gateway-describes-its-own-http-api.md) that document is
 the API documentation, so both artifacts serve the wrong number to a Developer deciding what they
@@ -234,7 +246,7 @@ nothing about the Db is mocked ([ADR-0022](./docs/adr/0022-the-store-is-postgres
 so a container is a prerequisite rather than an optional extra:
 
 ```sh
-docker run -d --name saf-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:17
+docker run -d --name concorde-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:17
 ```
 
 `DATABASE_URL` names the server and defaults to that container's URL,
@@ -247,7 +259,7 @@ containing takes one of its own. See `src/test-support/database.ts`.
 throwaway project, and checks that **all twenty-three** subpaths resolve there — to the type
 checker and to Node both. **There is no root among them**: `package.json` `exports` has no `.`
 entry and
-`import … from "shared-agent-framework"` resolves to nothing
+`import … from "@shutter-network/concorde"` resolves to nothing
 ([ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)). Eleven are components:
 `/signals`, `/pi`, `/users`,
 `/password-auth`, `/nostr-auth`, `/messenger`, `/http-channel`, `/nostr-channel`, `/signatures`,
@@ -278,7 +290,7 @@ subpath of its own.** The type and its outcome are on `/gateway`, which already 
 and `serverComponent`, and a bare `/auth` was refused as the first subpath with no constructor in
 it. `/signals`
 is the Signal Worker's own: its constructor, its options, the vocabulary a Signal
-Handler is written in, and `templateHandler` all come off `shared-agent-framework/signals`. The
+Handler is written in, and `templateHandler` all come off `@shutter-network/concorde/signals`. The
 last step of the check proves the root itself resolves to nothing, which is what would notice a
 root export creeping back and making one name reachable two ways. It also collects the exports of
 each `/schema` module the way `drizzle-kit` collects them, and proves that the eight yield **eight
@@ -298,7 +310,7 @@ as its own step.
 that starts a **real container** running a real `pi` against the real Agent
 server. It builds its own image from `src/test-support/pi-image/Dockerfile`, so it
 needs Docker and the network, and it takes about ten seconds. `npm run check`
-skips it — the variable `SAF_CONTAINER_TESTS` is what opts in, and the skip
+skips it — the variable `CONCORDE_CONTAINER_TESTS` is what opts in, and the skip
 reason says so — because everything else about the container and about `pi` is a
 fast test and the inner loop should stay one. CI runs it as its own step, so
 "skipped by default" does not become "never run". It needs no model
@@ -324,7 +336,7 @@ and each Channel are separate pages for the reason they are separate subpaths, a
 page for the same reason: a Developer reads the one they are using. `/nostr-auth`'s page is the only
 documentation of that component in the deliverable, no example building it. **Two words the
 reference is written in were defined nowhere in it, and the hole is closed.** **Operator** and
-**Shared Agent** appear on every page and belong to no component, and the deleted root page's
+**shared agent** appear on every page and belong to no component, and the deleted root page's
 module comment was the only place the rendered reference defined them; `site/reference/index.md`
 is generated from the entry point list and cannot be authored into
 ([ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)). What closed it is the
@@ -403,8 +415,8 @@ type, its nullability and its default, the primary key, the indexes, the unique 
 constraints, and the foreign keys with the schema-qualified table and column they point at. **A
 foreign key that leaves the component's own schema gets a sentence at the top of the page**,
 naming the columns and the subpath that creates what they point at: there are six of them onto
-`saf_users.users.id` from four components, and a `drizzle.config.ts` listing any of those four
-`/schema` subpaths without `shared-agent-framework/users/schema` generates a constraint onto a
+`concorde_users.users.id` from four components, and a `drizzle.config.ts` listing any of those four
+`/schema` subpaths without `@shutter-network/concorde/users/schema` generates a constraint onto a
 table nobody creates.
 
 **The structure comes from `generateDrizzleJson`**, `drizzle-kit`'s own snapshot generator and the
@@ -627,10 +639,10 @@ all** ([ADR-0046](./docs/adr/0046-the-operator-owns-migrations.md)). There is no
 `migrations:generate` script, no shipped migration folder, no descriptor, no
 `db.migrate`, no root `drizzle.*.config.ts` — and therefore neither of the two hand-edits
 that a regeneration used to demand. What a component ships is its schema module, on a subpath of
-its own, `shared-agent-framework/<component>/schema`, below the one carrying
+its own, `@shutter-network/concorde/<component>/schema`, below the one carrying
 its constructor (ADR-0055): a deployment's barrel imports that specifier, and an `exports` entry is
 the only supported way to name anything inside a package, the alternative being an Operator writing
-`node_modules/shared-agent-framework/dist/...` against a layout this package never promised. **The
+`node_modules/@shutter-network/concorde/dist/...` against a layout this package never promised. **The
 reason used to be `drizzle-kit`'s config taking file paths and never objects, and that reason is
 gone** — the barrel below is what the tool globs, and it reaches this package through an ordinary
 ESM specifier. What holds the subpath up now is in ADR-0055's second amendment. A deployment lists the `/schema` specifiers of the
@@ -695,9 +707,9 @@ Conventions the build depends on:
   more — that trick existed only to reach a shipped migration folder, and there is
   none (ADR-0046).
 - **Every subpath is a directory with an `index.ts`, and there is no `src/index.ts`.**
-  `shared-agent-framework/gateway` is `src/gateway/index.ts`, `/logging` is
+  `@shutter-network/concorde/gateway` is `src/gateway/index.ts`, `/logging` is
   `src/logging/index.ts`, and the same shape holds for all twenty-three, a `/schema` subpath
-  included: `shared-agent-framework/users/schema` is `src/users/schema/index.ts`, and the tables
+  included: `@shutter-network/concorde/users/schema` is `src/users/schema/index.ts`, and the tables
   are declared in it. **There was a door in front of it and there is not any more**: that file
   used to be one line starring a `src/<component>/schema.ts` beside it, which cost every reader
   two files where the other fifteen subpaths have one and was argued on a `drizzle-kit` interface
@@ -751,7 +763,7 @@ Conventions the build depends on:
   `src/**/*.test.ts` and `src/test-support/` are excluded from
   `tsconfig.build.json`, which the tarball check asserts.
 - **A component's tables are on the component's `/schema` subpath, and they must stay flat.**
-  `shared-agent-framework/<component>/schema` is the specifier a deployment's barrel stars
+  `@shutter-network/concorde/<component>/schema` is the specifier a deployment's barrel stars
   (ADR-0046, ADR-0055), and `drizzle-kit` takes `Object.values` of what it gets and
   keeps whatever passes `is(x, PgTable)` / `is(x, PgSchema)` — it never looks
   inside a plain object. So gathering the tables up as
@@ -781,7 +793,7 @@ Conventions the build depends on:
   has been written down: ADR-0055 deleted the prefixes on the ground that no deployment writes a
   barrel, every deployment writes one again, and the reversal is priced in that ADR's amendment.
   **Two names are in that class and no more.** A name describing one particular thing is not
-  prefixed: not the thirteen table names, each already `saf_<component>.<its own name>`, and not the
+  prefixed: not the thirteen table names, each already `concorde_<component>.<its own name>`, and not the
   four enum arrays, which are public on the component subpath too where `signalsSignalStates` would
   be indefensible. The table names are therefore **unguarded by naming and guarded by
   `scripts/check-package.ts`**, which imports all eight `/schema` specifiers **un-aliased** into one
@@ -789,12 +801,12 @@ Conventions the build depends on:
   `SyntaxError: Identifier 'x' has already been declared`, both naming the two import lines. **An
   alias added to one of those lines removes the check for that name**, which is the one way this
   guard fails quietly, and the file's own comment says so. It is also the near-miss that rule could
-  not have covered on its own: `tokens` moved from `saf_users.tokens` to `saf_password_auth.tokens`,
+  not have covered on its own: `tokens` moved from `concorde_users.tokens` to `concorde_password_auth.tokens`,
   and while both existed a barrel carrying `/users` and `/password-auth` would have dropped the name
   from **both**. Nothing in `npm run check` would see it; `check:package` is a separate CI step, so
   a ninth component with a colliding table name passes the inner loop.
 - **Four schema modules import `src/users/schema/index.ts`, and there are six cross-schema
-  foreign keys. Every one of them points at `saf_users.users.id` and nothing points back.**
+  foreign keys. Every one of them points at `concorde_users.users.id` and nothing points back.**
   `src/messenger/schema/index.ts` declares `messages.user_id`
   ([ADR-0036](./docs/adr/0036-the-http-messengers-user-id-is-a-foreign-key.md), ADR-0046);
   `src/nostr-channel/schema/index.ts` declares `pubkeys.user_id` and `outbox.user_id` (ADR-0049);
@@ -805,7 +817,7 @@ Conventions the build depends on:
   because the generator would emit the Users component's `CREATE TABLE` into the
   importing part's folder; with one generation graph it is the whole mechanism, and the
   constraint is free. What it costs a deployment is that a `drizzle.config.ts` listing **any** of
-  those four `/schema` subpaths without `shared-agent-framework/users/schema` generates a foreign
+  those four `/schema` subpaths without `@shutter-network/concorde/users/schema` generates a foreign
   key onto a table it never creates, and an Auth is the
   new way to make that mistake: a deployment can run Nostr Auth, the Nostr Channel and no
   Messenger, and still owe Users to its own list. `03_nostr` is the worked case — nobody logs in
@@ -934,7 +946,7 @@ Conventions the build depends on:
 - **Nothing in `src/agent-container/` knows about an Agent Implementation.** That
   directory is the Agent Container, the Mount Table and the process handling —
   what `docker run` takes and what to do with it — and it is exported from
-  **`shared-agent-framework/agent-container`**, because the whole point of it is that a
+  **`@shutter-network/concorde/agent-container`**, because the whole point of it is that a
   second Agent Implementation needs it unchanged
   ([ADR-0033](./docs/adr/0033-an-agent-is-a-container-and-one-function.md)). It sat at the
   package root until that root was emptied, and it is named for the two glossary terms it

@@ -58,7 +58,7 @@ import { schedulerTables, type schedules } from "./schema/index.ts";
  * Handler. A Schedule that fires with none registered under this `kind` leaves a Signal that fails
  * on every attempt.
  */
-export const scheduleFiredKind = "saf_schedule_fired";
+export const scheduleFiredKind = "concorde_schedule_fired";
 
 // Roughly a minute: comfortably under the `setTimeout` ceiling and short enough to bound drift
 // across a clock change. Nothing rests on the exact number.

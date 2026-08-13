@@ -28,7 +28,7 @@ export type TestDatabase = {
 };
 
 /**
- * Creates a database called `saf_test_<name>`, dropping any leftover of the same
+ * Creates a database called `concorde_test_<name>`, dropping any leftover of the same
  * name first so an interrupted run does not poison the next one.
  */
 export async function createTestDatabase(name: string): Promise<TestDatabase> {
@@ -57,7 +57,7 @@ export async function createTestDatabase(name: string): Promise<TestDatabase> {
 
 /** PostgreSQL truncates identifiers at 63 bytes, which would collide silently. */
 function databaseName(name: string): string {
-  const prefixed = `saf_test_${name.toLowerCase().replaceAll(/[^a-z0-9]+/g, "_")}`;
+  const prefixed = `concorde_test_${name.toLowerCase().replaceAll(/[^a-z0-9]+/g, "_")}`;
   if (prefixed.length > 63) {
     throw new Error(`test database name ${prefixed} exceeds PostgreSQL's 63-byte identifier limit`);
   }

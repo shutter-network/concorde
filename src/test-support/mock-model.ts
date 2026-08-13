@@ -177,7 +177,7 @@ function stream(answer: { readonly say: string } | { readonly bash: string }): s
   // choices and comes last before the terminator.
   chunks.push(
     `data: ${JSON.stringify({
-      id: "saf-mock",
+      id: "concorde-mock",
       object: "chat.completion.chunk",
       created: 0,
       model: "mock-model",
@@ -191,7 +191,7 @@ function stream(answer: { readonly say: string } | { readonly bash: string }): s
 
 function frame(choice: Record<string, unknown>): string {
   return `data: ${JSON.stringify({
-    id: "saf-mock",
+    id: "concorde-mock",
     object: "chat.completion.chunk",
     created: 0,
     model: "mock-model",

@@ -105,7 +105,7 @@ import { shikiThemes } from "./shiki-themes.mjs";
  * The class every anchor inside a signature block carries.
  * `.vitepress/theme/signature-links.css` is what gives it its dotted underline.
  */
-const LINK_CLASS = "saf-signature-link";
+const LINK_CLASS = "concorde-signature-link";
 
 /**
  * The grammar a block that is one member of an object type belongs to. Handed to Shiki as
@@ -817,7 +817,7 @@ function codeBlockHtml(highlighter, fragment, context) {
     })),
     transformers: [
       {
-        name: "saf:vitepress-code-block",
+        name: "concorde:vitepress-code-block",
         pre(node) {
           this.addClassToHast(node, "vp-code");
           delete node.properties.style;

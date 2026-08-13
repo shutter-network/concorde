@@ -50,7 +50,7 @@ export type SignedClaims = {
 
 export type SignaturesOptions = {
   /**
-   * The Shared Agent's private key, and the whole of its identity.
+   * The shared agent's private key, and the whole of its identity.
    *
    * The deployment loads it: nothing here parses a PEM, opens a file or generates a keypair, and
    * `createPrivateKey(readFileSync(path))` is the usual spelling. Copying this key copies the
@@ -131,7 +131,7 @@ export type Signatures = Component & {
    * Signs `claims` and answers with one compact JWS: `header.payload.signature`, base64url.
    *
    * `typ` goes into the protected header, so the signature covers it and swapping it invalidates
-   * the artifact. Nothing is reserved, `saf-decision+jws` included, and the label is this
+   * the artifact. Nothing is reserved, `concorde-decision+jws` included, and the label is this
    * identity's own claim about its artifact rather than a promise about the artifact's shape.
    *
    * A `signingAlg` the key cannot perform is refused here, at the first call, rather than at
@@ -237,7 +237,7 @@ function exportedJwk(publicKey: KeyObject): JsonWebKey {
     return publicKey.export({ format: "jwk" });
   } catch (error) {
     throw new Error(
-      `the signing key is ${publicKey.asymmetricKeyType} and cannot be exported as a JWK, so this Shared Agent would have no public key to serve and no algorithm to derive: ${reason(error)}. An rsa-pss key is what reaches this: its PSS parameters are part of its algorithm identifier and a JWK has nowhere to put them, and no re-encoding of the same key gets round it. Supply a plain RSA key and pass signingAlg "PS256": PSS is the padding, not the key.`,
+      `the signing key is ${publicKey.asymmetricKeyType} and cannot be exported as a JWK, so this shared agent would have no public key to serve and no algorithm to derive: ${reason(error)}. An rsa-pss key is what reaches this: its PSS parameters are part of its algorithm identifier and a JWK has nowhere to put them, and no re-encoding of the same key gets round it. Supply a plain RSA key and pass signingAlg "PS256": PSS is the padding, not the key.`,
       { cause: error },
     );
   }

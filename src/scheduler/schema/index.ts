@@ -1,5 +1,5 @@
 /**
- * What `shared-agent-framework/scheduler` creates in a database: the `schedules` table, and the
+ * What `@shutter-network/concorde/scheduler` creates in a database: the `schedules` table, and the
  * PostgreSQL schema it lives in. Keep it to the table and the values that define it, and add no
  * import of another component's schema: a Schedule references nobody, so this subpath can be listed
  * on its own.
@@ -17,13 +17,13 @@ import { type SQL, sql } from "drizzle-orm";
 import { check, jsonb, type PgColumn, pgSchema, text, timestamp } from "drizzle-orm/pg-core";
 
 /**
- * The PostgreSQL schema the Scheduler's table lives in, `saf_scheduler`.
+ * The PostgreSQL schema the Scheduler's table lives in, `concorde_scheduler`.
  *
  * Prefixed because the framework is installed into a database it does not own, and not
  * configurable: the table is compiled against this object, and the same object is what a generation
  * reads.
  */
-export const schedulerSchema = pgSchema("saf_scheduler");
+export const schedulerSchema = pgSchema("concorde_scheduler");
 
 export const scheduleKinds = ["once", "cron"] as const;
 

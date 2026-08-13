@@ -156,9 +156,9 @@ export type MessengerOptions = {
   /**
    * The Users component whose Users these Messages belong to. Build it first.
    *
-   * Nothing is called on it. `messages.user_id` is a foreign key onto `saf_users.users.id`, so the
-   * dependency is at the schema level, and authentication belongs to the Channel, which serves the
-   * routes a User reaches.
+   * Nothing is called on it. `messages.user_id` is a foreign key onto `concorde_users.users.id`, so
+   * the dependency is at the schema level, and authentication belongs to the Channel, which serves
+   * the routes a User reaches.
    */
   readonly users: Users;
   /**

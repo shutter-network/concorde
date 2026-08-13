@@ -35,7 +35,7 @@
  *    two tables on its specifier.
  *  - **there is no `.` in that map, and the last step below reads Node saying so.** Every value
  *    the root used to carry now sits on `/gateway`, `/logging`, `/db` or `/agent-container`, and
- *    a bare `shared-agent-framework` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`. What that buys
+ *    a bare `@shutter-network/concorde` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`. What that buys
  *    is that nothing lands on the root by accident: a re-export written there resolves to
  *    nowhere, so adding a root export back is a deliberate edit to `exports` and not a slip.
  *  - a component's tables arrive on its `/schema` specifier as **top-level named exports**.
@@ -132,29 +132,29 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
  * component's vocabulary and belongs beside it.
  */
 const consumerImports = [
-  'import { createAgentContainerRuntime, mountArguments } from "shared-agent-framework/agent-container";',
-  'import { openDb } from "shared-agent-framework/db";',
-  'import { createBareGateway, createGateway, NoAuthRegisteredError, serverComponent } from "shared-agent-framework/gateway";',
-  'import { defaultLogger } from "shared-agent-framework/logging";',
-  'import { createSignalWorker, runStates, signalStates, templateHandler } from "shared-agent-framework/signals";',
-  'import { runs, signals, signalsSchema, signalsTables } from "shared-agent-framework/signals/schema";',
-  'import { createPiRuntime, interpretPiOutput, piRun } from "shared-agent-framework/pi";',
-  'import { createUsers } from "shared-agent-framework/users";',
-  'import { users, usersSchema, usersTables } from "shared-agent-framework/users/schema";',
-  'import { createPasswordAuth } from "shared-agent-framework/password-auth";',
-  'import { passwordAuthSchema, passwordAuthTables, passwords, tokens } from "shared-agent-framework/password-auth/schema";',
-  'import { createNostrAuth } from "shared-agent-framework/nostr-auth";',
-  'import { admitted, grants, nostrAuthSchema, nostrAuthTables } from "shared-agent-framework/nostr-auth/schema";',
-  'import { createMessenger, messageDirections, messageReceivedKind } from "shared-agent-framework/messenger";',
-  'import { messages, messengerSchema, messengerTables } from "shared-agent-framework/messenger/schema";',
-  'import { createHttpChannel } from "shared-agent-framework/http-channel";',
-  'import { createNostrChannel, MalformedPublicKeyError, MessageTooLargeError, NoSuchUserError, PublicKeyConflictError, UnrecordedPublicKeyError } from "shared-agent-framework/nostr-channel";',
-  'import { nostrChannelSchema, nostrChannelTables, outbox, pubkeys, received } from "shared-agent-framework/nostr-channel/schema";',
-  'import { createSignatures } from "shared-agent-framework/signatures";',
-  'import { createDecisions } from "shared-agent-framework/decisions";',
-  'import { decisions, decisionsSchema, decisionsTables } from "shared-agent-framework/decisions/schema";',
-  'import { createScheduler, scheduleFiredKind, scheduleKinds, ScheduleSpecError } from "shared-agent-framework/scheduler";',
-  'import { schedulerSchema, schedulerTables, schedules } from "shared-agent-framework/scheduler/schema";',
+  'import { createAgentContainerRuntime, mountArguments } from "@shutter-network/concorde/agent-container";',
+  'import { openDb } from "@shutter-network/concorde/db";',
+  'import { createBareGateway, createGateway, NoAuthRegisteredError, serverComponent } from "@shutter-network/concorde/gateway";',
+  'import { defaultLogger } from "@shutter-network/concorde/logging";',
+  'import { createSignalWorker, runStates, signalStates, templateHandler } from "@shutter-network/concorde/signals";',
+  'import { runs, signals, signalsSchema, signalsTables } from "@shutter-network/concorde/signals/schema";',
+  'import { createPiRuntime, interpretPiOutput, piRun } from "@shutter-network/concorde/pi";',
+  'import { createUsers } from "@shutter-network/concorde/users";',
+  'import { users, usersSchema, usersTables } from "@shutter-network/concorde/users/schema";',
+  'import { createPasswordAuth } from "@shutter-network/concorde/password-auth";',
+  'import { passwordAuthSchema, passwordAuthTables, passwords, tokens } from "@shutter-network/concorde/password-auth/schema";',
+  'import { createNostrAuth } from "@shutter-network/concorde/nostr-auth";',
+  'import { admitted, grants, nostrAuthSchema, nostrAuthTables } from "@shutter-network/concorde/nostr-auth/schema";',
+  'import { createMessenger, messageDirections, messageReceivedKind } from "@shutter-network/concorde/messenger";',
+  'import { messages, messengerSchema, messengerTables } from "@shutter-network/concorde/messenger/schema";',
+  'import { createHttpChannel } from "@shutter-network/concorde/http-channel";',
+  'import { createNostrChannel, MalformedPublicKeyError, MessageTooLargeError, NoSuchUserError, PublicKeyConflictError, UnrecordedPublicKeyError } from "@shutter-network/concorde/nostr-channel";',
+  'import { nostrChannelSchema, nostrChannelTables, outbox, pubkeys, received } from "@shutter-network/concorde/nostr-channel/schema";',
+  'import { createSignatures } from "@shutter-network/concorde/signatures";',
+  'import { createDecisions } from "@shutter-network/concorde/decisions";',
+  'import { decisions, decisionsSchema, decisionsTables } from "@shutter-network/concorde/decisions/schema";',
+  'import { createScheduler, scheduleFiredKind, scheduleKinds, ScheduleSpecError } from "@shutter-network/concorde/scheduler";',
+  'import { schedulerSchema, schedulerTables, schedules } from "@shutter-network/concorde/scheduler/schema";',
 ];
 
 function run(command: string, args: string[], cwd: string): string {
@@ -193,7 +193,7 @@ function step(message: string): void {
   process.stdout.write(`${message}\n`);
 }
 
-const workDir = mkdtempSync(path.join(tmpdir(), "saf-package-check-"));
+const workDir = mkdtempSync(path.join(tmpdir(), "concorde-package-check-"));
 try {
   step("building");
   run("npm", ["run", "build"], repoRoot);
@@ -303,7 +303,7 @@ try {
     "dist/users/users.d.ts",
     // Password Auth, under its own subpath, with a `schema.js` beside it: the third module in the
     // framework whose schema imports the Users component's, because both of its columns
-    // reference `saf_users.users.id` (ADR-0036, ADR-0049, ADR-0052). `secrets.js` is the only
+    // reference `concorde_users.users.id` (ADR-0036, ADR-0049, ADR-0052). `secrets.js` is the only
     // scrypt and Token hashing in the package now, the Users component's copy having gone with
     // the credential, and it ships because `password-auth.js` imports it.
     "dist/password-auth/index.js",
@@ -317,7 +317,7 @@ try {
     "dist/password-auth/secrets.js",
     // Nostr Auth, under its own subpath, with a `schema.js` beside it: the fourth module in the
     // framework whose schema imports the Users component's, because `grants.user_id` references
-    // `saf_users.users.id` (ADR-0053). `nip98.js` is the security core, and the reason it is a
+    // `concorde_users.users.id` (ADR-0053). `nip98.js` is the security core, and the reason it is a
     // module of its own is the reason `nostr-channel/envelope.js` is: the library's own validator
     // checks the freshness window in one direction only, so an event dated in the future passes it
     // forever, and every check above `verifyEvent` is written here instead.
@@ -332,7 +332,7 @@ try {
     "dist/nostr-auth/schema/index.js",
     "dist/nostr-auth/schema/index.d.ts",
     // The Messenger, under its own subpath. Its `schema.js` is where the foreign key
-    // onto `saf_users.users.id` is declared now, so an Operator's generation writes the
+    // onto `concorde_users.users.id` is declared now, so an Operator's generation writes the
     // constraint that used to be hand-edited into a shipped folder (ADR-0034, ADR-0036,
     // ADR-0046). Its `routes.js` carries the agent's route group *and* the serializer the
     // HTTP Channel's own routes render a `MessageRecord` through, which is why that module
@@ -358,7 +358,7 @@ try {
     "dist/http-channel/routes.d.ts",
     // The Nostr Channel, under its own subpath, with a `schema.js` beside it — the second module
     // in the framework whose schema imports the Users component's, because `pubkeys.user_id`
-    // references `saf_users.users.id` too (ADR-0036, ADR-0049). `envelope.js` is the security
+    // references `concorde_users.users.id` too (ADR-0036, ADR-0049). `envelope.js` is the security
     // core: the NIP-59 unwrap written by hand, because the library's convenience function
     // discards the layer that carries the only authentication in the envelope.
     "dist/nostr-channel/index.js",
@@ -621,7 +621,7 @@ try {
       "  Mount,",
       "  MountTable,",
       "  RunPlan,",
-      '} from "shared-agent-framework/agent-container";',
+      '} from "@shutter-network/concorde/agent-container";',
       // The Db's own types: the handle, the transaction it hands a callback, the `LISTEN`
       // registration and the listener it calls back. `pg` is nowhere among them, which is what
       // keeps the pool out of the public API (ADR-0022).
@@ -631,7 +631,7 @@ try {
       "  Handle,",
       "  Listening,",
       "  Transaction,",
-      '} from "shared-agent-framework/db";',
+      '} from "@shutter-network/concorde/db";',
       // The assembly vocabulary, on its own specifier: the Component two methods, what a Gateway
       // is, the structural server it listens through, and the options both constructors take
       // (ADR-0031, ADR-0045). `Auth` and `AuthOutcome` are here rather than on a subpath of their
@@ -650,13 +650,13 @@ try {
       "  ListeningServer,",
       "  ServerComponent,",
       "  ServerComponentOptions,",
-      '} from "shared-agent-framework/gateway";',
+      '} from "@shutter-network/concorde/gateway";',
       // The logging seam, on its own specifier: nearly every part takes one, so it belongs to no
       // single part and an Operator satisfies it structurally.
       "import type {",
       "  LogFields,",
       "  Logger,",
-      '} from "shared-agent-framework/logging";',
+      '} from "@shutter-network/concorde/logging";',
       // The Signal Worker's own types, from its own subpath: the Worker and its options, the
       // two record shapes the Agent server answers with and their states, the Prompt the
       // Handler returns and the Run prompt the Runtime is given, the Runtime seam itself, the
@@ -680,7 +680,7 @@ try {
       "  SignalWorker,",
       "  SignalWorkerOptions,",
       "  TemplateHandlerOptions,",
-      '} from "shared-agent-framework/signals";',
+      '} from "@shutter-network/concorde/signals";',
       // The `pi` subpath exports **no type at all**, which is the shape ADR-0033 leaves
       // it in: there is no configuration to name, and everything the Runtime it returns
       // is made of — the Agent Container, the Run plan, the composed command line — comes
@@ -694,7 +694,7 @@ try {
       "  UserRecord,",
       "  Users,",
       "  UsersOptions,",
-      '} from "shared-agent-framework/users";',
+      '} from "@shutter-network/concorde/users";',
       // Password Auth's own types, from the eighth specifier, and no alias among them: the two
       // names it took off Users resolve to one binding each now.
       "import type {",
@@ -702,14 +702,14 @@ try {
       "  PasswordAuth,",
       "  PasswordAuthOptions,",
       "  ScryptParameters,",
-      '} from "shared-agent-framework/password-auth";',
+      '} from "@shutter-network/concorde/password-auth";',
       // And the second Auth's, from its own specifier. Two names and no credential type among
       // them, because this scheme issues nothing: what a deployment names is the constructor's
       // options and what it answers with (ADR-0053).
       "import type {",
       "  NostrAuth,",
       "  NostrAuthOptions,",
-      '} from "shared-agent-framework/nostr-auth";',
+      '} from "@shutter-network/concorde/nostr-auth";',
       // The Messenger's own types, from its own subpath, for the same reason: a
       // deployment with no messaging in it imports nothing from there, and one that does is
       // stating that it accepts this part's declined freedoms (ADR-0034). No route plugin
@@ -724,21 +724,21 @@ try {
       "  Messenger,",
       "  MessengerHandle,",
       "  MessengerOptions,",
-      '} from "shared-agent-framework/messenger";',
+      '} from "@shutter-network/concorde/messenger";',
       // And the HTTP Channel's, from the ninth specifier. Two names and no table among them:
       // this component owns nothing to migrate, so its subpath carries a constructor and the
       // types naming it (ADR-0047, ADR-0048).
       "import type {",
       "  HttpChannel,",
       "  HttpChannelOptions,",
-      '} from "shared-agent-framework/http-channel";',
+      '} from "@shutter-network/concorde/http-channel";',
       // And the Nostr Channel's, from the tenth specifier. Two names, like the HTTP Channel's,
       // even though this one owns tables: what a deployment names is the constructor's options
       // and what it answers with (ADR-0047, ADR-0049).
       "import type {",
       "  NostrChannel,",
       "  NostrChannelOptions,",
-      '} from "shared-agent-framework/nostr-channel";',
+      '} from "@shutter-network/concorde/nostr-channel";',
       // Signatures' own types, from its own subpath. `SignedClaims` is among them because the
       // caller builds the payload and therefore decides the bytes that get signed: the claims
       // are serialized in the order they were written, and nothing re-serializes them
@@ -747,7 +747,7 @@ try {
       "  Signatures,",
       "  SignaturesOptions,",
       "  SignedClaims,",
-      '} from "shared-agent-framework/signatures";',
+      '} from "@shutter-network/concorde/signatures";',
       // And Decisions', whose `DecisionRecord` is the one shape every surface of that part
       // answers with. No route plugin type is among either set, because neither part exports
       // one (ADR-0034).
@@ -755,7 +755,7 @@ try {
       "  DecisionRecord,",
       "  Decisions,",
       "  DecisionsOptions,",
-      '} from "shared-agent-framework/decisions";',
+      '} from "@shutter-network/concorde/decisions";',
       // The Scheduler's own types, from its own subpath, for the same reason: a deployment with no
       // time-based behaviour imports nothing from there, and one that does is opting the second
       // Producer in and wiring it like the Messenger (ADR-0018). No route plugin type is among
@@ -769,7 +769,7 @@ try {
       "  ScheduleSpec,",
       "  Scheduler,",
       "  SchedulerOptions,",
-      '} from "shared-agent-framework/scheduler";',
+      '} from "@shutter-network/concorde/scheduler";',
       'import { createPrivateKey, generateKeyPairSync, type KeyObject } from "node:crypto";',
       'import { pgSchema, text } from "drizzle-orm/pg-core";',
       // The two types the tables and schemas are annotated against below. They come from
@@ -954,14 +954,14 @@ try {
       "",
       "// An Operator's own routes, on Fastify's mechanism and no contract of ours —",
       "// including one that requires a User. This is the whole integration surface and",
-      "// the reason the augmentation is shipped: `request.safUser` is read with **no",
+      "// the reason the augmentation is shipped: `request.concordeUser` is read with **no",
       "// cast** here, in a consumer project that declares nothing of its own, which is",
       '// what proves the `declare module "fastify"` block reaches an installed',
       "// consumer rather than only this repository (ADR-0030).",
       "const ownRoutes: FastifyPluginAsync = async (fastify) => {",
       '  fastify.get("/healthz", async () => ({ ok: true }));',
       '  fastify.post<{ Body: { text: string } }>("/ask", { preHandler: publicComponent.requireUser }, async (request) => {',
-      "    const who: UserRecord = request.safUser;",
+      "    const who: UserRecord = request.concordeUser;",
       "    return { by: who.id, attributes: who.attributes, said: request.body.text };",
       "  });",
       "};",
@@ -992,7 +992,7 @@ try {
       "// property is read with no cast here too, and no route names a scheme.",
       "const authenticatedRoutes: FastifyPluginAsync = async (fastify) => {",
       '  fastify.get("/mine", { preHandler: publicComponent.requireUser }, async (request) => ({',
-      "    id: request.safUser.id,",
+      "    id: request.concordeUser.id,",
       "  }));",
       "};",
       "",
@@ -1413,7 +1413,7 @@ try {
       "  // The one namespace the table has: the host's path to the Runtime Directory, which",
       "  // is what the daemon resolves a bind source in. Every entry above is written",
       "  // relative to it, and a leading `/` on one is refused (ADR-0054).",
-      '  runtimeDir: "/srv/saf",',
+      '  runtimeDir: "/srv/concorde",',
       "};",
       "// One exported function and no resolved layer beside it: what a consumer holds is",
       "// the `--mount` argument list itself. Type-annotated, so a declaration that resolved",
@@ -1427,10 +1427,10 @@ try {
       "// Implementation adds is the one function below, whose outcome reader is produced",
       "// per Run so it can name the Session in a failure.",
       "const container: AgentContainer = {",
-      '  image: "saf/agent:latest",',
+      '  image: "concorde/agent:latest",',
       "  mounts,",
       '  entrypoint: ["agent"],',
-      '  networks: ["saf-agent", "saf-models"],',
+      '  networks: ["concorde-agent", "concorde-models"],',
       '  env: { ANTHROPIC_API_KEY: "sk-not-a-key" },',
       '  extraArgs: ["--memory", "2g"],',
       '  containerCommand: ["docker"],',
@@ -1462,9 +1462,9 @@ try {
       "// its own to hold one. It contributes two defaults to the container — the entry",
       "// point and `PI_OFFLINE` — and `piRun`, and nothing else (ADR-0033).",
       "export const pi: AgentContainerRuntime = createPiRuntime({",
-      '  image: "saf/pi:latest",',
+      '  image: "concorde/pi:latest",',
       "  mounts,",
-      '  networks: ["saf-agent"],',
+      '  networks: ["concorde-agent"],',
       '  env: { ANTHROPIC_API_KEY: "sk-not-a-key" },',
       '  extraArgs: ["--memory", "2g"],',
       "  logger: log,",
@@ -1610,7 +1610,7 @@ try {
       "  // process and never an HTTP request, which is what lets a Handler publish inside a",
       "  // transaction. It is also what proves `jose` is a declared dependency rather than one",
       "  // merely present in our own node_modules, since nothing else in this project installs it.",
-      "  const artifact: string = await signatures.sign('saf-decision+jws', claims);",
+      "  const artifact: string = await signatures.sign('concorde-decision+jws', claims);",
       "  shipped.info({ committed, segments: artifact.split('.').length }, \"a Statement was signed\");",
       "  // And Decisions' two, which are the same split for the same reason: `publish` takes the",
       "  // consumer's transaction so that a commitment and their record of why cannot come apart",
@@ -1731,9 +1731,9 @@ try {
         // The Mount Table, constructed and resolved from `/agent-container` the way an
         // Operator meets it: this is what proves `--mount type=bind` arguments come out
         // of an installed package rather than only out of this repository.
-        "const mounts = { runtimeDir: '/srv/saf', entries: [",
+        "const mounts = { runtimeDir: '/srv/concorde', entries: [",
         "  { agentPath: '/workspace', path: 'workspace' },",
-        "  { agentPath: '/srv/saf/agent', path: 'agent' },",
+        "  { agentPath: '/srv/concorde/agent', path: 'agent' },",
         "  { agentPath: '/workspace/AGENTS.md', path: 'AGENTS.md', readOnly: true },",
         "] };",
         "const mountArgs = mountArguments(mounts);",
@@ -1743,7 +1743,7 @@ try {
         // the image, the mounts, the user, the networks, the entry point and the agent's
         // own arguments, in that order (ADR-0033).
         "const generic = createAgentContainerRuntime({",
-        "  container: { image: 'saf/agent:latest', mounts, networks: ['saf-agent'], entrypoint: ['agent'], env: { ANTHROPIC_API_KEY: 'sk-not-a-key' } },",
+        "  container: { image: 'concorde/agent:latest', mounts, networks: ['concorde-agent'], entrypoint: ['agent'], env: { ANTHROPIC_API_KEY: 'sk-not-a-key' } },",
         "  run: (asked) => ({ args: ['--session-id', asked.session], stdin: asked.text, outcome: async () => ({ ok: true }) }),",
         "});",
         "const composed = generic.commandFor({ session: 'user_42', text: 'what happened?' });",
@@ -1751,7 +1751,7 @@ try {
         // an image and what the container sees, with no model, no provider and no
         // container path anywhere. It refuses a container it cannot work with at
         // construction, so this also proves that check runs from the installed package.
-        "const pi = createPiRuntime({ image: 'saf/pi:latest', mounts, networks: ['saf-agent'], env: { ANTHROPIC_API_KEY: 'sk-not-a-key' } });",
+        "const pi = createPiRuntime({ image: 'concorde/pi:latest', mounts, networks: ['concorde-agent'], env: { ANTHROPIC_API_KEY: 'sk-not-a-key' } });",
         "const piCommand = pi.commandFor({ session: 'user_42', text: 'what happened?' });",
         // The one function `pi` adds, on its own, which is what an author of a second
         // Agent Implementation writes the equivalent of.
@@ -1835,7 +1835,7 @@ try {
         // `fastify` and nothing else, so a missing `dependencies` entry fails right here
         // (ADR-0042). Verified with `node:crypto` against the key set the route serves, which
         // is also what proves that route answers from an installed package.
-        "const jws = await signatures.sign('saf-decision+jws', { seq: 7, createdAt: new Date().toISOString(), statement: 'we will ship on Friday' });",
+        "const jws = await signatures.sign('concorde-decision+jws', { seq: 7, createdAt: new Date().toISOString(), statement: 'we will ship on Friday' });",
         "await signaturesServer.ready();",
         "const keySet = (await signaturesServer.inject({ method: 'GET', url: '/jwks.json' })).json();",
         "const [jwsHeader, jwsPayload, jwsSignature] = jws.split('.');",
@@ -1918,7 +1918,7 @@ try {
         "const wrappersPresent = [];",
         "const stillOnTheComponent = [];",
         "for (const owner of owners) {",
-        "  const onSchema = await import('shared-agent-framework/' + owner + '/schema');",
+        "  const onSchema = await import('@shutter-network/concorde/' + owner + '/schema');",
         "  for (const value of Object.values(onSchema)) {",
         "    if (is(value, PgTable)) collectedTables.push(getTableConfig(value).schema + '.' + getTableConfig(value).name);",
         "    if (is(value, PgSchema)) collectedSchemas.push(value);",
@@ -1932,7 +1932,7 @@ try {
         "  const wrapper = onSchema[wrapperNames[owner]];",
         "  if (wrapper !== undefined && Object.values(wrapper).every((value) => is(value, PgTable))) wrappersPresent.push(owner);",
         "  if (is(wrapper, PgTable) || is(wrapper, PgSchema)) wrappersSeen.push(owner);",
-        "  const onComponent = await import('shared-agent-framework/' + owner);",
+        "  const onComponent = await import('@shutter-network/concorde/' + owner);",
         "  for (const value of Object.values(onComponent)) {",
         "    if (is(value, PgTable) || is(value, PgSchema)) stillOnTheComponent.push(owner);",
         "  }",
@@ -1947,7 +1947,7 @@ try {
         // **file path** inside the installed package, which is what an Operator's
         // `drizzle.config.ts` hands `drizzle-kit` as its `schema` (ADR-0055). Nothing else here
         // asks that question, every other check being an import.
-        "const resolvesToFiles = owners.every((owner) => { const url = import.meta.resolve('shared-agent-framework/' + owner + '/schema'); return url.startsWith('file:') && url.endsWith('/dist/' + owner + '/schema/index.js'); });",
+        "const resolvesToFiles = owners.every((owner) => { const url = import.meta.resolve('@shutter-network/concorde/' + owner + '/schema'); return url.startsWith('file:') && url.endsWith('/dist/' + owner + '/schema/index.js'); });",
         // Nothing writes anything: there is no call between composing and interpreting,
         // because the module that used to hold one is gone from the package, and the
         // composed command line names no file for the agent to read either — the
@@ -1960,15 +1960,15 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,list,setAttributes,start,stop:password auth Bearer authenticate,issueToken,revoke,scheme,setPassword,start,stop in saf_password_auth:nostr auth Nostr authenticate,recordPublicKey,scheme,start,stop in saf_nostr_auth:saf_messenger:history,register,send,start,stop:channel http name,send,start,stop:channel nostr drain,name,publicKey,recordPublicKey,send,start,stop as 1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f in saf_nostr_channel:message.received:saf_decisions:sign,start,stop:history,publish,start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,passwordAuth,signatures,decisions,messenger,httpChannel,ownLoop,worker:Shared Agent Gateway: Agent server describes 10 paths:by hand /healthz:cron 2030-06-02T09:00:00.000Z zone true:scheduler cancel,list,schedule,start,stop,tick fires saf_schedule_fired in saf_scheduler:tables saf_decisions.decisions saf_messenger.messages saf_nostr_auth.admitted saf_nostr_auth.grants saf_nostr_channel.outbox saf_nostr_channel.pubkeys saf_nostr_channel.received saf_password_auth.passwords saf_password_auth.tokens saf_scheduler.schedules saf_signals.runs saf_signals.signals saf_users.users in saf_decisions saf_messenger saf_nostr_auth saf_nostr_channel saf_password_auth saf_scheduler saf_signals saf_users, wrappers seen 0, wrappers present 8:schemas 8 of 8 distinct, on a component subpath 0, resolving to files true",
+    "function:function:docker concorde/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/concorde/workspace,target=/workspace:docker --entrypoint agent concorde/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:concorde_users:agentRoutes,create,get,list,setAttributes,start,stop:password auth Bearer authenticate,issueToken,revoke,scheme,setPassword,start,stop in concorde_password_auth:nostr auth Nostr authenticate,recordPublicKey,scheme,start,stop in concorde_nostr_auth:concorde_messenger:history,register,send,start,stop:channel http name,send,start,stop:channel nostr drain,name,publicKey,recordPublicKey,send,start,stop as 1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f in concorde_nostr_channel:message.received:concorde_decisions:sign,start,stop:history,publish,start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,passwordAuth,signatures,decisions,messenger,httpChannel,ownLoop,worker:Concorde Gateway: Agent server describes 10 paths:by hand /healthz:cron 2030-06-02T09:00:00.000Z zone true:scheduler cancel,list,schedule,start,stop,tick fires concorde_schedule_fired in concorde_scheduler:tables concorde_decisions.decisions concorde_messenger.messages concorde_nostr_auth.admitted concorde_nostr_auth.grants concorde_nostr_channel.outbox concorde_nostr_channel.pubkeys concorde_nostr_channel.received concorde_password_auth.passwords concorde_password_auth.tokens concorde_scheduler.schedules concorde_signals.runs concorde_signals.signals concorde_users.users in concorde_decisions concorde_messenger concorde_nostr_auth concorde_nostr_channel concorde_password_auth concorde_scheduler concorde_signals concorde_users, wrappers seen 0, wrappers present 8:schemas 8 of 8 distinct, on a component subpath 0, resolving to files true",
     "all twenty-three entries should resolve at runtime and none of them is the bare package, the Signal Worker's constructor and the template Handler both arriving off `/signals`, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from `/agent-container` without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and Users should construct into its own schema with its read plugin and its four operations — the two writes the agent's surface has no route for included, and no credential of any kind among them — and Password Auth should construct off the eighth subpath into a schema of its own from the Users component and a Public server, register its four routes and itself as an Auth with that server in its own constructor, and answer with the scheme a challenge names, the one member the server walks and its three trusted-code methods and no route plugin, and Nostr Auth should construct off its own subpath into a schema of its own, register itself with that same server and **no route anywhere**, and answer with the scheme a challenge names, the one member the server walks and the one trusted-code method that grants a public key, and the Messenger should construct into a schema of its own from all four of its required arguments and answer with an object carrying exactly its three trusted-code methods, because every other capability it has is a route it registered itself, and the HTTP Channel should construct off the ninth subpath, register itself with that Messenger and answer with a name fixed by its type and the three methods a Channel is and no trusted-code method at all, and the Nostr Channel should construct off the tenth from 32 raw bytes and a Relay address with no server anywhere, register itself with a second Messenger because one Channel per Messenger is refused at registration, derive the agent's public key from those bytes inside the installed package, and answer with the one trusted-code method that records a public key, the drain that is the half of a send a transaction cannot hold, and no route plugin beside them, and all of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the five parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone, and the Scheduler itself should construct from the installed `/scheduler` subpath and carry its management surface and its Component lifecycle, filing its table under a schema of its own, and each of the eight `/schema` subpaths, which is what ADR-0046 asks an Operator to list and where ADR-0055 puts the tables, should hand `drizzle-kit`'s own per-module collection rule its own tables and its own schema, thirteen tables and eight schemas between them — the HTTP Channel absent because that Channel owns no log and no tables, and the Nostr Channel present because the three things only it can know are its own —, and none of the `<component>Tables` wrappers, because a table reachable only through a wrapper object is dropped in silence and generates an empty migration, while all eight wrappers should nevertheless resolve on their own specifiers, and those eight schema objects should be eight distinct values, and the eight **component** subpaths should carry no table and no schema object at all, because a component's tables are on exactly one specifier, and every one of the eight should resolve to a file inside the installed package, that path being the only thing `drizzle-kit`'s config takes and the whole reason the entries exist",
   );
 
   // And the claim nothing above can see, because everything above imports a subpath: **the bare
   // specifier resolves to nothing.** `exports` has twenty-three entries and no `.`, so Node refuses
-  // `import "shared-agent-framework"` before it reads a byte of any module, and names the refusal
-  // `ERR_PACKAGE_PATH_NOT_EXPORTED`. The code is read rather than the exit status, because a
-  // module that threw on load would also exit non-zero and would prove the opposite of this.
+  // `import "@shutter-network/concorde"` before it reads a byte of any module, and names the
+  // refusal `ERR_PACKAGE_PATH_NOT_EXPORTED`. The code is read rather than the exit status, because
+  // a module that threw on load would also exit non-zero and would prove the opposite of this.
   //
   // What it buys: nothing lands on the root by accident. A re-export written into a new `index.ts`
   // is unreachable, a second door onto a component cannot open there, and the only way anything
@@ -1978,7 +1978,7 @@ try {
   step("checking the bare specifier resolves to nothing");
   const rootRefusal = refusalFrom(
     process.execPath,
-    ["--input-type=module", "-e", 'import "shared-agent-framework";'],
+    ["--input-type=module", "-e", 'import "@shutter-network/concorde";'],
     consumer,
   );
   assert.match(
@@ -2016,7 +2016,7 @@ try {
   );
   assert.match(
     help,
-    /SAF_GATEWAY_URL/,
+    /CONCORDE_GATEWAY_URL/,
     "the usage should name the variables the command reads, there being nowhere else a reader can find them",
   );
   const missingUser = refusalFrom(command, [], consumer);

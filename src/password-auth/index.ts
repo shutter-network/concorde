@@ -20,17 +20,17 @@
  * which Auths it constructs, and construction order inside `extend` only decides the order they
  * are asked in.
  *
- * The tables are on `shared-agent-framework/password-auth/schema` and nowhere else. Both point a
+ * The tables are on `@shutter-network/concorde/password-auth/schema` and nowhere else. Both point a
  * foreign key at the `users` table, so a configuration listing that subpath without
- * `shared-agent-framework/users/schema` generates a constraint onto a table it never creates.
+ * `@shutter-network/concorde/users/schema` generates a constraint onto a table it never creates.
  *
  * @example
  * A Gateway a person logs into, and one route of the Operator's own behind the server's hook.
  * ```ts
- * import { createGateway } from "shared-agent-framework/gateway";
- * import { createPasswordAuth } from "shared-agent-framework/password-auth";
- * import { createPiRuntime } from "shared-agent-framework/pi";
- * import { createUsers } from "shared-agent-framework/users";
+ * import { createGateway } from "@shutter-network/concorde/gateway";
+ * import { createPasswordAuth } from "@shutter-network/concorde/password-auth";
+ * import { createPiRuntime } from "@shutter-network/concorde/pi";
+ * import { createUsers } from "@shutter-network/concorde/users";
  *
  * const gateway = createGateway({
  *   databaseUrl: process.env.DATABASE_URL ?? "",
@@ -63,7 +63,7 @@
  * gateway.components.publicServer.fastify.get(
  *   "/whoami",
  *   { preHandler: gateway.components.publicServer.requireUser },
- *   async (request) => ({ id: request.safUser.id }),
+ *   async (request) => ({ id: request.concordeUser.id }),
  * );
  * ```
  *

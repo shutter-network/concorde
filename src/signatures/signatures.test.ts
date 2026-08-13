@@ -112,7 +112,7 @@ let agentServer: ServerComponent<FastifyInstance>;
 let publicServer: ServerComponent<FastifyInstance>;
 let signatures: Signatures;
 
-/** The other Shared Agent's servers, which exist only so that its constructor has somewhere. */
+/** The other shared agent's servers, which exist only so that its constructor has somewhere. */
 let elsewhere: ServerComponent<FastifyInstance>;
 let someoneElse: Signatures;
 
@@ -192,7 +192,7 @@ describe("the key set", () => {
 
 describe("what it signs", () => {
   it("is three base64url segments, and the signature is exactly 64 bytes", async () => {
-    const jws = await signatures.sign("saf-decision+jws", { statement });
+    const jws = await signatures.sign("concorde-decision+jws", { statement });
 
     const segments = jws.split(".");
     assert.equal(segments.length, 3, jws);
@@ -212,9 +212,9 @@ describe("what it signs", () => {
   });
 
   it("declares the algorithm and the type in the protected header", async () => {
-    const jws = await signatures.sign("saf-receipt+jws", { statement });
+    const jws = await signatures.sign("concorde-receipt+jws", { statement });
 
-    assert.deepEqual(headerOf(jws), { alg: "EdDSA", typ: "saf-receipt+jws" });
+    assert.deepEqual(headerOf(jws), { alg: "EdDSA", typ: "concorde-receipt+jws" });
   });
 
   it("carries the claims it was given, in the order they were written", async () => {
@@ -222,7 +222,7 @@ describe("what it signs", () => {
     // order of the caller's own object is the order of the bytes. Asserted on the decoded
     // string rather than on a parsed object, because a parsed object is where that fact stops
     // being visible (ADR-0042).
-    const jws = await signatures.sign("saf-decision+jws", { seq: 7, statement });
+    const jws = await signatures.sign("concorde-decision+jws", { seq: 7, statement });
 
     assert.equal(payloadTextOf(jws), JSON.stringify({ seq: 7, statement }));
   });
@@ -231,13 +231,13 @@ describe("what it signs", () => {
     // The demoable claim, in its smallest form: nothing here holds the `KeyObject` the part
     // was constructed with. The key comes off the wire, the artifact comes out of `sign`, and
     // the check is the built-in's.
-    const jws = await signatures.sign("saf-decision+jws", { statement });
+    const jws = await signatures.sign("concorde-decision+jws", { statement });
 
     assert.equal(await checks(jws), true);
   });
 
   it("fails verification when either segment is tampered with", async () => {
-    const jws = await signatures.sign("saf-decision+jws", { statement });
+    const jws = await signatures.sign("concorde-decision+jws", { statement });
     const [header, payload, signature] = jws.split(".");
     assert.ok(header !== undefined && payload !== undefined && signature !== undefined);
 
@@ -259,10 +259,10 @@ describe("what it signs", () => {
     // rather than beside it: a receipt presented as a Decision changes nothing but `typ`, and
     // a hand-rolled preimage has to remember to cover its own version tag where JWS cannot
     // omit it (ADR-0042).
-    const jws = await signatures.sign("saf-receipt+jws", { statement });
+    const jws = await signatures.sign("concorde-receipt+jws", { statement });
     const [, payload, signature] = jws.split(".");
     const relabelled = Buffer.from(
-      JSON.stringify({ alg: "EdDSA", typ: "saf-decision+jws" }),
+      JSON.stringify({ alg: "EdDSA", typ: "concorde-decision+jws" }),
       "utf8",
     ).toString("base64url");
 
@@ -288,7 +288,7 @@ describe("what the agent can have signed", () => {
 
     assert.deepEqual(headerOf(answered.json<{ jws: string }>().jws), {
       alg: "EdDSA",
-      typ: "saf-statement+jws",
+      typ: "concorde-statement+jws",
     });
   });
 
@@ -297,7 +297,11 @@ describe("what the agent can have signed", () => {
     // the authority to publish Decisions, so a decision-typed artifact minted here is that
     // authority exercised without a log row rather than a forgery (ADR-0042). The third label
     // is here because the first two are ours and the point is that the framework has no list.
-    for (const typ of ["saf-decision+jws", "saf-receipt+jws", "the votes of the March meeting"]) {
+    for (const typ of [
+      "concorde-decision+jws",
+      "concorde-receipt+jws",
+      "the votes of the March meeting",
+    ]) {
       const answered = await signing({ statement, typ });
 
       assert.equal(answered.statusCode, 200, answered.body);
@@ -312,7 +316,7 @@ describe("what the agent can have signed", () => {
   it("keeps the type out of the payload, where a second copy could disagree with the header", async () => {
     // `typ` is a header parameter, and the body carrying it is not the claims: an artifact
     // labelled in two places is an artifact a verifier can find labelled two ways.
-    const jws = signedBy(await signing({ statement, typ: "saf-receipt+jws" }));
+    const jws = signedBy(await signing({ statement, typ: "concorde-receipt+jws" }));
 
     assert.equal(payloadTextOf(jws), JSON.stringify({ statement }));
   });
@@ -351,14 +355,14 @@ describe("what the agent can have signed", () => {
 
 describe("the check it will do for a User", () => {
   it("answers the header and the payload it read out of an artifact that is ours", async () => {
-    const jws = signedBy(await signing({ statement, typ: "saf-receipt+jws" }));
+    const jws = signedBy(await signing({ statement, typ: "concorde-receipt+jws" }));
 
     const answered = await checking({ jws });
 
     assert.equal(answered.statusCode, 200, answered.body);
     assert.deepEqual(answered.json(), {
       verified: true,
-      header: { alg: "EdDSA", typ: "saf-receipt+jws" },
+      header: { alg: "EdDSA", typ: "concorde-receipt+jws" },
       payload: { statement },
     });
   });
@@ -370,7 +374,7 @@ describe("the check it will do for a User", () => {
 
     // A real artifact of another identity's, really signed by a whole second Signatures. This
     // is the case the route exists for and the one a hand-built forgery would not have been.
-    const foreign = await someoneElse.sign("saf-statement+jws", { statement });
+    const foreign = await someoneElse.sign("concorde-statement+jws", { statement });
     // A header that is not JSON at all, which is a parse failure inside the library rather
     // than a signature that did not check out.
     const unparseable = Buffer.from("this is not a header", "utf8").toString("base64url");
@@ -378,7 +382,7 @@ describe("the check it will do for a User", () => {
     for (const [what, presented] of [
       ["another identity's artifact", foreign],
       ["a tampered signature", `${header}.${payload}.${Buffer.alloc(64, 7).toString("base64url")}`],
-      ["a swapped type", `${headerFor("saf-decision+jws")}.${payload}.${signature}`],
+      ["a swapped type", `${headerFor("concorde-decision+jws")}.${payload}.${signature}`],
       ["two segments", `${header}.${payload}`],
       ["four segments", `${jws}.${signature}`],
       ["an unparseable header", `${unparseable}.${payload}.${signature}`],
@@ -449,12 +453,12 @@ describe("what it writes down", () => {
     // aggregator becomes a shadow copy of every private thing the agent ever signed.
     const secret = "the thing nobody should find in stdout";
     written.length = 0;
-    await signatures.sign("saf-decision+jws", { statement: secret });
+    await signatures.sign("concorde-decision+jws", { statement: secret });
 
     assert.equal(written.length, 1, "one signing should write one line");
     const [line] = written;
     assert.ok(line !== undefined);
-    assert.equal(line.fields.typ, "saf-decision+jws");
+    assert.equal(line.fields.typ, "concorde-decision+jws");
     // A SHA-256 of the Statement, and the digest is recomputed here rather than copied off
     // the line, so a line carrying a digest of something else fails.
     assert.equal(line.fields.statementSha256, sha256(secret));
@@ -468,12 +472,12 @@ describe("what it writes down", () => {
     // A route with a log line of its own would have been a second answer to "what was signed".
     const secret = "the other thing nobody should find in stdout";
     written.length = 0;
-    await signing({ statement: secret, typ: "saf-receipt+jws" });
+    await signing({ statement: secret, typ: "concorde-receipt+jws" });
 
     assert.equal(written.length, 1, "one signing should write one line");
     const [line] = written;
     assert.ok(line !== undefined);
-    assert.equal(line.fields.typ, "saf-receipt+jws");
+    assert.equal(line.fields.typ, "concorde-receipt+jws");
     assert.equal(line.fields.statementSha256, sha256(secret));
     assert.equal(JSON.stringify(line).includes(secret), false, JSON.stringify(line));
   });

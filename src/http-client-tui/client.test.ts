@@ -120,10 +120,13 @@ function agentSays(userId: string, text: string) {
 
 describe("joining a URL onto a base", () => {
   it("keeps a path the base carries, so a Gateway behind a prefix is reachable", () => {
-    assert.equal(urlFor("http://host:8080/saf", "messages"), "http://host:8080/saf/messages");
     assert.equal(
-      urlFor("http://host:8080/saf/", "auth/tokens"),
-      "http://host:8080/saf/auth/tokens",
+      urlFor("http://host:8080/concorde", "messages"),
+      "http://host:8080/concorde/messages",
+    );
+    assert.equal(
+      urlFor("http://host:8080/concorde/", "auth/tokens"),
+      "http://host:8080/concorde/auth/tokens",
     );
   });
 

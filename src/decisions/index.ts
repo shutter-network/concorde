@@ -1,6 +1,6 @@
 /**
  * The Decisions component owns the one global log of Decisions. A Decision is a Statement the
- * Shared Agent has committed to in public: signed with its key, numbered from 1, kept forever, and
+ * shared agent has committed to in public: signed with its key, numbered from 1, kept forever, and
  * readable by every User rather than addressed to one.
  *
  * {@link createDecisions} makes one. {@link Decisions} is what comes back, and its programmatic API
@@ -16,7 +16,7 @@
  * Publishing notifies nobody. It emits no Signal and wakes no Handler, so a User discovers a
  * Decision by polling, and the largest `seq` they hold is the whole resume mechanism.
  *
- * The table is on `shared-agent-framework/decisions/schema` and nowhere else. It references no
+ * The table is on `@shutter-network/concorde/decisions/schema` and nowhere else. It references no
  * other component's table, so that subpath can be listed on its own.
  *
  * @example
@@ -24,12 +24,12 @@
  * ```ts
  * import { createPrivateKey } from "node:crypto";
  * import { readFileSync } from "node:fs";
- * import { createGateway } from "shared-agent-framework/gateway";
- * import { createDecisions } from "shared-agent-framework/decisions";
- * import { createPasswordAuth } from "shared-agent-framework/password-auth";
- * import { createPiRuntime } from "shared-agent-framework/pi";
- * import { createSignatures } from "shared-agent-framework/signatures";
- * import { createUsers } from "shared-agent-framework/users";
+ * import { createGateway } from "@shutter-network/concorde/gateway";
+ * import { createDecisions } from "@shutter-network/concorde/decisions";
+ * import { createPasswordAuth } from "@shutter-network/concorde/password-auth";
+ * import { createPiRuntime } from "@shutter-network/concorde/pi";
+ * import { createSignatures } from "@shutter-network/concorde/signatures";
+ * import { createUsers } from "@shutter-network/concorde/users";
  *
  * const gateway = createGateway({
  *   databaseUrl: process.env.DATABASE_URL ?? "",

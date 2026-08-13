@@ -16,10 +16,10 @@
  * @example
  * A logger of the deployment's own, given to two parts that each take theirs separately.
  * ```ts
- * import { createGateway } from "shared-agent-framework/gateway";
- * import type { LogFields, Logger } from "shared-agent-framework/logging";
- * import { createPiRuntime } from "shared-agent-framework/pi";
- * import { createScheduler } from "shared-agent-framework/scheduler";
+ * import { createGateway } from "@shutter-network/concorde/gateway";
+ * import type { LogFields, Logger } from "@shutter-network/concorde/logging";
+ * import { createPiRuntime } from "@shutter-network/concorde/pi";
+ * import { createScheduler } from "@shutter-network/concorde/scheduler";
  *
  * // Four methods, and nothing to inherit from or register with.
  * const toConsole: Logger = {

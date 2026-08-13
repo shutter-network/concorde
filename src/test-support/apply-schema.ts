@@ -52,7 +52,7 @@ export type PartSchema = Record<string, unknown>;
  *
  * For a **fresh** database, which every caller has from `createTestDatabase`.
  * Nothing here is a migration: the push introspects `public` alone, so it never
- * sees a `saf_*` schema as already there and only ever emits creates. A second call
+ * sees a `concorde_*` schema as already there and only ever emits creates. A second call
  * against the same database therefore fails on `CREATE SCHEMA`, rather than
  * dropping what the first call made — which is the safer of the two ways to be
  * wrong, and the reason no tracking table appears.

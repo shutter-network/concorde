@@ -106,7 +106,7 @@ before(async () => {
   });
 
   // The schema of Users alongside the Messenger's, because `messages.user_id` references
-  // `saf_users.users.id` and one push has to see both (ADR-0036, ADR-0046). Password Auth's is
+  // `concorde_users.users.id` and one push has to see both (ADR-0036, ADR-0046). Password Auth's is
   // there for the same reason: both of its columns reference that table too (ADR-0052).
   await applySchema(db, signalsSchema, usersSchema, passwordAuthSchema, messengerSchema);
 });
@@ -357,7 +357,7 @@ describe("an unauthenticated read", () => {
       await presenting(client.token),
       // A well-formed Token that was never issued, and one issued to this very User that
       // has expired.
-      await presenting(`Bearer saf_${"A".repeat(43)}`),
+      await presenting(`Bearer concorde_${"A".repeat(43)}`),
       await presenting(`Bearer ${expired}`),
       // And with a window on it, so the refusal is not a route that only answers bare.
       await presenting(`Bearer ${expired}`, "?after=0&limit=2"),
