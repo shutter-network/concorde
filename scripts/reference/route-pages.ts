@@ -25,7 +25,7 @@
  * generation. A change to a page is a change to a route's `schema` block in its `routes.ts`.
  */
 
-import type { PageSet, ReferencePage } from "./pages.ts";
+import { type PageSet, pageLink, type ReferencePage } from "./pages.ts";
 import type {
   ComponentRoutes,
   ParameterDescription,
@@ -55,7 +55,7 @@ export function routePages(extraction: RouteExtraction): PageSet {
       collapsed: true,
       items: extraction.components.map((component) => ({
         text: component.subpath,
-        link: `/${directory}/${component.subpath}.md`,
+        link: pageLink(directory, component.subpath),
       })),
     },
   };

@@ -52,9 +52,19 @@
   "tsconfig": "../tsconfig.build.json",
 
   // `reference/` is generated in full and wiped on every run, which is why it holds no
-  // authored file: `.vitepress/` sits beside it, not inside it.
+  // authored file: `.vitepress/` sits beside it, not inside it, and so do the handwritten
+  // pages.
+  //
+  // **`docsRoot` is the site root and `out` is below it, and the two must not be equal again.**
+  // The theme writes every sidebar link as `path.relative(docsRoot, out)` joined to the page, so
+  // these two values are what decides whether a link reads `/gateway` or `/reference/gateway`.
+  // They were both `./reference` while the reference was the whole site. It is not: `../site`
+  // holds authored pages now, VitePress takes `site/` as its root, and a sidebar pointing at
+  // `/gateway` would reach nothing. Setting these equal again silently unroots every one of the
+  // fifteen TypeDoc links, and the build still passes: VitePress reports a dead link only for a
+  // link written in a page, never for one in a sidebar.
   "out": "./reference",
-  "docsRoot": "./reference",
+  "docsRoot": ".",
 
   // One file per entry point rather than one per exported symbol, so the whole public
   // surface is fifteen pages a reader can hold. `flattenOutputFiles` is what keeps those

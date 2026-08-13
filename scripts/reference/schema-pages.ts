@@ -23,7 +23,7 @@
  * Operator's database is going to hold. Adding the section is the way past it.
  */
 
-import type { PageSet, ReferencePage } from "./pages.ts";
+import { type PageSet, pageLink, type ReferencePage } from "./pages.ts";
 import type { ComponentTables, SchemaExtraction, TableSnapshot } from "./schema-extraction.ts";
 
 /** The directory these pages live in under `site/reference`, and the first part of their URLs. */
@@ -44,7 +44,7 @@ export function schemaPages(extraction: SchemaExtraction): PageSet {
       collapsed: true,
       items: extraction.components.map((component) => ({
         text: component.subpath,
-        link: `/${directory}/${component.subpath}.md`,
+        link: pageLink(directory, component.subpath),
       })),
     },
   };

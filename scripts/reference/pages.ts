@@ -9,6 +9,24 @@
  * produces the same shape.
  */
 
+/**
+ * Where the generated pages sit under the VitePress root, and therefore what every sidebar link
+ * to one begins with.
+ *
+ * `site/` is the root and `site/reference/` is one directory below it, because the site carries
+ * authored pages as well now. Written once here because both renderers need the identical value
+ * and a wrong one is quiet: VitePress reports a dead link written in a page and never one written
+ * in a sidebar, so a link that reaches nothing survives the build and is found by a reader.
+ * `typedoc.jsonc`'s `docsRoot` states the same fact to TypeDoc, which computes its own fifteen
+ * links from it.
+ */
+export const referenceBase = "/reference";
+
+/** One sidebar link to a generated page, in the shape VitePress reads. */
+export function pageLink(directory: string, subpath: string): string {
+  return `${referenceBase}/${directory}/${subpath}.md`;
+}
+
 /** One markdown file, named relative to its `PageSet`'s directory. */
 export type ReferencePage = {
   /** File name, with its `.md` extension. */

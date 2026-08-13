@@ -1,10 +1,8 @@
-# The API reference site
+# The documentation site
 
 TypeDoc reads the doc comments out of `../src`, its markdown plugin and VitePress theme write
 one page per entry point into `reference/`, `../scripts/reference/render.ts` writes the table
-pages into `reference/tables/` after it, and VitePress serves them all. The reference is the
-whole site: no landing page, no glossary, no guides, and no decision record as a page of its
-own. Run it from the repository root:
+and route pages after it, and VitePress serves them all. Run it from the repository root:
 
 ```sh
 npm run docs:dev     # serve on localhost and regenerate as doc comments are edited
@@ -16,6 +14,19 @@ All three install this package's dependencies from its lockfile first, so a fres
 no separate step. The site is not published: the repository is private, so a public URL would
 be the wrong trade while the surface is still being judged.
 
+**The site is two things now, and it used to be one.** `index.md`, `guide.md` and
+`architecture.md` sit in this directory and are written by hand for an Operator adopting the
+framework; `reference/` below them is generated and authored by nobody. The reference was the
+whole site until those three arrived, and the change cost one thing worth knowing: **three values
+now state where `reference/` sits and all three must agree.** `.vitepress/config.ts` sets
+`srcDir` to this directory, `typedoc.jsonc` sets `docsRoot` to it, and
+`../scripts/reference/pages.ts` exports `referenceBase` for the two renderers. Set any one of
+them back to `reference/` and that generator's sidebar links lose the `/reference` segment and
+reach nothing. **The build does not fail on it**: VitePress reports a dead link written in a
+page and never one written in a sidebar, so the failure is found by a reader rather than by
+`check:docs`. `README.md` is in `srcExclude` for a related reason — it is this note, about the
+toolchain rather than about the framework, and `srcDir` would otherwise serve it as a page.
+
 `reference/` is generated in full on every run and **is not committed**: `.gitignore` covers the
 whole directory, sidebar included. It was committed, so that a change to the public API arrived
 as a readable diff in review. A signature block is HTML now, and that does not diff readably.
@@ -26,9 +37,9 @@ of a doc-comment change has to run the site to see the rendered result. Nothing 
 Change the doc comment in `../src` and regenerate. `node_modules`, `.vitepress/cache` and
 `.vitepress/dist` are gitignored for reasons of their own, which `.gitignore` gives.
 
-**So a clone holds no pages at all.** `.vitepress/config.ts` imports both generated sidebars, and
-VitePress reads its config before anything else, so both `dev` and `build` generate first.
-Neither is a script to skip.
+**So a clone holds the three authored pages and no generated one.** `.vitepress/config.ts`
+imports both generated sidebars, and VitePress reads its config before anything else, so both
+`dev` and `build` generate first. Neither is a script to skip.
 
 **`generate` is two generators and the order is load-bearing.** `typedoc && node
 ../scripts/reference/render.ts`: TypeDoc empties `reference/`, so the table pages are written

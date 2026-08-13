@@ -311,13 +311,31 @@ documents each: for the reason those pages exist at all, below
 and each Channel are separate pages for the reason they are separate subpaths, and each Auth is a
 page for the same reason: a Developer reads the one they are using. `/nostr-auth`'s page is the only
 documentation of that component in the deliverable, no example building it. **Two words the
-reference is written in are now defined
-nowhere in it.** **Operator** and **Shared Agent** appear on every page and belong to no
-component, and the deleted root page's module comment was the only place the rendered reference
-defined them. `site/reference/index.md` is generated from the entry point list and cannot be
-authored into, so handwritten documentation is what will close that hole
-([ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)). `CONTEXT.md` defines both and
-is not part of what a Developer is handed.
+reference is written in were defined nowhere in it, and the hole is closed.** **Operator** and
+**Shared Agent** appear on every page and belong to no component, and the deleted root page's
+module comment was the only place the rendered reference defined them; `site/reference/index.md`
+is generated from the entry point list and cannot be authored into
+([ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)). What closed it is the
+handwritten documentation that paragraph predicted: **`site/` carries three authored pages now**,
+`index.md`, `guide.md` and `architecture.md`, written for an Operator adopting the framework
+rather than for a maintainer, and `index.md` defines both words. `CONTEXT.md` still defines them
+and is still not part of what a Developer is handed, so the two definitions are a pair to keep in
+step; the site's is the shorter one and says less on purpose.
+
+**Those three pages made the site two things, and three values now state where `reference/`
+sits.** `.vitepress/config.ts` sets `srcDir` to `site/`, `typedoc.jsonc` sets `docsRoot` to the
+same directory, and `scripts/reference/pages.ts` exports `referenceBase` for the two renderers.
+The theme computes its own sidebar links as `path.relative(docsRoot, out)`, which is why those
+two were equal while the reference was the whole site and must not be equal again. Set any one of
+the three back and that generator's links lose the `/reference` segment. **Nothing fails**:
+VitePress reports a dead link written in a page and never one written in a sidebar, so
+`check:docs` passes and a reader finds it. `site/README.md` is in `srcExclude`, being a note about
+the toolchain that `srcDir` would otherwise serve as a page. The authored pages are **not** under
+`site/reference`, which TypeDoc empties on every run; nothing about that directory changed.
+[`docs/architecture.md`](./docs/architecture.md) and
+[`docs/data-model.md`](./docs/data-model.md) are the maintainer's and stayed where they are: they
+carry ADR citations by the clause and are written for whoever edits this tree, which is the
+opposite reader, and the site's architecture page is not a replacement for either.
 
 **[`docs/api-docs.md`](./docs/api-docs.md) is what those comments are written against**: which
 fact goes in a module comment, which in a constructor, which in a method, and which belongs in a
