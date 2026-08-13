@@ -46,9 +46,10 @@
  * moving onto the component subpaths and off them again**
  * ([ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md),
  * [ADR-0055](../docs/adr/0055-a-components-tables-are-a-subpath-of-their-own.md)).
- * `src/<part>/schema.ts` is where a table is declared and it has never moved; only the
- * specifier an Operator imports it through has. The last test scans for those same files,
- * so it keeps covering every part without knowing anything about the export map.
+ * `src/<part>/schema/` is where a table is declared; the file inside it has been named twice
+ * and the specifier an Operator imports it through has moved once. The last test scans for
+ * those directories, so it keeps covering every part without knowing anything about the
+ * export map.
  */
 
 import assert from "node:assert/strict";
@@ -59,16 +60,16 @@ import { fileURLToPath } from "node:url";
 import { inArray, is } from "drizzle-orm";
 import { getTableConfig, PgTable, pgSchema, text } from "drizzle-orm/pg-core";
 import type { Db } from "./db/index.ts";
-import * as decisionsSchema from "./decisions/schema.ts";
-import * as messengerSchema from "./messenger/schema.ts";
-import * as nostrAuthSchema from "./nostr-auth/schema.ts";
-import * as nostrChannelSchema from "./nostr-channel/schema.ts";
-import * as passwordAuthSchema from "./password-auth/schema.ts";
-import * as schedulerSchema from "./scheduler/schema.ts";
-import * as signalsSchema from "./signals/schema.ts";
+import * as decisionsSchema from "./decisions/schema/index.ts";
+import * as messengerSchema from "./messenger/schema/index.ts";
+import * as nostrAuthSchema from "./nostr-auth/schema/index.ts";
+import * as nostrChannelSchema from "./nostr-channel/schema/index.ts";
+import * as passwordAuthSchema from "./password-auth/schema/index.ts";
+import * as schedulerSchema from "./scheduler/schema/index.ts";
+import * as signalsSchema from "./signals/schema/index.ts";
 import { applySchema, type PartSchema } from "./test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "./test-support/database.ts";
-import * as usersSchema from "./users/schema.ts";
+import * as usersSchema from "./users/schema/index.ts";
 
 /**
  * Every part that has a schema, keyed by the directory it lives in — which is what lets
@@ -133,7 +134,7 @@ describe("every component's schema, pushed as one graph", () => {
   it("covers every part in the source tree that has a schema", () => {
     const source = fileURLToPath(new URL(".", import.meta.url));
     const withSchema = readdirSync(source, { recursive: true, withFileTypes: true })
-      .filter((entry) => entry.name === "schema.ts")
+      .filter((entry) => entry.isDirectory() && entry.name === "schema")
       .map((entry) => relative(source, entry.parentPath));
 
     assert.deepEqual(withSchema.sort(), Object.keys(parts).sort());

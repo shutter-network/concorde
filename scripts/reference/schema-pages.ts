@@ -15,7 +15,7 @@
  *
  * **Nothing here is authored and no page is ever edited.** `site/reference` is emptied on every
  * generation, so a page that looked wrong and was fixed by hand would be gone on the next run.
- * A change to a page is a change to a `schema.ts`.
+ * A change to a page is a change to a `src/<component>/schema/index.ts`.
  *
  * **A snapshot holding something this file does not describe is a failure, not an omission.**
  * `assertNothingIsDropped` refuses enums, sequences, views, row policies and row level security,
@@ -75,7 +75,7 @@ function page(component: ComponentTables, owners: ReadonlyMap<string, string>): 
     `The tables this component creates, and the PostgreSQL schema \`${component.schema}\` it ` +
       `creates them in. A configuration listing \`${component.specifier}\` creates all of them.`,
     "",
-    `Generated from the snapshot \`drizzle-kit\` takes of \`src/${component.subpath}/schema.ts\`, ` +
+    `Generated from the snapshot \`drizzle-kit\` takes of \`src/${component.subpath}/schema/index.ts\`, ` +
       `which is the snapshot an Operator's own generation reads. Never edited by hand.`,
     ...crossSchemaWarning(component, tables, owners),
     ...tables.flatMap((table) => ["", ...tableSection(table)]),
@@ -205,7 +205,7 @@ function tableSection(table: TableSnapshot): readonly string[] {
 
 /**
  * The columns, in the order the component declares them, which is the order a reader comparing
- * this against `schema.ts` reads them in.
+ * this against the schema module reads them in.
  */
 function columnTable(table: TableSnapshot): readonly string[] {
   return rows(
@@ -258,7 +258,7 @@ function assertNothingIsDropped(
 
   throw new Error(
     [
-      `src/${component.subpath}/schema.ts declares things the table pages do not describe, so ` +
+      `src/${component.subpath}/schema/index.ts declares things the table pages do not describe, so ` +
         `its page would be complete-looking and wrong:`,
       ...dropped.map((entry) => `  ${entry}`),
       `Add the section to scripts/reference/schema-pages.ts.`,

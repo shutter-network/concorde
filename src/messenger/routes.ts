@@ -45,7 +45,7 @@ import {
   SeqContentionError,
   UnknownUserError,
 } from "./messages.ts";
-import { messageDirections } from "./schema.ts";
+import { messageDirections } from "./schema/index.ts";
 
 /**
  * The read both surfaces need, and the reason it is a type of its own.

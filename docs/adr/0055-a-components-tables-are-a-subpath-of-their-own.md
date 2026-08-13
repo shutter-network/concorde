@@ -7,7 +7,13 @@ table, the `saf_users` schema object and the `usersTables` wrapper. The export m
 entries to twenty-three: eight components own tables, and each gets a second entry. The root still
 exports nothing ([ADR-0051](./0051-the-package-root-exports-nothing.md)).
 
-**This ADR was amended after it shipped, and one of its decisions is reversed.** It removed the
+**This ADR has been amended twice.** The second amendment deletes the door: a component's tables
+are declared in `src/<component>/schema/index.ts` now, there is no `src/<component>/schema.ts`
+behind it, and the reason this ADR argues for the subpath is replaced with three that survive the
+first amendment. Nothing an Operator writes changes. The section headed *the door goes* is that
+amendment, and the section above it is left standing as the layout it replaced.
+
+**The first amendment reversed one of its decisions.** It removed the
 component prefixes from the two names every schema module declares, on the ground that no
 deployment writes a barrel any more. Deployments write one again, so the prefixes are back:
 `usersSchema` and `usersTables`, not `schema` and `tables`. The table names are unchanged and stay
@@ -146,6 +152,49 @@ of it is new.
 A star and not a list, deliberately. A list would be a second place to name every table, and a
 table added to `schema.ts` and forgotten there would be queryable, absent from the DDL, and
 mentioned by nothing.
+
+## Amended: the door goes, and the reason above it is replaced
+
+The two paragraphs directly above described the layout until this amendment. The declarations
+moved after all: `src/<component>/schema.ts` is now `src/<component>/schema/index.ts`, the eight
+one-line doors are deleted, and each component's tables are declared in the file the export map
+already named. Nothing an Operator writes changes. The eight specifiers are the same strings, they
+resolve to the same `dist/<component>/schema/index.js`, and no example barrel or `drizzle.config.ts`
+moves.
+
+**The reason has to be replaced, not only the layout.** This ADR's argument is in its own first
+heading, *the reason is a build tool's file-path API*, and that reason died with the amendment
+above it. A deployment writes a barrel again; `drizzle-kit` globs `./schema.ts` in the deployment's
+own directory and reaches this package through an ordinary ESM specifier. No file path into the
+package is involved anywhere any more, so nothing was left holding the door up. What holds the
+subpath itself up is three other things, none of them the one this ADR was argued on:
+
+- A barrel starring `shared-agent-framework/users` instead would pull the component's constructor,
+  its routes and therefore the framework's runtime into the `tsx` process `drizzle-kit` runs the
+  config in, to find the tables among them.
+- `export *` across eight whole component surfaces has far more to collide on than eight schema
+  modules do, and an ambiguous name is dropped in silence — the failure this ADR's own barrel
+  section is about.
+- A table stays reachable exactly one way. `scripts/check-package.ts` asserts that the component
+  subpath yields no table and no schema object at all, which is the assertion the split exists for.
+
+Those are better reasons than the one they replace, because none of them is a fact about one
+version of one tool's config type.
+
+**What the door bought, and why it stopped paying.** When this ADR shipped, leaving the
+declarations put meant 118 import specifiers across 54 files did not move, and neither did the
+three scans that find a component owning tables by looking for a file named `schema.ts`. That was
+the whole of it. Set against it, every reader of the tree had two files to hold apart where the
+other fifteen subpaths have one, and the second one carried ten lines of near-identical comment
+explaining why it existed. The scans now test for a `schema/` **directory**, which is the same
+one-line filter over the same `readdirSync`, and the import churn was paid once under a type
+checker that fails on every specifier it misses.
+
+**A larger reading was considered and refused.** If the file-path argument is gone, the question is
+fairly asked whether `/schema` should exist at all, with the tables going back onto the component
+subpath as ADR-0047 had them. The three reasons above are the answer, and the cost of being wrong
+is not symmetric: reversing this ADR is an export map going from twenty-three entries to fifteen,
+a barrel edit in all four examples and a major version, against a door that costs one file.
 
 **Eight names are on two subpaths, and no table is among them.** `signalStates`, `runStates`,
 `messageDirections` and `scheduleKinds` are declared in the components' `schema.ts` files because

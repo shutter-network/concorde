@@ -25,10 +25,10 @@
  * one design decision here the spec left open. The spec declined a guard, on the reading that
  * the only candidate was a comparison against the export map: a component may legitimately own no
  * tables, so that comparison needs a hand-written list of the exempt ones and moves the drift one
- * file over rather than removing it. `src/<component>/schema.ts` needs no exemption, because
- * owning that file *is* owning tables. It is also not new machinery: `src/schemas.test.ts` already
- * scans for exactly these files to hold exactly this list, and the eight lines below are that scan
- * again. The cost the spec agreed to record was that a component absent from the list is silently
+ * file over rather than removing it. `src/<component>/schema/` needs no exemption, because
+ * owning that directory *is* owning tables. It is also not new machinery: `src/schemas.test.ts`
+ * already scans for exactly these directories to hold exactly this list, and the eight lines below
+ * are that scan again. The cost the spec agreed to record was that a component absent from the list is silently
  * absent from the reference; that cost was priced against a committed reference where at least the
  * absence showed up once, as a deleted page in a review. The reference is not committed any more,
  * so nothing would have shown at all.
@@ -38,14 +38,14 @@ import { readdirSync } from "node:fs";
 import { relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateDrizzleJson } from "drizzle-kit/api";
-import * as decisions from "../../src/decisions/schema.ts";
-import * as messenger from "../../src/messenger/schema.ts";
-import * as nostrAuth from "../../src/nostr-auth/schema.ts";
-import * as nostrChannel from "../../src/nostr-channel/schema.ts";
-import * as passwordAuth from "../../src/password-auth/schema.ts";
-import * as scheduler from "../../src/scheduler/schema.ts";
-import * as signals from "../../src/signals/schema.ts";
-import * as users from "../../src/users/schema.ts";
+import * as decisions from "../../src/decisions/schema/index.ts";
+import * as messenger from "../../src/messenger/schema/index.ts";
+import * as nostrAuth from "../../src/nostr-auth/schema/index.ts";
+import * as nostrChannel from "../../src/nostr-channel/schema/index.ts";
+import * as passwordAuth from "../../src/password-auth/schema/index.ts";
+import * as scheduler from "../../src/scheduler/schema/index.ts";
+import * as signals from "../../src/signals/schema/index.ts";
+import * as users from "../../src/users/schema/index.ts";
 
 /**
  * The snapshot, written out here rather than taken from `drizzle-kit`.
@@ -192,14 +192,14 @@ export function extractSchemas(): SchemaExtraction {
       // so the absence would look exactly like the intended thing.
       if (Object.keys(tables).length === 0) {
         throw new Error(
-          `src/${subpath}/schema.ts exports no table that drizzle-kit can see. A table reached ` +
+          `src/${subpath}/schema/index.ts exports no table that drizzle-kit can see. A table reached ` +
             `only through the tables wrapper is dropped here exactly as it is dropped from a ` +
             `migration (ADR-0046), so flat-export it.`,
         );
       }
       if (declaredSchemas.length !== 1) {
         throw new Error(
-          `src/${subpath}/schema.ts declares ${declaredSchemas.length} PostgreSQL schemas ` +
+          `src/${subpath}/schema/index.ts declares ${declaredSchemas.length} PostgreSQL schemas ` +
             `(${declaredSchemas.join(", ") || "none"}). Every page states one schema name, and ` +
             `one schema per component is what keeps two components off one table ` +
             `(ADR-0022, src/schemas.test.ts).`,
@@ -251,7 +251,7 @@ function keptFieldsOf(snapshot: unknown): ReferenceSnapshot {
 function assertListIsWhole(): void {
   const source = fileURLToPath(new URL("../../src/", import.meta.url));
   const inSource = readdirSync(source, { recursive: true, withFileTypes: true })
-    .filter((entry) => entry.name === "schema.ts")
+    .filter((entry) => entry.isDirectory() && entry.name === "schema")
     .map((entry) => relative(source, entry.parentPath));
 
   const listed = Object.keys(schemaModules);
@@ -262,8 +262,8 @@ function assertListIsWhole(): void {
   throw new Error(
     [
       `The schema modules listed in scripts/reference/schema-extraction.ts disagree with src.`,
-      ...unlisted.map((s) => `  src/${s}/schema.ts is not listed, so ${s} has no page.`),
-      ...gone.map((s) => `  ${s} is listed but src/${s}/schema.ts is gone.`),
+      ...unlisted.map((s) => `  src/${s}/schema/ is not listed, so ${s} has no page.`),
+      ...gone.map((s) => `  ${s} is listed but src/${s}/schema/ is gone.`),
     ].join("\n"),
   );
 }

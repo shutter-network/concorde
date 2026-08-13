@@ -26,11 +26,11 @@ import { type ServerComponent, serverComponent } from "../gateway/components.ts"
 import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import type { UserRecord } from "../users/routes.ts";
-import * as usersSchema from "../users/schema.ts";
+import * as usersSchema from "../users/schema/index.ts";
 import { createUsers, type Users } from "../users/users.ts";
 import { createPasswordAuth, type PasswordAuth } from "./password-auth.ts";
 import type { IssuedToken } from "./routes.ts";
-import * as passwordAuthSchema from "./schema.ts";
+import * as passwordAuthSchema from "./schema/index.ts";
 
 const hour = 60 * 60 * 1000;
 const cheap = { logN: 12, blockSize: 8, parallelism: 1 } as const;

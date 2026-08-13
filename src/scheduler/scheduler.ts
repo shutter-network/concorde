@@ -47,7 +47,7 @@ import {
   selectSchedules,
   upsertSchedule,
 } from "./schedules.ts";
-import { schedulerTables, type schedules } from "./schema.ts";
+import { schedulerTables, type schedules } from "./schema/index.ts";
 
 /**
  * The `kind` every matured Schedule emits under, and half of the Signal contract. The other half is

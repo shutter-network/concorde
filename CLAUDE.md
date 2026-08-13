@@ -284,7 +284,7 @@ root export creeping back and making one name reachable two ways. It also collec
 each `/schema` module the way `drizzle-kit` collects them, and proves that the eight yield **eight
 distinct schema objects and thirteen tables, and that the component subpaths above them yield
 neither** — the assertion the split exists for and the one nothing else in the repository makes,
-because a `schema.ts` re-exported from both places puts every table behind two specifiers, and a
+because a schema module re-exported from both places puts every table behind two specifiers, and a
 `/schema` module that stopped re-exporting one leaves that table queryable and absent from the
 DDL. **It is also the only thing anywhere that holds the thirteen table names apart**: every
 `/schema` specifier is imported **un-aliased** into one module scope, which is what a deployment's
@@ -393,7 +393,8 @@ watching TypeDoc runs with `--cleanOutputDir false` for the same reason, because
 first rebuild of a dev session deletes the table pages and the sidebar that lists them
 (`site/README.md`). The pages land
 in `site/reference/tables/`, are gitignored with everything else in there, and are **generated and
-never authored**: a page is changed by changing a `schema.ts` and regenerating.
+never authored**: a page is changed by changing a `src/<component>/schema/index.ts` and
+regenerating.
 `site/.vitepress/config.ts` composes their sidebar section, which the renderer writes beside them,
 with the one TypeDoc writes. Extraction needs no database, no Docker and no network, and
 `npm run typecheck` reads it, which is why it lives in `scripts/` rather than in `site/`. Each page
@@ -424,9 +425,9 @@ silently missing from the reference. It is closed rather than recorded, because 
 priced against have moved. It assumed a committed reference, where a page that stopped being
 generated at least showed up once as a deleted file in review, and there is none. And the guard it
 declined derived the list from the export map, which needs a hand-written list of the components
-that legitimately own no tables and so moves the drift one file over. `src/<component>/schema.ts`
-needs no exemption, because owning that file is what owning tables is, and the scan is not new
-machinery: `src/schemas.test.ts` already holds the same list against the same files. Two more
+that legitimately own no tables and so moves the drift one file over. `src/<component>/schema/`
+needs no exemption, because owning that directory is what owning tables is, and the scan is not new
+machinery: `src/schemas.test.ts` already holds the same list against the same directories. Two more
 refusals ride with it, each guarding a page that would otherwise be complete-looking and wrong. A
 listed module exporting no table a snapshot can see fails, because that is the `tables` wrapper
 trap (ADR-0046) and a component with no tables correctly has no page, so the absence would look
@@ -479,7 +480,7 @@ The extractors' refusals fail the generation; a page and its sidebar entry come 
 one extraction, so they cannot disagree; and a pipeline that skipped the renderer fails at
 `config.ts`, which statically imports a sidebar file only the renderer writes, into a directory
 TypeDoc has just emptied. Three components correctly have no table page at all: `/pi`,
-`/signatures` and `/http-channel` declare no `schema.ts`, the first because it is one function and
+`/signatures` and `/http-channel` declare no schema module, the first because it is one function and
 two defaults, the second because a Signed Statement is never kept (ADR-0042), and the third because
 the log is the Messenger's (ADR-0048). Seven correctly have no route page: `/gateway`, `/logging`,
 `/db` and `/agent-container` are infrastructure rather than components, `/pi` serves nothing,
@@ -495,7 +496,7 @@ of it is terminal now. It collected two independent findings while one of them w
 comparison against the committed pages; with one kind of failure left there is nothing to
 collect. It is also what makes the guard in `site/specifier-titles.mjs` unattended: that guard
 holds every entry in `package.json` `exports` against **exactly one generator** — a
-`typedoc.jsonc` entry point or a `src/<component>/schema.ts` a table page is written from — both
+`typedoc.jsonc` entry point or a `src/<component>/schema/` a table page is written from — both
 ways, and fails the generation on any disagreement, an entry documented twice included. Before
 this command nothing but a human running TypeDoc fired it. CI runs it as its own step. TypeDoc's
 *warnings* fail it, through `treatWarningsAsErrors` in `typedoc.jsonc`. They did not while one
@@ -578,7 +579,7 @@ that bar rather than falling back to the margin.
 against empty braces, `PgTableWithColumns<{}>` being drizzle's own type under `excludeExternals`,
 and there is no such block on any page now: the tables are on `/schema` subpaths and a `/schema`
 subpath is not a TypeDoc entry point (ADR-0055). What went with it is larger than the cost it
-closed and is recorded in that ADR — every sentence written above a table in a `schema.ts` is now
+closed and is recorded in that ADR — every sentence written above a table in a schema module is now
 a comment for a reader of the source alone, a generated table page carrying structure and not
 prose. What replaces the four is one new cost, accepted rather than missed:
 **width**. The widest members went from about seventy characters to about a hundred and twenty and
@@ -625,12 +626,14 @@ rather than warning.
 all** ([ADR-0046](./docs/adr/0046-the-operator-owns-migrations.md)). There is no
 `migrations:generate` script, no shipped migration folder, no descriptor, no
 `db.migrate`, no root `drizzle.*.config.ts` — and therefore neither of the two hand-edits
-that a regeneration used to demand. What a component ships is its `schema.ts`, re-exported
-from a subpath of its own, `shared-agent-framework/<component>/schema`, below the one carrying
-its constructor (ADR-0055): `drizzle-kit`'s config takes **file paths and never objects**, so an
-export entry is the only supported way to hand a consumer a stable path into the package, and
-the alternative was an Operator writing `node_modules/shared-agent-framework/dist/...` against a
-layout this package never promised. A deployment lists the `/schema` specifiers of the
+that a regeneration used to demand. What a component ships is its schema module, on a subpath of
+its own, `shared-agent-framework/<component>/schema`, below the one carrying
+its constructor (ADR-0055): a deployment's barrel imports that specifier, and an `exports` entry is
+the only supported way to name anything inside a package, the alternative being an Operator writing
+`node_modules/shared-agent-framework/dist/...` against a layout this package never promised. **The
+reason used to be `drizzle-kit`'s config taking file paths and never objects, and that reason is
+gone** — the barrel below is what the tool globs, and it reaches this package through an ordinary
+ESM specifier. What holds the subpath up now is in ADR-0055's second amendment. A deployment lists the `/schema` specifiers of the
 components it runs in its own `drizzle.config.ts` and
 applies them with its own `drizzle-kit`: `push` to prototype, `generate` + `migrate` in
 production. **Every deployment writes a barrel, and the barrel is the only list.** ADR-0055 shipped
@@ -694,15 +697,19 @@ Conventions the build depends on:
 - **Every subpath is a directory with an `index.ts`, and there is no `src/index.ts`.**
   `shared-agent-framework/gateway` is `src/gateway/index.ts`, `/logging` is
   `src/logging/index.ts`, and the same shape holds for all twenty-three, a `/schema` subpath
-  included: `shared-agent-framework/users/schema` is `src/users/schema/index.ts`, one line
-  starring `../schema.ts`, and the declarations stay in `src/<component>/schema.ts` where the
-  component's own modules, `src/schemas.test.ts` and the reference extractors all read them
-  (ADR-0055). The package root exports
+  included: `shared-agent-framework/users/schema` is `src/users/schema/index.ts`, and the tables
+  are declared in it. **There was a door in front of it and there is not any more**: that file
+  used to be one line starring a `src/<component>/schema.ts` beside it, which cost every reader
+  two files where the other fifteen subpaths have one and was argued on a `drizzle-kit` interface
+  that a deployment's barrel stopped touching (ADR-0055, second amendment). So the component's own
+  modules, `src/schemas.test.ts` and the reference extractors all import that `index.ts`, and the
+  three that scan for a component owning tables scan for the `schema/` **directory**. The package
+  root exports
   nothing, so a module written at `src/index.ts` would ship and resolve to nowhere
   ([ADR-0051](./docs/adr/0051-the-package-root-exports-nothing.md)). A new subpath is a new
   directory, its `index.ts`, an `exports` entry, a block in `scripts/check-package.ts`, and
   documentation by exactly one generator — an entry point in `site/typedoc.jsonc`, or, for a
-  `/schema` subpath, the `src/<component>/schema.ts` a table page is written from. Two of those
+  `/schema` subpath, the `src/<component>/schema/` a table page is written from. Two of those
   four are enforced: `site/specifier-titles.mjs` holds `exports` against both generators both
   ways. There is no
   fifth any more, `tsconfig.json` having lost the `paths` that existed for one reader,
@@ -744,8 +751,8 @@ Conventions the build depends on:
   `src/**/*.test.ts` and `src/test-support/` are excluded from
   `tsconfig.build.json`, which the tarball check asserts.
 - **A component's tables are on the component's `/schema` subpath, and they must stay flat.**
-  `shared-agent-framework/<component>/schema` is the door an Operator's `drizzle-kit`
-  reads through (ADR-0046, ADR-0055), and that tool takes `Object.values` of the module and
+  `shared-agent-framework/<component>/schema` is the specifier a deployment's barrel stars
+  (ADR-0046, ADR-0055), and `drizzle-kit` takes `Object.values` of what it gets and
   keeps whatever passes `is(x, PgTable)` / `is(x, PgSchema)` — it never looks
   inside a plain object. So gathering the tables up as
   `export const tables = { users }` generates an **empty** migration and says
@@ -754,11 +761,11 @@ Conventions the build depends on:
   resolve and prove nothing. **No table is reachable two ways**, which is the other half of what
   that check asserts: a component subpath carries the constructor and the types and yields no
   table and no schema object at all. Three of the eleven do still re-export something from their
-  `schema.ts` — `/signals` carries `runStates` and `signalStates`, `/messenger`
+  schema module — `/signals` carries `runStates` and `signalStates`, `/messenger`
   `messageDirections`, `/scheduler` `scheduleKinds`, and each carries the union derived from its
   arrays. Eight names, each reachable from two specifiers, and no table among them: an array is
   what a column's check
-  constraint is compiled from, so it lives in `schema.ts`, and `SignalRecord.state`,
+  constraint is compiled from, so it lives in the schema module, and `SignalRecord.state`,
   `RunRecord.state`, `MessageRecord.direction` and `ScheduleRecord.kind` are declared with the
   unions and go out on the wire, so a reader of a record has to be able to name them. The overlap
   is **permanent**, recorded in ADR-0055 with the three ways of ending it that were declined, and
@@ -786,14 +793,14 @@ Conventions the build depends on:
   and while both existed a barrel carrying `/users` and `/password-auth` would have dropped the name
   from **both**. Nothing in `npm run check` would see it; `check:package` is a separate CI step, so
   a ninth component with a colliding table name passes the inner loop.
-- **Four schema modules import `src/users/schema.ts`, and there are six cross-schema
+- **Four schema modules import `src/users/schema/index.ts`, and there are six cross-schema
   foreign keys. Every one of them points at `saf_users.users.id` and nothing points back.**
-  `src/messenger/schema.ts` declares `messages.user_id`
+  `src/messenger/schema/index.ts` declares `messages.user_id`
   ([ADR-0036](./docs/adr/0036-the-http-messengers-user-id-is-a-foreign-key.md), ADR-0046);
-  `src/nostr-channel/schema.ts` declares `pubkeys.user_id` and `outbox.user_id` (ADR-0049);
-  `src/password-auth/schema.ts` declares `passwords.user_id` and `tokens.user_id` (ADR-0052);
-  and `src/nostr-auth/schema.ts` declares `grants.user_id` (ADR-0053). Counted from the
-  `references(() => users.id)` calls in `src/*/schema.ts`, which is where the number lives.
+  `src/nostr-channel/schema/index.ts` declares `pubkeys.user_id` and `outbox.user_id` (ADR-0049);
+  `src/password-auth/schema/index.ts` declares `passwords.user_id` and `tokens.user_id` (ADR-0052);
+  and `src/nostr-auth/schema/index.ts` declares `grants.user_id` (ADR-0053). Counted from the
+  `references(() => users.id)` calls in `src/*/schema/index.ts`, which is where the number lives.
   It was forbidden while each part generated a folder of its own,
   because the generator would emit the Users component's `CREATE TABLE` into the
   importing part's folder; with one generation graph it is the whole mechanism, and the

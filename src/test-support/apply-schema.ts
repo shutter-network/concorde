@@ -21,7 +21,7 @@ import type { Db } from "../db/index.ts";
 /**
  * A part's schema as `drizzle-kit` reads one: the module's exports, flat.
  *
- * `import * as users from "../users/schema.ts"` is the intended argument, and it is
+ * `import * as users from "../users/schema/index.ts"` is the intended argument, and it is
  * one module's own exports, which is what `drizzle-kit`'s loader requires per file
  * (ADR-0055). `drizzle-kit` takes `Object.values` and keeps whatever passes
  * `is(x, PgTable)` or `is(x, PgSchema)`, so the `<component>Tables` wrapper riding along

@@ -35,7 +35,7 @@ import type { UserRecord } from "../users/routes.ts";
 import type { Users } from "../users/users.ts";
 import { admitEvent, insertGrant, selectGrantFor } from "./grants.ts";
 import { checkNip98, nostrScheme } from "./nip98.ts";
-import { nostrAuthTables } from "./schema.ts";
+import { nostrAuthTables } from "./schema/index.ts";
 
 // NIP-98's own window, in milliseconds, and the default `windowMs` takes.
 const defaultWindowMs = 60_000;

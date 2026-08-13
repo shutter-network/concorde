@@ -26,7 +26,7 @@ import { defaultLogger, type Logger } from "../logging/logging.ts";
 import type { Prompt, Signal, SignalHandlers } from "./handlers.ts";
 import { agentReadRoutes } from "./routes.ts";
 import type { RunOutcome, RunPrompt, Runtime } from "./runtime.ts";
-import { runs, signals, signalsTables } from "./schema.ts";
+import { runs, signals, signalsTables } from "./schema/index.ts";
 
 /** What a Producer hands to {@link SignalWorker}'s `emit`. */
 export type EmittedSignal = {

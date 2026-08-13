@@ -25,8 +25,8 @@ import { createTestDatabase, type TestDatabase } from "../test-support/database.
 import { type FakeRuntime, fakeRuntime } from "../test-support/fake-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
 import type { Prompt, Signal, SignalHandler, SignalHandlers } from "./handlers.ts";
-import * as signalsSchema from "./schema.ts";
-import { signals } from "./schema.ts";
+import * as signalsSchema from "./schema/index.ts";
+import { signals } from "./schema/index.ts";
 import { templateHandler } from "./template-handler.ts";
 
 /**

@@ -25,10 +25,10 @@ import type { Logger } from "../logging/logging.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { nip98Header, type Signer, signer } from "../test-support/nip98-credentials.ts";
-import * as usersModule from "../users/schema.ts";
+import * as usersModule from "../users/schema/index.ts";
 import { createUsers, type Users } from "../users/users.ts";
 import { createNostrAuth, type NostrAuth } from "./nostr-auth.ts";
-import * as nostrAuthModule from "./schema.ts";
+import * as nostrAuthModule from "./schema/index.ts";
 
 const { admitted, grants, nostrAuthTables } = nostrAuthModule;
 

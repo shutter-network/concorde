@@ -34,8 +34,8 @@ import type { Db } from "../db/index.ts";
 import { serverComponent } from "../gateway/components.ts";
 import type { Logger } from "../logging/logging.ts";
 import { createMessenger, type Messenger } from "../messenger/messenger.ts";
-import * as messengerSchema from "../messenger/schema.ts";
-import * as signalsSchema from "../signals/schema.ts";
+import * as messengerSchema from "../messenger/schema/index.ts";
+import * as signalsSchema from "../signals/schema/index.ts";
 import { createSignalWorker, type SignalWorker } from "../signals/worker.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
@@ -47,10 +47,10 @@ import {
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import { directMessage } from "../test-support/nostr-envelopes.ts";
 import { waitUntil } from "../test-support/wait.ts";
-import * as usersSchema from "../users/schema.ts";
+import * as usersSchema from "../users/schema/index.ts";
 import { createUsers, type Users } from "../users/users.ts";
 import { createNostrChannel, type NostrChannel } from "./nostr-channel.ts";
-import * as nostrChannelSchema from "./schema.ts";
+import * as nostrChannelSchema from "./schema/index.ts";
 
 /** Where a server that is never started would have listened, had it been. */
 const nowhere = { port: 0, host: "127.0.0.1" } as const;

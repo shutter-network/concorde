@@ -18,7 +18,7 @@ import type { Component } from "../gateway/components.ts";
 import { type CursorWindow, limitSchema } from "../route-conventions.ts";
 import type { Signatures } from "../signatures/index.ts";
 import { agentDecisionRoutes, publicDecisionRoutes } from "./routes.ts";
-import { decisions, decisionsSchema, decisionsTables } from "./schema.ts";
+import { decisions, decisionsSchema, decisionsTables } from "./schema/index.ts";
 
 type DecisionsHandle = Handle<typeof decisionsTables>;
 

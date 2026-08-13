@@ -35,7 +35,7 @@ import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { type FakeAuth, fakeAuth } from "../test-support/fake-auth.ts";
 import type { UserRecord } from "./routes.ts";
-import * as usersSchema from "./schema.ts";
+import * as usersSchema from "./schema/index.ts";
 import { createUsers, type Users } from "./users.ts";
 
 let database: TestDatabase;

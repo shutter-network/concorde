@@ -36,12 +36,12 @@ import Fastify, { type FastifyInstance, type FastifyPluginAsync } from "fastify"
 import type { Db } from "../db/index.ts";
 import type { LogFields, Logger } from "../logging/logging.ts";
 import { createPasswordAuth } from "../password-auth/password-auth.ts";
-import * as passwordAuthSchema from "../password-auth/schema.ts";
+import * as passwordAuthSchema from "../password-auth/schema/index.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { type FakeAuth, fakeAuth } from "../test-support/fake-auth.ts";
 import type { UserRecord } from "../users/routes.ts";
-import * as usersSchema from "../users/schema.ts";
+import * as usersSchema from "../users/schema/index.ts";
 import { createUsers } from "../users/users.ts";
 import { NoAuthRegisteredError } from "./auth.ts";
 import { type ServerComponent, serverComponent } from "./components.ts";

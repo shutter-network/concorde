@@ -24,8 +24,8 @@ import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
 import type { SignalHandler, SignalHandlers } from "./handlers.ts";
 import type { Runtime } from "./runtime.ts";
-import * as signalsSchema from "./schema.ts";
-import { runs, signals } from "./schema.ts";
+import * as signalsSchema from "./schema/index.ts";
+import { runs, signals } from "./schema/index.ts";
 import { createSignalWorker, type SignalWorker, signalChannel } from "./worker.ts";
 
 let database: TestDatabase;

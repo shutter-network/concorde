@@ -20,7 +20,7 @@ import { CronExpressionParser } from "cron-parser";
 import { asc, eq, lte, sql } from "drizzle-orm";
 import { IANAZone } from "luxon";
 import type { Handle } from "../db/index.ts";
-import { type schedulerTables, schedules } from "./schema.ts";
+import { type schedulerTables, schedules } from "./schema/index.ts";
 
 type SchedulerHandle = Handle<typeof schedulerTables>;
 

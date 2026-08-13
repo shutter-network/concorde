@@ -77,7 +77,7 @@ import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 import type { Db } from "../db/index.ts";
 import { createDecisions, type DecisionRecord, type Decisions } from "../decisions/index.ts";
-import * as decisionsSchema from "../decisions/schema.ts";
+import * as decisionsSchema from "../decisions/schema/index.ts";
 import { createHttpChannel, type HttpChannel } from "../http-channel/index.ts";
 import type { Logger } from "../logging/logging.ts";
 import {
@@ -86,9 +86,9 @@ import {
   type Messenger,
   messageReceivedKind,
 } from "../messenger/index.ts";
-import * as messengerSchema from "../messenger/schema.ts";
+import * as messengerSchema from "../messenger/schema/index.ts";
 import { createPasswordAuth, type IssuedToken, type PasswordAuth } from "../password-auth/index.ts";
-import * as passwordAuthSchema from "../password-auth/schema.ts";
+import * as passwordAuthSchema from "../password-auth/schema/index.ts";
 import {
   createScheduler,
   type ScheduleFiredRecord,
@@ -96,16 +96,16 @@ import {
   type Scheduler,
   scheduleFiredKind,
 } from "../scheduler/index.ts";
-import * as schedulerSchema from "../scheduler/schema.ts";
+import * as schedulerSchema from "../scheduler/schema/index.ts";
 import type { RunRecord, SignalHandler, SignalRecord } from "../signals/index.ts";
-import * as signalsSchema from "../signals/schema.ts";
+import * as signalsSchema from "../signals/schema/index.ts";
 import { createSignatures, type Signatures } from "../signatures/index.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
 import { createUsers, type UserRecord, type Users } from "../users/index.ts";
-import * as usersSchema from "../users/schema.ts";
+import * as usersSchema from "../users/schema/index.ts";
 import type { Component, Gateway } from "./components.ts";
 import { createGateway, describedVersion, type InfraComponents } from "./gateway.ts";
 

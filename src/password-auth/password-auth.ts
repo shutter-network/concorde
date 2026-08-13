@@ -38,7 +38,7 @@ import type { FastifyInstance, preHandlerAsyncHookHandler } from "fastify";
 import type { Db, Handle } from "../db/index.ts";
 import type { Auth, AuthOutcome } from "../gateway/auth.ts";
 import type { UserRecord } from "../users/routes.ts";
-import { users } from "../users/schema.ts";
+import { users } from "../users/schema/index.ts";
 import type { Users } from "../users/users.ts";
 import {
   type Credentials,
@@ -48,7 +48,7 @@ import {
   passwordRoutes,
   presentedToken,
 } from "./routes.ts";
-import { passwordAuthTables, passwords, tokens } from "./schema.ts";
+import { passwordAuthTables, passwords, tokens } from "./schema/index.ts";
 import {
   checkedScryptParameters,
   defaultScryptParameters,

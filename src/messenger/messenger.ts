@@ -34,7 +34,7 @@ import {
   selectMessages,
 } from "./messages.ts";
 import { agentMessageRoutes } from "./routes.ts";
-import { messengerTables } from "./schema.ts";
+import { messengerTables } from "./schema/index.ts";
 
 // A constant and not an option: no prefix to configure and no plugin to register elsewhere, so an
 // Agent Implementation written for one deployment works against every other's.

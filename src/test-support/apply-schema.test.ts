@@ -17,8 +17,8 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import * as decisions from "../decisions/schema.ts";
-import * as users from "../users/schema.ts";
+import * as decisions from "../decisions/schema/index.ts";
+import * as users from "../users/schema/index.ts";
 import { applySchema } from "./apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "./database.ts";
 

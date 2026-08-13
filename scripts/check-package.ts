@@ -52,7 +52,7 @@
  *    `PATH` and the last step below runs it rather than looking for it.
  *  - **the eight `/schema` modules yield eight distinct schema objects and thirteen tables, and
  *    the eight component subpaths yield none of either.** That is the assertion the split exists
- *    for, and it is the one nothing else in the repository makes: a `schema.ts` re-exported from
+ *    for, and it is the one nothing else in the repository makes: a schema module re-exported from
  *    both places would put every table behind two specifiers, and a `/schema` module that stopped
  *    re-exporting one would leave the table queryable and absent from the DDL.
  *
@@ -121,7 +121,7 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
  * wrappers themselves are named too, which is what proves each resolves on its own specifier.
  *
  * **The state unions and the arrays behind them are on both subpaths**, and they are the only
- * names in the package that are. They live in `schema.ts` because the columns' check constraints
+ * names in the package that are. They live in the schema module because the columns' check
  * are compiled from the arrays, and a `SignalRecord`, a `RunRecord`, a `MessageRecord` and a
  * `ScheduleRecord` are declared with the unions and go out on the wire, so a reader of a record
  * reaches them off the component. No table is on both, which is the property that matters
@@ -281,12 +281,9 @@ try {
     // scratch project imports it below rather than at an Operator's first Signal.
     "dist/signals/template-handler.js",
     "dist/signals/template-handler.d.ts",
-    // Every component that owns tables ships two things for them: the declarations, which the
-    // component's own modules import, and the `schema/index.js` that re-exports them, which is
-    // what `./<component>/schema` in the export map names (ADR-0055). Both have to resolve, for
-    // Node and for an Operator's type checker (ADR-0046).
-    "dist/signals/schema.js",
-    "dist/signals/schema.d.ts",
+    // Every component that owns tables declares them in one module, which is both what the
+    // component's own modules import and what `./<component>/schema` in the export map names
+    // (ADR-0055). It has to resolve for Node and for an Operator's type checker (ADR-0046).
     "dist/signals/schema/index.js",
     "dist/signals/schema/index.d.ts",
     // The Signal Worker's Agent server routes: a Fastify plugin, and the only shipped
@@ -300,8 +297,6 @@ try {
     "dist/users/index.d.ts",
     "dist/users/routes.js",
     "dist/users/routes.d.ts",
-    "dist/users/schema.js",
-    "dist/users/schema.d.ts",
     "dist/users/schema/index.js",
     "dist/users/schema/index.d.ts",
     "dist/users/users.js",
@@ -317,8 +312,6 @@ try {
     "dist/password-auth/password-auth.d.ts",
     "dist/password-auth/routes.js",
     "dist/password-auth/routes.d.ts",
-    "dist/password-auth/schema.js",
-    "dist/password-auth/schema.d.ts",
     "dist/password-auth/schema/index.js",
     "dist/password-auth/schema/index.d.ts",
     "dist/password-auth/secrets.js",
@@ -336,8 +329,6 @@ try {
     "dist/nostr-auth/nip98.d.ts",
     "dist/nostr-auth/grants.js",
     "dist/nostr-auth/grants.d.ts",
-    "dist/nostr-auth/schema.js",
-    "dist/nostr-auth/schema.d.ts",
     "dist/nostr-auth/schema/index.js",
     "dist/nostr-auth/schema/index.d.ts",
     // The Messenger, under its own subpath. Its `schema.js` is where the foreign key
@@ -354,8 +345,6 @@ try {
     "dist/messenger/messages.d.ts",
     "dist/messenger/routes.js",
     "dist/messenger/routes.d.ts",
-    "dist/messenger/schema.js",
-    "dist/messenger/schema.d.ts",
     "dist/messenger/schema/index.js",
     "dist/messenger/schema/index.d.ts",
     // The HTTP Channel, under its own subpath and with **no schema module and no `/schema`
@@ -385,8 +374,6 @@ try {
     // inside the caller's transaction and the network act happens after it (ADR-0049).
     "dist/nostr-channel/outbound.js",
     "dist/nostr-channel/outbound.d.ts",
-    "dist/nostr-channel/schema.js",
-    "dist/nostr-channel/schema.d.ts",
     "dist/nostr-channel/schema/index.js",
     "dist/nostr-channel/schema/index.d.ts",
     // Signatures, under its own subpath and with **no schema module and no `/schema` entry**:
@@ -408,8 +395,6 @@ try {
     "dist/decisions/decisions.d.ts",
     "dist/decisions/routes.js",
     "dist/decisions/routes.d.ts",
-    "dist/decisions/schema.js",
-    "dist/decisions/schema.d.ts",
     "dist/decisions/schema/index.js",
     "dist/decisions/schema/index.d.ts",
     // The Scheduler, under its own subpath. It is the second Producer and the one part that
@@ -423,8 +408,6 @@ try {
     "dist/scheduler/schedules.d.ts",
     "dist/scheduler/routes.js",
     "dist/scheduler/routes.d.ts",
-    "dist/scheduler/schema.js",
-    "dist/scheduler/schema.d.ts",
     "dist/scheduler/schema/index.js",
     "dist/scheduler/schema/index.d.ts",
     // The `bin`, which is the one shipped module that is neither a subpath nor reached from one.
@@ -1925,7 +1908,7 @@ try {
         // very modules an Operator's `drizzle.config.ts` names (ADR-0046).
         //
         // The component subpath is read in the same loop and asked the opposite question. A
-        // `schema.ts` re-exported from both places is the mistake this catches, and it is a quiet
+        // schema module re-exported from both places is the mistake this catches, and it is a quiet
         // one: everything keeps working, every table is simply reachable two ways.
         "const owners = ['signals', 'users', 'password-auth', 'nostr-auth', 'messenger', 'nostr-channel', 'decisions', 'scheduler'];",
         "const wrapperNames = { signals: 'signalsTables', users: 'usersTables', 'password-auth': 'passwordAuthTables', 'nostr-auth': 'nostrAuthTables', messenger: 'messengerTables', 'nostr-channel': 'nostrChannelTables', decisions: 'decisionsTables', scheduler: 'schedulerTables' };",

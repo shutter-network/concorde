@@ -53,7 +53,7 @@ import {
   wireSize,
   wrapOf,
 } from "./outbound.ts";
-import { nostrChannelTables, received } from "./schema.ts";
+import { nostrChannelTables, received } from "./schema/index.ts";
 
 // Which Channel this is, fixed by its type and not an option: two Channels on one Messenger are
 // unconstructable anyway, so a name a Developer could set would only be a name they could get wrong.

@@ -29,14 +29,14 @@ import Fastify, { type FastifyInstance } from "fastify";
 import type { Db } from "../db/index.ts";
 import { type ServerComponent, serverComponent } from "../gateway/components.ts";
 import type { SignalRecord } from "../signals/routes.ts";
-import * as signalsSchema from "../signals/schema.ts";
+import * as signalsSchema from "../signals/schema/index.ts";
 import { createSignalWorker } from "../signals/worker.ts";
 import { createSignatures } from "../signatures/index.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import { createDecisions, type DecisionRecord } from "./decisions.ts";
-import * as decisionsSchema from "./schema.ts";
+import * as decisionsSchema from "./schema/index.ts";
 
 let database: TestDatabase;
 let db: Db;

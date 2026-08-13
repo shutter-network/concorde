@@ -15,15 +15,15 @@ import Fastify, { type FastifyInstance } from "fastify";
 import type { Db } from "../db/index.ts";
 import { type Component, serverComponent } from "../gateway/components.ts";
 import type { Logger } from "../logging/logging.ts";
-import * as signalsSchema from "../signals/schema.ts";
+import * as signalsSchema from "../signals/schema/index.ts";
 import { createSignalWorker, type SignalWorker } from "../signals/worker.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import { createScheduler } from "./scheduler.ts";
 import type { ScheduleRecord } from "./schedules.ts";
-import * as schedulerSchema from "./schema.ts";
-import { schedules } from "./schema.ts";
+import * as schedulerSchema from "./schema/index.ts";
+import { schedules } from "./schema/index.ts";
 
 let database: TestDatabase;
 let db: Db;

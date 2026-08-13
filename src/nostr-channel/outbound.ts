@@ -23,7 +23,7 @@
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import type { NostrEvent } from "nostr-tools/core";
 import type { Handle } from "../db/index.ts";
-import { type nostrChannelTables, outbox } from "./schema.ts";
+import { type nostrChannelTables, outbox } from "./schema/index.ts";
 
 // A handle typed to this component's own tables, and to no other's.
 type NostrHandle = Handle<typeof nostrChannelTables>;

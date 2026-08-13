@@ -38,7 +38,7 @@ import {
   signalStates,
   signals,
   type signalsTables,
-} from "./schema.ts";
+} from "./schema/index.ts";
 
 /** A handle typed to the Signal Worker's own tables, and to no other component's. */
 export type WorkerHandle = Handle<typeof signalsTables>;

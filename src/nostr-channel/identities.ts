@@ -14,7 +14,7 @@
 
 import { eq } from "drizzle-orm";
 import type { Handle } from "../db/index.ts";
-import { type nostrChannelTables, pubkeys } from "./schema.ts";
+import { type nostrChannelTables, pubkeys } from "./schema/index.ts";
 
 // A handle typed to this component's own tables, and to no other's.
 type NostrHandle = Handle<typeof nostrChannelTables>;

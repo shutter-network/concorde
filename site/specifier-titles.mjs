@@ -11,9 +11,9 @@
 // infrastructure subpaths, and `scripts/reference/render.ts`, whose table pages are the eight
 // `/schema` subpaths (ADR-0055). Every entry belongs to exactly one of them, and this fails the
 // generation on any disagreement in either direction: a TypeDoc module that is not an entry point,
-// an entry point that produced no module, a `/schema` entry with no `schema.ts` behind it to
-// render a table page from, a `schema.ts` with no `/schema` entry, and a `/schema` entry that
-// TypeDoc rendered a page for as well.
+// an entry point that produced no module, a `/schema` entry with no `schema/` directory behind it
+// to render a table page from, a `schema/` directory with no `/schema` entry, and a `/schema` entry
+// that TypeDoc rendered a page for as well.
 //
 // A `/schema` entry must not become a TypeDoc entry point, which is why it is documented by the
 // other generator rather than exempted here: `excludeExternals` empties drizzle's type parameter,
@@ -60,7 +60,7 @@ function specifiersByGenerator() {
 /**
  * The components that own tables, which is the set of pages the table renderer writes.
  *
- * Owning a `src/<component>/schema.ts` is what owning tables is, so the scan needs no exemption
+ * Owning a `src/<component>/schema/` is what owning tables is, so the scan needs no exemption
  * list for the components that legitimately own none. It is the same scan
  * `scripts/reference/schema-extraction.ts` holds its own module list against, and the same one
  * `src/schemas.test.ts` runs.
@@ -71,7 +71,7 @@ function componentsThatOwnTables() {
   const source = resolve(packageRoot, "src");
   return new Set(
     readdirSync(source, { recursive: true, withFileTypes: true })
-      .filter((entry) => entry.name === "schema.ts")
+      .filter((entry) => entry.isDirectory() && entry.name === "schema")
       .map((entry) => relative(source, entry.parentPath)),
   );
 }
@@ -114,7 +114,7 @@ export function load(app) {
     if (unrendered.length > 0) {
       throw new Error(
         `These entry points are in package.json exports and no generator documents them: ` +
-          `${unrendered.join(", ")}. A table page is written for every src/<component>/schema.ts, ` +
+          `${unrendered.join(", ")}. A table page is written for every src/<component>/schema/, ` +
           `and these have none.`,
       );
     }

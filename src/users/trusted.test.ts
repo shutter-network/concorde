@@ -33,11 +33,11 @@ import type { Db } from "../db/index.ts";
 import { type Component, serverComponent } from "../gateway/components.ts";
 import type { Logger } from "../logging/logging.ts";
 import { createSignalWorker, type SignalWorker } from "../signals/index.ts";
-import * as signalsSchema from "../signals/schema.ts";
+import * as signalsSchema from "../signals/schema/index.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import type { UserRecord } from "./routes.ts";
-import * as usersSchema from "./schema.ts";
+import * as usersSchema from "./schema/index.ts";
 import { createUsers, type Users } from "./users.ts";
 
 /** A well-formed id that names nobody, for the calls that must refuse one. */

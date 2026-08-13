@@ -28,7 +28,7 @@ import type { Db, Handle } from "../db/index.ts";
 import type { Component } from "../gateway/components.ts";
 import { limitSchema } from "../route-conventions.ts";
 import { agentUserRoutes, publicUserRoutes, type UserRecord } from "./routes.ts";
-import { users, usersTables } from "./schema.ts";
+import { users, usersTables } from "./schema/index.ts";
 
 type UsersHandle = Handle<typeof usersTables>;
 

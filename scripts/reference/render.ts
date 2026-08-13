@@ -14,7 +14,7 @@
  * imports that file statically.
  *
  * The pages are gitignored with the rest of `site/reference` and are never edited. A page is
- * changed by changing the `schema.ts` or the `routes.ts` it came from and regenerating.
+ * changed by changing the schema module or the `routes.ts` it came from and regenerating.
  */
 
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";

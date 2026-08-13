@@ -44,10 +44,10 @@ import { createTestDatabase, type TestDatabase } from "../test-support/database.
 import { type FakeAuth, fakeAuth } from "../test-support/fake-auth.ts";
 import { nip98Header, nip98Token, type Signer, signer } from "../test-support/nip98-credentials.ts";
 import type { UserRecord } from "../users/routes.ts";
-import * as usersSchema from "../users/schema.ts";
+import * as usersSchema from "../users/schema/index.ts";
 import { createUsers, type Users } from "../users/users.ts";
 import { createNostrAuth, type NostrAuth } from "./nostr-auth.ts";
-import * as nostrAuthSchema from "./schema.ts";
+import * as nostrAuthSchema from "./schema/index.ts";
 
 /** What the client thinks it is talking to, which is not what Fastify received. */
 const externalBaseUrl = "https://agent.example.invalid";
