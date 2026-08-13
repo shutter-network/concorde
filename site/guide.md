@@ -74,7 +74,7 @@ Write `tsconfig.json` beside it:
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["main.ts", "drizzle.config.ts"]
+  "include": ["main.ts", "drizzle.config.ts", "schema.ts"]
 }
 ```
 
@@ -319,45 +319,49 @@ See [Architecture: start order](./architecture#start-order).
 ## Step 7: Apply the database schema
 
 **The framework applies no DDL.** It ships schema definitions, and you apply them with your own
-`drizzle-kit`. Write `drizzle.config.ts`:
+`drizzle-kit`. It takes two files.
+
+A component's tables live on a `/schema` subpath of their own, one below the component. List the
+ones your deployment runs in a `schema.ts` of your own:
 
 ```ts
-import { createRequire } from "node:module";
+export * from "shared-agent-framework/messenger/schema";
+export * from "shared-agent-framework/password-auth/schema";
+export * from "shared-agent-framework/signals/schema";
+export * from "shared-agent-framework/users/schema";
+```
+
+This deployment names four for five: the HTTP Channel owns no tables, because it stores nothing
+and queues nothing. That file is the only place the list appears, and `drizzle.config.ts` points
+at it:
+
+```ts
 import { defineConfig } from "drizzle-kit";
 import { is } from "drizzle-orm";
 import { PgSchema } from "drizzle-orm/pg-core";
+import * as schema from "./schema.ts";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (databaseUrl === undefined) {
   throw new Error("set DATABASE_URL to the database this deployment applies its schema to");
 }
 
-const requireFrom = createRequire(import.meta.url);
-
-const specifiers = ["users", "password-auth", "messenger", "signals"].map(
-  (component) => `shared-agent-framework/${component}/schema`,
-);
-
-const schema = specifiers.map((specifier) => requireFrom.resolve(specifier));
-
-const schemaFilter = specifiers
-  .flatMap((specifier) => Object.values(requireFrom(specifier)))
-  .filter((exported) => is(exported, PgSchema))
-  .map((pgSchema) => pgSchema.schemaName);
-
 export default defineConfig({
   dialect: "postgresql",
-  schema,
-  schemaFilter,
+  schema: "./schema.ts",
+  schemaFilter: Object.values(schema)
+    .filter((exported) => is(exported, PgSchema))
+    .map((pgSchema) => pgSchema.schemaName),
   dbCredentials: { url: databaseUrl },
 });
 ```
 
-A component's tables live on a `/schema` subpath of their own, one below the component. You list
-the components your deployment runs. This deployment names four for five: the HTTP Channel owns
-no tables, because it stores nothing and queues nothing.
+`schemaFilter` is derived from the barrel rather than written out, so the list stays in one place.
+Every name a `/schema` subpath exports is unique across components, which is what makes one
+`export *` barrel safe: each schema object carries its component's name, `usersSchema` and
+`messengerSchema` and so on, and no two components declare a table under the same name.
 
-This file holds three traps. Each one fails quietly.
+These two files hold three traps. Each one fails quietly.
 
 ::: danger Never remove --force from the migrate command
 `drizzle-kit push` asks about a destructive statement on a terminal. A Compose one-shot has no
@@ -378,12 +382,6 @@ four components without
 creates.
 :::
 
-::: tip Why createRequire and not import.meta.resolve
-`drizzle-kit` reads this configuration by registering `tsx` and calling `require` on it. The file
-therefore runs as CommonJS, where `import.meta.resolve` is not a function. This shape looks like
-an old spelling. Do not modernize it.
-:::
-
 See [Architecture: data ownership](./architecture#data-ownership).
 
 ## Step 8: Write the container files
@@ -400,7 +398,7 @@ WORKDIR /app
 COPY package.json ./
 RUN npm install --no-audit --no-fund
 
-COPY main.ts drizzle.config.ts ./
+COPY main.ts drizzle.config.ts schema.ts ./
 
 CMD ["node", "main.ts"]
 ```
@@ -653,7 +651,7 @@ Now that one deployment works, each of these is a small change to `main.ts`:
 | Add a route of your own | Register a Fastify plugin on either server. |
 
 Remember two rules when you add a component. Add its `/schema` specifier to
-`drizzle.config.ts`, unless it owns no tables. Keep `shared-agent-framework/users/schema` in that
+`schema.ts`, unless it owns no tables. Keep `shared-agent-framework/users/schema` in that
 list whenever anything references it.
 
 ::: tip Every component is optional

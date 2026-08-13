@@ -48,7 +48,7 @@ import * as usersSchema from "../users/schema.ts";
 import { createUsers, type Users } from "../users/users.ts";
 import { createNostrChannel, type NostrChannel } from "./nostr-channel.ts";
 import * as nostrChannelSchema from "./schema.ts";
-import { outbox, tables } from "./schema.ts";
+import { nostrChannelTables, outbox } from "./schema.ts";
 
 /** Where a server that is never started would have listened, had it been. */
 const nowhere = { port: 0, host: "127.0.0.1" } as const;
@@ -155,7 +155,7 @@ function answer(messenger: Messenger, userId: string, text: string): Promise<Mes
  * the point of that test and must not become the next one's noise.
  */
 function queuedFor(userId: string): Promise<(typeof outbox.$inferSelect)[]> {
-  return db.handle(tables).select().from(outbox).where(eq(outbox.userId, userId));
+  return db.handle(nostrChannelTables).select().from(outbox).where(eq(outbox.userId, userId));
 }
 
 /**

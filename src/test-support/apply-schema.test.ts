@@ -27,7 +27,7 @@ describe("applySchema", () => {
     await onFreshDatabase("apply_schema_one", async ({ db }) => {
       await applySchema(db, users);
 
-      const handle = db.handle(users.tables);
+      const handle = db.handle(users.usersTables);
       const [written] = await handle
         .insert(users.users)
         .values({ attributes: { greeting: "hello" } })
@@ -44,7 +44,7 @@ describe("applySchema", () => {
     await onFreshDatabase("apply_schema_several", async ({ db }) => {
       await applySchema(db, users, decisions);
 
-      const handle = db.handle({ ...users.tables, ...decisions.tables });
+      const handle = db.handle({ ...users.usersTables, ...decisions.decisionsTables });
       const [user] = await handle.insert(users.users).values({}).returning();
       const [decision] = await handle
         .insert(decisions.decisions)

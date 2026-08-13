@@ -18,9 +18,9 @@ import type { Component } from "../gateway/components.ts";
 import { type CursorWindow, limitSchema } from "../route-conventions.ts";
 import type { Signatures } from "../signatures/index.ts";
 import { agentDecisionRoutes, publicDecisionRoutes } from "./routes.ts";
-import { decisions, schema, tables } from "./schema.ts";
+import { decisions, decisionsSchema, decisionsTables } from "./schema.ts";
 
-type DecisionsHandle = Handle<typeof tables>;
+type DecisionsHandle = Handle<typeof decisionsTables>;
 
 // A constant and not an option: no prefix to configure and no plugin to register elsewhere, so a
 // client written for one deployment's Decisions works against every other one.
@@ -155,7 +155,7 @@ export type Decisions = Component & {
  */
 export function createDecisions(options: DecisionsOptions): Decisions {
   // The Component's own handle, typed to its own tables. `pg` never leaves the Db.
-  const handle = options.db.handle(tables);
+  const handle = options.db.handle(decisionsTables);
 
   // One read, named once and given to both plugins. The agent's read and a User's read are the
   // same query with nothing to scope it by, and sharing one function is what keeps them from
@@ -264,7 +264,7 @@ async function publishDecision<TSchema extends Record<string, unknown>>(
 async function drawSeq<TSchema extends Record<string, unknown>>(
   tx: Handle<TSchema>,
 ): Promise<number> {
-  const table = `${schema.schemaName}.${getTableName(decisions)}`;
+  const table = `${decisionsSchema.schemaName}.${getTableName(decisions)}`;
   const [drawn] = await tx
     .select({
       seq: sql<number>`nextval(pg_get_serial_sequence(${table}, ${decisions.seq.name}))::int`,

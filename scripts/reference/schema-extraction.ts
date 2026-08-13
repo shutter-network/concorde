@@ -5,8 +5,8 @@
  * generator and the same code path that generates the Operator's migration
  * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)). It reads a module exactly
  * as an Operator's own run does, keeping the values that are tables and ignoring the rest, so the
- * `tables` wrapper beside them costs nothing and a page cannot disagree with the DDL that gets
- * applied. It connects to nothing: no database, no Docker, no network.
+ * `<component>Tables` wrapper beside them costs nothing and a page cannot disagree with the DDL
+ * that gets applied. It connects to nothing: no database, no Docker, no network.
  *
  * **One call per schema module, not one call for all of them.** A page is about one component,
  * and a per-module call is what makes the answer per component. A cross-schema foreign key still
@@ -186,7 +186,7 @@ export function extractSchemas(): SchemaExtraction {
       const { schemas, tables } = snapshot;
       const declaredSchemas = Object.keys(schemas);
       // Both of these are the wrapper trap in the shape this feature would meet it
-      // (ADR-0046): a table that retreated into the `tables` object is dropped by
+      // (ADR-0046): a table that retreated into the `<component>Tables` object is dropped by
       // `generateDrizzleJson` in silence, and the page for that component would render as
       // an honest, complete and empty page. A component with no tables has no page at all,
       // so the absence would look exactly like the intended thing.

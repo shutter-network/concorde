@@ -14,9 +14,9 @@ that both of them read. It shows:
 - **Signatures and Decisions are two components.** Signatures holds the key and signs
   anything; Decisions is the numbered, stored log that signs through it. An agent that only
   needs a receipt builds the first and not the second.
-- **Which components own tables.** `drizzle.config.ts` names five components for six.
-  Signatures owns none, because a Signed Statement is never kept. The HTTP Channel owns none,
-  because HTTP delivery is the User asking.
+- **Which components own tables.** `schema.ts` re-exports five components' `/schema` subpaths
+  for six components. Signatures owns none, because a Signed Statement is never kept. The HTTP
+  Channel owns none, because HTTP delivery is the User asking.
 
 ## Run it
 

@@ -3,7 +3,7 @@
 A Gateway whose only component is the Scheduler. It shows:
 
 - **Components are opt-in.** There is no Users component here, and no Messenger and no
-  Channel, because nothing in this deployment reaches a person. `drizzle.config.ts` names two
+  Channel, because nothing in this deployment reaches a person. `schema.ts` re-exports two
   components and no `users`, and that short list is correct rather than an omission: Users is
   what the Messenger, the Channels, Signatures and Decisions reference, and this deployment
   builds none of them.

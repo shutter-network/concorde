@@ -32,7 +32,7 @@ import {
  * `signals` is a plausible name for something an Operator already has. Not configurable: the tables
  * are compiled against this object, and the same object is what a generation reads.
  */
-export const schema = pgSchema("saf_signals");
+export const signalsSchema = pgSchema("saf_signals");
 
 /**
  * A Signal's processing state. One-way: nothing returns to `pending`, and a failed Signal is never
@@ -66,7 +66,7 @@ function stateIsKnown(column: PgColumn, states: readonly string[]): SQL {
  * Nothing deletes one. A Signal a Handler declined leaves a row behind exactly as a Signal that ran
  * does, which is what makes a refusal auditable afterwards.
  */
-export const signals = schema.table(
+export const signals = signalsSchema.table(
   "signals",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -104,7 +104,7 @@ export const signals = schema.table(
  * Session included, naming that one after the Run. The column stays nullable because rows written
  * before it did that still hold `null`.
  */
-export const runs = schema.table(
+export const runs = signalsSchema.table(
   "runs",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -128,4 +128,4 @@ export const runs = schema.table(
   ],
 );
 
-export const tables = { signals, runs };
+export const signalsTables = { signals, runs };

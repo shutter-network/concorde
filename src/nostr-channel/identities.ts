@@ -14,10 +14,10 @@
 
 import { eq } from "drizzle-orm";
 import type { Handle } from "../db/index.ts";
-import { pubkeys, type tables } from "./schema.ts";
+import { type nostrChannelTables, pubkeys } from "./schema.ts";
 
 // A handle typed to this component's own tables, and to no other's.
-type NostrHandle = Handle<typeof tables>;
+type NostrHandle = Handle<typeof nostrChannelTables>;
 
 // PostgreSQL's SQLSTATE for a unique violation: the key, or the User, is spoken for.
 const uniqueViolation = "23505";

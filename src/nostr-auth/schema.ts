@@ -34,7 +34,7 @@ import { users } from "../users/schema.ts";
  * configurable: the tables are compiled against this object, and the same object is what a
  * generation reads.
  */
-export const schema = pgSchema("saf_nostr_auth");
+export const nostrAuthSchema = pgSchema("saf_nostr_auth");
 
 /**
  * One row per Nostr public key that may act as a User over HTTP, and no row for one that may not.
@@ -46,7 +46,7 @@ export const schema = pgSchema("saf_nostr_auth");
  * cannot grant itself a User's identity. The cost is that nobody enrols themselves: a key nobody
  * recorded authenticates nothing, whatever it signs.
  */
-export const grants = schema.table(
+export const grants = nostrAuthSchema.table(
   "grants",
   {
     /**
@@ -98,7 +98,7 @@ export const grants = schema.table(
  * The table prunes itself in the transaction that writes it, so its size is a function of the
  * traffic in the last window rather than of the traffic ever.
  */
-export const admitted = schema.table(
+export const admitted = nostrAuthSchema.table(
   "admitted",
   {
     // The event's own id: 32 bytes as 64 lowercase hex characters.
@@ -121,4 +121,4 @@ export const admitted = schema.table(
   ],
 );
 
-export const tables = { grants, admitted };
+export const nostrAuthTables = { grants, admitted };

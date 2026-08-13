@@ -33,7 +33,7 @@ import { users } from "../users/schema.ts";
  * It was `saf_nostr` while this was the only component that spoke Nostr, so a deployment upgrading
  * across that split renames the schema.
  */
-export const schema = pgSchema("saf_nostr_channel");
+export const nostrChannelSchema = pgSchema("saf_nostr_channel");
 
 /**
  * Which Nostr public key belongs to which User, and the whole of admission over this medium.
@@ -47,7 +47,7 @@ export const schema = pgSchema("saf_nostr_channel");
  * recorded cannot be claimed by a second User, which is what stops one person's key becoming a
  * second person's inbox.
  */
-export const pubkeys = schema.table("pubkeys", {
+export const pubkeys = nostrChannelSchema.table("pubkeys", {
   /**
    * The User this key speaks for. The primary key, so one User holds one Nostr key.
    *
@@ -93,7 +93,7 @@ export const pubkeys = schema.table("pubkeys", {
  * that envelope is harmlessly re-dropped on every connect. The table is therefore the same order of
  * magnitude as the Message log, and nothing prunes it.
  */
-export const received = schema.table("received", {
+export const received = nostrChannelSchema.table("received", {
   // The gift wrap's own event id: 32 bytes as 64 lowercase hex characters.
   eventId: text("event_id").primaryKey(),
   // When this Gateway admitted it, which is not the timestamp the wrap carried.
@@ -117,7 +117,7 @@ export const received = schema.table("received", {
  * So `select * from saf_nostr_channel.outbox where reason is not null` is the whole answer to "why
  * did she not get it", and it needs no API.
  */
-export const outbox = schema.table("outbox", {
+export const outbox = nostrChannelSchema.table("outbox", {
   /**
    * The gift wrap's own event id: 32 bytes as 64 lowercase hex characters.
    *
@@ -178,4 +178,4 @@ export const outbox = schema.table("outbox", {
   failedAt: timestamp("failed_at", { withTimezone: true }),
 });
 
-export const tables = { pubkeys, received, outbox };
+export const nostrChannelTables = { pubkeys, received, outbox };

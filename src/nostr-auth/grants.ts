@@ -23,10 +23,10 @@
 
 import { eq, lt, sql } from "drizzle-orm";
 import type { Handle } from "../db/index.ts";
-import { admitted, grants, type tables } from "./schema.ts";
+import { admitted, grants, type nostrAuthTables } from "./schema.ts";
 
 // A handle typed to this component's own tables, and to no other's.
-type NostrAuthHandle = Handle<typeof tables>;
+type NostrAuthHandle = Handle<typeof nostrAuthTables>;
 
 // PostgreSQL's SQLSTATE for a unique violation: that key is already granted.
 const uniqueViolation = "23505";

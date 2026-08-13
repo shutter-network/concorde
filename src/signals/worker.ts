@@ -26,7 +26,7 @@ import { defaultLogger, type Logger } from "../logging/logging.ts";
 import type { Prompt, Signal, SignalHandlers } from "./handlers.ts";
 import { agentReadRoutes } from "./routes.ts";
 import type { RunOutcome, RunPrompt, Runtime } from "./runtime.ts";
-import { runs, signals, tables } from "./schema.ts";
+import { runs, signals, signalsTables } from "./schema.ts";
 
 /** What a Producer hands to {@link SignalWorker}'s `emit`. */
 export type EmittedSignal = {
@@ -217,7 +217,7 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   const sweepIntervalMs = options.sweepIntervalMs ?? defaultSweepIntervalMs;
 
   // The Signal Worker's own handle, typed to its own schema. `pg` never leaves the Db.
-  const handle = options.db.handle(tables);
+  const handle = options.db.handle(signalsTables);
 
   // The one act of wiring, here so that an Operator's entry point does not do it.
   const agentRoutes = agentReadRoutes(handle);

@@ -23,10 +23,10 @@
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import type { NostrEvent } from "nostr-tools/core";
 import type { Handle } from "../db/index.ts";
-import { outbox, type tables } from "./schema.ts";
+import { type nostrChannelTables, outbox } from "./schema.ts";
 
 // A handle typed to this component's own tables, and to no other's.
-type NostrHandle = Handle<typeof tables>;
+type NostrHandle = Handle<typeof nostrChannelTables>;
 
 // The PostgreSQL notification channel a queued wrap announces itself on, and the one the Channel
 // listens on. Prefixed for the reason the schema is, notification channels being per database. Not

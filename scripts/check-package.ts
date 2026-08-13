@@ -89,10 +89,15 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
  * at the top carry what the root used to, and the last step in this script is what proves the root
  * itself resolves to nothing.
  *
- * **Every `/schema` line aliases what it imports**, and that is the shape rather than an
- * inconvenience: eight modules each export a `schema` and a `tables`, so a file naming two of them
- * says which is which at the import site. The prefixes those names used to carry existed to
- * survive an `export *` barrel and there is no barrel any more (ADR-0055).
+ * **No `/schema` line aliases anything, and the absence is the assertion.** Every name off every
+ * `/schema` specifier lands in this one module scope under the name the package gives it, which is
+ * what a deployment's own `schema.ts` barrel does with `export *`. Two components declaring one
+ * name is therefore a `Duplicate identifier` from `tsc` and an `Identifier has already been
+ * declared` from Node, naming both import lines — the only place anything in this repository
+ * checks that (ADR-0055). The two names every schema module declares carry a component prefix so
+ * that they cannot collide; the thirteen table names carry none, and this file is what holds them
+ * apart. **An alias added to a line below removes the check for that name.** Reach for a rename in
+ * the package instead.
  *
  * The four infrastructure lines own no tables. `/gateway` carries the two assembly constructors
  * and the server adapter, `/logging` the default Logger, `/db` the one call that opens a pool, and
@@ -111,8 +116,9 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
  * it is caught there too, so every exported error class is now reached through an `instanceof`
  * rather than only imported.
  * Every table is named individually rather than pulled in as a namespace, because naming them is
- * what proves the module flat-exports them: a table that had retreated into `tables` would
- * fail to import here, where an `import * as` would resolve and say nothing (ADR-0046).
+ * what proves the module flat-exports them: a table that had retreated into `<component>Tables`
+ * would fail to import here, where an `import * as` would resolve and say nothing (ADR-0046). The
+ * wrappers themselves are named too, which is what proves each resolves on its own specifier.
  *
  * **The state unions and the arrays behind them are on both subpaths**, and they are the only
  * names in the package that are. They live in `schema.ts` because the columns' check constraints
@@ -131,24 +137,24 @@ const consumerImports = [
   'import { createBareGateway, createGateway, NoAuthRegisteredError, serverComponent } from "shared-agent-framework/gateway";',
   'import { defaultLogger } from "shared-agent-framework/logging";',
   'import { createSignalWorker, runStates, signalStates, templateHandler } from "shared-agent-framework/signals";',
-  'import { runs as runsTable, schema as signalsSchema, signals as signalsTable } from "shared-agent-framework/signals/schema";',
+  'import { runs, signals, signalsSchema, signalsTables } from "shared-agent-framework/signals/schema";',
   'import { createPiRuntime, interpretPiOutput, piRun } from "shared-agent-framework/pi";',
   'import { createUsers } from "shared-agent-framework/users";',
-  'import { schema as usersSchema, users as usersTable } from "shared-agent-framework/users/schema";',
+  'import { users, usersSchema, usersTables } from "shared-agent-framework/users/schema";',
   'import { createPasswordAuth } from "shared-agent-framework/password-auth";',
-  'import { passwords as passwordsTable, schema as passwordAuthSchema, tokens as tokensTable } from "shared-agent-framework/password-auth/schema";',
+  'import { passwordAuthSchema, passwordAuthTables, passwords, tokens } from "shared-agent-framework/password-auth/schema";',
   'import { createNostrAuth } from "shared-agent-framework/nostr-auth";',
-  'import { admitted as admittedTable, grants as grantsTable, schema as nostrAuthSchema } from "shared-agent-framework/nostr-auth/schema";',
+  'import { admitted, grants, nostrAuthSchema, nostrAuthTables } from "shared-agent-framework/nostr-auth/schema";',
   'import { createMessenger, messageDirections, messageReceivedKind } from "shared-agent-framework/messenger";',
-  'import { messages as messagesTable, schema as messengerSchema } from "shared-agent-framework/messenger/schema";',
+  'import { messages, messengerSchema, messengerTables } from "shared-agent-framework/messenger/schema";',
   'import { createHttpChannel } from "shared-agent-framework/http-channel";',
   'import { createNostrChannel, MalformedPublicKeyError, MessageTooLargeError, NoSuchUserError, PublicKeyConflictError, UnrecordedPublicKeyError } from "shared-agent-framework/nostr-channel";',
-  'import { outbox as outboxTable, pubkeys as pubkeysTable, received as receivedTable, schema as nostrChannelSchema } from "shared-agent-framework/nostr-channel/schema";',
+  'import { nostrChannelSchema, nostrChannelTables, outbox, pubkeys, received } from "shared-agent-framework/nostr-channel/schema";',
   'import { createSignatures } from "shared-agent-framework/signatures";',
   'import { createDecisions } from "shared-agent-framework/decisions";',
-  'import { decisions as decisionsTable, schema as decisionsSchema } from "shared-agent-framework/decisions/schema";',
+  'import { decisions, decisionsSchema, decisionsTables } from "shared-agent-framework/decisions/schema";',
   'import { createScheduler, scheduleFiredKind, scheduleKinds, ScheduleSpecError } from "shared-agent-framework/scheduler";',
-  'import { schedules as schedulesTable, schema as schedulerSchema } from "shared-agent-framework/scheduler/schema";',
+  'import { schedulerSchema, schedulerTables, schedules } from "shared-agent-framework/scheduler/schema";',
 ];
 
 function run(command: string, args: string[], cwd: string): string {
@@ -814,18 +820,28 @@ try {
       "// opens and ADR-0055 puts one level below the component so that a config can name it as a",
       "// path. Each table is imported by name at the top of this file rather than as a namespace,",
       "// which is what states the shape: `drizzle-kit` reads `Object.values` of a module and keeps",
-      "// what passes `is(x, PgTable)`, so a table that had retreated into the `tables` wrapper",
-      "// would be dropped in silence and generate an empty migration. Annotated as the two Drizzle",
-      "// types the exporter actually filters on, so a component that stopped exporting a table",
-      "// fails here rather than at an Operator's first `generate`.",
+      "// what passes `is(x, PgTable)`, so a table that had retreated into a `<component>Tables`",
+      "// wrapper would be dropped in silence and generate an empty migration. Annotated as the two",
+      "// Drizzle types the exporter actually filters on, so a component that stopped exporting a",
+      "// table fails here rather than at an Operator's first `generate`. Nothing here is aliased:",
+      "// thirteen table names in one scope is a deployment's own barrel, and a fourteenth colliding",
+      "// with one of them is a compile error rather than a table missing from the DDL.",
       "export const partTables: readonly PgTable[] = [",
-      "  signalsTable, runsTable, usersTable, passwordsTable, tokensTable,",
-      "  grantsTable, admittedTable,",
-      "  messagesTable, pubkeysTable, receivedTable, outboxTable, decisionsTable, schedulesTable,",
+      "  signals, runs, users, passwords, tokens,",
+      "  grants, admitted,",
+      "  messages, pubkeys, received, outbox, decisions, schedules,",
       "];",
       "export const partSchemas: readonly PgSchema[] = [",
       "  signalsSchema, usersSchema, passwordAuthSchema, nostrAuthSchema, messengerSchema,",
       "  nostrChannelSchema, decisionsSchema, schedulerSchema,",
+      "];",
+      "",
+      "// The wrappers `db.handle` takes, named so that each is proven to resolve on its own",
+      "// specifier. Not a `PgTable[]`: `drizzle-kit` never looks inside a plain object, which is why",
+      "// the flat exports above are the migratable surface and these are a convenience for a caller.",
+      "export const partTableWrappers: readonly Record<string, PgTable>[] = [",
+      "  signalsTables, usersTables, passwordAuthTables, nostrAuthTables, messengerTables,",
+      "  nostrChannelTables, decisionsTables, schedulerTables,",
       "];",
       "",
       "// The consequence the ADR records rather than mitigates: an exported table object is",
@@ -834,9 +850,9 @@ try {
       "// renamed out from under an Operator fails here.",
       "export async function readMessages(): Promise<{ seq: number; text: string }[]> {",
       "  return db",
-      "    .handle({ messages: messagesTable })",
-      "    .select({ seq: messagesTable.seq, text: messagesTable.text })",
-      "    .from(messagesTable);",
+      "    .handle({ messages })",
+      "    .select({ seq: messages.seq, text: messages.text })",
+      "    .from(messages);",
       "}",
       "",
       "// The cross-part shape: widens the schema parameter, so a handle typed to",
@@ -920,8 +936,8 @@ try {
       "// `tokenTtl` and no `scrypt`: it holds nothing a person presents, so there is no cost to",
       "// name and no lifetime to choose (ADR-0052).",
       "const usersOptions: UsersOptions = { db, publicServer: publicComponent };",
-      "export const users: Users = createUsers(usersOptions);",
-      "const userRoutes: FastifyPluginAsync = users.agentRoutes;",
+      "export const usersComponent: Users = createUsers(usersOptions);",
+      "const userRoutes: FastifyPluginAsync = usersComponent.agentRoutes;",
       "// There is no matching plugin for `GET /users/me`: that route takes the Public server's own",
       "// composed hook, so a plugin built without a server would have nothing to authenticate with.",
       "",
@@ -934,7 +950,7 @@ try {
       "// the parameters it was written under and this one is only what new ones get.",
       "const passwordCost: ScryptParameters = { logN: 15, blockSize: 8, parallelism: 3 };",
       "const passwordAuthOptions: PasswordAuthOptions = {",
-      "  db, users, publicServer: publicComponent,",
+      "  db, users: usersComponent, publicServer: publicComponent,",
       "  tokenTtl: 30 * 24 * 60 * 60 * 1000, scrypt: passwordCost,",
       "};",
       "export const passwordAuth: PasswordAuth = createPasswordAuth(passwordAuthOptions);",
@@ -947,7 +963,7 @@ try {
       "// plugin to hold and nothing under a prefix (ADR-0053). The base URL is what a client typed",
       "// rather than what a proxy forwarded, which is why it is stated here and never inferred.",
       "const nostrAuthOptions: NostrAuthOptions = {",
-      "  db, users, publicServer: publicComponent,",
+      "  db, users: usersComponent, publicServer: publicComponent,",
       '  externalBaseUrl: "https://agent.example.invalid", windowMs: 60_000,',
       "};",
       "export const nostrAuth: NostrAuth = createNostrAuth(nostrAuthOptions);",
@@ -978,7 +994,7 @@ try {
       "  async authenticate(request): Promise<AuthOutcome> {",
       "    const presented: string | undefined = request.headers.authorization;",
       '    if (presented === undefined) return { kind: "absent" };',
-      "    const who: UserRecord | undefined = await users.get(presented);",
+      "    const who: UserRecord | undefined = await usersComponent.get(presented);",
       "    return who === undefined",
       '      ? { kind: "refused", code: "invalid_token", detail: "the id named no User" }',
       '      : { kind: "authenticated", user: who };',
@@ -1097,7 +1113,7 @@ try {
       "// (ADR-0036, ADR-0046). The server option is satisfied by what `serverComponent`",
       "// returned, as every other part's is.",
       "const messengerOptions: MessengerOptions = {",
-      "  db, users, worker, agentServer: agentComponent,",
+      "  db, users: usersComponent, worker, agentServer: agentComponent,",
       "};",
       "// Annotated, and what it carries is three methods and no route plugin: the departure from",
       "// ADR-0032's door-out pattern that ADR-0034 states. `send` and `history` are used in",
@@ -1123,10 +1139,10 @@ try {
       "const nostrAgentComponent: Component & { readonly fastify: FastifyInstance } =",
       '  serverComponent(nostrAgentServer, { port: 7412, host: "localhost" });',
       "export const nostrMessenger: Messenger = createMessenger({",
-      "  db, users, worker, agentServer: nostrAgentComponent,",
+      "  db, users: usersComponent, worker, agentServer: nostrAgentComponent,",
       "});",
       "const nostrChannelOptions: NostrChannelOptions = {",
-      "  db, messenger: nostrMessenger, users,",
+      "  db, messenger: nostrMessenger, users: usersComponent,",
       "  secretKey: new Uint8Array(32).fill(1),",
       '  relayUrl: "wss://relay.example.invalid",',
       "  logger: log,",
@@ -1188,7 +1204,7 @@ try {
       "const decisionsOptions: DecisionsOptions = {",
       "  db, signatures, publicServer: publicComponent, agentServer: agentComponent,",
       "};",
-      "export const decisions: Decisions = createDecisions(decisionsOptions);",
+      "export const decisionsComponent: Decisions = createDecisions(decisionsOptions);",
       "// The one shape every surface of that part answers with, annotated so a field that went",
       "// missing from the declaration fails here. `jws` is not optional and never will be: the",
       "// number is drawn before the signature precisely so that the column can be NOT NULL.",
@@ -1528,15 +1544,15 @@ try {
       '  await publicServer.register(authenticatedRoutes, { prefix: "/me" });',
       "  // A User admitted from trusted code, in a transaction of the consumer's own:",
       "  // the write takes it first, and the reads take none (ADR-0023).",
-      "  const admitted: UserRecord = await db.tx((tx: Transaction) => users.create(tx));",
-      "  const sameUser: UserRecord | undefined = await users.get(admitted.id);",
-      "  const everyone: UserRecord[] = await users.list({ limit: 10 });",
+      "  const admitted: UserRecord = await db.tx((tx: Transaction) => usersComponent.create(tx));",
+      "  const sameUser: UserRecord | undefined = await usersComponent.get(admitted.id);",
+      "  const everyone: UserRecord[] = await usersComponent.list({ limit: 10 });",
       "  // Where authorization is written. It is a method and not a route, reachable from a Signal",
       "  // Handler and from an entry point, both of them trusted code (ADR-0009, ADR-0020), and",
       "  // nothing an injected prompt can call (ADR-0029). It takes the transaction first, so a",
       "  // grant and whatever the consumer records about it commit together or not at all.",
       "  await db.tx(async (tx: Transaction) => {",
-      '    await users.setAttributes(tx, admitted.id, { role: "operator", groups: ["support"] });',
+      '    await usersComponent.setAttributes(tx, admitted.id, { role: "operator", groups: ["support"] });',
       "  });",
       "  // Password Auth's three trusted-code methods, and the same split for the same reason: each",
       "  // takes the caller's transaction, so creating a User and giving them a credential cannot",
@@ -1544,7 +1560,7 @@ try {
       "  // `issueToken` mints for a User who presented nothing; `revoke` is the only way a credential",
       "  // stops working before it expires. None of the three has a route (ADR-0052).",
       "  const credentialled: IssuedToken = await db.tx(async (tx: Transaction) => {",
-      "    const person: UserRecord = await users.create(tx);",
+      "    const person: UserRecord = await usersComponent.create(tx);",
       '    await passwordAuth.setPassword(tx, person.id, "chosen by the Operator, proving nothing");',
       "    return passwordAuth.issueToken(tx, person.id);",
       "  });",
@@ -1622,10 +1638,10 @@ try {
       "  // components' logs are asked the same question, and its `limit` is past the routes' cap",
       "  // on purpose here for the same reason it was there.",
       "  const decided: DecisionRecord = await db.tx((tx: Transaction) =>",
-      '    decisions.publish(tx, "we will honour the terms as written"),',
+      '    decisionsComponent.publish(tx, "we will honour the terms as written"),',
       "  );",
-      "  const everything: DecisionRecord[] = await decisions.history(page);",
-      "  const newest: DecisionRecord[] = await decisions.history();",
+      "  const everything: DecisionRecord[] = await decisionsComponent.history(page);",
+      "  const newest: DecisionRecord[] = await decisionsComponent.history();",
       '  shipped.info({ decided: decided.seq, log: everything.length, page: newest.length }, "a Decision is on the record");',
       "  // The Scheduler's three management methods, and the one error class it exports. A spec that",
       "  // resolves to no fire is refused before anything is persisted, and an Operator branches on",
@@ -1653,8 +1669,8 @@ try {
       "  // producing before the drain, and last in the record is what buys that. Nothing in the",
       "  // framework checks any of it.",
       "  const gateway = createBareGateway({",
-      "    db, agentServer: agentComponent, publicServer: publicComponent, users, passwordAuth,",
-      "    nostrAuth, signatures, decisions, messenger, httpChannel, nostrMessenger, nostrChannel,",
+      "    db, agentServer: agentComponent, publicServer: publicComponent, users: usersComponent, passwordAuth,",
+      "    nostrAuth, signatures, decisions: decisionsComponent, messenger, httpChannel, nostrMessenger, nostrChannel,",
       "    worker: workerComponent, ownLoop,",
       "  });",
       "  // The record comes back with its types intact, so a part is reached by the key it was",
@@ -1820,7 +1836,7 @@ try {
         "const nostrChannel = createNostrChannel({ db: scratch, messenger: nostrMessenger, users: directory, secretKey: new Uint8Array(32).fill(1), relayUrl: 'wss://relay.example.invalid', logger: quiet });",
         "const signaturesComponent = serverComponent(signaturesServer, { port: 0 });",
         "const signatures = createSignatures({ signingKey: generateKeyPairSync('ed25519').privateKey, publicServer: signaturesComponent, agentServer: { fastify: Fastify() }, logger: quiet });",
-        "const decisions = createDecisions({ db: scratch, signatures, publicServer: signaturesComponent, agentServer: { fastify: Fastify() } });",
+        "const decisionsComponent = createDecisions({ db: scratch, signatures, publicServer: signaturesComponent, agentServer: { fastify: Fastify() } });",
         // The Scheduler, constructed the way an Operator constructs it: the Db, the Signal Worker it
         // emits into, and an Agent server for its routes. Nothing connects and nothing listens — what
         // this proves is that the `/scheduler` subpath resolves at runtime from the installed package,
@@ -1899,8 +1915,11 @@ try {
         // `drizzle-kit`'s `prepareFromPgImports`, reproduced: it requires **each listed file on
         // its own** and concatenates what comes back, and what it keeps out of one is
         // `Object.values` filtered by `is(x, PgTable)` and `is(x, PgSchema)`, with **no recursion
-        // into a plain object**. There is no merge anywhere in that pipeline, which is the whole
-        // reason the schema objects lost their prefixes (ADR-0055). `drizzle-kit` itself is not
+        // into a plain object**. There is no merge in that pipeline, but there is one upstream of
+        // it: a deployment's own `schema.ts` `export *`s these modules into a single namespace, and
+        // that is what the schema objects and the wrappers carry a component prefix for (ADR-0055).
+        // The un-aliased imports at the top of this file are where the collision is caught, since a
+        // name declared twice never reaches this loop. `drizzle-kit` itself is not
         // installed here and should not be — it is a development tool, and this is a consumer's
         // runtime tree — so what runs is the collection rule rather than the tool, against the
         // very modules an Operator's `drizzle.config.ts` names (ADR-0046).
@@ -1909,9 +1928,11 @@ try {
         // `schema.ts` re-exported from both places is the mistake this catches, and it is a quiet
         // one: everything keeps working, every table is simply reachable two ways.
         "const owners = ['signals', 'users', 'password-auth', 'nostr-auth', 'messenger', 'nostr-channel', 'decisions', 'scheduler'];",
+        "const wrapperNames = { signals: 'signalsTables', users: 'usersTables', 'password-auth': 'passwordAuthTables', 'nostr-auth': 'nostrAuthTables', messenger: 'messengerTables', 'nostr-channel': 'nostrChannelTables', decisions: 'decisionsTables', scheduler: 'schedulerTables' };",
         "const collectedTables = [];",
         "const collectedSchemas = [];",
         "const wrappersSeen = [];",
+        "const wrappersPresent = [];",
         "const stillOnTheComponent = [];",
         "for (const owner of owners) {",
         "  const onSchema = await import('shared-agent-framework/' + owner + '/schema');",
@@ -1920,18 +1941,23 @@ try {
         "    if (is(value, PgSchema)) collectedSchemas.push(value);",
         "  }",
         // And the failure the flat shape exists to avoid, demonstrated rather than argued: the
-        // `tables` wrapper `db.handle` takes rides along in every one of these modules and the
-        // exporter sees none of them. A schema module that exported only its wrapper would collect
-        // zero tables and generate an empty migration in silence.
-        "  if (is(onSchema.tables, PgTable) || is(onSchema.tables, PgSchema)) wrappersSeen.push(owner);",
+        // `<component>Tables` wrapper `db.handle` takes rides along in every one of these modules
+        // and the exporter sees none of them. A schema module that exported only its wrapper would
+        // collect zero tables and generate an empty migration in silence. Presence is asked
+        // separately, because a wrapper that stopped being exported is invisible to a rule whose
+        // whole point is that it ignores wrappers.
+        "  const wrapper = onSchema[wrapperNames[owner]];",
+        "  if (wrapper !== undefined && Object.values(wrapper).every((value) => is(value, PgTable))) wrappersPresent.push(owner);",
+        "  if (is(wrapper, PgTable) || is(wrapper, PgSchema)) wrappersSeen.push(owner);",
         "  const onComponent = await import('shared-agent-framework/' + owner);",
         "  for (const value of Object.values(onComponent)) {",
         "    if (is(value, PgTable) || is(value, PgSchema)) stillOnTheComponent.push(owner);",
         "  }",
         "}",
-        // Eight distinct schema objects, one per module. It was eight distinct *names* on one
-        // barrel until this release, which is a question that no longer exists: the names are all
-        // `schema` now and nothing merges them.
+        // Eight distinct schema objects, one per module, under eight distinct names. The names
+        // matter again: a deployment `export *`s these modules into one `schema.ts`, and eight
+        // exports called `schema` left one survivor and seven schemas with no `CREATE` behind them
+        // (ADR-0055).
         "const distinctSchemas = new Set(collectedSchemas).size + ' of ' + collectedSchemas.length + ' distinct';",
         "const schemaNames = collectedSchemas.map((value) => value.schemaName).sort();",
         // And the property the export entries exist for at all: each specifier resolves to a
@@ -1943,7 +1969,7 @@ try {
         // because the module that used to hold one is gone from the package, and the
         // composed command line names no file for the agent to read either — the
         // Operator's `AGENTS.md` above is a mount and `pi` discovers it (ADR-0025).
-        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), mountArgs[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersSchema.schemaName, String(Object.keys(directory).sort()), 'password auth ' + passwordAuth.scheme + ' ' + String(Object.keys(passwordAuth).sort()) + ' in ' + passwordAuthSchema.schemaName, 'nostr auth ' + nostrAuth.scheme + ' ' + String(Object.keys(nostrAuth).sort()) + ' in ' + nostrAuthSchema.schemaName, messengerSchema.schemaName, String(Object.keys(messenger).sort()), 'channel ' + httpChannel.name + ' ' + String(Object.keys(httpChannel).sort()), 'channel ' + nostrChannel.name + ' ' + String(Object.keys(nostrChannel).sort()) + ' as ' + nostrChannel.publicKey + ' in ' + nostrChannelSchema.schemaName, messageReceivedKind, decisionsSchema.schemaName, String(Object.keys(signatures).sort()), String(Object.keys(decisions).sort()), jws.split('.').length + ' segments, ' + Buffer.from(jwsSignature, 'base64url').length + ' signature bytes, verified ' + checked + ', private member ' + Object.hasOwn(keySet.keys[0], 'd'), String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(','), 'cron ' + cronNext + ' zone ' + zoneKnown, 'scheduler ' + String(Object.keys(scheduler).sort()) + ' fires ' + scheduleFiredKind + ' in ' + schedulerSchema.schemaName, 'tables ' + collectedTables.sort().join(' ') + ' in ' + schemaNames.join(' ') + ', wrappers seen ' + wrappersSeen.length, 'schemas ' + distinctSchemas + ', on a component subpath ' + stillOnTheComponent.length + ', resolving to files ' + resolvesToFiles];",
+        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), mountArgs[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersSchema.schemaName, String(Object.keys(directory).sort()), 'password auth ' + passwordAuth.scheme + ' ' + String(Object.keys(passwordAuth).sort()) + ' in ' + passwordAuthSchema.schemaName, 'nostr auth ' + nostrAuth.scheme + ' ' + String(Object.keys(nostrAuth).sort()) + ' in ' + nostrAuthSchema.schemaName, messengerSchema.schemaName, String(Object.keys(messenger).sort()), 'channel ' + httpChannel.name + ' ' + String(Object.keys(httpChannel).sort()), 'channel ' + nostrChannel.name + ' ' + String(Object.keys(nostrChannel).sort()) + ' as ' + nostrChannel.publicKey + ' in ' + nostrChannelSchema.schemaName, messageReceivedKind, decisionsSchema.schemaName, String(Object.keys(signatures).sort()), String(Object.keys(decisionsComponent).sort()), jws.split('.').length + ' segments, ' + Buffer.from(jwsSignature, 'base64url').length + ' signature bytes, verified ' + checked + ', private member ' + Object.hasOwn(keySet.keys[0], 'd'), String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(','), 'cron ' + cronNext + ' zone ' + zoneKnown, 'scheduler ' + String(Object.keys(scheduler).sort()) + ' fires ' + scheduleFiredKind + ' in ' + schedulerSchema.schemaName, 'tables ' + collectedTables.sort().join(' ') + ' in ' + schemaNames.join(' ') + ', wrappers seen ' + wrappersSeen.length + ', wrappers present ' + wrappersPresent.length, 'schemas ' + distinctSchemas + ', on a component subpath ' + stillOnTheComponent.length + ', resolving to files ' + resolvesToFiles];",
         "process.stdout.write(built.join(':'));",
       ].join("\n"),
     ],
@@ -1951,8 +1977,8 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,list,setAttributes,start,stop:password auth Bearer authenticate,issueToken,revoke,scheme,setPassword,start,stop in saf_password_auth:nostr auth Nostr authenticate,recordPublicKey,scheme,start,stop in saf_nostr_auth:saf_messenger:history,register,send,start,stop:channel http name,send,start,stop:channel nostr drain,name,publicKey,recordPublicKey,send,start,stop as 1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f in saf_nostr_channel:message.received:saf_decisions:sign,start,stop:history,publish,start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,passwordAuth,signatures,decisions,messenger,httpChannel,ownLoop,worker:Shared Agent Gateway: Agent server describes 10 paths:by hand /healthz:cron 2030-06-02T09:00:00.000Z zone true:scheduler cancel,list,schedule,start,stop,tick fires saf_schedule_fired in saf_scheduler:tables saf_decisions.decisions saf_messenger.messages saf_nostr_auth.admitted saf_nostr_auth.grants saf_nostr_channel.outbox saf_nostr_channel.pubkeys saf_nostr_channel.received saf_password_auth.passwords saf_password_auth.tokens saf_scheduler.schedules saf_signals.runs saf_signals.signals saf_users.users in saf_decisions saf_messenger saf_nostr_auth saf_nostr_channel saf_password_auth saf_scheduler saf_signals saf_users, wrappers seen 0:schemas 8 of 8 distinct, on a component subpath 0, resolving to files true",
-    "all twenty-three entries should resolve at runtime and none of them is the bare package, the Signal Worker's constructor and the template Handler both arriving off `/signals`, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from `/agent-container` without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and Users should construct into its own schema with its read plugin and its four operations — the two writes the agent's surface has no route for included, and no credential of any kind among them — and Password Auth should construct off the eighth subpath into a schema of its own from the Users component and a Public server, register its four routes and itself as an Auth with that server in its own constructor, and answer with the scheme a challenge names, the one member the server walks and its three trusted-code methods and no route plugin, and Nostr Auth should construct off its own subpath into a schema of its own, register itself with that same server and **no route anywhere**, and answer with the scheme a challenge names, the one member the server walks and the one trusted-code method that grants a public key, and the Messenger should construct into a schema of its own from all four of its required arguments and answer with an object carrying exactly its three trusted-code methods, because every other capability it has is a route it registered itself, and the HTTP Channel should construct off the ninth subpath, register itself with that Messenger and answer with a name fixed by its type and the three methods a Channel is and no trusted-code method at all, and the Nostr Channel should construct off the tenth from 32 raw bytes and a Relay address with no server anywhere, register itself with a second Messenger because one Channel per Messenger is refused at registration, derive the agent's public key from those bytes inside the installed package, and answer with the one trusted-code method that records a public key, the drain that is the half of a send a transaction cannot hold, and no route plugin beside them, and all of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the five parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone, and the Scheduler itself should construct from the installed `/scheduler` subpath and carry its management surface and its Component lifecycle, filing its table under a schema of its own, and each of the eight `/schema` subpaths, which is what ADR-0046 asks an Operator to list and where ADR-0055 puts the tables, should hand `drizzle-kit`'s own per-module collection rule its own tables and its own schema, thirteen tables and eight schemas between them — the HTTP Channel absent because that Channel owns no log and no tables, and the Nostr Channel present because the three things only it can know are its own —, and none of the `tables` wrappers, because a table reachable only through a wrapper object is dropped in silence and generates an empty migration, and those eight schema objects should be eight distinct values, and the eight **component** subpaths should carry no table and no schema object at all, because a component's tables are on exactly one specifier, and every one of the eight should resolve to a file inside the installed package, that path being the only thing `drizzle-kit`'s config takes and the whole reason the entries exist",
+    "function:function:docker saf/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/saf/workspace,target=/workspace:docker --entrypoint agent saf/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:saf_users:agentRoutes,create,get,list,setAttributes,start,stop:password auth Bearer authenticate,issueToken,revoke,scheme,setPassword,start,stop in saf_password_auth:nostr auth Nostr authenticate,recordPublicKey,scheme,start,stop in saf_nostr_auth:saf_messenger:history,register,send,start,stop:channel http name,send,start,stop:channel nostr drain,name,publicKey,recordPublicKey,send,start,stop as 1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f in saf_nostr_channel:message.received:saf_decisions:sign,start,stop:history,publish,start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,passwordAuth,signatures,decisions,messenger,httpChannel,ownLoop,worker:Shared Agent Gateway: Agent server describes 10 paths:by hand /healthz:cron 2030-06-02T09:00:00.000Z zone true:scheduler cancel,list,schedule,start,stop,tick fires saf_schedule_fired in saf_scheduler:tables saf_decisions.decisions saf_messenger.messages saf_nostr_auth.admitted saf_nostr_auth.grants saf_nostr_channel.outbox saf_nostr_channel.pubkeys saf_nostr_channel.received saf_password_auth.passwords saf_password_auth.tokens saf_scheduler.schedules saf_signals.runs saf_signals.signals saf_users.users in saf_decisions saf_messenger saf_nostr_auth saf_nostr_channel saf_password_auth saf_scheduler saf_signals saf_users, wrappers seen 0, wrappers present 8:schemas 8 of 8 distinct, on a component subpath 0, resolving to files true",
+    "all twenty-three entries should resolve at runtime and none of them is the bare package, the Signal Worker's constructor and the template Handler both arriving off `/signals`, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from `/agent-container` without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and Users should construct into its own schema with its read plugin and its four operations — the two writes the agent's surface has no route for included, and no credential of any kind among them — and Password Auth should construct off the eighth subpath into a schema of its own from the Users component and a Public server, register its four routes and itself as an Auth with that server in its own constructor, and answer with the scheme a challenge names, the one member the server walks and its three trusted-code methods and no route plugin, and Nostr Auth should construct off its own subpath into a schema of its own, register itself with that same server and **no route anywhere**, and answer with the scheme a challenge names, the one member the server walks and the one trusted-code method that grants a public key, and the Messenger should construct into a schema of its own from all four of its required arguments and answer with an object carrying exactly its three trusted-code methods, because every other capability it has is a route it registered itself, and the HTTP Channel should construct off the ninth subpath, register itself with that Messenger and answer with a name fixed by its type and the three methods a Channel is and no trusted-code method at all, and the Nostr Channel should construct off the tenth from 32 raw bytes and a Relay address with no server anywhere, register itself with a second Messenger because one Channel per Messenger is refused at registration, derive the agent's public key from those bytes inside the installed package, and answer with the one trusted-code method that records a public key, the drain that is the half of a send a transaction cannot hold, and no route plugin beside them, and all of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the five parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone, and the Scheduler itself should construct from the installed `/scheduler` subpath and carry its management surface and its Component lifecycle, filing its table under a schema of its own, and each of the eight `/schema` subpaths, which is what ADR-0046 asks an Operator to list and where ADR-0055 puts the tables, should hand `drizzle-kit`'s own per-module collection rule its own tables and its own schema, thirteen tables and eight schemas between them — the HTTP Channel absent because that Channel owns no log and no tables, and the Nostr Channel present because the three things only it can know are its own —, and none of the `<component>Tables` wrappers, because a table reachable only through a wrapper object is dropped in silence and generates an empty migration, while all eight wrappers should nevertheless resolve on their own specifiers, and those eight schema objects should be eight distinct values, and the eight **component** subpaths should carry no table and no schema object at all, because a component's tables are on exactly one specifier, and every one of the eight should resolve to a file inside the installed package, that path being the only thing `drizzle-kit`'s config takes and the whole reason the entries exist",
   );
 
   // And the claim nothing above can see, because everything above imports a subpath: **the bare

@@ -56,16 +56,20 @@ Each owns its migration step
 ([ADR-0046](./docs/adr/0046-the-operator-owns-migrations.md)): the framework applies no DDL and
 nothing in a `main.ts` asks it to, so a one-shot `migrate` service runs the same image with
 `drizzle-kit push --force` and the Gateway waits on it with
-`condition: service_completed_successfully`. An example's **`drizzle.config.ts`** is also where it
-says which components own tables, as a list of component names it turns into `/schema` specifiers:
-`00_minimal`'s is four names for five components, the HTTP Channel being the one that owns
-nothing. Two facts about that file are recorded in
-[ADR-0055](./docs/adr/0055-a-components-tables-are-a-subpath-of-their-own.md) rather than beside
-the code, the examples carrying no comments. It resolves with `createRequire(import.meta.url)` and
-**not** `import.meta.resolve`, because `drizzle-kit` reads its config by registering `tsx` and
-`require`ing it, so the file runs as CommonJS and `import.meta.resolve` is not a function there —
-the shape reads like an old spelling somebody will helpfully modernise, and modernising it breaks
-all four. And `--force` is not belt-and-braces: `push` asks about a destructive statement on a
+`condition: service_completed_successfully`. An example's **`schema.ts`** is where it says which
+components own tables, as one `export *` line per component's `/schema` subpath: `00_minimal`'s is
+four lines for five components, the HTTP Channel being the one that owns nothing. That file is a
+**barrel**, and it is the reason the two names every schema module declares carry a component
+prefix, `usersSchema` and `usersTables` rather than `schema` and `tables`: `export *` drops a name
+that resolves to more than one binding, so eight exports called `schema` leave one PostgreSQL
+schema created and seven not, and `push` reports `Changes applied` either way
+([ADR-0055](./docs/adr/0055-a-components-tables-are-a-subpath-of-their-own.md)). The
+**`drizzle.config.ts`** beside it names that one relative path, `schema: "./schema.ts"`, imports the
+barrel to derive `schemaFilter`, and resolves nothing: the `createRequire(import.meta.url)` that
+used to be there, with the warning that modernising it breaks all four, went with the specifier
+list. What did not go is `schemaFilter` itself, which is five lines of `is` and `PgSchema` that look
+deletable and are not, the guide's `::: danger Never remove schemaFilter` being the only thing
+saying so. And `--force` is not belt-and-braces: `push` asks about a destructive statement on a
 TTY, a Compose one-shot has none, and without the flag it applies nothing and **exits 0**, after
 which the Gateway starts on the strength of that success and every query fails.
 
@@ -282,8 +286,11 @@ distinct schema objects and thirteen tables, and that the component subpaths abo
 neither** — the assertion the split exists for and the one nothing else in the repository makes,
 because a `schema.ts` re-exported from both places puts every table behind two specifiers, and a
 `/schema` module that stopped re-exporting one leaves that table queryable and absent from the
-DDL. It needs the network, so it stays out
-of the inner loop; it needs no database at all, because nothing in the package applies
+DDL. **It is also the only thing anywhere that holds the thirteen table names apart**: every
+`/schema` specifier is imported **un-aliased** into one module scope, which is what a deployment's
+own barrel does, so two components declaring one table name is a compile error and a Node
+`SyntaxError` rather than a table missing from the DDL (ADR-0055). It needs the network, so it stays
+out of the inner loop; it needs no database at all, because nothing in the package applies
 DDL any more ([ADR-0046](./docs/adr/0046-the-operator-owns-migrations.md)). CI runs it
 as its own step.
 
@@ -626,16 +633,23 @@ the alternative was an Operator writing `node_modules/shared-agent-framework/dis
 layout this package never promised. A deployment lists the `/schema` specifiers of the
 components it runs in its own `drizzle.config.ts` and
 applies them with its own `drizzle-kit`: `push` to prototype, `generate` + `migrate` in
-production. **No deployment writes a barrel**, and that is what the subpaths bought: a barrel is a
-second list of the components a deployment runs, compared against the first by nothing, whose own
-first sentence goes stale. Each example under `examples/` is a worked version of that, four of
-them: no `schema.ts` of its own, a `drizzle.config.ts` that resolves each specifier with
-`createRequire(import.meta.url)` and still **derives** `schemaFilter` by importing those same
-specifiers rather than listing it, and a `migrate` service running the deployment's own image with
-`drizzle-kit push --force`, which the Gateway waits on with
+production. **Every deployment writes a barrel, and the barrel is the only list.** ADR-0055 shipped
+saying no deployment writes one and was amended: `drizzle-kit` globs the `schema` field, a bare
+package specifier globs to nothing, so listing specifiers there cost every config a
+`createRequire(import.meta.url)` and a second `require` of the same modules. Each example under
+`examples/` is a worked version of the barrel instead, four of them: a `schema.ts` that is one
+`export *` per component, a `drizzle.config.ts` whose `schema` is `"./schema.ts"` and which
+**derives** `schemaFilter` by importing that barrel rather than listing it, and a `migrate` service
+running the deployment's own image with `drizzle-kit push --force`, which the Gateway waits on with
 `condition: service_completed_successfully`. Derived and not listed because a config with no
 `schemaFilter` filters both sides of the diff down to `public`, finds no difference, creates not
-one table and exits 0.
+one table and exits 0 — measured, not inferred. The old objection to a barrel was that it is a
+second list compared against the first by nothing, and it is not: nothing else in a deployment
+names a `/schema` specifier, and `schemaFilter` comes out of the barrel. What the barrel costs is
+that `schema: "./schema.ts"` is glob'd against the process **cwd** where a resolved path was
+cwd-independent, correct in the Compose one-shot and `No schema files found` with exit 1 anywhere
+else, and that `schema.ts` has to be in the `COPY` line of all four Dockerfiles and the `include`
+of all four `tsconfig.json`s.
 
 The tests set their tables up the same way, through `src/test-support/apply-schema.ts`,
 which hands the same schema objects to `drizzle-kit`'s `pushSchema`. Nothing in the suite
@@ -750,18 +764,28 @@ Conventions the build depends on:
   is **permanent**, recorded in ADR-0055 with the three ways of ending it that were declined, and
   it is also held in place by `check:docs`: a record's field declared with a union that no documented specifier
   exports is the dangling reference `treatWarningsAsErrors` fails on, the way `CursorWindow` did.
-- **The schema object is `schema` and the wrapper is `tables`, and the prefixes they used to
-  carry are history rather than a rule.** `usersSchema` and `usersTables` existed to survive a
-  wildcard barrel, because **`export *` drops a name that resolves to more than one binding** and
-  eight components exporting a bare `schema` produced a barrel exporting none, an empty derived
-  `schemaFilter`, and a `push` that created not one table and exited 0; `drizzle-kit` requires
-  each listed schema file separately and merges no namespace, there is no barrel anywhere any
-  more, and so the discipline protects nothing (ADR-0055). The table names — `users`, `tokens`,
-  `messages` — never carried a prefix and never needed one, each being
-  `saf_<component>.<its own name>`, and the near-miss the old rule could not cover is closed with
-  it: `tokens` moved from `saf_users.tokens` to `saf_password_auth.tokens`, and while both existed
-  a barrel carrying `/users` and `/password-auth` would have dropped the name from **both**, which
-  is now impossible rather than uncaught.
+- **The schema object is `<component>Schema` and the wrapper is `<component>Tables`, and the rule
+  is that a name every schema module declares carries a component prefix.** `usersSchema` and
+  `usersTables` exist to survive a wildcard barrel, because **`export *` drops a name that resolves
+  to more than one binding**: eight components exporting a bare `schema` produce a barrel exporting
+  none under Node's ESM semantics, and under the `tsx` loader `drizzle-kit` actually registers, one
+  arbitrary winner. Either way `schemaFilter` derives to at most one schema name and `push` creates
+  one component's tables and prints `Changes applied` (ADR-0055). This is the second time that rule
+  has been written down: ADR-0055 deleted the prefixes on the ground that no deployment writes a
+  barrel, every deployment writes one again, and the reversal is priced in that ADR's amendment.
+  **Two names are in that class and no more.** A name describing one particular thing is not
+  prefixed: not the thirteen table names, each already `saf_<component>.<its own name>`, and not the
+  four enum arrays, which are public on the component subpath too where `signalsSignalStates` would
+  be indefensible. The table names are therefore **unguarded by naming and guarded by
+  `scripts/check-package.ts`**, which imports all eight `/schema` specifiers **un-aliased** into one
+  module scope out of the installed tarball: a duplicate is `TS2300: Duplicate identifier` and
+  `SyntaxError: Identifier 'x' has already been declared`, both naming the two import lines. **An
+  alias added to one of those lines removes the check for that name**, which is the one way this
+  guard fails quietly, and the file's own comment says so. It is also the near-miss that rule could
+  not have covered on its own: `tokens` moved from `saf_users.tokens` to `saf_password_auth.tokens`,
+  and while both existed a barrel carrying `/users` and `/password-auth` would have dropped the name
+  from **both**. Nothing in `npm run check` would see it; `check:package` is a separate CI step, so
+  a ninth component with a colliding table name passes the inner loop.
 - **Four schema modules import `src/users/schema.ts`, and there are six cross-schema
   foreign keys. Every one of them points at `saf_users.users.id` and nothing points back.**
   `src/messenger/schema.ts` declares `messages.user_id`

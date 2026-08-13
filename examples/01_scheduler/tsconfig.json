@@ -15,5 +15,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["main.ts", "drizzle.config.ts"]
+  "include": ["main.ts", "drizzle.config.ts", "schema.ts"]
 }

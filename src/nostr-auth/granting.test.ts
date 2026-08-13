@@ -25,12 +25,12 @@ import type { Logger } from "../logging/logging.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { nip98Header, type Signer, signer } from "../test-support/nip98-credentials.ts";
-import * as usersSchema from "../users/schema.ts";
+import * as usersModule from "../users/schema.ts";
 import { createUsers, type Users } from "../users/users.ts";
 import { createNostrAuth, type NostrAuth } from "./nostr-auth.ts";
-import * as nostrAuthSchema from "./schema.ts";
+import * as nostrAuthModule from "./schema.ts";
 
-const { admitted, grants, tables } = nostrAuthSchema;
+const { admitted, grants, nostrAuthTables } = nostrAuthModule;
 
 const externalBaseUrl = "https://agent.example.invalid";
 const nowhere = { port: 0, host: "127.0.0.1" } as const;
@@ -58,7 +58,7 @@ const operatorRoutes: FastifyPluginAsync = async (fastify) => {
 before(async () => {
   database = await createTestDatabase("nostr_auth_granting");
   db = database.db;
-  await applySchema(db, usersSchema, nostrAuthSchema);
+  await applySchema(db, usersModule, nostrAuthModule);
 
   publicServer = serverComponent(Fastify(), nowhere, { logger: quiet });
   users = createUsers({ db });
@@ -98,7 +98,7 @@ function asking(client: Signer) {
 
 /** Every event id the replay record holds. */
 async function recorded(): Promise<string[]> {
-  const rows = await db.handle(tables).select({ id: admitted.eventId }).from(admitted);
+  const rows = await db.handle(nostrAuthTables).select({ id: admitted.eventId }).from(admitted);
   return rows.map((row) => row.id).sort();
 }
 
@@ -209,7 +209,7 @@ describe("the replay record", () => {
     const stale = `${"1".repeat(63)}a`;
     const recent = `${"2".repeat(63)}b`;
     await db
-      .handle(tables)
+      .handle(nostrAuthTables)
       .insert(admitted)
       .values([
         { eventId: stale, admittedAt: new Date(Date.now() - 60 * 60 * 1000) },
@@ -336,7 +336,7 @@ describe("the surface this component has", () => {
     await db.tx((tx) => nostrAuth.recordPublicKey(tx, id, second.publicKey));
 
     const held = await db
-      .handle(tables)
+      .handle(nostrAuthTables)
       .select({ pubkey: grants.pubkey })
       .from(grants)
       .where(eq(grants.userId, id));

@@ -23,7 +23,7 @@ import { check, jsonb, type PgColumn, pgSchema, text, timestamp } from "drizzle-
  * configurable: the table is compiled against this object, and the same object is what a generation
  * reads.
  */
-export const schema = pgSchema("saf_scheduler");
+export const schedulerSchema = pgSchema("saf_scheduler");
 
 export const scheduleKinds = ["once", "cron"] as const;
 
@@ -45,7 +45,7 @@ function kindIsKnown(column: PgColumn, kinds: readonly string[]): SQL {
  * `name` is the primary key and the only identifier. There is no surrogate id beside it, so a
  * create is an upsert on the name and a cancel is a delete of it.
  */
-export const schedules = schema.table(
+export const schedules = schedulerSchema.table(
   "schedules",
   {
     // One flat namespace, shared by the agent and the Operator. Nothing scopes it by creator, so
@@ -87,4 +87,4 @@ export const schedules = schema.table(
   ],
 );
 
-export const tables = { schedules };
+export const schedulerTables = { schedules };

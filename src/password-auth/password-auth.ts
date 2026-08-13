@@ -48,7 +48,7 @@ import {
   passwordRoutes,
   presentedToken,
 } from "./routes.ts";
-import { passwords, tables, tokens } from "./schema.ts";
+import { passwordAuthTables, passwords, tokens } from "./schema.ts";
 import {
   checkedScryptParameters,
   defaultScryptParameters,
@@ -59,7 +59,7 @@ import {
   verifyPassword,
 } from "./secrets.ts";
 
-type PasswordAuthHandle = Handle<typeof tables>;
+type PasswordAuthHandle = Handle<typeof passwordAuthTables>;
 
 // Where the constructor puts its route group. A constant and not an option, so a client written
 // for one deployment's login works against every other one.
@@ -202,7 +202,7 @@ export type PasswordAuth = Auth & {
  */
 export function createPasswordAuth(options: PasswordAuthOptions): PasswordAuth {
   // The component's own handle, typed to its own tables. `pg` never leaves the Db.
-  const handle = options.db.handle(tables);
+  const handle = options.db.handle(passwordAuthTables);
   const tokenTtl = checkedTokenTtl(options.tokenTtl);
   const parameters = checkedScryptParameters(options.scrypt ?? defaultScryptParameters);
   const dummy = dummyDigest(parameters);

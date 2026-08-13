@@ -3,12 +3,17 @@
 Partially reverses [ADR-0047](./0047-a-component-is-one-subpath.md). A component's tables leave the
 component's subpath and go back onto a `/schema` subpath below it. `shared-agent-framework/users`
 carries `createUsers` and its types; `shared-agent-framework/users/schema` carries the `users`
-table, the `saf_users` schema object and the `tables` wrapper. The export map goes from fifteen
+table, the `saf_users` schema object and the `usersTables` wrapper. The export map goes from fifteen
 entries to twenty-three: eight components own tables, and each gets a second entry. The root still
 exports nothing ([ADR-0051](./0051-the-package-root-exports-nothing.md)).
 
-The prefixes go with the move. `usersSchema` is `schema`, `usersTables` is `tables`, and the same
-for the other seven. The table names are unchanged and stay flat.
+**This ADR was amended after it shipped, and one of its decisions is reversed.** It removed the
+component prefixes from the two names every schema module declares, on the ground that no
+deployment writes a barrel any more. Deployments write one again, so the prefixes are back:
+`usersSchema` and `usersTables`, not `schema` and `tables`. The table names are unchanged and stay
+flat, then and now. The section below headed *the prefixes come back* is the reversal, and the
+original reasoning is left standing above it rather than edited away, because it was correct about
+everything except how long its premise would hold.
 
 ## The reason is a build tool's file-path API, and it is weaker than the one it replaces
 
@@ -64,6 +69,72 @@ a plain object ([ADR-0046](./0046-the-operator-owns-migrations.md)), so a table 
 `tables` and not also flat-exported is dropped in silence. That rule stands exactly as ADR-0046
 wrote it.
 
+## Amended: the prefixes come back, because the barrel does
+
+The premise above is that a deployment lists `/schema` specifiers directly in its
+`drizzle.config.ts`, so no module ever merges two schema modules into one namespace. That held for
+one release. What it cost the four examples was the config itself: `drizzle-kit` globs the `schema`
+field, a bare package specifier globs to nothing, so every config resolved its specifiers with
+`createRequire(import.meta.url)` and derived `schemaFilter` by requiring them a second time. Twenty
+lines of build-tool trivia in the one file every consumer copies out, and a `createRequire` that had
+to be documented as a shape nobody may modernise.
+
+A deployment now writes a `schema.ts` that is `export *` per component, and its config points at
+that one relative path. `createRequire` goes, the specifier array goes, and the component list reads
+as ordinary import lines. The barrel is back, and with it the hazard this ADR deleted the prefixes
+to celebrate the end of.
+
+Measured rather than argued, on the real toolchain. `drizzle-kit push --force` over a barrel of two
+components whose schema objects were both called `schema`:
+
+```
+[✓] Changes applied
+saf_users.users
+```
+
+The other component's two tables are absent and the tool reports success. Under Node's ESM
+semantics the ambiguous name is dropped from both modules; under the `tsx` loader `drizzle-kit`
+actually registers, esbuild's re-export helper keeps the **first** binding, so one arbitrary
+component wins. Either way `schemaFilter` derives to one schema name out of eight and seven
+schemas never get a `CREATE`. With the prefixes restored, the same push yields all three tables.
+
+**The rule is narrower than the one this ADR removed, and it is mechanically decidable.** A name
+every schema module declares is prefixed. A name that describes one particular thing is not. Two
+names are in the first class, `<component>Schema` and `<component>Tables`, and any third would
+collide by construction the day it arrived. The thirteen table names and the four enum arrays are
+in the second, and the arrays could not be prefixed anyway: they are public on the component subpath
+too, where `signalsSignalStates` is indefensible.
+
+**The table names stay unguarded by naming and get a guard instead.** Two components exporting one
+table name would drop it from the barrel, so `push` would create twelve tables of thirteen and exit
+0, and the component that queries the missing one fails at its first read. Nothing in the test
+suite would notice, because `src/schemas.test.ts` reaches each module by file path and never builds
+a barrel. `scripts/check-package.ts` is what notices: it imports all eight `/schema` specifiers
+into one module scope out of the installed tarball, and every alias has been deleted, so a
+duplicate name is `TS2300: Duplicate identifier` from the type checker and
+`SyntaxError: Identifier 'x' has already been declared` from Node, each naming both import lines.
+The guard is the absence of the aliases, which is a load-bearing absence: an alias added there to
+work around some other clash removes the check for that name, and the file says so.
+
+The argument this ADR won against ADR-0047 survives the reversal, which is why it is an amendment
+and not a replacement. The complaint against the barrel was that it is *a second list of the
+components a deployment runs, compared against the first by nothing*. It is not. It is the only
+list: nothing else in a deployment names a `/schema` specifier, and `schemaFilter` is derived from
+the barrel rather than written beside it. The other complaint, that a barrel's own first sentence
+goes stale, is answered by the examples carrying no comments at all.
+
+Three costs, recorded rather than mitigated. The barrel's `schema: "./schema.ts"` is glob'd against
+the process cwd, where a resolved absolute path was cwd-independent; correct in the Compose one-shot
+and loud from anywhere else, `No schema files found` and exit 1. The duplicate-identifier guard runs
+in `npm run check:package`, which needs the network and is not the inner loop, so a ninth component
+with a colliding table name passes `npm run check` and fails the step after it. And `schemaFilter`
+is still five lines of `is` and `PgSchema` in a file with no comments to explain them: the
+`::: danger Never remove schemaFilter` block in the guide is the only thing standing between a
+reader's instinct and an empty database. Shipping a `schemaNames()` helper would make that
+deletion impossible rather than merely documented, and was declined because ADR-0046 put the
+Operator's migration machinery outside this package and one field of their config is where that
+boundary starts moving.
+
 ## What a `/schema` subpath is
 
 A directory with an `index.ts` that stars its component's `schema.ts`, which is the shape every
@@ -104,7 +175,12 @@ column it constrains and the constraint compiled from it are in one file, and th
 them to make one documentation sentence unqualified. The overlap costs a reader two doors to one
 declaration, which cannot drift, because it is one declaration. That is the cheaper of the two.
 
-## A config resolves the specifiers with `createRequire`, because it runs as CommonJS
+## A config ran as CommonJS and resolved the specifiers with `createRequire`
+
+**Superseded by the amendment above: a config names one relative path now and resolves nothing.**
+The loading facts are still true of `drizzle.config.ts` and still worth having written down, since
+a config that imports the barrel is still `require`d as CommonJS by `tsx`.
+
 
 `drizzle-kit` reads `drizzle.config.ts` by registering `tsx` and calling `require()` on it, so the
 file is transformed to CommonJS before it runs whatever the deployment's `package.json` says. Two
@@ -136,9 +212,13 @@ neither is what the derivation guards against: a config with no `schemaFilter` a
 sides of the diff down to `public`, finds no difference, prints `No changes detected`, creates not
 one table and exits 0 — the same ending as the `--force` below, reached another way.
 
-The whole of this is a fact about how one tool loads one file. It is written here because the four
-examples carry no code comments, and because the shape reads like an old-fashioned spelling of
-`import.meta.resolve` that somebody will helpfully modernise.
+The whole of this is a fact about how one tool loads one file. It was written here because the four
+examples carry no code comments, and because the shape read like an old-fashioned spelling of
+`import.meta.resolve` that somebody would helpfully modernise. That last worry is what the barrel
+retired: `import * as schema from "./schema.ts"` is an ordinary import, and the guide's
+`::: tip Why createRequire` block went with it. What survives is the reason `schemaFilter` is still
+derived: a config with no `schemaFilter` at all filters both sides of the diff down to `public`,
+finds no difference, prints `No changes detected`, creates not one table and exits 0.
 
 ## The `--force` on `push`
 
@@ -174,13 +254,14 @@ grew a `schema.ts` and no export entry fails on a page nobody can import.
   import their tables by name, because a namespace import would resolve and prove nothing.
 - **A consumer holding a table object changes import site.** `import { users } from
   "shared-agent-framework/users"` becomes `import { users } from
-  "shared-agent-framework/users/schema"`, and every deployment's `drizzle.config.ts` is rewritten
-  from a barrel to a list of resolved specifiers. This package is at `0.2.0` and the four examples
-  are the whole of the known consumer base, so the sweep is four directories.
+  "shared-agent-framework/users/schema"`, and every deployment's `drizzle.config.ts` is rewritten.
+  This package is at `0.2.0` and the four examples are the whole of the known consumer base, so the
+  sweep is four directories. The amendment above rewrote all four a second time, back to a barrel,
+  which is the cost of having got this half wrong once.
 - **The import line stutters where it did not.** `shared-agent-framework/users/schema` says
-  "schema" and then the module exports `schema`. That is the price of dropping the prefix, paid at
-  the import site instead of at the identifier, and it is a smaller price than the one ADR-0047 was
-  paying.
+  "schema" and then the module exports `usersSchema`. The amendment above put the prefix back, so
+  the stutter is milder than this ADR first shipped it and the identifier carries a component name
+  again.
 - **A Developer now has two pages per component to find things on**, which is the reader-facing
   half of ADR-0047's argument coming back. The reference sidebar carries the component pages and a
   collapsed `Tables` section, and the table page's heading is now the `/schema` specifier so the

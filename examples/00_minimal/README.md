@@ -14,9 +14,9 @@ Messenger and the HTTP Channel, one seeded person, and a terminal client. It sho
 - **A seeded person, in one transaction.** `main.ts` creates the User and sets their password
   together, so a User nobody can log in as never reaches the table. It is guarded by an empty
   list, so a restart keeps the id you copied.
-- **Which components own tables.** `drizzle.config.ts` names four components for five. The
-  HTTP Channel has none: it stores nothing and queues nothing, because HTTP delivery is the
-  User asking.
+- **Which components own tables.** `schema.ts` re-exports four components' `/schema` subpaths
+  for five components, and `drizzle.config.ts` names that one file. The HTTP Channel has none:
+  it stores nothing and queues nothing, because HTTP delivery is the User asking.
 
 ## Run it
 

@@ -15,9 +15,9 @@
 import { and, asc, desc, eq, gt, lt, sql } from "drizzle-orm";
 import type { Handle } from "../db/index.ts";
 import type { CursorWindow } from "../route-conventions.ts";
-import { type MessageDirection, messages, type tables } from "./schema.ts";
+import { type MessageDirection, messages, type messengerTables } from "./schema.ts";
 
-type MessagesHandle = Handle<typeof tables>;
+type MessagesHandle = Handle<typeof messengerTables>;
 
 /**
  * A Message, as every surface answers with it.

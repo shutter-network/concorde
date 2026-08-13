@@ -24,17 +24,20 @@ import type { Db } from "../db/index.ts";
  * `import * as users from "../users/schema.ts"` is the intended argument, and it is
  * one module's own exports, which is what `drizzle-kit`'s loader requires per file
  * (ADR-0055). `drizzle-kit` takes `Object.values` and keeps whatever passes
- * `is(x, PgTable)` or `is(x, PgSchema)`, so the `tables` wrapper riding along in the
- * namespace is ignored rather than harmful, and a table reachable *only* through
+ * `is(x, PgTable)` or `is(x, PgSchema)`, so the `<component>Tables` wrapper riding along
+ * in the namespace is ignored rather than harmful, and a table reachable *only* through
  * that wrapper would be invisible here exactly as it would be to the Operator.
  *
- * **What is not replicated is the merge**, and it never was. `exportsOf` below keys
- * every part's exports by position because two parts may export one name and a plain
- * merge would drop one of them in silence. An Operator meets no such merge: each
- * `/schema` file is required on its own and the results are concatenated, which is
- * the reason the prefixed export names went (ADR-0055). So this suite was immune to a
- * failure it once described itself as reproducing, and the failure has since stopped
- * existing.
+ * **What is not replicated is the merge**, and that is now a gap rather than a
+ * simplification. `exportsOf` below keys every part's exports by position, so two parts
+ * exporting one name are both kept here. An Operator meets exactly that merge: a
+ * deployment `export *`s the components it runs into one `schema.ts`, and a name declared
+ * by two of them is dropped in silence — under Node's ESM semantics from both modules,
+ * and under the `tsx` loader `drizzle-kit` actually registers, from all but the first
+ * (ADR-0055). The two names every schema module declares are prefixed for that reason.
+ * The table names are not, and nothing here would notice a collision between two of them:
+ * `scripts/check-package.ts` is what does, by importing all eight `/schema` specifiers
+ * un-aliased into one module scope, where a duplicate is a compile error.
  */
 export type PartSchema = Record<string, unknown>;
 

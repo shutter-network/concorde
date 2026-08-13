@@ -36,7 +36,7 @@ import { users } from "../users/schema.ts";
  * It was `saf_http_messages` while one component held the log and the only way of reaching a
  * person, so a deployment upgrading across that split renames the schema.
  */
-export const schema = pgSchema("saf_messenger");
+export const messengerSchema = pgSchema("saf_messenger");
 
 /**
  * Which way a Message travelled: `inbound` from the User to the agent, `outbound` from the agent to
@@ -70,7 +70,7 @@ function directionIsKnown(column: PgColumn, directions: readonly string[]): SQL 
  * component's `/schema` subpath without `shared-agent-framework/users/schema` generates a reference
  * to a table nothing creates, and dies on `schema "saf_users" does not exist`.
  */
-export const messages = schema.table(
+export const messages = messengerSchema.table(
   "messages",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -122,4 +122,4 @@ export const messages = schema.table(
   ],
 );
 
-export const tables = { messages };
+export const messengerTables = { messages };

@@ -34,7 +34,7 @@ import { users } from "../users/schema.ts";
  * configurable: the tables are compiled against this object, and the same object is what a
  * generation reads.
  */
-export const schema = pgSchema("saf_password_auth");
+export const passwordAuthSchema = pgSchema("saf_password_auth");
 
 /**
  * One row per User who can log in with a password, and no row for a User who cannot.
@@ -42,7 +42,7 @@ export const schema = pgSchema("saf_password_auth");
  * The primary key is the User, so a User holds one password. Nothing here records who set it: an
  * Operator replacing a forgotten password and a User rotating their own write the same row.
  */
-export const passwords = schema.table("passwords", {
+export const passwords = passwordAuthSchema.table("passwords", {
   /**
    * The User this password belongs to, and the primary key.
    *
@@ -76,7 +76,7 @@ export const passwords = schema.table("passwords", {
  * The plaintext exists once, in the response that issued it, so a row is verifiable and never
  * readable. Nothing reaps a row past its expiry. An expired Token stops matching.
  */
-export const tokens = schema.table(
+export const tokens = passwordAuthSchema.table(
   "tokens",
   {
     id: uuid("id").primaryKey().defaultRandom(),
@@ -115,4 +115,4 @@ export const tokens = schema.table(
   ],
 );
 
-export const tables = { passwords, tokens };
+export const passwordAuthTables = { passwords, tokens };

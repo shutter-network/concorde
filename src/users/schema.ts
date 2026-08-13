@@ -36,7 +36,7 @@ import { jsonb, pgSchema, timestamp, uuid } from "drizzle-orm/pg-core";
  * `users` is a plausible name for a schema an Operator already has. Not configurable: the tables
  * are compiled against this object, and the same object is what a generation reads.
  */
-export const schema = pgSchema("saf_users");
+export const usersSchema = pgSchema("saf_users");
 
 /**
  * A User: an opaque Gateway-issued id, arbitrary Attributes, and when they were admitted.
@@ -44,7 +44,7 @@ export const schema = pgSchema("saf_users");
  * Nothing removes a row. There is no delete, no deactivation and no column recording either, so a
  * reference to a User from another component's table cannot come to dangle.
  */
-export const users = schema.table("users", {
+export const users = usersSchema.table("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   /**
    * Arbitrary JSON the deployment defines, and where grouping and therefore authorization live.
@@ -65,4 +65,4 @@ export const users = schema.table("users", {
     .default(sql`clock_timestamp()`),
 });
 
-export const tables = { users };
+export const usersTables = { users };
