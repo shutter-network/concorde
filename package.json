@@ -125,7 +125,8 @@
     "extract:schema": "node scripts/reference/extract-schema.ts",
     "check:docs": "node scripts/check-docs.ts",
     "docs:dev": "npm --prefix site ci --no-audit --no-fund && npm --prefix site run dev",
-    "docs:build": "npm --prefix site ci --no-audit --no-fund && npm --prefix site run build"
+    "docs:build": "npm --prefix site ci --no-audit --no-fund && npm --prefix site run build",
+    "docs:deploy": "scripts/deploy-docs.sh"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.6",

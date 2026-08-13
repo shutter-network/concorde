@@ -28,13 +28,19 @@ export default defineConfig({
   // excluded by VitePress itself.
   srcExclude: ["README.md"],
 
+  // The site is served as GitHub Pages for this repository, so it sits under the repository name
+  // rather than at the root of the host, and every asset and every internal link resolves below
+  // this segment. It is a fourth value stating where the site's pages sit, alongside the three
+  // named above, and the only one of the four that fails loudly: absent or wrong, the HTML loads
+  // and every stylesheet, script and font 404s, so the first page opened says so. A custom domain
+  // sets this back to "/". `../scripts/deploy-docs.sh` is what publishes, by hand.
+  base: "/shared-agent-framework/",
+
   // The pair VitePress would have picked anyway, said out loud because the signature blocks are
   // coloured by a second call to the same highlighter and have to be handed the same two themes;
   // `../shiki-themes.mjs` is where the argument for naming them once lives.
   markdown: { theme: shikiThemes },
 
-  // Not published anywhere ([the site runs locally](../README.md)), so no base path and no
-  // sitemap.
   themeConfig: {
     nav: [
       { text: "Guide", link: "/guide" },

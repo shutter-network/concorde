@@ -8,11 +8,30 @@ and route pages after it, and VitePress serves them all. Run it from the reposit
 npm run docs:dev     # serve on localhost and regenerate as doc comments are edited
 npm run docs:build   # generate and build the static site
 npm run check:docs   # regenerate, check every page for a linked block, then build
+npm run docs:deploy  # check:docs, then publish the build to the `gh-pages` branch
 ```
 
-All three install this package's dependencies from its lockfile first, so a fresh clone needs
-no separate step. The site is not published: the repository is private, so a public URL would
-be the wrong trade while the surface is still being judged.
+All four install this package's dependencies from its lockfile first, so a fresh clone needs
+no separate step.
+
+**The site is published at
+[jannikluhn.github.io/shared-agent-framework](https://jannikluhn.github.io/shared-agent-framework/),
+and it used to be published nowhere.** It was not, on the argument that the repository was
+private and a public URL was the wrong trade while the surface was still being judged; the
+repository is public now, so the first half of that is gone. Two things follow and neither is
+guarded. **`base` in `.vitepress/config.ts` has to be the repository name**, because these are
+project pages and every asset resolves below that segment: absent or wrong, the HTML loads and
+every stylesheet, script and font 404s. A custom domain moves the site to the root of that
+domain and sets `base` back to `/`, and the two always change together. And
+**`../scripts/deploy-docs.sh` publishes the working tree**, not a commit: it stamps the
+`gh-pages` commit message with `git describe --dirty` so a site built over uncommitted edits
+says so, and it refuses nothing. Nothing deploys on a push, so a doc comment merged on `main`
+is live when somebody remembers. `check:docs` in CI still proves it would build.
+
+Because the publishing source is a branch rather than an Actions artifact, GitHub runs the
+legacy Jekyll pipeline over it, which drops every path beginning with `_`. Nothing VitePress
+writes today has one, so the `.nojekyll` the script writes changes nothing today: it is what
+keeps a future one from 404ing in a way that reads as a wrong `base`.
 
 **The site is two things now, and it used to be one.** `index.md`, `guide.md` and
 `architecture.md` sit in this directory and are written by hand for an Operator adopting the
