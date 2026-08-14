@@ -2,7 +2,7 @@
  * The Prompt template Handler.
  *
  * Most of this needs no database: a Handler is a function of a Signal and whatever
- * its factory was given (ADR-0024), so the rendering criteria are unit tests over
+ * its factory was given, so the rendering criteria are unit tests over
  * string literals. The last two are not. "Fails that Signal with a
  * reason" is a claim about the Signal log, and "does not stop the worker" is a claim
  * about what happens to the *next* Signal, so those run through a real Signal Worker against
@@ -11,7 +11,7 @@
  * The escaping assertions are byte-for-byte on purpose. `noEscape: true` looks like
  * a mistake to anyone who knows Handlebars from web work, and the damage from
  * "fixing" it — prompts with `&#x27;` where an apostrophe should be — is invisible
- * in every log and every Run outcome (ADR-0027).
+ * in every log and every Run outcome.
  */
 
 import assert from "node:assert/strict";
@@ -32,7 +32,7 @@ import { templateHandler } from "./template-handler.ts";
 /**
  * Every character Handlebars escapes by default, in text a User could plausibly
  * write. If any of them comes back transformed, the Prompt reaching the agent is
- * not what the Operator's data function said (ADR-0003).
+ * not what the Operator's data function said.
  */
 const everythingHandlebarsWouldEscape = `it's <b>&</b> \`tick\` "quoted" =equals`;
 
@@ -189,8 +189,8 @@ describe("a substituted value", () => {
 /**
  * A template that does not compile fails one call, and a template that does not render
  * fails another. The split is the whole point of compiling at construction: the first
- * kind never reaches a Signal, and under ADR-0017 a Signal it did reach would stay
- * failed forever.
+ * kind never reaches a Signal, and a Signal it did reach would stay failed forever,
+ * nothing being retried.
  *
  * Both cases here are the reason `templateHandler` calls `precompile` and discards it.
  * Handlebars' own `compile` defers the parse *and* the code generation to the first
@@ -267,7 +267,7 @@ describe("a template that cannot produce a Prompt", () => {
  * Handlebars documents that strict mode disables inverse operations, so
  * `{{^absent}}` throws where every other way of asking "was this supplied?" renders.
  * Pinned in both directions: without the first assertion the failure is discovered
- * by a Signal that fails permanently (ADR-0017), and without the rest a later reader
+ * by a Signal that fails permanently, and without the rest a later reader
  * could conclude `strict` makes presence tests impossible and drop it.
  */
 describe("strict mode's reach", () => {
@@ -357,7 +357,7 @@ describe("a Handler's Handlebars environment", () => {
 /**
  * The two criteria that are about the Signal log rather than the Handler.
  *
- * PostgreSQL is real and the Runtime is the only fake (ADR-0022). "Does not stop the
+ * PostgreSQL is real and the Runtime is the only fake. "Does not stop the
  * worker" is a claim about what happens to the *next* Signal, so the worker here is
  * started once and never restarted.
  */

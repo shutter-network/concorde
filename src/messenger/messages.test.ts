@@ -51,8 +51,7 @@ let directory: Users;
 
 /**
  * Where the constructor put each plugin. There is no second registration in this file, and
- * there could not be: this part exports no plugin and its prefixes are not configurable,
- * which is its stated departure from ADR-0032 (ADR-0034).
+ * there could not be: this part exports no plugin and its prefixes are not configurable.
  */
 const prefix = "/messages";
 
@@ -71,21 +70,21 @@ before(async () => {
   // Required of the construction and never started, because nothing in this ticket's
   // surface emits: the agent's send is not an arrival and wakes nobody.
   const worker = createSignalWorker({ db, runtime: fakeRuntime(), handlers: {} });
-  // Before the Messenger, which takes it: `messages.user_id` references this part's table
-  // (ADR-0036), and the push below has to see both schemas for the constraint to generate.
+  // Before the Messenger, which takes it: `messages.user_id` references this part's table,
+  // and the push below has to see both schemas for the constraint to generate.
   directory = createUsers({ db, agentServer });
   // A scheme that recognises nothing, so the Public routes refuse with the composed 401
-  // rather than throwing for having no scheme registered at all (ADR-0052).
+  // rather than throwing for having no scheme registered at all.
   publicServer.registerAuth(fakeAuth("Bearer"));
   // Nothing is held: every capability this part has so far is a route, and it registered
-  // both plugins itself (ADR-0032).
+  // both plugins itself.
   createHttpChannel({
     db,
     messenger: createMessenger({ db, users: directory, worker, agentServer }),
     publicServer,
   });
 
-  // Three schemas, pushed as one graph the way an Operator's own list is (ADR-0046).
+  // Three schemas, pushed as one graph the way an Operator's own list is.
   await applySchema(db, signalsSchema, usersSchema, messengerSchema);
 });
 
@@ -95,7 +94,7 @@ after(async () => {
   await database.drop();
 });
 
-/** A User, admitted from trusted code, which is the only way one is admitted (ADR-0052). */
+/** A User, admitted from trusted code, which is the only way one is admitted. */
 async function admitted(): Promise<string> {
   return (await db.tx((tx) => directory.create(tx))).id;
 }
@@ -148,8 +147,8 @@ describe("sending a Message to a User over the Agent server", () => {
   });
 
   it("answers 404 for a well-formed uuid naming no User, and writes nothing", async () => {
-    // The foreign key doing the one thing it exists to catch: an agent copying an id wrong
-    // (ADR-0036). There is no lookup in front of the write, so this 404 comes from the
+    // The foreign key doing the one thing it exists to catch: an agent copying an id wrong.
+    // There is no lookup in front of the write, so this 404 comes from the
     // write that actually failed.
     const refused = await post({ userId: nobody, text: "are you there?" });
     assert.equal(refused.statusCode, 404);
@@ -177,7 +176,7 @@ describe("sending a Message to a User over the Agent server", () => {
 
     // `additionalProperties: false` strips rather than refuses, which is what is wanted
     // here: an agent talked into asking for an inbound Message asks through a field that
-    // reaches nothing, and cannot put words in a User's mouth (ADR-0034).
+    // reaches nothing, and cannot put words in a User's mouth.
     const message = await post({ userId: user, text: "not from you", direction: "inbound" });
     assert.equal(message.statusCode, 201);
     assert.equal(message.json<MessageRecord>().direction, "outbound");
@@ -273,7 +272,7 @@ describe("reading a User's Message log over the Agent server", () => {
 
   it("requires a User, and refuses an unknown query parameter", async () => {
     const user = await withFour();
-    // Required not for confidentiality — the agent may read everything (ADR-0011) — but
+    // Required not for confidentiality — the agent may read everything — but
     // because `seq` is per User and cannot cursor an interleaved result.
     assert.equal((await read("")).statusCode, 400);
     assert.equal((await read("?limit=2")).statusCode, 400);

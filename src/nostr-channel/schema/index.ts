@@ -3,10 +3,8 @@
  * and `outbox` tables, and the PostgreSQL schema they live in. Keep it to the tables and the values
  * that define them.
  *
- * No Message is declared here, whichever medium one travelled by: the log is the Messenger's
- * ([ADR-0048](../../../docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)). What
- * this Channel keeps is the three things only it can know
- * ([ADR-0049](../../../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)).
+ * No Message is declared here, whichever medium one travelled by: the log is the Messenger's. What
+ * this Channel keeps is the three things only it can know.
  *
  * The import of the schema of Users is what lets two columns below reference
  * `concorde_users.users.id`, and it re-exports nothing of it. That is the second such import in the
@@ -15,9 +13,7 @@
  *
  * The schema is `concorde_nostr_channel`, named for the component rather than for the protocol.
  * Nostr Auth speaks Nostr too, so a protocol name here would belong to whichever of the two a
- * reader met first
- * ([ADR-0053](../../../docs/adr/0053-nostr-auth-verifies-nip-98-per-request.md)). Shortening it to
- * `concorde_nostr` is the thing to refuse in review.
+ * reader met first. Shortening it to `concorde_nostr` is the thing to refuse in review.
  */
 
 import { sql } from "drizzle-orm";
@@ -62,7 +58,7 @@ export const pubkeys = nostrChannelSchema.table("pubkeys", {
    * libraries and the wire format use.
    *
    * Not an `npub`. NIP-19's human-facing encodings "MUST NOT be used in NIP-01 events", and the
-   * framework decodes none of them (ADR-0050). What is stored here is compared byte for byte
+   * framework decodes none of them. What is stored here is compared byte for byte
    * against the author of a decrypted message, so a value in any other spelling matches nothing.
    */
   pubkey: text("pubkey").notNull().unique("pubkeys_pubkey_unique"),

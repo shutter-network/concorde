@@ -5,7 +5,7 @@
  * `alpha` is exported alongside `widgets` for the same reason every part's `schema.ts`
  * exports its `pgSchema`: a push reads top-level values and creates a schema only if it
  * is handed one, so `applySchema(db, { widgets })` gets `schema "test_alpha" does not
- * exist` ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)).
+ * exist`.
  *
  * `src/test-support` is excluded from the build, so none of this ships.
  */

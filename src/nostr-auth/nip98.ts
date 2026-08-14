@@ -1,7 +1,6 @@
 /**
  * The NIP-98 credential, checked by hand over the signature primitive, and the seven checks that
- * are the whole authentication of a request
- * ([ADR-0053](../../docs/adr/0053-nostr-auth-verifies-nip-98-per-request.md)).
+ * are the whole authentication of a request.
  *
  * This file is `src/nostr-channel/envelope.ts`'s sibling and was written from the same argument.
  * `nostr-tools` ships `nip98.validateToken`, and **nothing here calls it**. Its freshness check,

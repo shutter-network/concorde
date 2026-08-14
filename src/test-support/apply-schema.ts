@@ -4,9 +4,8 @@
  *
  * This is the test suite's whole setup story for DDL. An Operator lists the `/schema`
  * subpaths of the parts they run in a `drizzle.config.ts` and runs `drizzle-kit push`
- * or `generate` + `migrate`
- * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md),
- * [ADR-0055](../../docs/adr/0055-a-components-tables-are-a-subpath-of-their-own.md));
+ * or `generate` + `migrate`;
+ *
  * a test hands the same objects to `applySchema` and gets the same tables. Pushing
  * rather than applying reviewed SQL is the prototype flow, and a database created and
  * dropped inside one test file is exactly a prototype.
@@ -22,8 +21,8 @@ import type { Db } from "../db/index.ts";
  * A part's schema as `drizzle-kit` reads one: the module's exports, flat.
  *
  * `import * as users from "../users/schema/index.ts"` is the intended argument, and it is
- * one module's own exports, which is what `drizzle-kit`'s loader requires per file
- * (ADR-0055). `drizzle-kit` takes `Object.values` and keeps whatever passes
+ * one module's own exports, which is what `drizzle-kit`'s loader requires per file.
+ * `drizzle-kit` takes `Object.values` and keeps whatever passes
  * `is(x, PgTable)` or `is(x, PgSchema)`, so the `<component>Tables` wrapper riding along
  * in the namespace is ignored rather than harmful, and a table reachable *only* through
  * that wrapper would be invisible here exactly as it would be to the Operator.
@@ -33,8 +32,8 @@ import type { Db } from "../db/index.ts";
  * exporting one name are both kept here. An Operator meets exactly that merge: a
  * deployment `export *`s the components it runs into one `schema.ts`, and a name declared
  * by two of them is dropped in silence — under Node's ESM semantics from both modules,
- * and under the `tsx` loader `drizzle-kit` actually registers, from all but the first
- * (ADR-0055). The two names every schema module declares are prefixed for that reason.
+ * and under the `tsx` loader `drizzle-kit` actually registers, from all but the first.
+ * The two names every schema module declares are prefixed for that reason.
  * The table names are not, and nothing here would notice a collision between two of them:
  * `scripts/check-package.ts` is what does, by importing all eight `/schema` specifiers
  * un-aliased into one module scope, where a duplicate is a compile error.

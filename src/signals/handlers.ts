@@ -1,15 +1,15 @@
 /**
  * The Handler seam, and the absence at the middle of it is the decision: a Handler is given the
- * Signal and nothing else (ADR-0024). A full `ctx` was weighed first and lost, because carrying the
+ * Signal and nothing else. A full `ctx` was weighed first and lost, because carrying the
  * Messenger in it would put messaging back into the Signal Worker's Handler contract, which is what
- * keeping identity and messaging out of the Worker bought (ADR-0020). A minimal `{ log, workspace,
+ * keeping identity and messaging out of the Worker bought. A minimal `{ log, workspace,
  * signals }` lost too: it is a second way to obtain what the Operator's entry point already holds,
  * and a Handler's dependencies read better in its own factory than arriving ambiently. Do not add
  * one back.
  *
  * `post` cannot produce Prompts, and that is the same argument. A failure Signal was considered, so
  * that retry and notification could be written as ordinary Handlers, and rejected as indirection
- * over a phase that is already arbitrary code with store access (ADR-0017).
+ * over a phase that is already arbitrary code with store access.
  */
 
 /**

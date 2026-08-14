@@ -1,15 +1,13 @@
 /**
  * **The grant is a method and never a route**, and that is the same guard the Nostr Channel's
- * `recordPublicKey` carries ([ADR-0049](../../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md),
- * [ADR-0053](../../docs/adr/0053-nostr-auth-verifies-nip-98-per-request.md)). Recording a key hands
+ * `recordPublicKey` carries. Recording a key hands
  * whoever holds it a User's whole identity over HTTP, so it sits with the writes an injected prompt
- * cannot reach ([ADR-0003](../../docs/adr/0003-prompt-injection-is-an-accepted-risk.md)). This
- * component registers **no route on either server**, and a route added here is the thing to refuse
- * in review, whatever it does.
+ * cannot reach. This component registers **no route on either server**, and a route added here is
+ * the thing to refuse in review, whatever it does.
  *
  * **Nothing here reads `concorde_nostr_channel.pubkeys`.** The Channel's table says "the agent
- * writes to this key"; this one says "this key acts as this User". ADR-0048 refused a shared
- * identity table on the argument that an Authenticator would keep a copy, and it turns out not to
+ * writes to this key"; this one says "this key acts as this User". A shared identity table was
+ * refused on the argument that an Authenticator would keep a copy, and it turns out not to
  * be a copy: the cardinalities are opposite and so are the directions. Making one read the other is
  * the thing to refuse in review after the route.
  *

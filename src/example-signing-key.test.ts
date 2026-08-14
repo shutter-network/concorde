@@ -3,7 +3,7 @@
  *
  * Both keys exist so that `docker compose up` comes up from a fresh clone with no generation
  * step, and the whole safety of each is that it is a decoy marked worthless at every point of
- * contact (ADR-0041). None of that marking may go *inside* the key in a way that stops it
+ * contact. None of that marking may go *inside* the key in a way that stops it
  * parsing: a comment that breaks the loader is a worse outcome than no comment. So each case
  * below reads the committed bytes exactly as the example's `main.ts` reads them, and pins what
  * the deployment then depends on.
@@ -44,7 +44,7 @@ describe("02_decisions' committed signing key", () => {
   it("is the Ed25519 key the deployment derives its algorithm from", () => {
     const key = createPrivateKey(readFileSync(keyFile));
     // Ed25519 fixes `alg` to EdDSA with no choice to make, so the deployment passes no
-    // `signingAlg` and Signatures derives it (ADR-0044). A different key type here would be a
+    // `signingAlg` and Signatures derives it. A different key type here would be a
     // silent change to what the README's offline verification has to do.
     assert.equal(key.asymmetricKeyType, "ed25519");
   });

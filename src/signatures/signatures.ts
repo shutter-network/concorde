@@ -10,8 +10,7 @@
  * and cannot stringify into a log line by accident. The public half is derived rather than taken
  * as a second option, because a second option is a second answer to which key this is. The hook
  * `POST /verify` runs comes off the Public server rather than off a component, because which
- * schemes a deployment accepts is what that server holds
- * ([ADR-0052](../../docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)).
+ * schemes a deployment accepts is what that server holds.
  * So this component takes no Users, reads no User anywhere, and authenticates nobody.
  *
  * `algorithmForCurve` is deliberately narrower than JOSE. Ed448 and secp256k1 determine `EdDSA`

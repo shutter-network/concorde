@@ -5,14 +5,14 @@
  *
  * What `register` answers with is the only way an inbound Message can be written: the Messenger has
  * no public `receive`, on purpose, so that no other code can put words in a User's log and no
- * Channel can claim to be a different one (ADR-0048). Handing the routes the Messenger itself
+ * Channel can claim to be a different one. Handing the routes the Messenger itself
  * gives them nothing to write through.
  *
  * `send` is a no-op rather than an unwritten member, and there is no queue table behind it. The
  * `Channel` type argues the general case at length: an implementation must not perform the network
  * act inside the caller's transaction, because a publish cannot be rolled back and a transaction
  * can. HTTP has no act to defer either. Delivery is the User asking, so the row in the log is the
- * whole of it and the next poll carries it (ADR-0035). Do not add a queue here.
+ * whole of it and the next poll carries it. Do not add a queue here.
  *
  * The submission's transaction is opened here and not in the handler, because a route holds no Db.
  * The Messenger's `receive` joins it rather than opening one, which is what would let a Channel

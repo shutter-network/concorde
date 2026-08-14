@@ -76,8 +76,7 @@ before(async () => {
   const worker = createSignalWorker({ db, runtime: fakeRuntime(), handlers: {}, logger: silent });
   users = createUsers({ db, agentServer, publicServer: server });
   // The scheme this client logs in with: `POST /auth/tokens` is Password Auth's route now, and
-  // registering it with the server is what makes the Channel's two routes authenticate anybody
-  // (ADR-0052).
+  // registering it with the server is what makes the Channel's two routes authenticate anybody.
   passwordAuth = createPasswordAuth({
     db,
     users,

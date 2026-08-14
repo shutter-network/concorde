@@ -1,5 +1,5 @@
 /**
- * A value and a pure function, and keeping it that way is the whole decision (ADR-0028). It creates
+ * A value and a pure function, and keeping it that way is the whole decision. It creates
  * nothing, writes nothing and stats nothing, so a pre-flight check on any of these paths does not
  * belong here however cheap it looks. Everything refused below is decidable from the value alone,
  * and that is the criterion the list of refusals is built on.
@@ -9,7 +9,7 @@
  * That is the check this module is allowed not to write.
  *
  * Resolution is one `path.posix.join` of the Runtime Directory and an entry's path, and that is why
- * the two ways out of that directory are refused rather than resolved (ADR-0054): a `..` segment
+ * the two ways out of that directory are refused rather than resolved: a `..` segment
  * joins away into a path above the root with nothing left to see it, and a leading `/` lands under
  * the root a second time. The second refusal is what catches the shape this replaced, where an
  * entry named an absolute path of its own; do not soften it into normalization, because the wrong

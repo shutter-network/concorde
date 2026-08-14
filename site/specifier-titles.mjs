@@ -4,12 +4,12 @@
 // TypeDoc names a module after its entry file's path, so `../src/users/index.ts` arrives as
 // `users` and `../src/index.ts` as `index` — neither of which is a thing anyone can type into
 // an import. This renames each module to its specifier in the root package.json `exports`, so
-// the page a Developer lands on is headed with the line they copy (ADR-0047).
+// the page a Developer lands on is headed with the line they copy.
 //
 // The mapping is derived from the export map rather than listed here, and the whole map is
 // accounted for. Two generators write the reference: TypeDoc, whose pages are the component and
 // infrastructure subpaths, and `scripts/reference/render.ts`, whose table pages are the eight
-// `/schema` subpaths (ADR-0055). Every entry belongs to exactly one of them, and this fails the
+// `/schema` subpaths. Every entry belongs to exactly one of them, and this fails the
 // generation on any disagreement in either direction: a TypeDoc module that is not an entry point,
 // an entry point that produced no module, a `/schema` entry with no `schema/` directory behind it
 // to render a table page from, a `schema/` directory with no `/schema` entry, and a `/schema` entry
@@ -44,7 +44,7 @@ function specifiersByGenerator() {
   const tables = new Map();
   for (const [subpath, conditions] of Object.entries(manifest.exports)) {
     // A subpath mapped to `null` is deliberately unreachable and has no module to document —
-    // `"./messenger"` was one until ADR-0047 retired it — so it is skipped rather than an error.
+    // `"./messenger"` was one until it was retired — so it is skipped rather than an error.
     if (typeof conditions?.default !== "string") continue;
     const moduleName = conditions.default
       .replace(/^\.\/dist\//, "")
@@ -89,7 +89,7 @@ export function load(app) {
             `"${documentedElsewhere}" is documented by a generated table page and TypeDoc has ` +
               `rendered one for it too. An export entry gets exactly one generator. Take the ` +
               `entry point out of typedoc.jsonc: a rendered page would print every table as ` +
-              `PgTableWithColumns<{}> and say nothing the table page does not (ADR-0055).`,
+              `PgTableWithColumns<{}> and say nothing the table page does not.`,
           );
         }
         throw new Error(
@@ -123,7 +123,7 @@ export function load(app) {
       throw new Error(
         `These components own tables and have no "./<component>/schema" entry in package.json ` +
           `exports: ${unexported.join(", ")}. Their table page would document a specifier ` +
-          `nobody can import (ADR-0055).`,
+          `nobody can import.`,
       );
     }
   });

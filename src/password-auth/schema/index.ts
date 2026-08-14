@@ -9,8 +9,7 @@
  * configuration listing this component's `/schema` subpath without that one generates a reference
  * to a table nothing creates.
  *
- * **A password is a row rather than a column now**
- * ([ADR-0052](../../../docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)).
+ * **A password is a row rather than a column now**.
  * `concorde_users.users.password_hash` is nullable because a User authenticated some other way need
  * never have one; here the absence is the absence of the row, so `password_hash` is `NOT NULL` and
  * nothing has to decide what a null one means. Do not make it nullable to mirror the column this

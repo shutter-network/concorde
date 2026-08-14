@@ -77,6 +77,6 @@ export { ScheduleSpecError } from "./schedules.ts";
 // The one union this subpath still takes from `schema.ts`, and the array it is derived from. Both
 // are on `/schema` too, which is the one overlap the split leaves: the array is what the column's
 // check constraint is compiled from, and `ScheduleRecord.kind` is declared with the union and is
-// on the wire (ADR-0055).
+// on the wire.
 export type { ScheduleKind } from "./schema/index.ts";
 export { scheduleKinds } from "./schema/index.ts";

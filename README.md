@@ -179,5 +179,4 @@ npm run check   # typecheck, build, lint, test
 ```
 
 PostgreSQL is real in every test and nothing about the database is mocked, so that container is a
-prerequisite rather than an extra. `CLAUDE.md` is the full account of the toolchain, and
-`docs/adr/` records the decisions.
+prerequisite rather than an extra. `CLAUDE.md` is the full account of the toolchain.

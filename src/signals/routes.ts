@@ -8,12 +8,12 @@
  *
  * Unscoped by decision and not by omission: the agent reads every Signal and every Run whatever
  * Session it is in, because Session routing organises context and was never a confidentiality
- * mechanism (ADR-0011, ADR-0006). Do not add a `session` or a `user` parameter here. There is
- * nothing on a Signal to scope by in any case, the Worker holding no identity (ADR-0020).
+ * mechanism. Do not add a `session` or a `user` parameter here. There is
+ * nothing on a Signal to scope by in any case, the Worker holding no identity.
  *
  * All `GET`. Nothing here writes, a Signal being immutable but for the state the Worker gives it,
  * and a Run being the Worker's record of its own work. This is the agent's read and only the
- * agent's: ADR-0024 expects a Signal Handler to answer "has this arrived before?" for itself, and
+ * agent's: a Signal Handler answers "has this arrived before?" for itself, and
  * what it has for that is a handle over `signalsTables` rather than a method on the Worker.
  */
 

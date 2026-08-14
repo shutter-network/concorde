@@ -3,9 +3,8 @@
  *
  * A route plugin declares its own `tags`, `summary`, `description`, parameters and response
  * schemas, and `@fastify/swagger` collects those declarations through an `onRoute` hook at
- * registration ([ADR-0040](../../docs/adr/0040-the-gateway-describes-its-own-http-api.md)). So the
- * document is obtainable by registering a plugin on a bare Fastify and asking it: nothing calls a
- * handler, so no Db, no Docker, no model and no network are involved.
+ * registration. So the document is obtainable by registering a plugin on a bare Fastify and asking
+ * it: nothing calls a handler, so no Db, no Docker, no model and no network are involved.
  *
  * **One bare instance per plugin, not one per component.** Then no two plugins can collide on a
  * path, and the server a plugin belongs to is a property of the instance rather than something to
@@ -51,7 +50,7 @@ import { agentUserRoutes, publicUserRoutes } from "../../src/users/routes.ts";
  * Which of the two servers a plugin goes on.
  *
  * The difference is the difference between what the agent can call and what a User's client can.
- * The Agent server has no authentication of any kind (ADR-0003). The Public server has some on
+ * The Agent server has no authentication of any kind. The Public server has some on
  * almost every route, and which routes are the exception is in those routes' own descriptions.
  */
 export type ServerName = "agent" | "public";
@@ -153,7 +152,7 @@ export type ServerRoutes = {
 
 /** One component's routes, keyed by the specifier a Developer imports the component from. */
 export type ComponentRoutes = {
-  /** The directory under `src`, which is also the subpath in the export map (ADR-0047). */
+  /** The directory under `src`, which is also the subpath in the export map. */
   readonly subpath: string;
   /** The full import specifier, which is what the page is titled with. */
   readonly specifier: string;
@@ -358,7 +357,7 @@ function onlyMediaType(
  * Refuses a route that would render as a heading with most of the page missing.
  *
  * A route arrives with `tags`, a `summary`, a `description` and a `response` schema per status it
- * can answer, or it arrives half-described (ADR-0040), and until now nothing but review said so.
+ * can answer, or it arrives half-described, and until now nothing but review said so.
  * The generated page is where a half-described route becomes visible, and it becomes visible as an
  * absence, which is the shape of thing a reader does not notice.
  *
@@ -389,7 +388,7 @@ function assertNothingIsHalfDescribed(
       `The ${listed.server} plugin of src/${listed.subpath}/routes.ts has a route the pages ` +
         `cannot describe, so its page would be a heading with the answer missing:`,
       ...half,
-      `Either the route is half-described (ADR-0040), or @fastify/swagger has renamed a field ` +
+      `Either the route is half-described, or @fastify/swagger has renamed a field ` +
         `this extraction reads by name.`,
     ].join("\n"),
   );

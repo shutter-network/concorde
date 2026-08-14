@@ -99,11 +99,10 @@ async function guarded(): Promise<{
   };
   const server = serverComponent(Fastify(), nowhere, { logger });
   built.push(server);
-  // Before the routes, because a Fastify instance that has booted takes no more of
-  // these. It answers what the default handler would, so what the assertions read is
-  // the ordinary 500 an Operator would see.
-  // `TError` defaults to `unknown` on this hook, so the annotation is what lets the
-  // message be read. Fastify hands the thrown value through untouched either way.
+  // Before the routes, because a Fastify instance that has booted takes no more of these. It
+  // answers what the default handler would, so what the assertions read is the ordinary 500 an
+  // Operator would see. `TError` defaults to `unknown` on this hook, so the annotation is what lets
+  // the message be read. Fastify hands the thrown value through untouched either way.
   server.fastify.setErrorHandler(async (error: Error, _request, reply) => {
     thrown.push(error);
     return reply.code(500).send({

@@ -1,13 +1,13 @@
 /**
  * The Runtime seam, and it is the narrowest interface in the framework on purpose: one method, one
  * argument, one outcome. What it decides is whether a second Agent Implementation is possible at
- * all (ADR-0033), so everything specific to one of them stays in that Runtime's own constructor:
- * the image, the mounts, the model, the configuration files the program reads on disk (ADR-0016).
+ * all, so everything specific to one of them stays in that Runtime's own constructor:
+ * the image, the mounts, the model, the configuration files the program reads on disk.
  * Nothing that only `pi` needs may arrive here.
  *
  * Two things that look like omissions are decisions. There is no timeout, because a Run that is cut
  * short has already sent Messages and written the Workspace and is never retried, and the framework
- * cannot know the right number for a deployment it knows nothing about (ADR-0017). And there is no
+ * cannot know the right number for a deployment it knows nothing about. And there is no
  * Run id, because the Session name already traces a Run: the Worker resolves a fresh Session to
  * `run_<the Run's id>` before calling this.
  */

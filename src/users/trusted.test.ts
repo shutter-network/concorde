@@ -2,14 +2,13 @@
  * The asymmetry the whole part is arranged around: what trusted code may do, and what the agent
  * may not.
  *
- * Signal Handlers and an Operator's entry point are trusted code (ADR-0009, ADR-0020) and hold the
- * constructed object. The Agent server is the one surface an injected prompt reaches (ADR-0003)
- * and it authenticates nobody at all (ADR-0010). So both of this component's writes, admitting a
+ * Signal Handlers and an Operator's entry point are trusted code and hold the
+ * constructed object. The Agent server is the one surface an injected prompt reaches
+ * and it authenticates nobody at all. So both of this component's writes, admitting a
  * User and setting their Attributes, are methods and not routes, and this file is where that
  * stops being a description and becomes a property.
  *
- * **Nothing here is about a credential.** The password digest and the Token left for Password Auth
- * ([ADR-0052](../../docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)),
+ * **Nothing here is about a credential.** The password digest and the Token left for Password Auth,
  * so what a Token is worth, who may mint one and what a wrong password answers are all
  * `src/password-auth/`'s, and the Public server has no part in this file.
  *
@@ -20,7 +19,7 @@
  *
  * The Signal Worker is present here and nowhere else in this part, for one criterion: a
  * transaction that creates a User and emits a Signal must commit or roll back as one. The Users
- * component is not a Producer and emits nothing itself (ADR-0029), so that pattern is the
+ * component is not a Producer and emits nothing itself, so that pattern is the
  * deployment's, and this is where it is proved to work.
  *
  * A database of this file's own, because no two test files may share one.
@@ -74,7 +73,7 @@ before(async () => {
   agentServer = serverComponent(Fastify(), { port: 0, host: "127.0.0.1" });
 
   // Handed the Agent server, so `/users` is where the constructor put the read plugin: nothing
-  // here registers it, and nothing here could forget to (ADR-0032). No Public server, because
+  // here registers it, and nothing here could forget to. No Public server, because
   // `GET /users/me` needs a scheme registered and no scheme is this file's subject.
   directory = createUsers({ db, agentServer });
   // Constructed and never started: this file emits Signals and reads them back, and a running
@@ -98,7 +97,7 @@ after(async () => {
   await database.drop();
 });
 
-/** A User, admitted from trusted code, which is the only way one is admitted (ADR-0052). */
+/** A User, admitted from trusted code, which is the only way one is admitted. */
 function admit(): Promise<UserRecord> {
   return db.tx((tx) => directory.create(tx));
 }
@@ -163,7 +162,7 @@ describe("setting Attributes from trusted code", () => {
   });
 
   it("takes the caller's transaction, so a rollback grants nothing", async () => {
-    // What "takes the transaction first" buys, made observable (ADR-0023): granting a
+    // What "takes the transaction first" buys, made observable: granting a
     // group and recording in the Operator's own tables who granted it commit together
     // or not at all.
     const user = await admit();
@@ -191,7 +190,7 @@ describe("setting Attributes from trusted code", () => {
 
 describe("admitting a User and giving them a credential", () => {
   it("is one transaction, because `create` takes the caller's", async () => {
-    // The claim ADR-0052 rests the removal of `POST /users` on: a Signal Handler admitting
+    // The claim the removal of `POST /users` rests on: a Signal Handler admitting
     // somebody and an Auth writing their secret are one commit, so a crash cannot leave a User
     // nobody can log in as. This file holds no Auth, so what is proved here is the half that is
     // this component's, the write joining a transaction of the caller's and rolling back with
@@ -225,9 +224,9 @@ describe("a User and a Signal in one transaction", () => {
   it("commits as one, which is how a deployment gets a `user.created` Signal", async () => {
     // The Users component is **not** a Producer: it takes no reference to the Signal
     // Worker and emits nothing, because the worker is globally serial and a Signal per
-    // User event would put a Run behind one (ADR-0029). A deployment that wants it emits
-    // it itself, and this is the pattern — both writes take the caller's transaction
-    // (ADR-0023), so there is one.
+    // User event would put a Run behind one. A deployment that wants it emits
+    // it itself, and this is the pattern — both writes take the caller's transaction,
+    // so there is one.
     const created = await db.tx(async (tx) => {
       const user = await directory.create(tx);
       await directory.setAttributes(tx, user.id, { invitedBy: "the Operator" });

@@ -1,10 +1,8 @@
 /**
  * The two secrets this component holds want opposite treatment, and that is the part most likely
- * to be "corrected" later by somebody applying one rule to both
- * ([ADR-0030](../../docs/adr/0030-passwords-are-traded-for-bearer-tokens.md)).
+ * to be "corrected" later by somebody applying one rule to both.
  *
- * **This file is `src/users/secrets.ts`, byte for byte, and the copy is deliberate**
- * ([ADR-0052](../../docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)).
+ * **This file is `src/users/secrets.ts`, byte for byte, and the copy is deliberate**.
  * The secrets are this component's now, and the Users component keeps its own login working through
  * the expand half of that move. Ticket 03 deletes the other one; until then, edit both or neither,
  * and do not make one import the other, because a component reaching into another's private module

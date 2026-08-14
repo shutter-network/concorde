@@ -64,7 +64,7 @@ export type { RunOutcome, RunPrompt, Runtime } from "./runtime.ts";
 // unions and the arrays they are derived from are the exception and are on both: a check constraint
 // is compiled from the arrays, which is why they live in `schema.ts`, and `SignalRecord.state` and
 // `RunRecord.state` are declared with the unions and are on the wire, so a reader of either record
-// has to be able to name them (ADR-0055).
+// has to be able to name them.
 export type { RunState, SignalState } from "./schema/index.ts";
 export { runStates, signalStates } from "./schema/index.ts";
 export type { TemplateHandlerOptions } from "./template-handler.ts";

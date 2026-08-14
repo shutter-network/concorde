@@ -6,11 +6,11 @@
  *
  * There is no `user_id` on either table and there must not be one. The Signal Worker authenticates
  * nobody, so who a Signal came from is not a fact it holds; it travels in the payload, written by a
- * trusted Producer (ADR-0020, superseding ADR-0019's column).
+ * trusted Producer.
  *
  * Both state columns are one-way, and nothing ever returns to `pending`. A retry column, a
  * `timed_out` state and an attempt counter are all absent for one reason: a failed Run is never
- * re-run and nothing is ever timed out (ADR-0017).
+ * re-run and nothing is ever timed out.
  */
 
 import { type SQL, sql } from "drizzle-orm";

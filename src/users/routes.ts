@@ -7,21 +7,17 @@
  * the reference out of the declarations below, so a table beside them would be a second list to
  * keep true and nothing would compare the two.
  *
- * **The agent's routes are reads and there is no create among them**
- * ([ADR-0052](../../docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)).
- * `POST /users` was removed rather than stripped of its password parameter. Attributes are where
- * grouping and therefore authorization live
- * ([ADR-0008](../../docs/adr/0008-party-is-not-in-the-data-model.md)), the Agent server has no
- * authentication of any kind, and an injected prompt reaches everything on it
- * ([ADR-0003](../../docs/adr/0003-prompt-injection-is-an-accepted-risk.md)). An agent that could
- * mint a User **and** give it a credential has minted itself an account it can log in as. A User
- * is admitted from trusted code, which is `users.create` inside the Operator's own transaction. Do
- * not add the route back, and do not add a validator in front of one: there is nothing here to
- * bypass and nothing to configure.
+ * **The agent's routes are reads and there is no create among them**. `POST /users` was removed
+ * rather than stripped of its password parameter. Attributes are where grouping and therefore
+ * authorization live, the Agent server has no authentication of any kind, and an injected prompt
+ * reaches everything on it. An agent that could mint a User **and** give it a credential has minted
+ * itself an account it can log in as. A User is admitted from trusted code, which is `users.create`
+ * inside the Operator's own transaction. Do not add the route back, and do not add a validator in
+ * front of one: there is nothing here to bypass and nothing to configure.
  *
  * `GET /me` is the one Public route here, and it is here rather than under a scheme's prefix
  * because it only echoes `request.concordeUser`: whichever Auth named the User, the answer is the
- * same (ADR-0052). It takes the Public server's own composed hook, so this component authenticates
+ * same. It takes the Public server's own composed hook, so this component authenticates
  * nobody.
  *
  * Each route's own `description` is what `/openapi.json` serves, so those strings are the API
@@ -95,7 +91,7 @@ const aQueryParameterWasWritten = "A query parameter was written, and this route
  * The other components' routes reach for `bearerRequired` in `route-conventions.ts`, which names
  * the Token and where one comes from. This route cannot: it is the one route in the framework that
  * is deliberately scheme-independent, so a sentence promising a Token would be wrong in a
- * deployment whose Users hold no password (ADR-0052).
+ * deployment whose Users hold no password.
  */
 const authenticationRequired =
   "**Requires authentication.** Present a credential of any scheme this deployment accepts, which is `Authorization: Bearer <token>` wherever the password login is registered. The User answered with is the one the Gateway authenticated, and no parameter anywhere names another.";
@@ -186,7 +182,7 @@ export function agentUserRoutes(directory: UserOperations): FastifyPluginAsync {
  * It is not optional, though at runtime it is absent until a `requireUser` has run. The type cannot
  * express "set only after this hook ran", so a route that forgets the preHandler still type-checks
  * and reads `undefined`. Accepted, as everywhere else that Operator code is guidance rather than
- * construction ([ADR-0030](../../docs/adr/0030-passwords-are-traded-for-bearer-tokens.md)).
+ * construction.
  */
 declare module "fastify" {
   interface FastifyRequest {
@@ -197,7 +193,7 @@ declare module "fastify" {
      * Which scheme named them is not recorded here and is not a route's business: the Public
      * server walks every Auth registered with it and writes this property in one place, so a
      * handler reading it behaves the same under a password, a Nostr key or a scheme of the
-     * Operator's own (ADR-0052).
+     * Operator's own.
      */
     concordeUser: UserRecord;
   }

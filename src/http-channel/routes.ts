@@ -1,6 +1,6 @@
 /**
  * One plugin, on the Public server, and it is what HTTP as a Channel actually is: a User
- * submitting, and a User polling their own log by cursor (ADR-0035, ADR-0048). The agent's own two
+ * submitting, and a User polling their own log by cursor. The agent's own two
  * routes are acts on the log rather than acts of a medium, so they are the Messenger's and live in
  * `../messenger/routes.ts`. The plugin is not exported and the prefix is not configurable. Every
  * path it declares is relative, because the constructor supplies that prefix.

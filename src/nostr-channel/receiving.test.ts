@@ -5,8 +5,7 @@
  * something acting as a real sender, and what is asserted is a Message in a User's log, a Signal
  * Handler that ran, or a row that does not exist. Nothing reaches into the unwrap, and nothing
  * asserts that a function was called — the point of testing here is that a refactor moving the
- * code cannot move the answer
- * ([ADR-0049](../../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)).
+ * code cannot move the answer.
  *
  * **`impersonation` is the load-bearing test in this file, and arguably in the component.** NIP-17
  * states one `MUST`: a client must compare the seal's author against the rumor's, because the gift
@@ -22,7 +21,7 @@
  * the Channel has finished with both. What is then asserted is the whole of what exists.
  *
  * A real started Signal Worker, real PostgreSQL and a real WebSocket. The Runtime is the one thing
- * faked (ADR-0022). A Relay, a Messenger and a Channel per test, because a Channel registers with
+ * faked. A Relay, a Messenger and a Channel per test, because a Channel registers with
  * one Messenger once and each test wants its own store of events.
  */
 
@@ -403,7 +402,7 @@ describe("a Nostr message the agent must not admit", () => {
       // No Message, and — the part that matters for an agent whose public identity is known —
       // **no row of any kind**, not even the one that records an envelope as read. A stranger who
       // discovers the agent cannot grow the Operator's database by messaging it. The cost is that
-      // this envelope is re-dropped on every connect, which is the trade ADR-0049 takes.
+      // this envelope is re-dropped on every connect, which is the trade taken.
       assert.deepEqual(await messagesSaying("hello, I found your npub"), []);
       assert.equal(await envelopeWasRead(unwanted.id), false);
     });

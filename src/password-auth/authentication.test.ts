@@ -23,7 +23,7 @@
  *    behind it, and a request carrying a broken one of this scheme must not.
  *  - `serves nothing to a route that forgot the preHandler` records what actually happens rather
  *    than what would be nice. Nothing is protected by default, and the type cannot say "set only
- *    after `requireUser` ran" (ADR-0030), so the failure mode is pinned here.
+ * after `requireUser` ran", so the failure mode is pinned here.
  *
  * A database of this file's own, because no two test files may share one, and a deliberately
  * cheap scrypt cost, because every Token here starts with a login.
@@ -222,7 +222,7 @@ describe("authenticating a request", () => {
 describe("a route of the Operator's own", () => {
   it("serves nothing to a route that forgot the preHandler", async () => {
     // Nothing is protected by default, and the augmentation cannot express "set only after
-    // `requireUser` ran" (ADR-0030), so a route that omits it type-checks and runs. What it does
+    // `requireUser` ran", so a route that omits it type-checks and runs. What it does
     // then is measured here rather than assumed, because a guess about this is exactly the guess
     // an Operator would make:
     //

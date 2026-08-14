@@ -1,7 +1,6 @@
 /**
  * The NIP-59 envelope, unwrapped by hand over the encryption primitive, and the five checks that
- * are the whole authentication of an inbound message
- * ([ADR-0049](../../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)).
+ * are the whole authentication of an inbound message.
  *
  * A gift wrap is signed by a fresh random key and the rumor inside it is signed by nobody. So the
  * only thing that binds a message to its author is that the *seal* decrypted under a conversation
@@ -127,7 +126,7 @@ export function openEnvelope(
  * client can recover its own sent messages from a Relay. The agent's record of what it said is the
  * Message log, so the self-copy would halve nothing and would put the agent's own events on the
  * agent's own subscription. `wrapEvent` is therefore the entry point, and that is a decision
- * rather than a shortcut (ADR-0049).
+ * rather than a shortcut.
  *
  * Nothing about the result is dated now. NIP-59 randomises both the seal's and the wrap's
  * `created_at` up to two days into the past, which hides when the agent answered from anyone

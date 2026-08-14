@@ -85,6 +85,6 @@ export { createMessenger, messageReceivedKind } from "./messenger.ts";
 // The one union this subpath still takes from `schema.ts`, and the array it is derived from. Both
 // are on `/schema` too, which is the one overlap the split leaves: the array is what the column's
 // check constraint is compiled from, and `MessageRecord.direction` is declared with the union and
-// is on the wire (ADR-0055).
+// is on the wire.
 export type { MessageDirection } from "./schema/index.ts";
 export { messageDirections } from "./schema/index.ts";

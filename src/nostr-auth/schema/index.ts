@@ -10,12 +10,11 @@
  * `/schema` subpath without that one generates a constraint onto a table nothing creates.
  *
  * **`grants` is not a copy of `concorde_nostr_channel.pubkeys` and must not be kept in step with
- * it** ([ADR-0053](../../../docs/adr/0053-nostr-auth-verifies-nip-98-per-request.md)). The two
- * tables hold the same kind of value with opposite cardinalities and for opposite purposes: the
- * Channel picks exactly one key to *send* to, so its primary key is the User; this table admits any
- * number of signers to *act as* one User, so its primary key is the key. A reader who fixes the
- * "duplication" by pointing one at the other has made a person reachable over Nostr into a person
- * who may drive the HTTP API.
+ * it**. The two tables hold the same kind of value with opposite cardinalities and for opposite
+ * purposes: the Channel picks exactly one key to *send* to, so its primary key is the User; this
+ * table admits any number of signers to *act as* one User, so its primary key is the key. A reader
+ * who fixes the "duplication" by pointing one at the other has made a person reachable over Nostr
+ * into a person who may drive the HTTP API.
  *
  * `admitted` is written on every authenticated request, which no other table in the framework is.
  * It is pruned in the transaction that writes it, so read the delete in `grants.ts` before changing

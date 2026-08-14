@@ -425,11 +425,3 @@ Each of these is a deliberate decision, not an omission. Read the whole list bef
 - **A withheld Decision is undetectable.** A gap in the sequence means a rolled-back transaction,
   and the Operator owns the database.
 - **Swapping the Agent Implementation means rewriting the agent's configuration.**
-
-## Where the rationale lives
-
-Every decision above was recorded when it was made, with the alternatives that were refused and
-what each choice costs. Those records live in the repository, as numbered decision records under
-`docs/adr/`.
-
-This page states what is true. Those records state why.

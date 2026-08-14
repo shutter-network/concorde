@@ -1,9 +1,9 @@
 /**
  * Every key an Operator can bring, and what happens to the ones that are not Ed25519.
  *
- * `signatures.test.ts` is the artifact and the routes, all of it on the one key ADR-0041
- * describes. This file is the other axis: **one row of the derivation table per test**, plus
- * the keys that earn a refusal instead of an algorithm (ADR-0042). Nothing here is a database
+ * `signatures.test.ts` is the artifact and the routes, all of it on one key. This file
+ * is the other axis: **one row of the derivation table per test**, plus
+ * the keys that earn a refusal instead of an algorithm. Nothing here is a database
  * and nothing is mocked but the Users component's hook, which none of these tests reach.
  *
  * The claim under every derivation row is the same one, and it is deliberately not "the
@@ -18,7 +18,7 @@
  * refuses to have.** That mapping lives here, in a test, which is the only place it may: the
  * shipped code hands `jose` a string and the library owns hash, padding and signature
  * encoding, and a second mapping in `src` that disagreed with the library's would be worse
- * than none (ADR-0042). Written out here it does the opposite job, being an independent
+ * than none. Written out here it does the opposite job, being an independent
  * implementation, so an artifact that only `jose` can read fails.
  *
  * The signature **length** is asserted for every row alongside the verification, because the
@@ -61,7 +61,7 @@ type Server = ServerComponent<FastifyInstance>;
 /**
  * One keypair per key type, generated here, which is where a keypair may be generated: the
  * framework generates none, because a fresh key per restart leaves every prior artifact
- * unverifiable with nothing saying so (ADR-0041).
+ * unverifiable with nothing saying so.
  *
  * Once each and at module load rather than per test, because two of them are RSA and RSA
  * generation is the only slow thing in this file.
@@ -105,7 +105,7 @@ after(async () => {
 describe("the algorithm it derives from the key", () => {
   // One row per key type the table derives, and the artifact is what says which was derived:
   // there is no accessor for it and there should not be, since the `alg` a verifier acts on
-  // is the one in the header (ADR-0042).
+  // is the one in the header.
   for (const { what, key, kty, crv, alg, bytes } of [
     {
       what: "an Ed25519 key",
@@ -175,7 +175,7 @@ describe("the keys it refuses to be constructed with", () => {
     // Six algorithms are valid for one RSA key and nothing in the key distinguishes them, so
     // this is the one key type a derivation cannot serve. Guessing would be silent: an
     // artifact signed under the wrong one of the six is refused by the verifier and by
-    // nobody here (ADR-0042).
+    // nobody here.
     assert.throws(
       () => constructedWith(keys.rsa),
       (error: Error) => {
@@ -269,7 +269,7 @@ describe("the refusal that is not the constructor's", () => {
   // Everything above is refused before a server exists. This is the exposure that leaves:
   // a `signingAlg` that was *given* is passed to `jose` unexamined, because whether a key
   // can perform an algorithm is the library's question and a second answer of ours would be
-  // a second opinion (ADR-0042). The library's answer is asynchronous and construction is
+  // a second opinion. The library's answer is asynchronous and construction is
   // not, so it arrives at the first signing. Pinned rather than merely recorded, because a
   // documented exposure that nothing exercises is a documented guess.
   for (const [what, key, signingAlg] of [
@@ -304,7 +304,7 @@ function constructedWith(
   const agentServer = serverComponent(Fastify(), nowhere);
   const publicServer = serverComponent(Fastify(), nowhere);
   // A scheme that takes any `Authorization` header, because `POST /verify` takes the server's
-  // hook and a server with no scheme registered throws rather than refusing (ADR-0052). Only the
+  // hook and a server with no scheme registered throws rather than refusing. Only the
   // one test that reaches that route presents a header; what a real scheme does is
   // `src/password-auth/`'s.
   publicServer.registerAuth(

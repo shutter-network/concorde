@@ -217,7 +217,7 @@ describe("a record of Components", () => {
 
   it("starts an integer-like key first, whatever the Operator wrote", async () => {
     const log: string[] = [];
-    // Recorded rather than guarded against (ADR-0037). JavaScript orders `"2"` before
+    // Recorded rather than guarded against. JavaScript orders `"2"` before
     // every ordinary key in any object, so this Gateway starts the wrong part first and
     // nothing anywhere says so — which is the cost of not refusing it statically.
     const gateway = createBareGateway({

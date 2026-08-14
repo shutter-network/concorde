@@ -1,10 +1,10 @@
 /**
  * The drain loop and Signal Handler dispatch: the heart of the Signal Worker.
  *
- * PostgreSQL is real (ADR-0022) and the only fake is the Runtime, which is the seam
+ * PostgreSQL is real and the only fake is the Runtime, which is the seam
  * a container would otherwise sit behind. The Handlers are written inline,
  * because that is exactly what an Operator writes — a plain object closing over
- * whatever the test needs, with no harness from us (ADR-0024).
+ * whatever the test needs, with no harness from us.
  *
  * Every assertion here is on something an Operator or the agent could see: what a
  * Signal's state and error end up as, what Runs exist behind it, what the adapter
@@ -134,7 +134,7 @@ function notifyNothing(): Promise<unknown> {
   return db.handle({}).execute(sql`select pg_notify(${signalChannel}, '')`);
 }
 
-/** Emitting as a Producer does: inside a transaction the caller owns (ADR-0023). */
+/** Emitting as a Producer does: inside a transaction the caller owns. */
 function emit(worker: SignalWorker, kind: string, payload: unknown = {}): Promise<string> {
   return db.tx((tx) => worker.emit(tx, { kind, payload }));
 }
@@ -252,8 +252,8 @@ describe("worker.start", () => {
 
 /**
  * The type checker is the assertion: the Handler map is a construction option, so a
- * Signal Worker with none is unconstructable rather than merely unstartable
- * (ADR-0021). Never called — if `handlers` ever became optional, `@ts-expect-error`
+ * Signal Worker with none is unconstructable rather than merely unstartable.
+ * Never called — if `handlers` ever became optional, `@ts-expect-error`
  * would fail the typecheck.
  */
 export function constructingWithoutHandlersDoesNotCompile(runtime: Runtime): SignalWorker {
@@ -334,7 +334,7 @@ describe("the worker", () => {
             ["user_2", "two", "done", null],
             // Not `null`, which is what this column said for a fresh Session until the
             // Worker started naming them: the one Prompt whose Session nobody chose
-            // still records the one it used (ADR-0033).
+            // still records the one it used.
             [`run_${fresh.id}`, "three, in a fresh Session", "done", null],
           ],
         );
@@ -353,8 +353,7 @@ describe("the worker", () => {
     // Two Prompts per Signal, so "one at a time" covers both directions it could
     // be broken in: Runs of one Signal overlapping each other, and Runs of two
     // Signals overlapping. Different Sessions make no difference — the worker is
-    // serial globally, and a shared Workspace is safe for no other reason
-    // (ADR-0012).
+    // serial globally, and a shared Workspace is safe for no other reason.
     //
     // The Handler also declares the payload it expects. The Signal Worker carries
     // payloads as `unknown`, because their shape is the Producer's contract rather
@@ -438,7 +437,7 @@ describe("the worker", () => {
         assert.match(row.error ?? "", /the model refused/);
 
         // The Prompt after the failing one still ran: the Handler asked for both,
-        // and nothing here is retried or abandoned (ADR-0017).
+        // and nothing here is retried or abandoned.
         assert.deepEqual(
           (await runsOf(id)).map((run) => [run.prompt, run.state, run.error]),
           [
@@ -528,7 +527,7 @@ describe("the worker", () => {
 
   it("hands the Runtime any Session name, and fails only the Run it rejects", async () => {
     // What makes a name acceptable is the Agent Implementation's to say and nothing
-    // here holds a copy of it (ADR-0016), so every Prompt reaches the Runtime with
+    // here holds a copy of it, so every Prompt reaches the Runtime with
     // the name its Handler wrote — including the two spellings a check of ours would
     // have refused.
     const runtime = fakeRuntime((prompt) =>
@@ -558,7 +557,7 @@ describe("the worker", () => {
         );
         // The rejected name is on its own Run's row beside the Runtime's own words,
         // and the Prompts around it ran — which is the ordinary shape of a failed
-        // Run (ADR-0017) rather than an exception the framework made for names.
+        // Run rather than an exception the framework made for names.
         assert.deepEqual(
           (await runsOf(id)).map((run) => [run.session, run.state, run.error]),
           [
@@ -577,7 +576,7 @@ describe("the worker", () => {
     // here because the Prompt is only worth handing over if the Run behind it already
     // exists — this is what the agent sees over the Agent server while its own Run is
     // going. The Runtime used to be handed the Run's id to make this checkable; it takes
-    // one argument now (ADR-0033), so the lookup is by Session, and `found` is asserted
+    // one argument now, so the lookup is by Session, and `found` is asserted
     // rather than assumed: a Session name is unique here only because these two are, and
     // taking the first of two matches would make this test pass by luck.
     const runtime = fakeRuntime(async (prompt) => {
@@ -623,8 +622,7 @@ describe("the worker", () => {
     // The whole of what a Handler writing `session: null` now gets. The name is the
     // framework's one convention rather than each Runtime's, and it is resolved here,
     // where the Run row is: a Runtime that generated its own could name a Session the
-    // Run's row could not record, which is what `runs.session` said `null` for
-    // (ADR-0025, ADR-0033).
+    // Run's row could not record, which is what `runs.session` said `null` for.
     const runtime = fakeRuntime();
     await withWorker(
       {
@@ -923,7 +921,7 @@ describe("restart recovery", () => {
         // asks what happened to it.
         assert.match(row.error ?? "", /restart/);
 
-        // Not re-run, which is the whole point (ADR-0017): its Runs may already have
+        // Not re-run, which is the whole point: its Runs may already have
         // sent Messages, written the Workspace, or called something outside.
         assert.equal(handled, 0);
         assert.deepEqual(runtime.recorded, []);

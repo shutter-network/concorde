@@ -2,12 +2,11 @@
  * The statements the outbound queue is made of, and the two refusals that keep a Message from being
  * recorded as sent when it could never have gone out.
  *
- * The send is split in two because a publish cannot be rolled back and a transaction can
- * ([ADR-0049](../../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)). Publishing
- * inside the caller's transaction would either hold that transaction open across a round trip to the
- * Relay, or leave a recipient holding words the rollback erased from the log. So everything knowable
- * happens before the commit, the address, the wrap, its size and the row, and the network act
- * happens after it.
+ * The send is split in two because a publish cannot be rolled back and a transaction can.
+ * Publishing inside the caller's transaction would either hold that transaction open across a round
+ * trip to the Relay, or leave a recipient holding words the rollback erased from the log. So
+ * everything knowable happens before the commit, the address, the wrap, its size and the row, and
+ * the network act happens after it.
  *
  * That split is what puts the size bound here rather than in the publishing half, and it is the
  * thing to keep if this file is rearranged: built early, an over-long reply is a throw at the
@@ -15,8 +14,7 @@
  * and stops.
  *
  * The other half is a pump: read the rows nothing has attempted, publish, delete on acceptance, and
- * leave a reason on anything else. Nothing retries, per
- * [ADR-0017](../../docs/adr/0017-failed-runs-are-not-retried.md), and this table is where retries,
+ * leave a reason on anything else. Nothing retries, and this table is where retries,
  * backoff and an attempt cap would land.
  */
 

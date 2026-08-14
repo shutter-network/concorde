@@ -1,7 +1,7 @@
 /**
  * Serial globally, and that is load-bearing rather than a simplification: one Run at a time,
  * whatever Session it is in, is what makes a Workspace shared by every Signal Handler and the agent
- * safe to have (ADR-0012). Per-Session parallelism was weighed and lost, and reopening it means
+ * safe to have. Per-Session parallelism was weighed and lost, and reopening it means
  * scoping the Workspace per Session first. `pi`'s own session store has no locking either, so two
  * live writers on one Session would clobber each other in silence.
  *
@@ -14,7 +14,7 @@
  * `recover` has to finish before anything is claimed. A drain running alongside it would mark its
  * own Signal `processing` and have recovery fail it underneath. What recovery must never do is
  * re-run: a Run may already have sent Messages, written the Workspace and called something outside,
- * and its Prompt is already appended to the Session on disk (ADR-0017).
+ * and its Prompt is already appended to the Session on disk.
  */
 
 import { randomUUID } from "node:crypto";

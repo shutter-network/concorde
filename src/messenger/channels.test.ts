@@ -1,11 +1,10 @@
 /**
  * The seam between the Messenger and the one Channel that reaches people.
  *
- * Everything here is asked of the two objects an Operator holds, with a Channel of this file's
- * own: a Channel is a public interface a deployment implements
- * ([ADR-0048](../../docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)), so
- * the one below is an Operator's Channel rather than a mock of anything internal. What it does is
- * record what it was handed, or refuse.
+ * Everything here is asked of the two objects an Operator holds, with a Channel of this file's own:
+ * a Channel is a public interface a deployment implements, so the one below is an Operator's
+ * Channel rather than a mock of anything internal. What it does is record what it was handed, or
+ * refuse.
  *
  * Four claims, and each one is a thing an Operator or a User can observe:
  *

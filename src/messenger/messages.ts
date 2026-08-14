@@ -5,7 +5,7 @@
  * one query with the User id arriving from a query parameter, a Token or an argument. Keep it that
  * way: a second spelling of either is a second chance to disagree about what `before` means.
  *
- * Numbering both directions per User is ADR-0035, and the retry below is the price it names. An
+ * Numbering both directions per User is what the retry below is the price of. An
  * advisory lock and a per-User counter table have identical semantics and were rejected for adding
  * state and an idiom this repository has neither of. The savepoint is not part of the retry and
  * survives its removal: a constraint violation aborts the enclosing transaction, which on the

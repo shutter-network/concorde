@@ -1,7 +1,7 @@
 /**
  * The record is order-bearing and a wrong entry in it is silent, so the type has to be tight enough
  * that an accident cannot happen. That is why both of `Component`'s methods stay required: with
- * `name` gone (ADR-0037) a type whose two methods were optional would be the empty type, satisfied
+ * `name` gone a type whose two methods were optional would be the empty type, satisfied
  * by every value in the program, an options bag and a string included.
  *
  * `unwind` collects what each `stop` threw rather than rethrowing the first. One bad teardown

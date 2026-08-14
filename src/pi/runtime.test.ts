@@ -10,7 +10,7 @@
  * No Docker, no credentials, no network, no filesystem. `piRun` is a **pure and total**
  * function of its Prompt, with no case left over: the Session arrives already named,
  * because the Signal Worker answered a Handler's request for a fresh one before any of
- * this ran (ADR-0033), and that is asserted in `src/signals/worker.test.ts` where it
+ * this ran, and that is asserted in `src/signals/worker.test.ts` where it
  * happens. What none of this can prove is that the mounts resolve, that the image
  * declares the two things `pi` needs of it, or that a Session resumes: nothing but a real
  * container can, and that is `./container.test.ts`.
@@ -91,7 +91,7 @@ describe("what the agent is told", () => {
     // Verified against pi@0.83.0: `settings.json` holds `defaultModel` and
     // `defaultProvider`, and `pi` falls back to them when no flag is given. The cost is
     // that nothing refuses a deployment with no usable model any more — it is a Gateway
-    // that starts, serves, and fails its first Run permanently (ADR-0025, ADR-0033).
+    // that starts, serves, and fails its first Run permanently.
     for (const flag of ["--model", "--provider"]) {
       assert.ok(!commandFor().args.includes(flag), `${flag} should not be passed`);
     }
@@ -100,7 +100,7 @@ describe("what the agent is told", () => {
   it("names no directory, and sets no variable saying where one is", () => {
     // All three container paths are gone. The image declares the first two — `WORKDIR`
     // and `ENV PI_CODING_AGENT_DIR` — and `pi` resolves the third under the second. A
-    // path the framework does not carry is a path it cannot get wrong (ADR-0025).
+    // path the framework does not carry is a path it cannot get wrong.
     const composed = commandFor();
 
     for (const flag of ["--workdir", "-w", "--session-dir"]) {
@@ -118,7 +118,7 @@ describe("what the agent is told", () => {
 
     assert.equal(argumentAfter(composed, "--session-id"), "user_42");
     // `--session` resolves only an existing Session and exits 1 otherwise, which would
-    // fail every first Run of a named Session (ADR-0006, ADR-0025).
+    // fail every first Run of a named Session.
     for (const flag of ["--session", "--no-session", "--continue", "--resume"]) {
       assert.ok(!composed.args.includes(flag), `${flag} should not be passed`);
     }
@@ -128,7 +128,7 @@ describe("what the agent is told", () => {
     // Nothing here holds a copy of `pi`'s session-id grammar. `pi` checks `--session-id`
     // itself and exits 1 with its own message, which reaches the Operator through the
     // failed Run's `error` beside the name in its `session` — a diagnostic that cannot go
-    // stale, unlike a transcribed pattern (ADR-0024, ADR-0016). Nothing is joined onto a
+    // stale, unlike a transcribed pattern. Nothing is joined onto a
     // path either, here or anywhere, so a name that climbs is a name and not a traversal.
     for (const session of ["../escape", "user:42", "a/b", ""]) {
       assert.equal(argumentAfter(commandFor({}, { session, text: "hi" }), "--session-id"), session);
@@ -139,7 +139,7 @@ describe("what the agent is told", () => {
     // What used to be here was `--append-system-prompt <the agent directory>/…`, pointing
     // at a file rewritten before every Run. The Operator places an `AGENTS.md` in the
     // Workspace instead and `pi` finds it in its own working directory, so there is no
-    // flag to pass and nothing to know (ADR-0025, ADR-0028).
+    // flag to pass and nothing to know.
     const composed = commandFor({ extraArgs: ["--memory", "2g"] });
 
     for (const flag of ["--append-system-prompt", "--system-prompt", "--prompt-file"]) {
@@ -156,7 +156,7 @@ describe("what the agent is told", () => {
   it("ignores project-local configuration in the Workspace", () => {
     // The Workspace is writable by the agent and `trust.json` persists between Runs, so
     // without this one Run could arrange for the next to load its settings out of the
-    // Workspace — a reconfiguration that survives the Run that managed it (ADR-0003).
+    // Workspace — a reconfiguration that survives the Run that managed it.
     assert.ok(agentArgsOf(commandFor()).includes("--no-approve"));
     assert.ok(!commandFor().args.includes("--approve"));
   });
@@ -210,7 +210,7 @@ describe("the Prompt", () => {
     assert.equal(composed.stdin, "read @notes.md");
     // `pi` reads a leading `@word` as a file to include and refuses an argument starting
     // with `-`. Neither applies to piped stdin, and the whole Prompt is rendered text an
-    // Operator's template produced (ADR-0027).
+    // Operator's template produced.
     assert.ok(!composed.args.includes("read @notes.md"));
   });
 
@@ -240,7 +240,7 @@ describe("the outcome reader one Run gets", () => {
   it("names that Run's Session in a failure, which is why it is made per Run", async () => {
     // The Run's `error` column is the only thing an Operator has to go on, and a message
     // that named nothing left them with no transcript to open. A reader supplied once at
-    // construction could not have said this (ADR-0025, ADR-0033).
+    // construction could not have said this.
     const outcome = await piRun({ session: "user_99", text: "hi" }).outcome(silence());
 
     assert.equal(outcome.ok, false);

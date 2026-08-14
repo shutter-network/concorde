@@ -45,7 +45,7 @@ export const hostFromContainer = "host.docker.internal";
  * container under Docker Desktop and **does not** under a plain Linux daemon, where the
  * server has to be bound somewhere the bridge can reach. Two separate values, the `host`
  * the Operator gives Fastify's `listen` and the address they write into the agent's own
- * `AGENTS.md`, both theirs and neither derivable from the other (ADR-0010).
+ * `AGENTS.md`, both theirs and neither derivable from the other.
  */
 export const addHostToGateway = `--add-host=${hostFromContainer}:host-gateway`;
 

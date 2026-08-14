@@ -17,7 +17,7 @@ before(async () => {
   db = database.db;
   // One table is the whole of what the pool, the handle, the transactions and the
   // listeners need to be observable, and it is pushed the way an Operator applies
-  // theirs: the Db applies nothing itself (ADR-0046).
+  // theirs: the Db applies nothing itself.
   await applySchema(db, { alpha, widgets });
 });
 
@@ -27,7 +27,7 @@ after(() => database.drop());
  * Shaped like a write one part of the Gateway performs on behalf of another: it
  * takes the transaction rather than finding one, and widens the schema parameter
  * instead of naming a part's schema, so a handle and a transaction from anywhere
- * both satisfy it (ADR-0023). The call sites below are what prove it compiles
+ * both satisfy it. The call sites below are what prove it compiles
  * against both; `npm run typecheck` is the assertion.
  */
 async function record<TSchema extends Record<string, unknown>>(

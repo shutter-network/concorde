@@ -8,12 +8,11 @@
  * and it says so in its own description.
  *
  * **There is no `GET /me` here.** It only echoes `request.concordeUser`, so it is
- * scheme-independent and cannot live under one scheme's prefix
- * ([ADR-0052](../../docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)).
+ * scheme-independent and cannot live under one scheme's prefix.
  * It is the Users component's, and it stays there.
  *
  * The three routes below `POST /tokens` take the **server's** composed hook and not one of this
- * component's own. That is the whole of ADR-0052's aggregate: `request.concordeUser` is assigned in
+ * component's own. That is the whole of the server's aggregate: `request.concordeUser` is assigned in
  * one place, and a route reading it does not care which scheme named the User. The consequence is
  * visible on `DELETE /tokens/current`, which is documented where it is answered.
  *

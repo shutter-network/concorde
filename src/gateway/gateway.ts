@@ -4,7 +4,7 @@
  * `describeSurface` runs **before** `extend`. Route discovery is an `onRoute` hook and every part
  * registers its routes inside its own constructor, so a route queued before the hook is invisible
  * to it. Move the two calls below `extend` and both OpenAPI documents are empty, with nothing on
- * the console (ADR-0040, ADR-0045).
+ * the console.
  *
  * The `handlers` map is built empty, handed to the worker, and filled by `Object.assign` at the
  * end. That is what breaks the cycle between the worker, the Signal Handlers and a component a

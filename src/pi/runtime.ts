@@ -3,14 +3,14 @@
  * `src/pi/`. Driving `pi` in-process through its TypeScript SDK is real, and it was rejected on
  * exposure: `pi`'s shell tool hands its child `{ ...process.env }`, so an in-process agent would
  * hold the Gateway's `DATABASE_URL` and could write to every table directly, bypassing the Agent
- * server (ADR-0025). Only what the container's `env` names reaches the agent.
+ * server. Only what the container's `env` names reaches the agent.
  *
  * The split with `src/agent-container/` runs one way. Everything about running an agent as a
  * container lives there and knows nothing about `pi`: the argument assembly, the confinement flags,
  * the mounts, the networks, the environment, the spawning, stdin, stderr, the exit status and the
  * diagnosis appended to a failure. This file imports from it and nothing there imports back, and an
  * import of `../pi/` into that directory is the thing to refuse in review, because the whole point
- * of the split is that a second Agent Implementation takes it unchanged (ADR-0033).
+ * of the split is that a second Agent Implementation takes it unchanged.
  */
 
 import {

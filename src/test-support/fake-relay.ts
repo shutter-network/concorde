@@ -6,8 +6,7 @@
  * It plugs into the Relay address a Channel is constructed with, so it adds **no seam**
  * to the framework: nothing is injected, nothing is stubbed, and the client's own
  * reconnect, its NIP-42 flow and its post-authentication retry are all exercised for
- * real. That is the reason this is a socket rather than a fake relay object
- * ([ADR-0049](../../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)):
+ * real. That is the reason this is a socket rather than a fake relay object:
  * a localhost socket costs milliseconds, and a stub would have tested our own stub.
  *
  * **Its fidelity is load-bearing.** Nothing in this repository ever speaks to a real

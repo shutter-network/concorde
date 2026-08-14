@@ -2,13 +2,11 @@
  * The agent answers, and what a User's Nostr client, an Operator's SQL and the Relay each end up
  * holding.
  *
- * **Every test here is about the seam a publish cannot cross.** A publish cannot be rolled back
- * and a transaction can, so the send is two halves: everything knowable happens inside the
- * caller's transaction and throws there with nothing recorded, and the network act happens after
- * it commits
- * ([ADR-0049](../../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)). So the
- * assertions come in pairs — what the Relay received, and what the log and the queue say — because
- * either one alone would pass for a Channel that had put the two halves back together.
+ * **Every test here is about the seam a publish cannot cross.** A publish cannot be rolled back and
+ * a transaction can, so the send is two halves: everything knowable happens inside the caller's
+ * transaction and throws there with nothing recorded, and the network act happens after it commits.
+ * So the assertions come in pairs — what the Relay received, and what the log and the queue say —
+ * because either one alone would pass for a Channel that had put the two halves back together.
  *
  * Everything is asserted at the top seam. The reply is read out of the fake Relay the way the
  * recipient's own client reads it, over the real two layers and with the seal's author compared,

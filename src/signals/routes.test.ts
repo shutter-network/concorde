@@ -6,8 +6,8 @@
  * Signals through a real worker against real PostgreSQL and then reading them back
  * over HTTP. Nothing inserts a row directly.
  *
- * The load-bearing test is `is unscoped`, and it is written the way ADR-0011
- * describes rather than the way it is convenient: the reads happen **from inside a
+ * The load-bearing test is `is unscoped`, and it is written the way an unscoped read
+ * has to be proven rather than the way it is convenient: the reads happen **from inside a
  * Run**, executing in one Session, and what comes back is every other Session's
  * Signals and Runs.
  */
@@ -96,7 +96,7 @@ before(async () => {
 
   // Handed the Agent server, so the Signal and Run surface is registered on it at no
   // prefix by the constructor: nothing here registers a plugin, and nothing here could
-  // forget to (ADR-0032).
+  // forget to.
   worker = createSignalWorker({
     db,
     runtime,
@@ -182,7 +182,7 @@ describe("reading prior Signals over the Agent server", () => {
     assert.equal(new Date(settled.emittedAt).toISOString(), settled.emittedAt);
 
     // A Signal that failed carries why, which is the whole reason a state without an
-    // error would be no use: a typo in a `kind` is permanent (ADR-0017), so the
+    // error would be no use: a typo in a `kind` is permanent, so the
     // reason has to be readable.
     const unhandled = list.find((signal) => signal.kind === "unhandled");
     assert.ok(unhandled !== undefined);
@@ -223,7 +223,7 @@ describe("reading prior Signals over the Agent server", () => {
     }
 
     // There is no scope parameter to pass, and asking for one is an error rather than
-    // a request silently answered with everything (ADR-0011).
+    // a request silently answered with everything.
     for (const query of ["session=user_a", "userId=a"]) {
       assert.equal((await read(`/signals?${query}`)).statusCode, 400, query);
     }
@@ -251,7 +251,7 @@ describe("reading Runs over the Agent server", () => {
     assert.ok(fresh !== undefined);
     // The Run whose Prompt asked for a fresh Session, and it reads as a Session like any
     // other: the Signal Worker named it after this very Run before starting it, so what
-    // the agent sees here is where the transcript went rather than `null` (ADR-0033).
+    // the agent sees here is where the transcript went rather than `null`.
     assert.equal(fresh.session, `run_${fresh.id}`);
     assert.equal(fresh.state, "done");
     assert.equal(fresh.error, null);
@@ -284,7 +284,7 @@ describe("the read surface", () => {
   it("is unscoped: a Run in one Session reads every other Session's Signals and Runs", () => {
     // Read by the Run in Session `user_e`, while it was the Run in flight. Session
     // routing organises context; it isolates nothing, and no endpoint may be designed
-    // as though it did (ADR-0011).
+    // as though it did.
     assert.equal(
       readsFromInsideARun.length,
       1,
@@ -296,7 +296,7 @@ describe("the read surface", () => {
 
     assert.deepEqual(
       // The one Session nobody named is folded to a fixed word, because its name is the
-      // id of the Run carrying it and so differs every time this suite runs (ADR-0033).
+      // id of the Run carrying it and so differs every time this suite runs.
       seenRuns
         .map((run) => (run.session === `run_${run.id}` ? "named after its own Run" : run.session))
         .toSorted(),
@@ -319,7 +319,7 @@ describe("the read surface", () => {
 
   it("answers over HTTP at the address the Agent server bound", async () => {
     // What the agent actually does: one `curl` against a base URL and a path, with
-    // nothing to authenticate with, because reaching the port is access (ADR-0010).
+    // nothing to authenticate with, because reaching the port is access.
     const response = await fetch(`${address}/signals?limit=1`);
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");

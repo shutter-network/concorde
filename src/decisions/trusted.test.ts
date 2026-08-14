@@ -3,7 +3,7 @@
  * from inside its own transaction, and read the whole log without a Token and without a
  * route.
  *
- * A Signal Handler and an Operator's entry point are trusted code (ADR-0009, ADR-0020) and
+ * A Signal Handler and an Operator's entry point are trusted code and
  * hold the object the constructor returns. These two methods are the whole of what that
  * object adds to the two no-ops, and the pair is what makes a Handler able to commit to
  * something and build the next Prompt from what has already been committed to.
@@ -19,7 +19,7 @@
  * Two tests are the reason the file exists:
  *
  *  - `commits with the caller's own write, and a rollback loses both` is what taking the
- *    transaction first buys (ADR-0023). A Handler answering a Signal by committing to
+ * transaction first buys. A Handler answering a Signal by committing to
  *    something and recording in the Operator's own tables *why* must commit as one, and the
  *    rollback half is the failure the split exists to prevent: a Decision published about
  *    something that was never recorded. Ambient enlistment is not available here for the
@@ -41,7 +41,7 @@
  * artifact it could not verify would be a second, worse path to a row.
  *
  * A database of this file's own, because no two test files may share one, a keypair generated
- * here, which is where a keypair may be generated (ADR-0041), and a deliberately cheap scrypt
+ * here, which is where a keypair may be generated, and a deliberately cheap scrypt
  * cost, because the one Token here is bought with a password.
  */
 
@@ -116,8 +116,7 @@ before(async () => {
   });
   // Users for the identity and Password Auth for the login under `/auth`, which is what makes
   // `publicServer.requireUser` able to authenticate the one read below. Construction order
-  // against Decisions is free, unlike the Messenger's, there being no foreign key here
-  // (ADR-0043).
+  // against Decisions is free, unlike the Messenger's, there being no foreign key here.
   const users = createUsers({ db, agentServer, publicServer });
   const passwordAuth = createPasswordAuth({
     db,
@@ -138,8 +137,7 @@ before(async () => {
 
   await applySchema(db, signalsSchema, usersSchema, passwordAuthSchema, decisionsSchema);
 
-  // Admitted from trusted code, in one transaction: there is no route that creates a User
-  // (ADR-0052).
+  // Admitted from trusted code, in one transaction: there is no route that creates a User.
   const created = await db.tx(async (tx) => {
     const user = await users.create(tx);
     await passwordAuth.setPassword(tx, user.id, password);
@@ -164,7 +162,7 @@ after(async () => {
 describe("a Handler publishing a Decision", () => {
   it("writes it inside its own transaction, and both surfaces read it back", async () => {
     // The call as a Handler writes it: the transaction first, then the Statement, and nothing
-    // else at all (ADR-0023). There is no User to address and no artifact to supply.
+    // else at all. There is no User to address and no artifact to supply.
     const published = await db.tx((tx) => decisions.publish(tx, "we will ship on Friday"));
 
     // The whole record against a literal the type checker holds to `DecisionRecord`: a field
@@ -186,7 +184,7 @@ describe("a Handler publishing a Decision", () => {
 
     // And the artifact is a real one. Checked against the key set over HTTP and with
     // `node:crypto`, because a Decision trusted code published has to survive the same
-    // hand-off as one the agent published: it is the artifact that is the Decision (ADR-0042).
+    // hand-off as one the agent published: it is the artifact that is the Decision.
     assert.equal(await checks(published.jws), true, "a published Decision should verify");
     assert.deepEqual(payloadOf(published.jws), {
       seq: published.seq,
@@ -237,7 +235,7 @@ describe("a Handler publishing a Decision", () => {
     );
 
     // The number it burned is gone and nothing fills it, which is expected and means nothing:
-    // gaplessness would prove nothing anyway, the Operator owning the database (ADR-0043).
+    // gaplessness would prove nothing anyway, the Operator owning the database.
     const next = await db.tx((tx) => decisions.publish(tx, "and the log carries on"));
     assert.ok(next.seq > attempted.seq, "a rolled-back publish burns its number");
 
@@ -263,7 +261,7 @@ describe("a Handler publishing a Decision", () => {
 
   it("answers with the record, which is what a caller cannot read back", async () => {
     // A read takes no transaction, so it is on another connection and cannot see an
-    // uncommitted write (ADR-0023). Everything the caller needs is what `publish` returned,
+    // uncommitted write. Everything the caller needs is what `publish` returned,
     // which is why there is no read-back for this to be a surprise about, and why the agent
     // can quote a Decision to a User in the same Run.
     const inside = await db.tx(async (tx) => {
@@ -298,7 +296,7 @@ describe("a Handler reading the Decision log", () => {
 
     // The same query reached three ways, by a Token, by nothing at all and by an argument. The
     // whole point of there being one implementation is that these cannot come to disagree
-    // about what `before` means (ADR-0035).
+    // about what `before` means.
     for (const [window, asked] of [
       ["", {}],
       ["?limit=3", { limit: 3 }],
@@ -341,7 +339,7 @@ describe("a Handler reading the Decision log", () => {
     const whole = await decisions.history({ after: from, limit: many });
     assert.equal(whole.length, many);
     // By what was committed to rather than by absolute numbers, so that a gap burned anywhere
-    // else in this file is what it is supposed to be here too: meaningless (ADR-0043). What
+    // else in this file is what it is supposed to be here too: meaningless. What
     // this asserts is every one of them, once, in the order they were published.
     assert.deepEqual(
       whole.map((decision) => decision.statement),
@@ -376,10 +374,10 @@ describe("the object the constructor answers with", () => {
     // An assertion of **absence**, and the reason it is the object's own keys rather than a
     // list of names to probe: a method added later appears here and fails this. There is no
     // `verify`, no `sign` and nothing anywhere on it naming a User, because this log has no
-    // owner and the key that signs is Signatures' (ADR-0043).
+    // owner and the key that signs is Signatures'.
     //
     // `start` and `stop` are the two that do nothing, and they are here because this part is
-    // in the Gateway's record like every other one (ADR-0037).
+    // in the Gateway's record like every other one.
     assert.deepEqual(Object.keys(decisions).sort(), ["history", "publish", "start", "stop"]);
 
     // Two parameters, the transaction and the Statement, which is the runtime shadow of the
@@ -401,7 +399,7 @@ async function mark(): Promise<number> {
   return newest?.seq ?? 0;
 }
 
-/** The log as the agent reads it, which takes no credential of any kind (ADR-0010). */
+/** The log as the agent reads it, which takes no credential of any kind. */
 async function asAgent(window: string): Promise<DecisionRecord[]> {
   const answered = await agentServer.fastify.inject({ url: `${prefix}${window}` });
   assert.equal(answered.statusCode, 200, `the agent's read should have answered: ${answered.body}`);
@@ -441,7 +439,7 @@ function numbers(page: readonly DecisionRecord[]): number[] {
  *
  * The signing input is **reconstructed by splitting the string that was returned** rather than
  * rebuilt from a header and a payload of this file's own, and the oracle is `node:crypto`
- * rather than the library that signed it (ADR-0042).
+ * rather than the library that signed it.
  */
 async function checks(jws: string): Promise<boolean> {
   const answered = await publicServer.fastify.inject({ url: "/jwks.json" });

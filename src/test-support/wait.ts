@@ -1,8 +1,8 @@
 /**
  * Waiting for the worker to get somewhere.
  *
- * The worker is asynchronous and nothing in the framework is bounded by time
- * (ADR-0017), so a test asserts on a Signal's recorded state rather than on the
+ * The worker is asynchronous and nothing in the framework is bounded by time,
+ * so a test asserts on a Signal's recorded state rather than on the
  * worker's internals. The deadline here is the test's own, not the framework's:
  * without one a broken worker hangs the suite instead of failing it.
  */

@@ -31,7 +31,7 @@ export type ModelRequest = {
    *
    * That second half is where an `AGENTS.md` the Operator placed in the Workspace turns
    * up. Nothing of the framework's is in here, and no flag of the framework's put it
-   * there (ADR-0025).
+   * there.
    */
   readonly system: string;
   readonly messages: readonly ModelMessage[];
@@ -53,7 +53,7 @@ export type ModelReply =
    *
    * `400` is the case worth having: `pi --mode json` reports it inside the stream and
    * then **exits 0**, which is the trap the Run outcome must not be read from an exit
-   * code (ADR-0025).
+   * code.
    */
   | { readonly refuse: { readonly status: number; readonly message: string } };
 

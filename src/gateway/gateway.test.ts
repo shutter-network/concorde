@@ -5,20 +5,20 @@
  * reverse order back, unwind on a failed start. What it cannot say is that the real parts *fit*
  * that record, or that the order they go in is the right one. This file is the other half. Every
  * part here is real — real PostgreSQL, two real Fastify instances on real sockets, a real started
- * Signal Worker, the real Users component and the real HTTP Messenger — and the Runtime is the
- * one thing faked, as everywhere else (ADR-0022).
+ * Signal Worker, the real Users component and the real HTTP Channel — and the Runtime is the
+ * one thing faked, as everywhere else.
  *
  * The infrastructure comes from `createGateway`; the four opinionated parts are built by hand in
  * `extend`, exactly as an example's `main.ts` builds them, so the fixture is a mirror of a real
- * deployment (ADR-0045). What the framework still settles is the key order:
+ * deployment. What the framework still settles is the key order:
  *
  *     db -> agentServer -> publicServer -> <extend's parts> -> worker
  *
  * comes from one rule. **The Signal Worker's `stop` is the only stop that does work.** Every other
- * one releases something; the worker's waits for the Run in flight and never cancels it
- * (ADR-0017), and that Run reads the Db, calls the Agent server and reaches the Messenger through
+ * one releases something; the worker's waits for the Run in flight and never cancels it,
+ * and that Run reads the Db, calls the Agent server and reaches the Messenger through
  * a Signal Handler's post phase. So the drain goes first, while everything it uses is still up —
- * which is why the Worker is keyed **last** even though it is constructed early (ADR-0045).
+ * which is why the Worker is keyed **last** even though it is constructed early.
  *
  * That is what the last test asserts, and it is the assertion `src/pi/container.test.ts`
  * says it does not make: a Run is parked in flight, `stop` is called around it, and the Run
@@ -26,7 +26,7 @@
  * comes back from inside the Run itself, which is the only vantage point from which "still
  * up during the drain" is a fact rather than a guess. The Operator's own Component is in
  * that report too, and it says **still running**: whatever `extend` returns is keyed ahead of
- * the Worker now, so it stops *after* the drain rather than before it (ADR-0045).
+ * the Worker now, so it stops *after* the drain rather than before it.
  *
  * The other thing settled here is the **construction cycle**. The worker takes its Handler
  * map at construction, the Messenger takes the worker, and the Handler's post phase sends a
@@ -34,14 +34,12 @@
  * the Db and a Component that `extend` returned, all three of which are constructed after
  * the worker that will dispatch to it.
  *
- * A third claim shares the first suite without being about the assembly at all, and it is
- * here because there is nowhere cheaper: **what a part recorded and what the wire carries
- * are the same record**. A response schema is a serializer, so a field the schema does not
- * declare is dropped from the answer without a word
- * ([ADR-0040](../docs/adr/0040-the-gateway-describes-its-own-http-api.md)), and catching
- * that needs a record produced in this process and read back over a socket. Every other
- * body comparison in this repository compares one HTTP response against another, where a
- * uniformly stripped field is stripped on both sides and passes.
+ * A third claim shares the first suite without being about the assembly at all, and it is here
+ * because there is nowhere cheaper: **what a part recorded and what the wire carries are the same
+ * record**. A response schema is a serializer, so a field the schema does not declare is dropped
+ * from the answer without a word, and catching that needs a record produced in this process and
+ * read back over a socket. Every other body comparison in this repository compares one HTTP
+ * response against another, where a uniformly stripped field is stripped on both sides and passes.
  *
  * The tests run in order and share one Gateway, because a Gateway is stopped once. The
  * no-op stops are therefore exercised before the last test, by hand and while everything is
@@ -56,12 +54,12 @@
  * Worker, and constructing a Runtime would be the obvious next convenience. It reads no database
  * and starts nothing — it walks the import graph from `src/index.ts` and asserts the one edge
  * worth keeping absent, an Agent Implementation, is *not* in it, and that the four parts are not
- * either now that they are the Operator's (ADR-0045).
+ * either now that they are the Operator's.
  *
  * **One password is in this file, and one only.** This fixture builds Users with no
  * `scrypt` option, so every derivation here is at OWASP's 32 MiB cost, and the User this
  * suite is otherwise built around is admitted and handed a Token from trusted code
- * instead, which is the same two calls an OIDC callback makes (ADR-0030), so that four
+ * instead, which is the same two calls an OIDC callback makes, so that four
  * route groups are proven registered by reads that hash nothing. The exception is the round
  * trip on an issued Token: `POST /auth/tokens` is the only route in the framework that
  * answers one, and a login is the only way to reach it, so that assertion buys its
@@ -120,15 +118,14 @@ const nobody = "2f1b4d54-1c3a-4f2e-9d7b-8e6a5c4b3a21";
 /**
  * The shared agent's identity for the duration of this file, generated here because this is
  * where a keypair may be generated: the framework generates none, and `signingKey` is required
- * of every deployment including one that publishes nothing
- * ([ADR-0041](../docs/adr/0041-the-shared-agent-has-a-signing-identity.md)).
+ * of every deployment including one that publishes nothing.
  */
 const { privateKey: signingKey } = generateKeyPairSync("ed25519");
 
 /**
  * What `createGateway` builds and hands `extend`: the infrastructure every deployment has, in
  * the order it keys it. **The Worker is in this record but keyed last in the returned Gateway**,
- * so this is what `extend` receives rather than the start order (ADR-0045).
+ * so this is what `extend` receives rather than the start order.
  */
 const theInfra = ["db", "agentServer", "publicServer", "worker"];
 
@@ -137,15 +134,15 @@ const theInfra = ["db", "agentServer", "publicServer", "worker"];
  * it stops, written once because more than one test is about exactly this list.
  *
  * The parts are `extend`'s now, so they are keyed between the servers and the Worker — the Worker
- * keyed **last** so the drain runs while they are all still live (ADR-0045). Users is
- * before the HTTP Messenger, a foreign-key ordering the Operator owns and can get wrong loudly
- * (ADR-0036); Signatures and Decisions sit between them and the Messenger, ahead of the Worker, so
- * a post phase that publishes on the way out reaches them inside the drain (ADR-0043). The
- * **Scheduler** is keyed ahead of the Worker too, exactly like the HTTP Messenger and every other
+ * keyed **last** so the drain runs while they are all still live. Users is
+ * before the HTTP Channel, a foreign-key ordering the Operator owns and can get wrong loudly;
+ * Signatures and Decisions sit between them and the Messenger, ahead of the Worker, so
+ * a post phase that publishes on the way out reaches them inside the drain. The
+ * **Scheduler** is keyed ahead of the Worker too, exactly like the HTTP Channel and every other
  * `extend` part: it is the second Producer, but a Producer built in `extend` stops *after* the
  * drain, so its `stop` cancels the firing timer once the Worker has already drained, and a fire
- * that lands during the drain is a pending Signal the next boot handles — the residual ADR-0018
- * accepts rather than leaving `extend` for `createBareGateway` to stop it first. `notes` is the
+ * that lands during the drain is a pending Signal the next boot handles — the residual accepted
+ * rather than leaving `extend` for `createBareGateway` to stop it first. `notes` is the
  * Operator's own Component, keyed last of the extension.
  */
 const theRecord = [
@@ -194,7 +191,7 @@ function notebook(): Notebook {
 
 /**
  * The parts an Operator builds in `extend`, which is the full stack: the four opinionated ones and
- * the Scheduler, the second Producer, opted in and wired the same way (ADR-0018, ADR-0045).
+ * the Scheduler, the second Producer, opted in and wired the same way.
  */
 type Stack = {
   readonly users: Users;
@@ -209,18 +206,18 @@ type Stack = {
 /**
  * The four parts, built by hand from the infrastructure `createGateway` hands `extend`, exactly
  * as an example's `main.ts` does it — which is what makes this fixture a mirror of a real
- * deployment (ADR-0045). Users is constructed **before** the HTTP Messenger, which
- * takes it; Signatures before Decisions, which holds it and signs through it in process
- * (ADR-0043). Neither order is a migration order any more: `messages.user_id`'s foreign key
+ * deployment. Users is constructed **before** the HTTP Channel, which
+ * takes it; Signatures before Decisions, which holds it and signs through it in process.
+ * Neither order is a migration order any more: `messages.user_id`'s foreign key
  * onto `concorde_users.users.id` is generated from one push that sees both schemas, and the
- * statements inside it are ordered by `drizzle-kit` (ADR-0046). The order the framework used
+ * statements inside it are ordered by `drizzle-kit`. The order the framework used
  * to hide is on display here, which is the whole point of the parts being the Operator's now.
  */
 function fullStack({ db, agentServer, publicServer, worker }: InfraComponents): Stack {
   const users = createUsers({ db, agentServer, publicServer });
   // The one scheme this deployment accepts. It registers itself with the Public server inside
   // its own constructor, which is what makes `publicServer.requireUser` able to authenticate
-  // anybody: every other part here takes that hook and holds no credential (ADR-0052).
+  // anybody: every other part here takes that hook and holds no credential.
   const passwordAuth = createPasswordAuth({ db, users, publicServer, tokenTtl: hour });
   const signatures = createSignatures({ signingKey, agentServer, publicServer, logger: silent });
   const decisions = createDecisions({ db, signatures, agentServer, publicServer });
@@ -228,7 +225,7 @@ function fullStack({ db, agentServer, publicServer, worker }: InfraComponents): 
   const httpChannel = createHttpChannel({ db, messenger, publicServer });
   // The Scheduler, given the Agent server so its routes register and are discovered by the
   // description plugin the constructor put on ahead of `extend` — the seam this file's document
-  // suite reads them out of (ADR-0040, ADR-0045). It imposes no construction-order constraint of
+  // suite reads them out of. It imposes no construction-order constraint of
   // its own: a Schedule references nobody.
   const scheduler = createScheduler({ db, worker, agentServer, logger: silent });
   return { users, passwordAuth, signatures, decisions, messenger, httpChannel, scheduler };
@@ -240,11 +237,10 @@ const callbacks: string[] = [];
 /**
  * The awkward JSON both round trips carry, and the reason either of them nests anything.
  *
- * A Signal's `payload` and a User's `attributes` are both declared with an **empty
- * schema**, precisely so that arbitrary JSON survives serialization byte intact
- * ([ADR-0040](../docs/adr/0040-the-gateway-describes-its-own-http-api.md)), and a flat
- * object of strings would not have shown it: a list of mixed types, a null inside it and
- * an object below that are what a schema with an opinion would flatten or drop.
+ * A Signal's `payload` and a User's `attributes` are both declared with an **empty schema**,
+ * precisely so that arbitrary JSON survives serialization byte intact, and a flat object of strings
+ * would not have shown it: a list of mixed types, a null inside it and an object below that are
+ * what a schema with an opinion would flatten or drop.
  */
 const awkwardJson = { list: [1, "two", null, { deep: true }], nothing: null };
 
@@ -273,8 +269,8 @@ const roundTripAttributes = { groups: ["reviewers"], nested: awkwardJson };
  * The one Message in this file that a *User* wrote, and the reason the notebook below ends
  * up with two lines rather than one.
  *
- * There is no trusted-code method that writes an inbound Message and that is deliberate
- * (ADR-0034), so the Public submission route is the only way a log has both directions in
+ * There is no trusted-code method that writes an inbound Message and that is deliberate,
+ * so the Public submission route is the only way a log has both directions in
  * it, and that is what makes the numbering worth reading back at all.
  */
 const roundTripSubmission = "and one from me, while everything is still up";
@@ -286,12 +282,12 @@ const roundTripping: SignalHandler<{ readonly text: string }> = {
 
 /**
  * A Handler for the Scheduler's fixed `kind`, written `SignalHandler<ScheduleFiredRecord>` the way
- * an Operator writes it — the reason the record type is exported (ADR-0018).
+ * an Operator writes it — the reason the record type is exported.
  *
  * Nothing in this file makes a Schedule mature: the round trip below arms a `once` far in the
  * future so the read model is what is under test, not a fire. It is registered anyway because the
  * Scheduler is a Producer in this fixture, and registering no Handler for its `kind` would leave a
- * matured Schedule a permanently failed Signal (ADR-0017).
+ * matured Schedule a permanently failed Signal.
  */
 const scheduleFiring: SignalHandler<ScheduleFiredRecord> = {
   handle: (signal) => [{ session: `schedule_${signal.payload.scheduleName}`, text: "fired" }],
@@ -311,7 +307,7 @@ const inFlightAtShutdown = "are you still there?";
  * the Signal Worker.
  *
  * A Decision reached by a failing Run is still a Decision, and the phase that reaches it runs
- * inside the drain (ADR-0038, ADR-0043).
+ * inside the drain.
  */
 const decidedOnTheWayOut = "the March rollout is off, decided while the Gateway was stopping";
 
@@ -350,11 +346,10 @@ const duringTheDrain: string[] = [];
  * A Run that parks until the shutdown starts, then reports what is still up, then fails.
  *
  * It fails on purpose: a failed Run is what makes the Handler's post phase send a Message,
- * which is the last thing the drain does and the one that reaches the Messenger
- * (ADR-0017).
+ * which is the last thing the drain does and the one that reaches the Messenger.
  *
  * One Prompt parks and every other Run is ordinary, which is what lets the round-trip
- * assertions have a finished Run to read: the worker is serial globally (ADR-0012), so a
+ * assertions have a finished Run to read: the worker is serial globally, so a
  * Run parked before them would be a Gateway that never got to them at all.
  */
 const runtime = fakeRuntime(async (prompt) => {
@@ -368,7 +363,7 @@ before(async () => {
   database = await createTestDatabase("gateway");
 
   // The infrastructure from one call, and the four parts built by hand in `extend` — the whole
-  // stack, and the construction order and wiring the Operator now owns and can see (ADR-0045).
+  // stack, and the construction order and wiring the Operator now owns and can see.
   // Only the Worker's key position and the description-before-`extend` registration are the
   // framework's, and neither is expressible wrongly on this path.
   gateway = createGateway({
@@ -381,7 +376,7 @@ before(async () => {
     extend: (infra) => {
       callbacks.push("extend");
       // Given the four infrastructure Components, and *not* the handlers: a Component that needed
-      // a Handler would be a Component that wanted to be a Signal Worker (ADR-0045).
+      // a Handler would be a Component that wanted to be a Signal Worker.
       assert.deepEqual(Object.keys(infra), theInfra);
       // The four parts, plus the Operator's own notebook keyed last of them: this is a mirror of
       // an example's `main.ts` with one Component added, which is what proves `extend` reaches the
@@ -403,7 +398,7 @@ before(async () => {
   components = gateway.components;
 
   // Every schema this deployment runs, pushed as one graph, which is exactly the list an
-  // Operator writes and points their own `drizzle-kit` at (ADR-0046). The framework applies
+  // Operator writes and points their own `drizzle-kit` at. The framework applies
   // nothing itself, so this is the whole of how the tables get here, and `messages.user_id`
   // is a live foreign key onto `concorde_users.users.id` because both schemas are in the same
   // push rather than because two folders were ordered.
@@ -428,8 +423,7 @@ after(async () => {
   // Stopped here as well as by the last test, because the Db the record holds is what has to
   // be closed before the database can be dropped: a test that never reached `stop` would
   // otherwise leave a pool open and fail the drop with PostgreSQL's "is being accessed by
-  // other users", which is the wrong failure to read. A second `stop` finds nothing to do
-  // (ADR-0037).
+  // other users", which is the wrong failure to read. A second `stop` finds nothing to do.
   await gateway?.stop();
   await database.drop();
 });
@@ -443,17 +437,17 @@ after(async () => {
  * it reaches (the Db, the Messenger, Decisions, the notebook) is constructed *after* the
  * Signal Worker that will dispatch to it, which is the cycle `createGateway` exists to break —
  * even though the Messenger and Decisions are now the Operator's, built in `extend`, the worker
- * is still constructed with an empty map and the map filled by `handlers` afterwards (ADR-0045).
+ * is still constructed with an empty map and the map filled by `handlers` afterwards.
  *
  * The publish is why Decisions is keyed **ahead of** the Signal Worker: a post phase runs after
  * the Runs arising from a Signal have finished, which during shutdown is inside the drain, and
- * a Decision reached by a failing Run should still be recorded (ADR-0043, ADR-0045).
+ * a Decision reached by a failing Run should still be recorded.
  *
  * What makes it *work* today is narrower than that, and worth saying rather than letting a
  * reader infer the stronger claim: the insert goes through the Db's handle, and the Db is keyed
  * first and therefore stopped last. Decisions' own `stop` does nothing, so moving its key
  * behind the worker's would leave this line passing and only the pinned order in `theRecord`
- * would report it. The position is the HTTP Messenger's anticipatory one, held for the day
+ * would report it. The position is the HTTP Channel's anticipatory one, held for the day
  * either part's `stop` starts releasing something.
  */
 function answering(all: Full): SignalHandler<MessageRecord> {
@@ -465,7 +459,7 @@ function answering(all: Full): SignalHandler<MessageRecord> {
     async post(signal, outcome) {
       if (!outcome.failed) return;
       duringTheDrain.push(
-        await reaching("the HTTP Messenger sent a Message", async () => {
+        await reaching("the HTTP Channel sent a Message", async () => {
           const sent = await all.db.tx((tx) =>
             all.messenger.send(tx, signal.payload.userId, "Something went wrong."),
           );
@@ -475,7 +469,7 @@ function answering(all: Full): SignalHandler<MessageRecord> {
       duringTheDrain.push(
         await reaching("Decisions published a Decision", async () => {
           // In a transaction of the Handler's own, which is the shape the trusted method
-          // exists for (ADR-0023), and read straight back through the other one, which is the
+          // exists for, and read straight back through the other one, which is the
           // fact this line carries: the row committed while the Gateway was closing, and the
           // artifact that came back is the artifact the log holds. No number in the line, so
           // that a Decision published anywhere else in this file does not rewrite a shutdown
@@ -495,8 +489,7 @@ describe("a whole deployment from one call", () => {
     // The keys are the start order, and they are the order the drain needs. That they are
     // *acted on* in this order is `components.test.ts`'s claim; that these are what this
     // deployment consists of, and in this order, is this one — the infrastructure the framework
-    // keyed and the four parts `extend` built, with the Worker keyed **last** so it stops first
-    // (ADR-0045).
+    // keyed and the four parts `extend` built, with the Worker keyed **last** so it stops first.
     assert.deepEqual(Object.keys(components), theRecord);
   });
 
@@ -530,7 +523,7 @@ describe("a whole deployment from one call", () => {
     assert.equal((await authenticated(`${publicUrl}/messages`)).status, 200);
     assert.equal((await authenticated(`${publicUrl}/decisions`)).status, 200);
     // And Signatures' two, whose one read is the only route on the Public server that takes no
-    // Token besides the login: a public key is public (ADR-0042). The other two are POSTs and
+    // Token besides the login: a public key is public. The other two are POSTs and
     // are exercised in full further down; here they are one 400 each, which is a group that
     // registered rather than the 404 of one that did not.
     assert.equal((await fetch(`${publicUrl}/jwks.json`)).status, 200);
@@ -540,11 +533,11 @@ describe("a whole deployment from one call", () => {
 
   it("has the Messenger's foreign key onto the Users table, and it is enforced", async () => {
     // The constraint is declared in `messenger/schema.ts` and generated by the push in
-    // `before` (ADR-0046), so nothing hand-wrote it and nothing scanned a folder for it.
+    // `before`, so nothing hand-wrote it and nothing scanned a folder for it.
     // What is asserted is that it is *there and enforced*: a Message addressed to a
     // well-formed uuid naming no User is refused rather than stored. `UnknownUserError` is
     // PostgreSQL's `23503` named — the constraint refusing, surfaced as a throw for trusted
-    // code and as the agent's 404 on the route (ADR-0036).
+    // code and as the agent's 404 on the route.
     //
     // Without the foreign key this row inserts happily and the call resolves, so the
     // rejection is the constraint and could be nothing else.
@@ -573,7 +566,7 @@ describe("a whole deployment from one call", () => {
     // take while every body is empty, and it is worth having for the day one of them is
     // not: a stop that had done something would have taken a route, a pool or a hook with
     // it, and one `GET /messages` needs the Public server, `requireUser`, the
-    // Messenger's own plugin and the Db, all four of them (ADR-0032). Decisions' Public read
+    // Messenger's own plugin and the Db, all four of them. Decisions' Public read
     // needs the same four and Signatures' key set needs neither the Db nor the hook, so the
     // three together cover both halves of what a stop could have released.
     assert.equal((await authenticated(`${publicUrl}/messages`)).status, 200);
@@ -586,7 +579,7 @@ describe("a whole deployment from one call", () => {
   it("answers a Signal and its Run as the Signal Worker recorded them, and drops nothing", async () => {
     // A response schema is a **serializer**: Fastify compiles it with
     // `fast-json-stringify`, which strips every field the schema does not declare and
-    // warns about none of it (ADR-0040). So a field added to `SignalRecord` and forgotten
+    // warns about none of it. So a field added to `SignalRecord` and forgotten
     // in the Signal Worker's schema simply stops reaching the agent, and every comparison
     // of one HTTP response against another passes, because both sides lost it.
     //
@@ -657,8 +650,8 @@ describe("a whole deployment from one call", () => {
   it("answers a User and an issued Token as Users recorded them, and drops nothing", async () => {
     // The same hazard the Signal round trip above is about, on the one record where it
     // cuts both ways. A field dropped from a `UserRecord` is an answer quietly missing
-    // something; a field *added* to the schema is the password hash on a wire ADR-0030
-    // says it never reaches. So the shape is asserted whole in both directions: against a
+    // something; a field *added* to the schema is the password hash on a wire it is
+    // never meant to reach. So the shape is asserted whole in both directions: against a
     // record this process holds, and against the bytes that came back.
     const created = await components.db.tx(async (tx) => {
       const user = await components.users.create(tx);
@@ -677,7 +670,7 @@ describe("a whole deployment from one call", () => {
       id: created.id,
       // Byte intact, nesting and nulls and all, which is what the empty schema on
       // `attributes` is for: the Gateway never interpreted these and the wire does not
-      // start (ADR-0014).
+      // start.
       attributes: roundTripAttributes,
       // Compared against the in-process record rather than against itself, which is what
       // a dropped field would survive: `undefined` on both sides of a `deepEqual` passes.
@@ -748,7 +741,7 @@ describe("a whole deployment from one call", () => {
     // And the three routes that answer nothing still answer nothing. A response schema is
     // a serializer, so a 204 declared as a body is a route that answers 500 at
     // serialization time; `type: "null"` is what keeps these empty and what keeps the
-    // document from promising a body nobody sends (ADR-0040). Ordered so that each has a
+    // document from promising a body nobody sends. Ordered so that each has a
     // Token that still works: the password change first, then the presented Token revoked,
     // then every Token of that User revoked over the one `issueToken` minted.
     const changing = { currentPassword: theOnePassword, newPassword: "and its replacement" };
@@ -774,7 +767,7 @@ describe("a whole deployment from one call", () => {
     }
   });
 
-  it("answers a Message log as the HTTP Messenger recorded it, and pages it three ways", async () => {
+  it("answers a Message log as the HTTP Channel recorded it, and pages it three ways", async () => {
     // A User of this test's own, because `seq` is per User and every number below is an
     // assertion: the User the rest of the file shares has a Message posted into their log by
     // the drain test underneath this one.
@@ -783,7 +776,7 @@ describe("a whole deployment from one call", () => {
     // Four Messages in one log and in both directions, written the only two ways a Message
     // can be. `send` is the part's own method, which is what a Signal Handler calls and what
     // the agent's route reaches; the Public submission is the only way an inbound Message
-    // exists at all, since there is deliberately no method that writes one (ADR-0034).
+    // exists at all, since there is deliberately no method that writes one.
     const first = await sending(reader.id, "the first thing the agent said");
     const submitted = await postJson(
       `${publicUrl}/messages`,
@@ -798,7 +791,7 @@ describe("a whole deployment from one call", () => {
 
     // The log as the part holds it: in this process, never serialized, and therefore the one
     // side of every comparison below that a response schema cannot have taken anything out
-    // of (ADR-0040). One numbered sequence across both directions is the whole of ADR-0035,
+    // of. One numbered sequence across both directions is the whole of the design,
     // and it is what makes a single cursor able to serve a poll and a render alike.
     const recorded = await components.messenger.history(reader.id);
     assert.deepEqual(
@@ -842,7 +835,7 @@ describe("a whole deployment from one call", () => {
     assert.deepEqual((await ownLog(reader.token, "")).messages, recorded);
 
     // The three cursor cases, on the surface a person writes a client against, and all three
-    // ascending (ADR-0035). No cursor is the **newest** page and not the oldest, which is the
+    // ascending. No cursor is the **newest** page and not the oldest, which is the
     // case a client has no way to guess and the description is now what tells it.
     assert.deepEqual(await ownTexts(reader.token, "?limit=2"), [third.text, fourth.text]);
     assert.deepEqual(await ownTexts(reader.token, "?before=3&limit=2"), [first.text, second.text]);
@@ -870,7 +863,7 @@ describe("a whole deployment from one call", () => {
   it("answers a Decision as Decisions published it, and a key set with nothing private in it", async () => {
     // The same serializer hazard as the two round trips above, on the record where a dropped
     // field would be worst: the artifact **is** the Decision, so a `jws` the schema forgot to
-    // declare is a log of Decisions nobody can verify, answered with a 200 (ADR-0040).
+    // declare is a log of Decisions nobody can verify, answered with a 200.
     //
     // The independent side of this comparison is not the part's own `history`, which would be
     // one of ours agreeing with another of ours, but something better: the payload inside the
@@ -900,7 +893,7 @@ describe("a whole deployment from one call", () => {
 
     // And the same record cited by its number, which is how a User fetches the one somebody
     // quoted at them: the route is a citation rather than a cursor query, and it answers from
-    // the read above rather than from a query of its own (ADR-0043).
+    // the read above rather than from a query of its own.
     const numbered = await bearing(`${publicUrl}/decisions/${decision.seq}`, client.token);
     const numberedBody = await numbered.text();
     assert.equal(numbered.status, 200, numberedBody);
@@ -919,7 +912,7 @@ describe("a whole deployment from one call", () => {
     // The key set, over the Public server and with no Token, and **without a private member
     // in it**: the worst failure available anywhere in this feature is the private scalar
     // being served from an unauthenticated route, and this is the assembled Gateway's own
-    // check of it (ADR-0042).
+    // check of it.
     const keys = await fetch(`${publicUrl}/jwks.json`);
     const keysBody = await keys.text();
     assert.equal(keys.status, 200, keysBody);
@@ -946,7 +939,7 @@ describe("a whole deployment from one call", () => {
     // **The Decision label, asked for on the generic route**, which is the thing a reviewer
     // will want refused and which is deliberately allowed: publishing a Decision is an
     // authority the agent already holds, so a decision-typed artifact minted here is that same
-    // authority exercised without a log row rather than a forgery (ADR-0042). It is asserted
+    // authority exercised without a log row rather than a forgery. It is asserted
     // against the assembled Gateway rather than against Signatures alone because "nothing is
     // reserved" only means something where the real Decisions is sitting next door.
     const claimed = "a receipt for the March invoice, which is not a Decision";
@@ -985,7 +978,7 @@ describe("a whole deployment from one call", () => {
 
     // And the log does not have it, which is the sentence the freedom above costs: `typ` is
     // the agent's signed claim about its own artifact and not a promise that a row exists, so
-    // only an artifact fetched from here is guaranteed to be one of these (ADR-0042).
+    // only an artifact fetched from here is guaranteed to be one of these.
     const { decisions } = await agentJson<{ decisions: DecisionRecord[] }>("/decisions?after=0");
     assert.equal(
       decisions.some((published) => published.jws === jws),
@@ -995,8 +988,8 @@ describe("a whole deployment from one call", () => {
 
     // The lazy check, and the first half of what it costs: a Token, and the Public server's
     // single 401 without one. Compared body for body against another Public route's refusal,
-    // because "the same 401" is the claim and this part authenticates nobody (ADR-0030,
-    // ADR-0052).
+    // because "the same 401" is the claim and this part authenticates nobody.
+    //
     const refused = await fetch(`${publicUrl}/verify`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1009,7 +1002,7 @@ describe("a whole deployment from one call", () => {
 
     // And with one, the verdict and what the artifact said. The independent side of this
     // comparison is the bytes above, which no response schema has been near, so a `header` or
-    // a `payload` the serializer flattened disagrees with what was signed (ADR-0040).
+    // a `payload` the serializer flattened disagrees with what was signed.
     const checked = await postJson(`${publicUrl}/verify`, { jws }, client.token);
     const checkedBody = await checked.text();
     assert.equal(checked.status, 200, checkedBody);
@@ -1036,7 +1029,7 @@ describe("a whole deployment from one call", () => {
     // response schema is the serializer `fast-json-stringify` compiles, so a field added to
     // `ScheduleRecord` and forgotten in the route schema is dropped from the wire *and* the
     // document, and no comparison of one HTTP response against another can see it because a
-    // uniformly stripped field is stripped on both sides (ADR-0040). This is the assertion that
+    // uniformly stripped field is stripped on both sides. This is the assertion that
     // can: the record is produced through the part's own `schedule`, in this process, and the
     // whole body read back over HTTP is compared against a literal the type checker holds to
     // `ScheduleRecord`.
@@ -1095,7 +1088,7 @@ describe("a whole deployment from one call", () => {
 
     // The Handler ran, and it reached the Component `extend` returned. That is the cycle
     // closed at runtime: this Handler was built by a callback taking objects the worker
-    // holding it was constructed before (ADR-0038). Two lines and not one, because the round
+    // holding it was constructed before. Two lines and not one, because the round
     // trip above submitted a Message too, and both went through this Handler.
     assert.deepEqual(components.notes.lines, [roundTripSubmission, inFlightAtShutdown]);
 
@@ -1109,21 +1102,21 @@ describe("a whole deployment from one call", () => {
 
     // What the Run reached from inside the drain, and the whole of the order's
     // justification. The Public server is in there deliberately: it goes on accepting
-    // submissions throughout, which is the trade ADR-0045 takes — that Message is stored,
+    // submissions throughout, which is the trade the order takes — that Message is stored,
     // its Signal stays `pending`, and the next boot picks it up. The Operator's own Component
     // is the one line that says **still running**, because whatever `extend` returns is keyed
-    // ahead of the Worker now and therefore stops *after* the drain, not before it (ADR-0045).
+    // ahead of the Worker now and therefore stops *after* the drain, not before it.
     //
     // The last line is what a Decision reached by a failing Run costs and buys: a post phase
     // that commits to something on the way out gets a row and an artifact, because the insert
-    // goes through the Db and the Db stops last (ADR-0043). Which part of the order that
+    // goes through the Db and the Db stops last. Which part of the order that
     // depends on is on `answering` above, and it is the Db's key rather than Decisions' own.
     assert.deepEqual(duringTheDrain, [
       "Users read the Db: 1 User",
       "the Agent server answered: 200",
       "the Public server took a submission: 201",
       "the Operator's own Component: still running",
-      "the HTTP Messenger sent a Message: outbound",
+      "the HTTP Channel sent a Message: outbound",
       "Decisions published a Decision: the same artifact",
     ]);
 
@@ -1142,9 +1135,8 @@ describe("the infrastructure on its own", () => {
 
   it("is the four infrastructure Components and nothing else when no extend is passed", () => {
     // No `extend`, and no `signingKey`: a deployment that publishes nothing builds neither
-    // Signatures nor Decisions and holds no key at all, which under ADR-0038 was unexpressible —
-    // the assembly required a key of every deployment — and is now the smallest possible Gateway
-    // (ADR-0045).
+    // Signatures nor Decisions and holds no key at all, which was once unexpressible —
+    // the assembly required a key of every deployment — and is now the smallest possible Gateway.
     const bare = createGateway({
       databaseUrl: "postgres://nobody@example.invalid/none",
       runtime,
@@ -1166,7 +1158,7 @@ describe("the infrastructure on its own", () => {
 
   it("refuses to construct without a database, naming the option", () => {
     // Required, and read from no environment: there is no `DATABASE_URL` fallback to fall through
-    // to any more, so the framework reads nothing (ADR-0045). The throw is the constructor's own
+    // to any more, so the framework reads nothing. The throw is the constructor's own
     // and happens before `openDb`, which is lazy, so an Operator who omits it — a JavaScript
     // caller, since the type forbids it — is told which option to pass rather than watching `pg`
     // open a pool against its own defaults and fail on the first statement of the first Run.
@@ -1193,7 +1185,7 @@ describe("the infrastructure on its own", () => {
       // substituting an infrastructure Component in place would start the Operator's own where
       // ours would have gone and nothing anywhere would say so. The refusal is a type error, and
       // this is where it is pinned: `@ts-expect-error` fails the typecheck if the line below ever
-      // starts compiling (ADR-0037). An Operator who really wants a Worker of their own writes
+      // starts compiling. An Operator who really wants a Worker of their own writes
       // `createBareGateway` by hand, which is the honest way to say it.
       // @ts-expect-error worker is an infrastructure key and may not be replaced by an extension
       extend: (infra) => ({ notes: notebook(), worker: infra.worker }),
@@ -1250,8 +1242,7 @@ describe("the infrastructure on its own", () => {
 /**
  * Both servers describing themselves, which is a claim no part can make on its own: a part
  * knows its own routes and nothing about which surface it shares them with, and the plugin
- * that discovers them is registered by this constructor before any part exists at all
- * ([ADR-0040](../docs/adr/0040-the-gateway-describes-its-own-http-api.md)).
+ * that discovers them is registered by this constructor before any part exists at all.
  *
  * Nothing here reaches PostgreSQL. The Gateways are constructed against the database URL
  * that resolves to nothing, the same one the two tests above it use, and never started:
@@ -1261,11 +1252,11 @@ describe("the infrastructure on its own", () => {
  * a server that has been closed. This one never starts or stops a Gateway.
  *
  * **All twenty-seven routes declare what they answer with**, one part at a time: the Signal
- * Worker's four, Users' three, Password Auth's four, the HTTP Messenger's four, Decisions' five,
- * Signatures' three and the Scheduler's four. What no test here can do is catch a *dropped*
- * field, since a document and
- * the wire it describes are the same schema read twice. That is the round-trip assertions in
- * the first suite, which need records real parts recorded and therefore a real database.
+ * Worker's four, Users' three, Password Auth's four, the HTTP Channel's four, Decisions' five,
+ * Signatures' three and the Scheduler's four. What no test here can do is catch a *dropped* field,
+ * since a document and the wire it describes are the same schema read twice. That is the round-trip
+ * assertions in the first suite, which need records real parts recorded and therefore a real
+ * database.
  */
 describe("the description both servers serve", () => {
   /** Somewhere nothing resolves, since none of this connects. */
@@ -1277,8 +1268,7 @@ describe("the description both servers serve", () => {
    * Written out rather than counted, because the two facts worth pinning are which routes
    * a deployment assembled the default way ends up with and, more sharply, that neither
    * list contains a single entry of the other's: one plugin instance per server is what
-   * makes an Agent server route unable to leak into the Public server's description
-   * (ADR-0040).
+   * makes an Agent server route unable to leak into the Public server's description.
    *
    * A path ending in a slash is a route registered at `""` under a prefix, which is how
    * `GET /users` and both Message routes are written. Cosmetic, carried by a generated
@@ -1379,8 +1369,7 @@ describe("the description both servers serve", () => {
     assert.equal(document.info.title, "Concorde Gateway: Agent server");
     assert.equal(document.info.version, describedVersion);
     // The one sentence about this surface that is true of every route on it, and the one
-    // an Agent Implementation would otherwise be told by hand: there is no credential here
-    // (ADR-0010, ADR-0025).
+    // an Agent Implementation would otherwise be told by hand: there is no credential here.
     assert.match(document.info.description, /no authentication of any kind/);
 
     assert.deepEqual(Object.keys(document.paths).sort(), agentPaths);
@@ -1422,7 +1411,7 @@ describe("the description both servers serve", () => {
     // The sentences an Operator used to transcribe into the agent's instructions, in the
     // document instead, and the statuses, which were never written down anywhere: an
     // agent that cannot tell a 404 for an unknown Signal from a 400 for a mistyped one
-    // has to guess (ADR-0025, ADR-0040). Read out of the served document rather than off
+    // has to guess. Read out of the served document rather than off
     // the schema objects, because the document is the only part of this a consumer sees.
     const document = await documentOf(described.components.agentServer.fastify);
     const answers: Readonly<Record<string, readonly string[]>> = {
@@ -1469,7 +1458,7 @@ describe("the description both servers serve", () => {
   it("says what the three Users routes answer with, across both surfaces", async () => {
     // Three routes and two documents, which is one of the parts that span both surfaces and
     // therefore one of the places where "an Agent server route can never leak into the Public
-    // server's description" is a claim about a part rather than about a server (ADR-0040).
+    // server's description" is a claim about a part rather than about a server.
     const documents = {
       agent: await documentOf(described.components.agentServer.fastify),
       public: await documentOf(described.components.publicServer.fastify),
@@ -1509,7 +1498,7 @@ describe("the description both servers serve", () => {
 
     // **There is no create, and the document is where that is visible to a client author.**
     // `POST /users` was removed rather than stripped of its password parameter, so an injected
-    // prompt cannot mint itself an account and then a credential for it (ADR-0052). Asserted on
+    // prompt cannot mint itself an account and then a credential for it. Asserted on
     // the served document, because that is the only part of this a consumer sees.
     assert.equal(documents.agent.paths["/users/"]?.post, undefined);
     assert.equal(documents.agent.paths["/users/{id}"]?.post, undefined);
@@ -1528,7 +1517,7 @@ describe("the description both servers serve", () => {
     );
 
     // `GET /users/me` wants a credential and names no scheme as *the* scheme, because it
-    // echoes whichever User the Gateway authenticated (ADR-0052).
+    // echoes whichever User the Gateway authenticated.
     const me = String(documents.public.paths["/users/me"]?.get?.description);
     assert.match(me, /\*\*Requires authentication\.\*\*/);
     assert.match(me, /any scheme this deployment accepts/);
@@ -1567,7 +1556,7 @@ describe("the description both servers serve", () => {
 
   it("says what Password Auth's four routes answer with, and which one needs no Token", async () => {
     // The one part whose routes are all on the Public server, and the only part in this
-    // deployment that holds a credential: the login and the three routes below it (ADR-0052).
+    // deployment that holds a credential: the login and the three routes below it.
     const documents = {
       agent: await documentOf(described.components.agentServer.fastify),
       public: await documentOf(described.components.publicServer.fastify),
@@ -1633,10 +1622,10 @@ describe("the description both servers serve", () => {
     assert.equal(token.properties?.token?.description, undefined);
   });
 
-  it("says what the HTTP Messenger's four routes answer with, and how a log is paged", async () => {
+  it("says what the HTTP Channel's four routes answer with, and how a log is paged", async () => {
     // The other part that spans both surfaces, and the one whose two surfaces are likeliest
     // to be conflated: submitting and reading are the same pair of routes on each, differing
-    // in exactly one thing, which is where the User comes from (ADR-0035, ADR-0040).
+    // in exactly one thing, which is where the User comes from.
     const documents = {
       agent: await documentOf(described.components.agentServer.fastify),
       public: await documentOf(described.components.publicServer.fastify),
@@ -1646,7 +1635,7 @@ describe("the description both servers serve", () => {
     const messages = "/messages/";
 
     // The 404 is the agent's alone, and its absence from the Public submission is the
-    // document following the code: nothing removes a User (ADR-0029), so the id on that
+    // document following the code: nothing removes a User, so the id on that
     // route is the one `requireUser` just read a User by and the status is unreachable.
     // The 503 is on both submissions, since a busy log is busy from either direction.
     const answers: readonly {
@@ -1689,7 +1678,7 @@ describe("the description both servers serve", () => {
 
     // **The cursor semantics, which no schema conveys any part of**: `after` and `before` are
     // two optional integers, and nothing about that shape says which of them is the newest
-    // page or that all three cases answer the same way up (ADR-0035). Asserted on both reads
+    // page or that all three cases answer the same way up. Asserted on both reads
     // and in the same words, because the two are one query asked about a User named in a
     // different place and a client written against either pages identically.
     for (const surface of ["agent", "public"] as const) {
@@ -1790,7 +1779,7 @@ describe("the description both servers serve", () => {
     // The third part that spans both surfaces, and the one whose two surfaces are the same
     // read twice: the log is global, so the agent's read and a User's differ in nothing but
     // whether a Token is wanted, which is a thing a client author should be told rather than
-    // left to infer from a missing parameter (ADR-0043).
+    // left to infer from a missing parameter.
     const documents = {
       agent: await documentOf(described.components.agentServer.fastify),
       public: await documentOf(described.components.publicServer.fastify),
@@ -1808,9 +1797,9 @@ describe("the description both servers serve", () => {
       { surface: "agent", path: log, method: "get", statuses: ["200", "400"] },
       // No 503 anywhere on this part: `nextval` is atomic, so there is no race to lose and no
       // bounded retry to run out of. And the only 404 is the by-number pair's, which is a
-      // number nobody has rather than the HTTP Messenger's missing User: with no `user_id`
-      // there is no foreign key, so ADR-0036's "the agent's 404 is PostgreSQL's 23503 caught"
-      // has no analogue here and neither read of the log can 404 at all.
+      // number nobody has rather than the HTTP Channel's missing User: with no `user_id`
+      // there is no foreign key, so the Messenger's "the agent's 404 is PostgreSQL's 23503
+      // caught" has no analogue here and neither read of the log can 404 at all.
       { surface: "agent", path: cited, method: "get", statuses: ["200", "400", "404"] },
       { surface: "public", path: log, method: "get", statuses: ["200", "400", "401"] },
       { surface: "public", path: cited, method: "get", statuses: ["200", "400", "401", "404"] },
@@ -1842,7 +1831,7 @@ describe("the description both servers serve", () => {
 
     // The citation described as the thing it replaces, which is the whole reason it is a route:
     // a client that writes `?after=<n-1>&limit=1` will get that off-by-one wrong once, and
-    // nothing but a sentence could tell them not to (ADR-0040).
+    // nothing but a sentence could tell them not to.
     for (const surface of ["agent", "public"] as const) {
       const citing = String(documents[surface].paths[cited]?.get?.description);
       assert.match(citing, /`GET \/decisions\/7` is the Decision numbered 7/, surface);
@@ -1872,7 +1861,7 @@ describe("the description both servers serve", () => {
       const reading = String(documents[surface].paths[log]?.get?.description);
       assert.match(reading, /\*\*One global log, the same for every reader\.\*\*/, surface);
       // The cursor rules, in the shared words, because a client written against one of these
-      // two reads pages the other identically (ADR-0035).
+      // two reads pages the other identically.
       assert.match(reading, /\*\*Three cursor cases, one order\.\*\*/, surface);
       assert.match(reading, /All three answer \*\*ascending by `seq`\*\*/, surface);
     }
@@ -1889,7 +1878,7 @@ describe("the description both servers serve", () => {
 
     // And the same four fields on the citation, because it is the same schema rather than a
     // second one describing the same record: a response schema is a serializer, so two of them
-    // would be two chances to drop `jws` from one surface and not the other (ADR-0040).
+    // would be two chances to drop `jws` from one surface and not the other.
     assert.deepEqual(
       Object.keys(schemaOf(documents.public, cited, "get", "200").properties ?? {}).sort(),
       fields,
@@ -1897,7 +1886,7 @@ describe("the description both servers serve", () => {
 
     // And the sentence the whole feature turns on, on the read a Party actually meets: the
     // offline path named first, and what a signature does not prove said outright, because a
-    // reader who over-reads it has been misled by us (ADR-0041).
+    // reader who over-reads it has been misled by us.
     const takingItAway = String(documents.public.paths[log]?.get?.description);
     assert.match(takingItAway, /off-the-shelf JOSE library/);
     assert.match(takingItAway, /nothing whatever about how the agent behaved/);
@@ -1906,7 +1895,7 @@ describe("the description both servers serve", () => {
   it("says what Signatures' three routes answer with, and what each of them is worth", async () => {
     // The fourth part across both surfaces, and the one whose three routes are three different
     // relationships with the same key: only the agent may sign, anybody with a Token may ask,
-    // and anybody at all may take the key and stop asking (ADR-0042).
+    // and anybody at all may take the key and stop asking.
     const documents = {
       agent: await documentOf(described.components.agentServer.fastify),
       public: await documentOf(described.components.publicServer.fastify),
@@ -1949,7 +1938,7 @@ describe("the description both servers serve", () => {
 
     // **`typ` described as what it is**, which is the one thing about this part a reader can
     // get wrong in the direction that matters: the freedom said outright on the request, and
-    // the consequence of that freedom said outright on the answer (ADR-0042).
+    // the consequence of that freedom said outright on the answer.
     const signing = bodyOf(documents.agent, "/sign", "post");
     assert.deepEqual(Object.keys(signing.properties ?? {}).sort(), ["statement", "typ"]);
     assert.deepEqual(signing.required, ["statement"]);
@@ -1985,7 +1974,7 @@ describe("the description both servers serve", () => {
     // The 401 in the shared words with where the hook came from added, which is how Decisions
     // and the HTTP Channel describe the same refusal: this part holds no scheme of its own, and
     // a client should not have to discover that to know the answer is identical there. It names
-    // no scheme either, because more than one can refuse (ADR-0052).
+    // no scheme either, because more than one can refuse.
     const unauthenticated = String(
       documents.public.paths["/verify"]?.post?.responses["401"]?.description,
     );
@@ -2020,9 +2009,9 @@ describe("the description both servers serve", () => {
   it("says what the Scheduler's four routes answer with, and that they are the agent's alone", async () => {
     // The Scheduler is the second Producer and an opt-in part, built into the Agent server in
     // `extend`; its routes are in this document only because the description plugin was registered
-    // ahead of `extend` and its `onRoute` hook saw them register inside the constructor (ADR-0040,
-    // ADR-0045). All four are the agent's, disableable as a group by constructing the part with no
-    // Agent server (ADR-0018).
+    // ahead of `extend` and its `onRoute` hook saw them register inside the constructor.
+    //  All four are the agent's, disableable as a group by constructing the part with no
+    // Agent server.
     const documents = {
       agent: await documentOf(described.components.agentServer.fastify),
       public: await documentOf(described.components.publicServer.fastify),
@@ -2068,7 +2057,7 @@ describe("the description both servers serve", () => {
     assert.equal(JSON.stringify(documents.public.paths).includes("Schedules"), false);
 
     // `PUT` carries a 201 and a 200 and **no 404**: it creates when the name is absent, so the
-    // create-versus-update is the whole of what its status says (ADR-0018).
+    // create-versus-update is the whole of what its status says.
     const upsert = documents.agent.paths[byName]?.put;
     assert.match(String(upsert?.description), /\bupsert\b/);
     assert.equal(Object.hasOwn(upsert?.responses ?? {}, "404"), false);
@@ -2088,7 +2077,7 @@ describe("the description both servers serve", () => {
 
     // The same shape under the list envelope, which is a second serializer written separately: one
     // `schedules` array and the same five fields on its items, so a field dropped from one schema
-    // and not the other differs here (ADR-0040).
+    // and not the other differs here.
     const page = schemaOf(documents.agent, list, "get", "200");
     assert.deepEqual(Object.keys(page.properties ?? {}), ["schedules"]);
     assert.deepEqual(
@@ -2109,16 +2098,16 @@ describe("the description both servers serve", () => {
     // The single most breakable thing in the change, and the reason this test exists: the
     // description plugin is registered ahead of every part, so an Operator's own routes are
     // discovered along with the framework's. Register it after the parts and this fails
-    // with an empty document, which is the only symptom there is (ADR-0040).
+    // with an empty document, which is the only symptom there is.
     const { agentServer, publicServer } = unstarted().components;
 
     // Both spellings, in the stretch an Operator writes them in: nothing is awaited between
     // the constructor and these two lines, which is what makes the difference between them
     // observable at all.
     //
-    // Through `register`, which is the door ADR-0032 already points at. The plugin's body
-    // runs at boot, by which time the description
-    // plugin has added its `onRoute` hook, so this route is discovered.
+    // Through `register`, which is the door components already point at. The plugin's body runs at
+    // boot, by which time the description plugin has added its `onRoute` hook, so this route is
+    // discovered.
     publicServer.fastify.register(async (fastify) => {
       fastify.get("/ask", async () => ({ ok: true }));
     });
@@ -2155,7 +2144,7 @@ describe("the description both servers serve", () => {
     // `npm version` writes the literal through `scripts/stamp-version.ts`, so this is the
     // backstop rather than the guard: what reaches it is a version edited into the manifest
     // without that command, or a stamp whose declaration no longer matches. Reading the
-    // manifest here rather than in the constructor is the whole of the trade ADR-0040 makes:
+    // manifest here rather than in the constructor is the whole of the trade:
     // the cost of the constant is paid by a test rather than by a file read inside a
     // constructor documented as doing no I/O.
     const manifest: unknown = JSON.parse(
@@ -2169,7 +2158,7 @@ describe("the description both servers serve", () => {
    * could do anything if one were. The four parts are built in `extend`, exactly as an
    * example's `main.ts` builds them, because that is where their routes are registered now — and
    * the description this suite reads has to describe those routes, which it does only because
-   * the plugin is registered ahead of `extend` (ADR-0040, ADR-0045).
+   * the plugin is registered ahead of `extend`.
    *
    * Called twice: once for the pair every test below reads, and once by the test that
    * needs a Gateway of its own, since a route has to be registered before the instance
@@ -2236,10 +2225,10 @@ describe("the description both servers serve", () => {
 describe("the package root", () => {
   it("reaches no Agent Implementation and none of the four parts, however far the imports go", () => {
     // `createGateway` reaches the Db, the servers and the Signal Worker and     // components an Operator builds in `extend`: they are the Operator's now, built in `extend` and reached through
-    // their own subpath exports, so constructing none of them loads none of them (ADR-0045). The
+    // their own subpath exports, so constructing none of them loads none of them. The
     // edge that stays absent is the one worth keeping absent — an Agent Implementation — since
     // the Runtime is an option rather than a spec, so swapping `pi` for another stays "this
-    // import and this function name, and nothing below" (ADR-0033).
+    // import and this function name, and nothing below".
     const src = fileURLToPath(new URL("..", import.meta.url));
     const reached = reachableFrom(path.join(src, "gateway", "index.ts"));
 
@@ -2249,9 +2238,9 @@ describe("the package root", () => {
       [],
     );
 
-    // And none of the components built in `extend`, which is ADR-0038's assertion inverted: the root used to reach
+    // And none of the components built in `extend`, which is the assertion inverted: the root used to reach
     // `./users` and `./http-messenger` because the assembly built them, and now reaches neither,
-    // nor Signatures nor Decisions (ADR-0045).
+    // nor Signatures nor Decisions.
     for (const part of [
       path.join(src, "users", "users.ts"),
       path.join(src, "messenger", "messenger.ts"),
@@ -2298,7 +2287,7 @@ function reachableFrom(entry: string): Set<string> {
  * test's: the Db through Users, the two servers over their own sockets. A Run
  * that could not reach one of these would be a Run the shutdown order had broken — the
  * Operator's own Component included now, since it is keyed ahead of the Worker and is therefore
- * *supposed* to be still up through the drain (ADR-0045).
+ * *supposed* to be still up through the drain.
  */
 async function whatIsStillUp(): Promise<string[]> {
   return [
@@ -2322,8 +2311,8 @@ async function whatIsStillUp(): Promise<string[]> {
  * One thing the Run tries, reported as a line of the log whether it worked or not.
  *
  * A failure comes back **as a line** rather than as a throw, and that is the point of this
- * function: a throw from inside a Run is caught by the worker and recorded as a failed Run
- * (ADR-0017), so the reason the drain broke would never reach the assertion outside. What
+ * function: a throw from inside a Run is caught by the worker and recorded as a failed Run,
+ * so the reason the drain broke would never reach the assertion outside. What
  * each line carries is a fact from the part it names — a count, a status — so a line cannot
  * be right for the wrong reason either.
  */
@@ -2341,7 +2330,7 @@ async function reaching(what: string, act: () => Promise<string>): Promise<strin
  * The two calls an OIDC callback makes, and the reason every test here but one needs no
  * password: `users.create` derives nothing, `passwordAuth.issueToken` mints a Token for
  * somebody who presented nothing, and what comes back is indistinguishable from a Token a
- * login bought (ADR-0030, ADR-0052). This fixture builds Password Auth with no `scrypt`
+ * login bought. This fixture builds Password Auth with no `scrypt`
  * option, so the alternative would be two derivations at OWASP's 32 MiB cost for nothing most
  * of this file asserts. The one test that does assert something about them buys its own.
  */
@@ -2353,7 +2342,7 @@ async function admitted(): Promise<{ id: string; token: string }> {
 
 /**
  * One read of the Agent server, over its own socket and with nothing to authenticate
- * with, which is the whole of what reaching that port takes (ADR-0010).
+ * with, which is the whole of what reaching that port takes.
  */
 async function agentJson<T>(path: string): Promise<T> {
   const response = await fetch(`${agentUrl}${path}`);

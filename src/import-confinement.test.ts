@@ -2,15 +2,11 @@
  * The libraries that belong to one component each, and the lint rule that says so — asked of
  * Biome rather than read out of `biome.json`.
  *
- * Three libraries are confined to the directories that own them: `pg` to the Db
- * ([ADR-0022](../docs/adr/0022-the-store-is-postgresql-through-drizzle.md)), `jose` to Signatures
- * ([ADR-0042](../docs/adr/0042-a-signature-is-a-compact-jws.md)), and the two Nostr libraries to
- * the two parts that speak that protocol, the Nostr Channel
- * ([ADR-0049](../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)) and Nostr Auth
- * ([ADR-0053](../docs/adr/0053-nostr-auth-verifies-nip-98-per-request.md)). The rule is the
- * whole enforcement, and nothing else in the repository notices a further part reaching for one,
- * so a rule that quietly stopped firing would leave every one of those decisions written down and
- * unenforced.
+ * Three libraries are confined to the directories that own them: `pg` to the Db, `jose` to
+ * Signatures, and the two Nostr libraries to the two parts that speak that protocol, the Nostr
+ * Channel and Nostr Auth. The rule is the whole enforcement, and nothing else in the repository
+ * notices a further part reaching for one, so a rule that quietly stopped firing would leave every
+ * one of those decisions written down and unenforced.
  *
  * **A directory excluded here is excluded for all three libraries**, which is the recorded cost of
  * the single entry below: `src/nostr-auth/**` may import `pg` and `jose` too, and nothing but

@@ -10,8 +10,8 @@
  * Both directions are here, each written the way it arrives: the agent's send on the Agent
  * server, and the User's own post on the Public one. That is what makes the read's
  * direction-blindness observable rather than merely stated — one log, numbered across both,
- * with no `direction` parameter to filter by and a refusal for anyone who asks for one
- * (ADR-0035). The Signal Worker constructed below is never started, so the Signal a post
+ * with no `direction` parameter to filter by and a refusal for anyone who asks for one.
+ * The Signal Worker constructed below is never started, so the Signal a post
  * emits sits `pending` and nothing downstream of it happens: what a submission wakes is
  * `posted-messages.test.ts`'s subject, and this file's is the read.
  *
@@ -66,7 +66,7 @@ const hour = 60 * 60 * 1000;
  * A cost nobody should deploy, so that a file full of logins runs in a moment.
  *
  * Legitimate because each digest carries the parameters it was written under: this is a
- * construction-time number and not a property of the schema (ADR-0030).
+ * construction-time number and not a property of the schema.
  */
 const cheap: ScryptParameters = { logN: 12, blockSize: 8, parallelism: 1 };
 
@@ -91,13 +91,13 @@ before(async () => {
   // test wants, since the row is what it reads and the Run is not its subject.
   const worker = createSignalWorker({ db, runtime: fakeRuntime(), handlers: {} });
   // Users first, because the Messenger's foreign key names it and Password Auth reads through
-  // it; the foreign key's ordering is the push's to arrange (ADR-0046). Password Auth is where
+  // it; the foreign key's ordering is the push's to arrange. Password Auth is where
   // a Token here comes from, and registering it with the Public server is what makes
-  // `publicServer.requireUser` able to authenticate the reads below (ADR-0052).
+  // `publicServer.requireUser` able to authenticate the reads below.
   users = createUsers({ db, agentServer, publicServer });
   passwordAuth = createPasswordAuth({ db, users, publicServer, tokenTtl: hour, scrypt: cheap });
   // Nothing is held: the read under test is a route, and the Channel's constructor registered
-  // it itself, behind that component's own hook (ADR-0032). The Messenger is built inline because
+  // it itself, behind that component's own hook. The Messenger is built inline because
   // this file holds neither — the log it owns is reached only over HTTP here.
   createHttpChannel({
     db,
@@ -106,8 +106,8 @@ before(async () => {
   });
 
   // The schema of Users alongside the Messenger's, because `messages.user_id` references
-  // `concorde_users.users.id` and one push has to see both (ADR-0036, ADR-0046). Password Auth's is
-  // there for the same reason: both of its columns reference that table too (ADR-0052).
+  // `concorde_users.users.id` and one push has to see both. Password Auth's is
+  // there for the same reason: both of its columns reference that table too.
   await applySchema(db, signalsSchema, usersSchema, passwordAuthSchema, messengerSchema);
 });
 
@@ -121,7 +121,7 @@ after(async () => {
  * A User with a password, admitted from trusted code, holding a Token they logged in for.
  *
  * Two writes in one transaction, which is the only way a User who can log in exists: no route
- * anywhere creates one (ADR-0052).
+ * anywhere creates one.
  */
 async function admitted(): Promise<Client> {
   const created = await db.tx(async (tx) => {
@@ -216,11 +216,11 @@ describe("a User reading their own Messages", () => {
     const first = await sent(client.id, "what happened to the deploy?");
 
     // The record is the one the agent's send answered with, byte for byte: one shape on
-    // every surface, not a projection per reader (ADR-0034).
+    // every surface, not a projection per reader.
     assert.deepEqual(await log(client.token), [first]);
     assert.equal(first.userId, client.id);
     // Outbound, because the agent wrote it, and answered to the User all the same: a
-    // Message log is one log in both directions, and this read filters neither (ADR-0035).
+    // Message log is one log in both directions, and this read filters neither.
     assert.equal(first.direction, "outbound");
 
     // And the other direction, written by the User themselves at the route beside this one.
@@ -373,8 +373,7 @@ describe("an unauthenticated read", () => {
     }
 
     // Byte for byte, not merely equivalent: the Channel authenticates nobody, so this is
-    // the one refusal the Public server composes, reaching a route in another part unchanged
-    // (ADR-0030, ADR-0052).
+    // the one refusal the Public server composes, reaching a route in another part unchanged.
     const [first, ...rest] = refusals;
     assert.ok(first !== undefined);
     for (const refused of rest) {

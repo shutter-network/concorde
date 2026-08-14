@@ -1,7 +1,7 @@
 /**
- * The log lives here and the medium does not, which is the whole of ADR-0048. Three of the four
- * freedoms ADR-0034 declined moved up from the HTTP Messenger with the log: the `text` content, the
- * fixed Signal `kind`, and one numbered sequence per User across both directions. The fourth, how a
+ * The log lives here and the medium does not, which is the whole of the split. Three shapes are
+ * fixed here rather than left to a Channel: the `text` content, the fixed Signal `kind`, and one
+ * numbered sequence per User across both directions. The fourth thing, how a
  * person is reached, is what the `Channel` below hands back. Do not add a `channel` argument
  * to `send`, a `channel` column, or a Channel name in the Signal payload while `register` refuses a
  * second Channel: the three arrive together or none of them does, and a column constant in every

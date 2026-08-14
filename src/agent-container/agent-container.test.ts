@@ -6,7 +6,7 @@
  * that can observe an Agent Implementation's own defaults: a test composing arguments
  * from the parts would have to restate those defaults in order to check them, which the
  * prototype demonstrated by producing a command line with no entry point in it and
- * nothing able to notice (ADR-0033).
+ * nothing able to notice.
  *
  * There is no `pi` here and no second Agent Implementation either. The stand-in below is
  * an agent shaped unlike `pi` on purpose — its Prompt goes on argv rather than stdin in
@@ -31,7 +31,7 @@ import path from "node:path";
 import { after, describe, it } from "node:test";
 import type { LogFields, Logger } from "../logging/logging.ts";
 // The two ends of a Run are the Signal Worker's vocabulary and come off its own subpath,
-// which is what a `RunPlan` is written against (ADR-0047).
+// which is what a `RunPlan` is written against.
 import type { RunOutcome, RunPrompt } from "../signals/index.ts";
 import {
   type FakeContainerScript,
@@ -39,7 +39,7 @@ import {
   fakeContainerReport,
 } from "../test-support/fake-container.ts";
 // From the package root, which is where an Operator meets the container half: nothing in
-// any of it knows about an Agent Implementation (ADR-0026, ADR-0033).
+// any of it knows about an Agent Implementation.
 import {
   type AgentContainer,
   type ComposedCommand,
@@ -69,7 +69,7 @@ const prompt: RunPrompt = { session: "user_42", text: "what happened?" };
  * The reader closes over the Session, which is the whole reason `run` produces one per
  * Run rather than being handed a reader once at construction. It takes the Session as it
  * finds it and resolves nothing: a `RunPrompt`'s Session is a string, because the Signal
- * Worker answered a Handler's request for a fresh one long before here (ADR-0033).
+ * Worker answered a Handler's request for a fresh one long before here.
  */
 function agentRun({ session, text }: RunPrompt): RunPlan {
   return {
@@ -160,9 +160,9 @@ describe("the least an Operator can declare", () => {
   it("takes no Mount Table at all, which is a deployment and not a mistake", () => {
     // An image that bakes in its own configuration and keeps no state between Runs
     // mounts nothing. An empty table says the same thing and is no longer refused: the
-    // rule that forbade it was deleted rather than moved (ADR-0028). It has to name a
+    // rule that forbade it was deleted rather than moved. It has to name a
     // Runtime Directory nothing then reads, which is why the absent table is the one the
-    // Runtime itself falls back on (ADR-0054).
+    // Runtime itself falls back on.
     for (const container of [
       { image: "concorde/agent" },
       { image: "concorde/agent", mounts: { entries: [], runtimeDir } },
@@ -186,7 +186,7 @@ describe("what the container runtime is told", () => {
     // own configuration used to refuse it at resolution, on the argument that everything
     // holding a resolved configuration should have a command to run; there is no
     // resolution step left to refuse it in, and "no container runtime named" and "the
-    // default container runtime" are the same statement (ADR-0033).
+    // default container runtime" are the same statement.
     assert.equal(commandFor({ containerCommand: [] }).command, "docker");
   });
 
@@ -209,13 +209,13 @@ describe("what the container runtime is told", () => {
   it("runs as this process's own user, so bind-mounted files are readable both ways", () => {
     // Not configuration, and there is no field that says otherwise. Without it every
     // file the agent writes into a bind mount is owned by uid 0, and a Signal Handler
-    // can read it and delete it but cannot modify it in place (ADR-0025, ADR-0028).
+    // can read it and delete it but cannot modify it in place.
     assert.equal(argumentAfter(commandFor(), "--user"), ownUser());
   });
 
   it("joins every network it was given, and none where none was named", () => {
-    // Plural with no default: the runtime's own default is the shared bridge ADR-0025
-    // argues against, and no network at all breaks every Run.
+    // Plural with no default: the runtime's own default is the shared bridge the agent
+    // should not be on, and no network at all breaks every Run.
     assert.deepEqual(
       valuesOf(commandFor({ networks: ["concorde-agent", "concorde-models"] }).args, "--network"),
       ["concorde-agent", "concorde-models"],
@@ -311,7 +311,7 @@ describe("the Mount Table on an Agent Container", () => {
   });
 
   it("never emits -v, which is what makes the daemon refuse a source that is not there", () => {
-    // The load-bearing subtraction of ADR-0028, and the reason a startup mount check
+    // The load-bearing subtraction, and the reason a startup mount check
     // could go: `-v` invents a missing directory source as `root`, and invents a
     // *directory* even where a file was meant. `--mount` refuses both, naming the path.
     const composed = commandFor({ extraArgs: ["--memory", "2g"] });
@@ -358,7 +358,7 @@ describe("the Mount Table on an Agent Container", () => {
   it("resolves every entry against the runtime directory, which is the daemon's own", () => {
     // The daemon resolves a bind source on the *host*, so the runtime directory is the
     // host's path to the shared tree, however this process reaches it. An entry naming
-    // the directory itself resolves to it whole, and one below it appends (ADR-0054).
+    // the directory itself resolves to it whole, and one below it appends.
     const composed = commandFor({
       mounts: {
         entries: [
@@ -392,8 +392,7 @@ describe("the Mount Table on an Agent Container", () => {
   it('takes "/" as a runtime directory, which is the escape for a tree on two host mounts', () => {
     // One directory cannot span two host mounts, so a deployment whose shared tree does
     // names the host root and writes the rest of each path into the entry. The general
-    // rule with an ordinary value, in place of the accommodation ADR-0028 granted
-    // (ADR-0054).
+    // rule with an ordinary value, in place of a special case.
     const composed = commandFor({
       mounts: { entries: [{ agentPath: "/thing", path: "mnt/b/thing" }], runtimeDir: "/" },
     });
@@ -465,7 +464,7 @@ describe("the flags the framework does not model", () => {
 
   it("reach the container runtime and never the agent", () => {
     // Half an escape hatch, recorded as a gap rather than a decision: there is still no
-    // way to pass the agent itself a flag the framework does not model (ADR-0025).
+    // way to pass the agent itself a flag the framework does not model.
     const composed = commandFor({ extraArgs: ["--memory", "2g"] });
 
     assert.ok(!agentArgsOf(composed).includes("--memory"));
@@ -476,7 +475,7 @@ describe("the loggable copy of the command line", () => {
   it("replaces every environment value, with no exceptions list", () => {
     // A list of what is safe to log would have to be right about every provider's key
     // name forever, and it would have to name an Agent Implementation's own variables
-    // inside a module that must not know them (ADR-0033).
+    // inside a module that must not know them.
     const composed = commandFor({
       env: { ANTHROPIC_API_KEY: "sk-a-real-key", AGENT_DIR: "/home/agent/.pi/agent" },
       extraArgs: ["--env", "OPENAI_API_KEY=another-real-key", "-e", "AWS_SECRET=third"],
@@ -516,10 +515,9 @@ describe("the loggable copy of the command line", () => {
 
 describe("a container that cannot work", () => {
   it("is refused at construction rather than at the first Run", () => {
-    // A Run that fails is never retried (ADR-0017), so a deployment refused only at its
+    // A Run that fails is never retried, so a deployment refused only at its
     // first Signal is one whose every Signal becomes a permanently failed Run. These two
-    // and the tests after them are the whole of what is decidable from the value alone
-    // (ADR-0028).
+    // and the tests after them are the whole of what is decidable from the value alone.
     assert.throws(
       () => createAgentContainerRuntime({ container: { image: "" }, run: agentRun }),
       /no image/,
@@ -541,7 +539,7 @@ describe("a container that cannot work", () => {
     // The old absolute form written into the new field: it does not fail, it resolves under the
     // runtime directory a second time. `/srv/concorde/state` against a runtimeDir of
     // `/srv/concorde` is a plausible-looking `/srv/concorde/srv/concorde/state` and a daemon
-    // refusal at the first Run, which under ADR-0017 is a permanently dead Signal (ADR-0054).
+    // refusal at the first Run, which is a permanently dead Signal, nothing being retried.
     assert.throws(
       () =>
         createAgentContainerRuntime({
@@ -566,7 +564,7 @@ describe("a container that cannot work", () => {
   });
 
   it("refuses a '.' or '..' segment in an agentPath, an entry's path, or the runtimeDir", () => {
-    // Every one is decidable from the value with no I/O (ADR-0028). A '..' segment is
+    // Every one is decidable from the value with no I/O. A '..' segment is
     // what makes an entry's path escape the runtime directory it is written against, and
     // joining the two would resolve it away silently. The table is refused where it was
     // written, and the Operator is told to normalize the path rather than having it
@@ -617,7 +615,7 @@ describe("a container that cannot work", () => {
 
   it("refuses two entries that name the same agentPath, even differing only by a trailing slash", () => {
     // Two sources at one target is the daemon's refusal at the first Run today, which
-    // under ADR-0017 is a permanently dead Signal — and it needs no I/O to see (ADR-0028).
+    // is a permanently dead Signal — and it needs no I/O to see.
     // The comparison grants the same trailing-slash tolerance the prefix matching does.
     const refuses = (entries: readonly Mount[]) =>
       assert.throws(
@@ -645,7 +643,7 @@ describe("a container that cannot work", () => {
   it("lets no entry resolve outside the runtime directory it is written against", () => {
     // The two ways to leave it, and both are refused rather than resolved: a '..' segment,
     // which `path.posix.join` would quietly collapse into a host path above the root, and
-    // a leading '/', which would land under it twice (ADR-0054).
+    // a leading '/', which would land under it twice.
     const refuses = (entry: Mount, reason: RegExp) =>
       assert.throws(
         () =>
@@ -666,7 +664,7 @@ describe("a container that cannot work", () => {
 
   it("touches no filesystem doing it, so none of these paths need exist", () => {
     // Resolution is pure. Whether a source is really there is the daemon's answer at the
-    // first Run and deliberately nobody else's (ADR-0028).
+    // first Run and deliberately nobody else's.
     assert.doesNotThrow(() =>
       createAgentContainerRuntime({
         container: {

@@ -16,8 +16,7 @@
  * from it, which is also the only place in the suite where the numbers can be written down.
  *
  * Alongside the walk, the refusals and the cursor cases the shared conventions provide, asserted
- * here because this is the surface a client meets rather than because this part implements them
- * ([ADR-0035](../../docs/adr/0035-a-users-messages-are-one-log-read-by-cursor.md)).
+ * here because this is the surface a client meets rather than because this part implements them.
  *
  * Every read below is made over HTTP against two real Fastify instances and real PostgreSQL,
  * nothing inserts a row directly, and the Token is bought with a real password at the
@@ -97,7 +96,7 @@ before(async () => {
 
   const users = createUsers({ db, agentServer, publicServer });
   // The scheme this file logs in with, and what makes `publicServer.requireUser` able to
-  // authenticate anybody: Decisions holds no credential of its own (ADR-0052).
+  // authenticate anybody: Decisions holds no credential of its own.
   const passwordAuth = createPasswordAuth({
     db,
     users,
@@ -105,8 +104,8 @@ before(async () => {
     tokenTtl: hour,
     scrypt: cheap,
   });
-  // Generated here, which is where a keypair may be generated: the framework generates none
-  // (ADR-0041). Nothing in this file looks at an artifact; the key is what Decisions needs to
+  // Generated here, which is where a keypair may be generated: the framework generates none.
+  // Nothing in this file looks at an artifact; the key is what Decisions needs to
   // exist at all.
   const { privateKey } = generateKeyPairSync("ed25519");
   const signatures = createSignatures({
@@ -119,8 +118,7 @@ before(async () => {
 
   await applySchema(db, usersSchema, passwordAuthSchema, decisionsSchema);
 
-  // Admitted from trusted code, in one transaction: there is no route that creates a User
-  // (ADR-0052).
+  // Admitted from trusted code, in one transaction: there is no route that creates a User.
   const created = await db.tx(async (tx) => {
     const user = await users.create(tx);
     await passwordAuth.setPassword(tx, user.id, password);
@@ -179,8 +177,7 @@ describe("walking the log", () => {
   it("is the same walk for the agent, whose read is a User's with no Token wanted", async () => {
     // The log is global and neither read is scoped by anything at all, so the agent's answer is
     // a User's byte for byte. Asserted over the same windows the walks use, because a difference
-    // between the two surfaces would be a difference in *paging* rather than in content
-    // (ADR-0043).
+    // between the two surfaces would be a difference in *paging* rather than in content.
     for (const window of [`?limit=${page}`, "?before=5&limit=3", "?after=0&limit=3", "?after=6"]) {
       const theirs = await publicServer.fastify.inject({
         url: `${prefix}${window}`,
@@ -326,7 +323,7 @@ function reading(window: string) {
   });
 }
 
-/** And the agent's read of the same window, which takes no credential at all (ADR-0010). */
+/** And the agent's read of the same window, which takes no credential at all. */
 function asAgent(window: string) {
   return agentServer.fastify.inject({ url: `${prefix}${window}` });
 }

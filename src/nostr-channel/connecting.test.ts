@@ -152,7 +152,7 @@ describe("the Nostr Channel's one connection", () => {
         relay.received.some((message) => message.verb === "REQ"),
       );
       // The filter carries no `since`: a gift wrap's timestamp is randomised into the past, so a
-      // watermark would discard most of what is in flight (ADR-0049). What is asked for is every
+      // watermark would discard most of what is in flight. What is asked for is every
       // gift wrap addressed to this agent, every time.
       const [request] = relay.received.filter((message) => message.verb === "REQ");
       assert.deepEqual(request?.filters, [{ kinds: [1059], "#p": [channel.publicKey] }]);
@@ -379,7 +379,7 @@ describe("the shared agent's Nostr identity", () => {
 
     // 32 raw bytes in, a lowercase hex public key out. The framework parses no key material and
     // generates none: there is no `nsec` decoder here, no file path option and no environment
-    // variable, so a deployment brings its own identity or does not start (ADR-0050).
+    // variable, so a deployment brings its own identity or does not start.
     assert.equal(channel.publicKey, getPublicKey(secretKey));
     assert.match(channel.publicKey, /^[0-9a-f]{64}$/);
   });

@@ -13,7 +13,7 @@
  * **nothing else** — no `KeyObject` this file constructed, no header or payload of its own
  * rebuilt from the record, and no `jose`. The oracle is `node:crypto`, because `jose` is what
  * signs, and the signing input is reconstructed by splitting the emitted string, which is what
- * catches signing bytes that are not the bytes that were stored (ADR-0042).
+ * catches signing bytes that are not the bytes that were stored.
  *
  * A database of this file's own, because no two test files may share one, and a deliberately
  * cheap scrypt cost, because every Token here starts with a login.
@@ -54,7 +54,7 @@ const hour = 60 * 60 * 1000;
  * A cost nobody should deploy, so that a file full of logins runs in a moment.
  *
  * Legitimate because each digest carries the parameters it was written under: this is a
- * construction-time number and not a property of the schema (ADR-0030).
+ * construction-time number and not a property of the schema.
  */
 const cheap: ScryptParameters = { logN: 12, blockSize: 8, parallelism: 1 };
 
@@ -76,11 +76,11 @@ before(async () => {
 
   // No Signal Worker anywhere in this file, and that is worth noticing rather than reading as
   // an omission: neither part here is a Producer and neither holds one, so unlike every
-  // messaging suite there is nothing to construct and nothing that could wake (ADR-0043).
+  // messaging suite there is nothing to construct and nothing that could wake.
   const users = createUsers({ db, agentServer, publicServer });
   // The scheme this file logs in with. It registers itself with the Public server, which is
   // what makes `publicServer.requireUser` able to authenticate anybody at all: Decisions holds
-  // no credential and this component is where the Token comes from (ADR-0052).
+  // no credential and this component is where the Token comes from.
   const passwordAuth = createPasswordAuth({
     db,
     users,
@@ -90,7 +90,7 @@ before(async () => {
   });
   // The keypair is generated here, which is where a keypair may be generated: the framework
   // generates none, because a fresh key per restart leaves every artifact ever published
-  // unverifiable with nothing saying so (ADR-0041).
+  // unverifiable with nothing saying so.
   const { privateKey } = generateKeyPairSync("ed25519");
   const signatures = createSignatures({
     signingKey: privateKey,
@@ -103,7 +103,7 @@ before(async () => {
   await applySchema(db, usersSchema, passwordAuthSchema, decisionsSchema);
 
   // Admitted from trusted code, in one transaction, which is the only way a User with a
-  // password exists: there is no route that creates one (ADR-0052).
+  // password exists: there is no route that creates one.
   const created = await db.tx(async (tx) => {
     const user = await users.create(tx);
     await passwordAuth.setPassword(tx, user.id, password);
@@ -129,8 +129,8 @@ describe("a User reading the log", () => {
     const published = await publish("the thing everybody gets to see");
 
     // The same record, from two surfaces, with nothing scoping either: the agent's read and a
-    // User's are one query, and the two route groups differ only in whether an auth hook ran
-    // (ADR-0043). Compared whole, so a field declared in one response schema and forgotten in
+    // User's are one query, and the two route groups differ only in whether an auth hook ran.
+    // Compared whole, so a field declared in one response schema and forgotten in
     // the other differs here.
     const read = await ownLog(`?after=${published.seq - 1}`);
     assert.deepEqual(read, [published]);
@@ -144,7 +144,7 @@ describe("a User reading the log", () => {
   it("is refused without a Token, in the single 401 the Public server answers", async () => {
     // This part authenticates nobody: the hook belongs to the Public server, taken as one
     // option on the route, so a missing header, a header in another scheme, an unknown Token
-    // and an expired one are one status and one message (ADR-0030, ADR-0052).
+    // and an expired one are one status and one message.
     for (const headers of [{}, { authorization: "Basic nope" }, { authorization: "Bearer nope" }]) {
       const refused = await publicServer.fastify.inject({ url: prefix, headers });
       assert.equal(refused.statusCode, 401, refused.body);
@@ -167,7 +167,7 @@ describe("a User citing a Decision by number", () => {
   it("fetches the one that was cited at them, and the agent's copy of it is identical", async () => {
     // What a citation is for: somebody quotes "Decision 7" and the number is the whole of what
     // the reader needs. Compared whole against both surfaces, because the log is global and the
-    // two reads are one query with nothing to scope (ADR-0043).
+    // two reads are one query with nothing to scope.
     const published = await publish("the term somebody will quote by number");
 
     const cited = await citing(published.seq);
@@ -182,7 +182,7 @@ describe("a User citing a Decision by number", () => {
     const published = await publish("not for whoever found the port");
 
     // The Gateway is not a public bulletin board: a Decision is public because a *User* takes
-    // one away and hands it on, not because a stranger can fetch one (ADR-0043). The refusal is
+    // one away and hands it on, not because a stranger can fetch one. The refusal is
     // the server's, so it is byte for byte the one the log read answers with.
     const refused = await publicServer.fastify.inject({ url: `${prefix}/${published.seq}` });
     assert.equal(refused.statusCode, 401, refused.body);
@@ -233,7 +233,7 @@ describe("a third party holding nothing but the public key", () => {
     assert.equal(Buffer.from(signature, "base64url").length, 64);
 
     // The header says which algorithm and what kind of thing this is, and both are inside the
-    // signature, so neither can be swapped by whoever hands the artifact on (ADR-0042).
+    // signature, so neither can be swapped by whoever hands the artifact on.
     assert.deepEqual(decoded(header), { alg: "EdDSA", typ: "concorde-decision+jws" });
     // And the payload says the same as the record: a verifier who was given only the artifact
     // reconstructs the log entry from it, which is why a row is not needed for one to be real.
@@ -316,7 +316,7 @@ function citing(seq: number) {
  */
 async function checks(jws: string): Promise<boolean> {
   // With no Token, which is the point of this route: a verifier who never authenticates and
-  // never will still gets the key (ADR-0042).
+  // never will still gets the key.
   const answered = await publicServer.fastify.inject({ url: "/jwks.json" });
   assert.equal(answered.statusCode, 200, answered.body);
   const [key] = answered.json<{ keys: JsonWebKey[] }>().keys;

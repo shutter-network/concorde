@@ -1,10 +1,9 @@
 /**
  * What every component creates in an Operator's database, as one JSON document.
  *
- * The structure comes out of `generateDrizzleJson`, which is `drizzle-kit`'s own snapshot
- * generator and the same code path that generates the Operator's migration
- * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)). It reads a module exactly
- * as an Operator's own run does, keeping the values that are tables and ignoring the rest, so the
+ * The structure comes out of `generateDrizzleJson`, which is `drizzle-kit`'s own snapshot generator
+ * and the same code path that generates the Operator's migration. It reads a module exactly as an
+ * Operator's own run does, keeping the values that are tables and ignoring the rest, so the
  * `<component>Tables` wrapper beside them costs nothing and a page cannot disagree with the DDL
  * that gets applied. It connects to nothing: no database, no Docker, no network.
  *
@@ -137,8 +136,7 @@ export type ComponentTables = {
   readonly subpath: string;
   /**
    * The full import specifier, which is what the page is titled with: the component's own subpath
-   * with `/schema` after it
-   * ([ADR-0055](../../docs/adr/0055-a-components-tables-are-a-subpath-of-their-own.md)).
+   * with `/schema` after it.
    */
   readonly specifier: string;
   /** The single PostgreSQL schema this component writes into, such as `concorde_users`. */
@@ -185,8 +183,8 @@ export function extractSchemas(): SchemaExtraction {
       const snapshot = keptFieldsOf(generateDrizzleJson(module));
       const { schemas, tables } = snapshot;
       const declaredSchemas = Object.keys(schemas);
-      // Both of these are the wrapper trap in the shape this feature would meet it
-      // (ADR-0046): a table that retreated into the `<component>Tables` object is dropped by
+      // Both of these are the wrapper trap in the shape this feature would meet it:
+      // a table that retreated into the `<component>Tables` object is dropped by
       // `generateDrizzleJson` in silence, and the page for that component would render as
       // an honest, complete and empty page. A component with no tables has no page at all,
       // so the absence would look exactly like the intended thing.
@@ -194,7 +192,7 @@ export function extractSchemas(): SchemaExtraction {
         throw new Error(
           `src/${subpath}/schema/index.ts exports no table that drizzle-kit can see. A table reached ` +
             `only through the tables wrapper is dropped here exactly as it is dropped from a ` +
-            `migration (ADR-0046), so flat-export it.`,
+            `migration, so flat-export it.`,
         );
       }
       if (declaredSchemas.length !== 1) {
@@ -202,7 +200,7 @@ export function extractSchemas(): SchemaExtraction {
           `src/${subpath}/schema/index.ts declares ${declaredSchemas.length} PostgreSQL schemas ` +
             `(${declaredSchemas.join(", ") || "none"}). Every page states one schema name, and ` +
             `one schema per component is what keeps two components off one table ` +
-            `(ADR-0022, src/schemas.test.ts).`,
+            `(src/schemas.test.ts).`,
         );
       }
       return {

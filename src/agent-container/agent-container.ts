@@ -1,7 +1,7 @@
 /**
  * Nothing in this file may learn what an Agent Implementation is, and the same holds for every
  * other file in this directory. Every field below is one `docker run` takes, and the whole bet of
- * ADR-0033 is that the next agent program needs all of them unchanged and contributes only a `run`
+ * this directory is that the next agent program needs all of them unchanged and contributes only a `run`
  * function. `src/pi/` is the other half and imports from here. Nothing here may import back, and an
  * import of `../pi/` is the thing to refuse in review; no lint rule enforces it.
  *
@@ -256,7 +256,7 @@ function composeArgv(
   // `--mount type=bind` per entry and never `-v`. That is what makes the daemon refuse a missing
   // source, rather than invent it as a `root`-owned directory. An absent table contributes
   // nothing at all, and is not stood in for by an empty one: a Mount Table names a Runtime
-  // Directory, and no deployment is made to name a directory it has no entries under (ADR-0054).
+  // Directory, and no deployment is made to name a directory it has no entries under.
   if (container.mounts !== undefined) args.push(...mountArguments(container.mounts));
 
   const user = ownUser();
@@ -314,7 +314,7 @@ function diagnosis(result: {
 
 /**
  * This process's `uid:gid`, or nothing on a platform that has no such thing. Not configuration, and
- * the reason is ADR-0028: without `--user` the agent's files in a bind mount are owned by uid 0,
+ * the reason is filesystem ownership: without `--user` the agent's files in a bind mount are owned by uid 0,
  * and a Signal Handler running as the Gateway's uid can then read and delete such a file but never
  * change it in place. `extraArgs` is the documented countermand.
  */

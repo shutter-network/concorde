@@ -3,11 +3,11 @@
  * outcome.
  *
  * The Runtime is the one thing in the framework that is faked in tests
- * (ADR-0022 keeps PostgreSQL real), because the alternative is a container, an
+ * (PostgreSQL stays real), because the alternative is a container, an
  * image, and credentials for every assertion about dispatch. The real one arrives
  * in tickets 07 and 08.
  *
- * It also watches for **overlap**. The worker is serial globally (ADR-0012) and a
+ * It also watches for **overlap**. The worker is serial globally and a
  * shared Workspace is only safe because of it, so a second concurrent Run is the
  * failure that matters most and the only place it is observable is here.
  */
@@ -23,7 +23,7 @@ export type FakeRuntime = Runtime & {
    *
    * The Prompts and nothing beside them, because a Prompt is now the whole of what
    * the seam is given: the Run id left it, and a Run's Session — the one thing that
-   * used to need the id to be interesting — is on the Prompt itself (ADR-0033).
+   * used to need the id to be interesting — is on the Prompt itself.
    */
   readonly recorded: readonly RunPrompt[];
   /** Whether two Runs were ever in flight at once. Always expected to be false. */

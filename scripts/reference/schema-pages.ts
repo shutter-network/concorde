@@ -1,12 +1,10 @@
 /**
  * One page per component that owns tables, written from the extracted snapshots.
  *
- * The reader is the Operator who owns generation and application of the DDL
- * ([ADR-0046](../../docs/adr/0046-the-operator-owns-migrations.md)). They list the `/schema`
- * subpaths of the components they run in their own `drizzle.config.ts`
- * ([ADR-0055](../../docs/adr/0055-a-components-tables-are-a-subpath-of-their-own.md)), and this is
- * where they read what that will create: the PostgreSQL schema, every table, every column with its
- * SQL type, its nullability and its default, the keys, the indexes and the constraints.
+ * The reader is the Operator who owns generation and application of the DDL. They list the
+ * `/schema` subpaths of the components they run in their own `drizzle.config.ts`, and this is where
+ * they read what that will create: the PostgreSQL schema, every table, every column with its SQL
+ * type, its nullability and its default, the keys, the indexes and the constraints.
  *
  * **The foreign keys that leave a schema get a sentence of their own at the top of the page.**
  * A list carrying the Messenger's, the Nostr Channel's, Password Auth's or Nostr Auth's subpath
@@ -69,7 +67,7 @@ function page(component: ComponentTables, owners: ReadonlyMap<string, string>): 
     //
     // Quoted, and `JSON.stringify` rather than a pair of `"` characters: the package is scoped, so
     // every specifier begins with `@`, which YAML reserves. Bare, the frontmatter does not parse
-    // and the site build fails on the file rather than on the line (ADR-0056).
+    // and the site build fails on the file rather than on the line.
     "---",
     `title: ${JSON.stringify(`${component.specifier} tables`)}`,
     "---",

@@ -4,7 +4,7 @@
  *
  * The subject is the artifact and the key set, so this is the one suite in the repository
  * with **no database in it**: this part stores nothing, and there is nothing here a row could
- * be read back from (ADR-0042). Everything else is real — two real Fastify instances, two real
+ * be read back from. Everything else is real — two real Fastify instances, two real
  * Ed25519 keypairs, and the real `jose` doing the signing.
  *
  * **The oracle is `node:crypto`, deliberately not `jose`.** `jose` is what signs, so a `jose`
@@ -23,7 +23,7 @@
  *
  * The keypairs are generated here, in the test, which is where a keypair may be generated: the
  * framework generates none, because a fresh key per restart leaves every prior artifact
- * unverifiable with nothing saying so (ADR-0041). The second one is a **whole second
+ * unverifiable with nothing saying so. The second one is a **whole second
  * Signatures**, which is how a foreign artifact is obtained without this file learning to build
  * one: a string another identity really signed is the case `POST /verify` most has to get
  * right, and a hand-assembled forgery would be testing our own idea of what one looks like.
@@ -75,7 +75,7 @@ const somebody: UserRecord = {
  * So what is asserted below is what belongs to *this* part: the check route runs the server's
  * hook and runs it **before** its own handler, so a caller who does not get past it gets no
  * verdict. That a deployment's real schemes refuse the same way is the assembly's claim and is
- * made in `gateway.test.ts` (ADR-0030, ADR-0052).
+ * made in `gateway.test.ts`.
  */
 function anyHeader(): FakeAuth {
   return fakeAuth("Bearer", (request) =>
@@ -94,7 +94,7 @@ const written: Line[] = [];
  * A Logger that keeps what it was told, which is the only way "the Statement is not in the
  * log" is observable at all.
  *
- * Structural, like every Logger: four methods and no `pino` anywhere (ADR-0027).
+ * Structural, like every Logger: four methods and no `pino` anywhere.
  */
 const capturing: Logger = {
   debug: () => {},
@@ -150,7 +150,7 @@ describe("the key set", () => {
   it("is served to somebody holding no Token at all", async () => {
     // Every other read on this server is behind the Public server's single 401, and this is
     // the stated exception: a public key is public, and the whole audience for it is a third
-    // party who has no Token and never touches the rest of the Gateway (ADR-0042).
+    // party who has no Token and never touches the rest of the Gateway.
     const answered = await publicServer.fastify.inject({ method: "GET", url: "/jwks.json" });
 
     assert.equal(answered.statusCode, 200, answered.body);
@@ -206,8 +206,8 @@ describe("what it signs", () => {
     const [, , signature] = segments;
     // Exactly 64 for Ed25519, per RFC 8037. The measured trap this stands against is the
     // neighbouring one: Node emits DER for EC unless told otherwise, giving a 71-byte
-    // signature where RFC 7518 requires 64, and a self-consistent verifier accepts it happily
-    // (ADR-0042). The length is checked here because nothing else would.
+    // signature where RFC 7518 requires 64, and a self-consistent verifier accepts it happily.
+    // The length is checked here because nothing else would.
     assert.equal(Buffer.from(String(signature), "base64url").length, 64);
   });
 
@@ -221,7 +221,7 @@ describe("what it signs", () => {
     // The payload is signed as the exact bytes emitted and nothing re-serializes it, so the
     // order of the caller's own object is the order of the bytes. Asserted on the decoded
     // string rather than on a parsed object, because a parsed object is where that fact stops
-    // being visible (ADR-0042).
+    // being visible.
     const jws = await signatures.sign("concorde-decision+jws", { seq: 7, statement });
 
     assert.equal(payloadTextOf(jws), JSON.stringify({ seq: 7, statement }));
@@ -258,7 +258,7 @@ describe("what it signs", () => {
     // The sharpest of the tampering cases, and the reason the scheme is inside the signature
     // rather than beside it: a receipt presented as a Decision changes nothing but `typ`, and
     // a hand-rolled preimage has to remember to cover its own version tag where JWS cannot
-    // omit it (ADR-0042).
+    // omit it.
     const jws = await signatures.sign("concorde-receipt+jws", { statement });
     const [, payload, signature] = jws.split(".");
     const relabelled = Buffer.from(
@@ -295,7 +295,7 @@ describe("what the agent can have signed", () => {
   it("accepts any type at all, the Decision label included", async () => {
     // **Nothing is reserved**, and this is the assertion that says so. The agent already holds
     // the authority to publish Decisions, so a decision-typed artifact minted here is that
-    // authority exercised without a log row rather than a forgery (ADR-0042). The third label
+    // authority exercised without a log row rather than a forgery. The third label
     // is here because the first two are ours and the point is that the framework has no list.
     for (const typ of [
       "concorde-decision+jws",
@@ -392,7 +392,7 @@ describe("the check it will do for a User", () => {
       const answered = await checking({ jws: presented });
 
       // 200, because none of these is this Gateway failing: they all arrive from a caller,
-      // and "no" is the answer to the question that was asked (ADR-0042).
+      // and "no" is the answer to the question that was asked.
       assert.equal(answered.statusCode, 200, `${what}: ${answered.body}`);
       assert.deepEqual(answered.json(), { verified: false }, what);
       // And nothing about the artifact reported beside it. A header echoed off a `false` would
@@ -449,7 +449,7 @@ describe("what it writes down", () => {
   it("logs the type and a digest, and never the Statement", async () => {
     // Signing is otherwise unrecorded, which is a real regression and is mitigated rather
     // than solved by this line: an injected agent mints unlimited artifacts and the only
-    // trail is here (ADR-0042). What must not be here is the Statement itself, or a log
+    // trail is here. What must not be here is the Statement itself, or a log
     // aggregator becomes a shadow copy of every private thing the agent ever signed.
     const secret = "the thing nobody should find in stdout";
     written.length = 0;

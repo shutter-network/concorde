@@ -8,8 +8,8 @@
  * second seam.
  *
  * The load-bearing test is `carries no route that creates a User, sets Attributes or removes
- * one`. It is the security boundary of the whole part (ADR-0029,
- * [ADR-0052](../../docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)):
+ * one`. It is the security boundary of the whole part:
+ *
  * Attributes are where authorization lives and an Auth's secret is what a person presents, so an
  * agent that could mint a User **and** give it a credential could log in as an administrator. It
  * asserts the Agent plugin's **complete** route table rather than probing a list of URLs, so a
@@ -80,13 +80,12 @@ before(async () => {
   agentServer = serverComponent(Fastify(), { port: 0, host: "127.0.0.1" });
   publicServer = serverComponent(Fastify(), { port: 0, host: "127.0.0.1" });
   // Registered before the component, though the order does not matter: the hook reads the
-  // registered Auths per request rather than closing over them (ADR-0052).
+  // registered Auths per request rather than closing over them.
   scheme = fakeAuth("Bearer");
   publicServer.registerAuth(scheme);
 
   // Handed both servers, so the reads are on the Agent server under `/users` and `GET /users/me`
-  // is on the Public one: nothing here registers either plugin, and nothing here could forget to
-  // (ADR-0032).
+  // is on the Public one: nothing here registers either plugin, and nothing here could forget to.
   directory = createUsers({ db, agentServer, publicServer });
 
   // The second registration is the Operator's own, by hand, which is the door the
@@ -115,7 +114,7 @@ function read(path: string, at = prefix) {
   return agentServer.fastify.inject({ method: "GET", url: `${at}${path}` });
 }
 
-/** A User admitted from trusted code, which is the only way one is admitted (ADR-0052). */
+/** A User admitted from trusted code, which is the only way one is admitted. */
 function created(): Promise<UserRecord> {
   return db.tx((tx) => directory.create(tx));
 }
@@ -145,7 +144,7 @@ async function readUsers(query = ""): Promise<UserRecord[]> {
  * Every route a plugin contributes, as `METHOD path` and sorted.
  *
  * Registered under **no prefix**, so what comes back is the plugin's own paths, which is the
- * thing being asserted, since the prefix is the Operator's (ADR-0021). Fastify's `onRoute` hook is
+ * thing being asserted, since the prefix is the Operator's. Fastify's `onRoute` hook is
  * the mechanism, so this is the router's own account of what exists rather than a list somebody
  * kept up to date, and the `HEAD` entries are Fastify's own siblings for each `GET`.
  */
@@ -165,8 +164,8 @@ describe("admitting a User from the Operator's own code", () => {
   it("creates one with an opaque id, empty Attributes, and a creation time", async () => {
     const user = fixture[0];
     assert.ok(user !== undefined);
-    // An opaque Gateway-issued id and nothing resembling a name or an email
-    // (ADR-0014): the caller supplied nothing and could not have.
+    // An opaque Gateway-issued id and nothing resembling a name or an email:
+    // the caller supplied nothing and could not have.
     assert.match(user.id, /^[0-9a-f-]{36}$/);
     assert.deepEqual(user.attributes, {});
     assert.equal(new Date(user.createdAt).toISOString(), user.createdAt);
@@ -179,7 +178,7 @@ describe("admitting a User from the Operator's own code", () => {
   it("takes no id, so a User cannot be created at a chosen one", async () => {
     // Seeding is the Operator's, out of band and once: a User has no natural key, so
     // "create this one if absent" is not expressible and an explicit id would only
-    // invite a hardcoded uuid into a deployment's source (ADR-0029). There is no
+    // invite a hardcoded uuid into a deployment's source. There is no
     // parameter for one on the method and no route through which one could arrive.
     const chosen = "11111111-2222-3333-4444-555555555555";
     assert.notEqual((await created()).id, chosen);
@@ -187,7 +186,7 @@ describe("admitting a User from the Operator's own code", () => {
   });
 
   it("admits nobody when the caller's transaction rolls back", async () => {
-    // `create` takes the transaction rather than finding one (ADR-0023), so
+    // `create` takes the transaction rather than finding one, so
     // admitting a User and whatever the Operator records about them cannot come
     // apart. Proved from the outside: the User is not there afterwards.
     let attempted: UserRecord | undefined;
@@ -288,7 +287,7 @@ describe("the Agent server", () => {
     // rather than a list of URLs to probe: a route added later appears here and fails this, which
     // is what makes the property maintained rather than merely true today. `POST /` is what is
     // gone: it was removed rather than stripped of its password parameter, so the agent's surface
-    // on identity is two reads (ADR-0052).
+    // on identity is two reads.
     assert.deepEqual(
       await routeTable(directory.agentRoutes),
       ["GET /", "GET /:id", "HEAD /", "HEAD /:id"],
@@ -326,12 +325,12 @@ describe("the Agent server", () => {
     }
 
     // And afterwards nothing about the User has moved: the Attributes are still the column's
-    // default and the User is still there to be read: nothing removes one (ADR-0029).
+    // default and the User is still there to be read: nothing removes one.
     assert.deepEqual(await readBack(user.id), user);
   });
 
   it("carries no `/me`, having no request it could answer one for", async () => {
-    // The Agent server authenticates nobody at all (ADR-0010), so `request.concordeUser` is never
+    // The Agent server authenticates nobody at all, so `request.concordeUser` is never
     // assigned there and there is nothing for such a route to echo. It is on the Public server
     // and only there.
     //
@@ -361,7 +360,7 @@ describe("GET /users/me on the Public server", () => {
   it("refuses when no scheme named anybody, and reads no credential of its own", async () => {
     // The whole of this component's part in authentication: it takes the hook and never looks
     // at the request. So a Token is not something this route can be given, and the refusal is
-    // the server's (ADR-0052).
+    // the server's.
     const refused = await publicServer.fastify.inject({
       method: "GET",
       url: `${prefix}/me`,
@@ -397,8 +396,7 @@ describe("the Agent server plugin", () => {
   it("honours whatever prefix the Operator registers it under", async () => {
     // The prefix is Fastify's own mechanism and nothing of ours: the plugin carries
     // none, and `/users` is where the constructor put it rather than where the routes
-    // think they live, so the layout stays the Operator's through this plugin
-    // (ADR-0032).
+    // think they live, so the layout stays the Operator's through this plugin.
     const user = await created();
     assert.deepEqual((await read(`/${user.id}`, alsoAt)).json(), user);
     // And the same User through the registration the constructor made, because both

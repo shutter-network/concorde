@@ -1,17 +1,15 @@
 /**
  * **The three capabilities that escalate are methods and never routes**, and that is as true here
- * as it was where this code came from
- * ([ADR-0029](../../docs/adr/0029-users-are-a-part-of-their-own.md),
- * [ADR-0052](../../docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)).
- * Trusted code holds the returned object; the Agent server is a surface an injected prompt reaches
- * ([ADR-0003](../../docs/adr/0003-prompt-injection-is-an-accepted-risk.md)). So replacing a
- * password, minting a Token and revoking have no route anywhere, and this component registers
- * nothing on the Agent server at all.
+ * as it was where this code came from.
+ *
+ * Trusted code holds the returned object; the Agent server is a surface an injected prompt reaches.
+ * So replacing a password, minting a Token and revoking have no route anywhere, and this component
+ * registers nothing on the Agent server at all.
  *
  * **This is not a Producer.** It emits no Signals and takes no reference to the Signal Worker. A
- * Signal on login is refused rather than merely omitted: the worker is globally serial
- * ([ADR-0012](../../docs/adr/0012-the-gateway-is-a-serial-signal-worker.md)), so a Signal per
- * login turns any authentication burst into a Run queue that starves every real Signal behind it.
+ * Signal on login is refused rather than merely omitted: the worker is globally serial, so a Signal
+ * per login turns any authentication burst into a Run queue that starves every real Signal behind
+ * it.
  *
  * Three orderings below are load-bearing. `logIn` derives unconditionally, against a fixed dummy
  * digest when there is nothing to verify against, so a miss costs what a hit costs and the
@@ -25,7 +23,7 @@
  * **`authenticate` runs two statements where the code it replaces ran one.** The Users component
  * joined its own `tokens` to its own `users`; the two tables are in different schemas now, and the
  * record an outcome carries is Users' to answer with rather than this component's to assemble out
- * of columns it does not own (ADR-0052). The second read is `users.get`, which is why this
+ * of columns it does not own. The second read is `users.get`, which is why this
  * component takes the whole Users component and not a hook.
  *
  * The registration is the **last** thing the constructor does, after the routes are queued. An

@@ -7,9 +7,12 @@ root, one `docs/adr/`.
 ## Before exploring, read these
 
 - **`CONTEXT.md`** at the repo root — the glossary of domain terms
+- **`site/architecture.md`** — what the parts are and why they are separate,
+  written for somebody adopting the framework
 - **`docs/adr/`** — read the ADRs that touch the area you're about to work in.
-  There are currently 36 (`0001`–`0036`), and most `CONTEXT.md` entries link to
-  the ADR that decided them; follow those links rather than reading the whole set.
+  The set was reset: fifty-odd accumulated, went stale against the code, and were
+  deleted rather than repaired, so the directory starts empty and holds only
+  decisions taken from here on. Write new ones; do not restore the old.
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence;
 don't suggest creating them upfront. The `/domain-modeling` skill (reached via
@@ -22,10 +25,9 @@ terms or decisions actually get resolved.
 /
 ├── CONTEXT.md          ← the glossary
 ├── docs/
-│   ├── architecture.md
-│   ├── data-model.md
 │   ├── adr/            ← 0001-…  numbered, kebab-case titles
 │   └── agents/         ← this file, plus issue-tracker.md and triage-labels.md
+├── site/               ← the authored pages and the generated API reference
 ├── src/                ← one directory per part of the Gateway
 ├── examples/           ← standalone deployments, one per concern, each with a README
 └── .scratch/           ← issues and specs (see issue-tracker.md)
@@ -51,5 +53,5 @@ inventing language the project doesn't use (reconsider) or there's a real gap
 If your output contradicts an existing ADR, surface it explicitly rather than
 silently overriding:
 
-> _Contradicts ADR-0007 (messages carry arbitrary JSON payloads) — but worth
+> _Contradicts ADR-0003 (a Message is one entity with a direction) — but worth
 > reopening because…_

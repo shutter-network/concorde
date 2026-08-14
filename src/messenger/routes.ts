@@ -2,10 +2,8 @@
  * One plugin, on the Agent server, at the prefix the constructor supplies. The agent's acts are
  * acts on the log rather than acts of any one medium, so they belong to the component that owns the
  * log; a User's own submission and cursored poll are what HTTP as a Channel *is*, and they live in
- * `../http-channel/routes.ts`
- * ([ADR-0048](../../docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md)).
- * Neither plugin is exported and neither prefix is configurable, so every path this one declares is
- * relative to the prefix the constructor supplies, `/messages`.
+ * `../http-channel/routes.ts`. Neither plugin is exported and neither prefix is configurable, so
+ * every path this one declares is relative to the prefix the constructor supplies, `/messages`.
  *
  * The routes themselves are not listed here. `scripts/reference/route-pages.ts` renders them into
  * the reference out of the declarations below, so a table beside them would be a second list to

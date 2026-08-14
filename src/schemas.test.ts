@@ -3,22 +3,19 @@
  *
  * This is the assembled question, and it is asked here rather than left to whichever
  * test happens to construct the most parts. An Operator lists the `/schema` subpaths
- * of the parts they run in one `drizzle.config.ts` and gets a single generation graph
- * ([ADR-0046](../docs/adr/0046-the-operator-owns-migrations.md),
- * [ADR-0055](../docs/adr/0055-a-components-tables-are-a-subpath-of-their-own.md)), so
+ * of the parts they run in one `drizzle.config.ts` and gets a single generation graph, so
  * the only place a *set* of parts can be wrong is that list, and the longest list
  * anyone can write is this one.
  *
  * Two ways a set can be wrong, and they fail differently enough to need a test each.
  *
- * **A cross-schema foreign key names a part outside the set** is the loud one.
- * `messages.user_id`, `pubkeys.user_id`, `outbox.user_id`, Password Auth's two columns and Nostr
- * Auth's `grants.user_id` all reference
- * `concorde_users.users.id` in code (ADR-0036, ADR-0046, ADR-0049, ADR-0052, ADR-0053), so
- * the set is coherent only while Users is in it, and a set without it throws
- * on the `ADD CONSTRAINT` — `schema "concorde_users" does not exist`. Pushing is enough to
- * catch that, and the first test pushes. What that test cannot do by itself is keep
- * "the set" equal to "every part", which is the last test's job.
+ * **A cross-schema foreign key names a part outside the set** is the loud one. `messages.user_id`,
+ * `pubkeys.user_id`, `outbox.user_id`, Password Auth's two columns and Nostr Auth's
+ * `grants.user_id` all reference `concorde_users.users.id` in code, so the set is coherent only
+ * while Users is in it, and a set without it throws on the `ADD CONSTRAINT` — `schema
+ * "concorde_users" does not exist`. Pushing is enough to catch that, and the first test pushes.
+ * What that test cannot do by itself is keep "the set" equal to "every part", which is the last
+ * test's job.
  *
  * **Two parts declaring one table** is the silent one, and it stays silent past the
  * push: `drizzle-kit` keys tables by qualified name and keeps the last one it sees, so
@@ -27,14 +24,14 @@
  * declarations cannot see it either — that comparison keys by qualified name too, so
  * both sides collapse the same way and agree. So the second test asks it of the schema
  * objects instead, and asks the stronger form: every part has a `concorde_<part>` schema of
- * its own (ADR-0022), which two parts cannot collide on a table without first breaking.
+ * its own, which two parts cannot collide on a table without first breaking.
  *
  * The first test therefore compares **what the database ends up holding against what
  * the parts declare** for a different silent failure, the wrapper trap. `drizzle-kit`
  * reads `Object.values` and keeps what passes `is(x, PgTable)` without ever looking
  * inside a plain object, so a table reachable only through a part's `*Tables` wrapper
- * is dropped in silence and generated as nothing — the failure ADR-0046 names as the
- * reason this file exists. The expectation is built from the wrappers *and* the flat
+ * is dropped in silence and generated as nothing — the failure this file exists to
+ * catch. The expectation is built from the wrappers *and* the flat
  * exports, so a table the part queries but never flat-exports is a table this test
  * asks the database for and does not find.
  *
@@ -43,9 +40,8 @@
  * uncovered in silence, so the list is held against the source tree.
  *
  * **Every part is reached by file path here, and that is why this file survived the tables
- * moving onto the component subpaths and off them again**
- * ([ADR-0047](../docs/adr/0047-a-component-is-one-subpath.md),
- * [ADR-0055](../docs/adr/0055-a-components-tables-are-a-subpath-of-their-own.md)).
+ * moving onto the component subpaths and off them again**.
+ *
  * `src/<part>/schema/` is where a table is declared; the file inside it has been named twice
  * and the specifier an Operator imports it through has moved once. The last test scans for
  * those directories, so it keeps covering every part without knowing anything about the
@@ -118,7 +114,7 @@ describe("every component's schema, pushed as one graph", () => {
 
   it("gives every part a schema of its own, so no part's table can be another's", () => {
     // Asked of the schemas and not of the tables, because it is the stronger question
-    // and the shorter one: ADR-0022's `concorde_<part>` per part held as a fact rather than
+    // and the shorter one: `concorde_<part>` per part held as a fact rather than
     // a naming habit. Two parts cannot collide on a table without first sharing the
     // schema it is in, and a part declaring one table into another part's schema — the
     // collision in its less obvious spelling — is caught here and nowhere else.

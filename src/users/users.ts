@@ -1,22 +1,19 @@
 /**
  * **This component authenticates nobody and holds nothing a person presents.** The password
- * digest, the Token table and the hook that verified one are Password Auth's
- * ([ADR-0052](../../docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)),
+ * digest, the Token table and the hook that verified one are Password Auth's,
  * and what is left here is identity: the opaque id, the Attributes, and the reads of both. A
  * credential of any kind arriving in this file again is the thing to refuse in review, because the
  * seam the whole design rests on is who owns the secret.
  *
  * **Admitting a User and setting Attributes are methods and never routes**, and that is the shape
- * of what remains ([ADR-0029](../../docs/adr/0029-users-are-a-part-of-their-own.md)). Trusted code
- * holds the returned object; the Agent server is a surface an injected prompt reaches
- * ([ADR-0003](../../docs/adr/0003-prompt-injection-is-an-accepted-risk.md)). So the agent's routes
- * are two reads, and promoting either capability to a route is the thing to refuse in review.
+ * of what remains. Trusted code holds the returned object; the Agent server is a surface an
+ * injected prompt reaches. So the agent's routes are two reads, and promoting either capability to
+ * a route is the thing to refuse in review.
  *
  * **This is not a Producer.** It emits no Signals and takes no reference to the Signal Worker. A
  * Signal on a User being admitted is refused rather than merely omitted: the worker is globally
- * serial ([ADR-0012](../../docs/adr/0012-the-gateway-is-a-serial-signal-worker.md)). A deployment
- * that wants one emits it itself, atomically, because writes take the transaction first
- * ([ADR-0023](../../docs/adr/0023-cross-component-writes-take-an-explicit-transaction.md)).
+ * serial. A deployment that wants one emits it itself, atomically, because writes take the
+ * transaction first.
  *
  * `updateUser` uses `returning` so that "no such User" is distinct from "nothing to change", which
  * is why it throws: an id with a typo in it would otherwise be a permission quietly not given.

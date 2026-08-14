@@ -2,7 +2,7 @@
  * The highest-risk logic in the `pi` adapter, which is why it is a module of its own with no
  * process in it. Three properties of `pi --mode json` each produce a plausible wrong answer rather
  * than an error, so getting a Run to work once catches none of them and only a test over a crafted
- * stream does (ADR-0025).
+ * stream does.
  *
  * Two of the three are the worthless exit code and the terminal record, and both are rendered on the
  * function, having consequences a caller acts on. The third is here, because it has none until

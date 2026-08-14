@@ -6,12 +6,12 @@
  *
  * `noEscape` must stay. Remove it and every Prompt carries `&#x27;` where an apostrophe belongs,
  * with nothing in any log to say so, because a Prompt is text for a model rather than markup for a
- * browser (ADR-0027).
+ * browser.
  *
  * `template` takes source and never a path, and widening it back to accept one is the thing to
  * refuse. A path costs a caller one `readFileSync` and buys the framework a whole class of
  * failure: a template read per Signal is a template that first fails a Signal, and a failed Signal
- * is permanently dead (ADR-0017), so the person who sent the message hears nothing.
+ * is permanently dead, so the person who sent the message hears nothing.
  *
  * `Handlebars.compile` defers the parse *and* the code generation to the first render, so compiling
  * alone would leave a malformed template failing that first Signal after all. The discarded
@@ -38,11 +38,10 @@ export type TemplateHandlerOptions<TPayload = unknown> = {
    * The Handlebars source, compiled once when the Handler is built.
    *
    * Source, and not a path or a `file:` URL. A deployment that keeps its wording in a file reads
-   * the file itself:
-   * `template: readFileSync(new URL("./prompt.hbs", import.meta.url), "utf8")`. Nothing reads it
-   * again after that, so an edit reaches no Prompt until the process starts again. In exchange a
-   * template Handlebars cannot compile throws from {@link templateHandler}, before the Gateway
-   * listens, instead of failing a Signal that nothing retries.
+   * the file itself: `template: readFileSync(new URL("./prompt.hbs", import.meta.url), "utf8")`.
+   * Nothing reads it again after that, so an edit reaches no Prompt until the process starts again.
+   * In exchange a template Handlebars cannot compile throws from {@link templateHandler}, before
+   * the Gateway listens, instead of failing a Signal that nothing retries.
    *
    * It is compiled with `noEscape`, so nothing substituted is HTML-escaped, and with `strict`,
    * which fails the Signal on a variable `data` did not supply. `strict` also disables inverse

@@ -13,12 +13,12 @@
  *    directory**, in a directory the Gateway never created and never named. No
  *    `--session-dir` is passed at all: `pi` resolves where its transcripts go, and a
  *    Session survives because the agent directory is mounted and for no other reason.
- *    Nothing says so if it is not, which is the one accepted failure of ADR-0033 that
- *    does not even fail — the agent merely forgets
+ *    Nothing says so if it is not, which is the one accepted failure that does not even
+ *    fail — the agent merely forgets
  *  - `pi` **discovers an `AGENTS.md` the Operator placed in the Workspace**, with no flag
  *    from the framework and nothing of the framework's in the file, and the agent
  *    **reaches the Agent server** at the address that file names — over HTTP from inside
- *    its container, with `curl` from its own shell tool and no credential (ADR-0010).
+ * its container, with `curl` from its own shell tool and no credential.
  *    This is the whole replacement for the instructions file the framework used to write
  *    before every Run, end to end
  *  - a **Session name `pi` refuses** fails that Run and no other, with `pi`'s own
@@ -26,8 +26,8 @@
  *    checks nothing, so this is the only place the claim can be tested at all
  *  - a **mount source that is not there is refused by the daemon**, naming the path, and
  *    nothing is invented on the Operator's disk. This is what the deleted startup mount
- *    check was replaced by, so it is the one claim in ADR-0028 with nothing else behind
- *    it (`--mount type=bind`, never `-v`)
+ *    check was replaced by, so it is the one claim about mounting with nothing else
+ *    behind it (`--mount type=bind`, never `-v`)
  *  - a **read-only file entry nested inside a read-write directory entry** is genuinely
  *    unwritable from inside the container while the directory around it still writes,
  *    which is what lets a file the agent must not change be one it cannot change
@@ -119,7 +119,7 @@ const agentsFileName = "AGENTS.md";
  * `pi` falls back to `<agentDir>/sessions` and resolves the rest itself. Observed in
  * pi@0.83.0: it puts one directory per *working directory* under there, named after the
  * path — `--workspace--` for `/workspace` — and one `.jsonl` per Session inside it. So
- * the flat directory ADR-0025 records the cost of is flat per Workspace, and since an
+ * the flat directory whose cost is recorded above is flat per Workspace, and since an
  * image declares one `WORKDIR` that is one directory for the whole deployment.
  *
  * Written down here, in a test, because a test is the only thing entitled to know it.
@@ -165,7 +165,7 @@ type Rig = {
    * Every Run recorded for a Signal.
    *
    * The id comes back because a fresh Session is named after it, so it is what a test
-   * checks the name against rather than predicting one (ADR-0033).
+   * checks the name against rather than predicting one.
    */
   runsOf(
     signalId: string,
@@ -180,7 +180,7 @@ type Paths = {
    *
    * This process and the daemon are the same host here, so the one namespace the table has is
    * also the one this file creates directories in. A containerised Gateway is what makes those
-   * two part company, and nothing on this side would notice (ADR-0054).
+   * two part company, and nothing on this side would notice.
    */
   readonly root: string;
   readonly workspace: string;
@@ -213,7 +213,7 @@ async function temporaryPaths(t: TestContext): Promise<Paths> {
  * The two directories an Operator creates, since the framework creates none.
  *
  * Two rather than three: there is no Session root any more, so the deployment creates one
- * fewer directory and names no Session path anywhere (ADR-0025, ADR-0033).
+ * fewer directory and names no Session path anywhere.
  */
 function directoriesOf(paths: Paths): readonly string[] {
   return [paths.workspace, paths.agentDir];
@@ -246,7 +246,7 @@ function mockProvider(baseUrl: string): Record<string, unknown> {
  *
  * The framework used to write this file before every Run out of an opaque field of its
  * configuration. It carries no such field now, and `pi` reads the file itself out of
- * `PI_CODING_AGENT_DIR` (ADR-0016, ADR-0025).
+ * `PI_CODING_AGENT_DIR`.
  */
 async function placeModels(paths: Paths, baseUrl: string): Promise<void> {
   const file = path.join(paths.agentDir, "models.json");
@@ -260,7 +260,7 @@ async function placeModels(paths: Paths, baseUrl: string): Promise<void> {
  * line. Verified in pi@0.83.0: `settings.json` carries `defaultModel` and
  * `defaultProvider`, and `pi` falls back to them when no flag names either — so this file
  * is the whole of how the Run below knows what to talk to, and a Run that reaches the
- * scripted model at all is the proof that it works (ADR-0025, ADR-0033).
+ * scripted model at all is the proof that it works.
  *
  * Written **outside** the agent directory and mounted read-only into it, which is what
  * every example does and is the arrangement worth proving: `pi` takes a lock beside
@@ -286,7 +286,7 @@ function settingsEntry(paths: Paths): Mount {
  *
  * Nothing of the framework's is in it, and nothing of the framework's produced it — an
  * Operator writes this text themselves, as each example's `AGENTS.md` does, and a copy of it
- * can go stale when the Signal Worker's routes change (ADR-0025).
+ * can go stale when the Signal Worker's routes change.
  */
 async function placeInstructions(paths: Paths, agentServerUrl: string): Promise<void> {
   await writeFile(
@@ -334,7 +334,7 @@ function runtimeOn(paths: Paths, extraEntries: readonly Mount[] = []): Runtime {
  * The Workspace is writable by the agent, so an instructions file simply placed in it is
  * one a successful injection can rewrite for the next Run. `readOnly` is what makes the
  * property structural, and a single-file entry is what leaves the directory around it
- * writable (ADR-0003, ADR-0028).
+ * writable.
  */
 function instructionsEntry(paths: Paths): Mount {
   return {
@@ -351,13 +351,13 @@ function instructionsEntry(paths: Paths): Mount {
  * Agent server with the Worker's routes on it, and the scripted model. Construct and start,
  * as every entry point does it — but by hand through `createBareGateway`,
  * because what this file needs is a subset of the infrastructure and none of the four parts
- * `createGateway` hands the Operator through `extend` (ADR-0045). Nothing here is about the
+ * `createGateway` hands the Operator through `extend`. Nothing here is about the
  * assembly; the subject is a real container running a real `pi`.
  *
  * What it does **not** prove is the ordering: it stops nothing mid-Run, so that the
  * Agent server must outlive the Signal Worker is not asserted here.
  * `gateway.test.ts` is where it is, with a fake Runtime parked in flight while the
- * Gateway shuts down around it (ADR-0045).
+ * Gateway shuts down around it.
  */
 async function withGateway(
   t: TestContext,
@@ -366,7 +366,7 @@ async function withGateway(
 ): Promise<void> {
   const paths = await temporaryPaths(t);
   // Both, as an Operator's entry point does it, because the framework creates no directory
-  // anywhere (ADR-0028) and the daemon refuses a bind source that is not there rather than
+  // anywhere and the daemon refuses a bind source that is not there rather than
   // inventing one — which is the case the test below this one walks into.
   await Promise.all(directoriesOf(paths).map((directory) => mkdir(directory, { recursive: true })));
 
@@ -378,7 +378,7 @@ async function withGateway(
   // the framework ships no server and defaults no address, so both are stated here.
   // Bound beyond loopback on purpose — under a plain Linux daemon a container cannot
   // reach a loopback-bound server at all, and this test has to pass on both. Nothing
-  // warns about it and nothing inspects what was bound (ADR-0004).
+  // warns about it and nothing inspects what was bound.
   const agentServer = serverComponent(Fastify(), { port, host: "0.0.0.0" });
   const model = await startMockModel(reply);
 
@@ -392,7 +392,7 @@ async function withGateway(
   const runtime = runtimeOn(paths, [instructionsEntry(paths), settingsEntry(paths)]);
 
   // The Gateway's own Db, on the same database. The Worker's tables are pushed here rather
-  // than by constructing it, because the framework applies no DDL of its own (ADR-0046);
+  // than by constructing it, because the framework applies no DDL of its own;
   // handing the Worker the server is what registers its routes, so nothing here calls
   // `register`. One push per database, and this function runs once.
   const db = openDb(database.url);
@@ -415,7 +415,7 @@ async function withGateway(
           return row !== undefined && row.state !== "pending" && row.state !== "running";
         },
         // A container start, an image lookup and two model round trips, on whatever
-        // machine this is. The framework itself has no timeouts (ADR-0017); this one is
+        // machine this is. The framework itself has no timeouts; this one is
         // the test's, so a wedged Run fails the suite rather than hanging it.
         180_000,
       );
@@ -434,8 +434,7 @@ async function withGateway(
 
   // An example deployment's order, minus the three parts this test has no use for: the
   // Db first so it stops last, the Agent server before the Worker so it closes after the
-  // drain, and `start` in one call that binds the port the agent was already told about
-  // (ADR-0037, ADR-0038).
+  // drain, and `start` in one call that binds the port the agent was already told about.
   const gateway = createBareGateway({ db, agentServer, worker });
   await gateway.start();
   try {
@@ -471,7 +470,7 @@ function readsAndWrites(request: ModelRequest): ModelReply {
  *
  * Read out of the system prompt rather than passed in from the test, because that is the
  * only channel the real thing has: `pi` ships no HTTP client, so the Operator's own
- * `AGENTS.md` plus `curl` *is* the binding (ADR-0010). `pi` discovered that file in its
+ * `AGENTS.md` plus `curl` *is* the binding. `pi` discovered that file in its
  * working directory and put it here with no flag from us, and a Run where that failed
  * makes this throw rather than quietly passing.
  */
@@ -529,7 +528,7 @@ describe("pi in a real container", { skip }, () => {
 
       // The Handler that asked for a fresh Session, which is the Worker's to name. The
       // row says `run_<its own id>` rather than `null`, so the Session an Operator has to
-      // go looking for is on the Run they are already looking at (ADR-0033).
+      // go looking for is on the Run they are already looking at.
       const [freshRun] = await rig.runsOf(fresh);
       assert.ok(freshRun !== undefined, "the fresh Signal should have one Run");
       assert.deepEqual(
@@ -583,17 +582,17 @@ describe("pi in a real container", { skip }, () => {
       );
       assert.ok(resumed !== undefined, "the second Run should carry the first Run's conversation");
 
-      // And where the transcripts went, which is the claim ADR-0033 traded the Session
-      // root for: **under the mounted agent directory**, in a directory `pi` chose and
+      // And where the transcripts went, which is what the Session root was traded
+      // for: **under the mounted agent directory**, in a directory `pi` chose and
       // created inside its own container. The framework passed no `--session-dir`, named
       // no path, and created nothing; the agent directory is the Operator's, and mounting
-      // it is the whole of why any of this survived the `--rm` (ADR-0025, ADR-0028).
+      // it is the whole of why any of this survived the `--rm`.
       //
       // One directory for the Workspace and one transcript per Session inside it, and
       // every Run parses all of them: that is the cost of the framework holding no
       // filesystem knowledge, and since the image declares one `WORKDIR` it is one
       // directory for the whole deployment, growing without bound with nothing the
-      // Operator can do about it (ADR-0025).
+      // Operator can do about it.
       const transcripts = await rig.transcripts();
       assert.equal(transcripts.length, 2, `one transcript per Session: ${transcripts.join(", ")}`);
       assert.ok(
@@ -603,7 +602,7 @@ describe("pi in a real container", { skip }, () => {
       // And the other is the fresh one, findable on disk from the Run's own row. This is
       // what naming a fresh Session buys and the reason it is not left ephemeral: the
       // transcript of a Run nobody chose a Session for is still one an Operator can open,
-      // starting from the Run they were reading (ADR-0025, ADR-0033).
+      // starting from the Run they were reading.
       assert.ok(
         transcripts.some((file) => file.includes(`run_${freshRun.id}`)),
         `the fresh Session's transcript should be named after its Run: ${transcripts.join(", ")}`,
@@ -621,7 +620,7 @@ describe("pi in a real container", { skip }, () => {
       assert.equal(await readFile(written, "utf8"), "and edited by the Gateway");
 
       // And the Run whose model refuses it: recorded failed, with the provider's own
-      // words, out of a process that exited 0 (ADR-0025's first trap, through a real
+      // words, out of a process that exited 0 (the first JSONL trap, through a real
       // container this time rather than a captured stream).
       const [failed] = await rig.runsOf(await rig.ask({ session: "user_7", text: doomed }));
       assert.equal(failed?.state, "failed");
@@ -633,7 +632,7 @@ describe("pi in a real container", { skip }, () => {
       // with the name they wrote in the Run's `session` beside it. The framework used
       // to carry a transcription of that grammar and fail the whole Signal before any
       // Run existed; this is the diagnostic that replaced it, and it cannot go stale
-      // when `pi` changes its mind (ADR-0024).
+      // when `pi` changes its mind.
       const rejectedName = "user:42";
       const [rejected] = await rig.runsOf(
         await rig.ask({ session: rejectedName, text: "This name is not one pi accepts." }),
@@ -659,8 +658,8 @@ describe("pi in a real container", { skip }, () => {
   it("is refused by the daemon when a mount source is not there, which names the path", async (t) => {
     // The claim the deleted startup mount check was traded for, and the only place it can
     // be made: `--mount type=bind` refuses a missing source, where `-v` would invent it
-    // as a `root`-owned directory and let the Run succeed against an empty Workspace
-    // (ADR-0028). No Signal Worker and no Agent server here — the container never starts.
+    // as a `root`-owned directory and let the Run succeed against an empty Workspace.
+    // No Signal Worker and no Agent server here — the container never starts.
     const paths = await temporaryPaths(t);
     // Everything but the Workspace, which is the typo this is about.
     await mkdir(paths.agentDir, { recursive: true });
@@ -682,8 +681,8 @@ describe("pi in a real container", { skip }, () => {
 
   it("gives the agent a read-only file inside a directory it can still write", async (t) => {
     // What replaces rewriting the agent's configuration before every Run: a file the
-    // agent must not change becomes one it *cannot* change, by construction and for free
-    // (ADR-0028). The nesting is the part worth proving — a read-only directory would
+    // agent must not change becomes one it *cannot* change, by construction and for free.
+    // The nesting is the part worth proving — a read-only directory would
     // hold the same property and break every sibling operation `pi` needs.
     const paths = await temporaryPaths(t);
     await Promise.all(

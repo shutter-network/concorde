@@ -10,8 +10,8 @@
  *
  * The two separated twice in three releases before this existed: `0.1.0` shipped announcing
  * `0.0.0` and `0.3.0` shipped announcing `0.2.0`. Each was corrected in `src` one commit later and
- * neither was corrected on npm, so both artifacts still serve the wrong number under ADR-0040,
- * where that document is the API documentation. `gateway.test.ts` holds the literal against the
+ * neither was corrected on npm, so both artifacts still serve the wrong number in the
+ * OpenAPI document that is the API documentation. `gateway.test.ts` holds the literal against the
  * manifest and is the backstop rather than the guard: `prepublishOnly` builds and does not test,
  * so what that test does is fail `npm run check` on `main` after the publish, which is what it did
  * both times.

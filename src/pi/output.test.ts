@@ -353,7 +353,7 @@ describe("output that cannot be read", () => {
 
   it("names the Session, which is what a reader produced per Run buys", async () => {
     // The Run's `error` column is the only thing an Operator has to go on, and until the
-    // reader was made per Run it could not say which transcript to open (ADR-0033). One
+    // reader was made per Run it could not say which transcript to open. One
     // case rather than every one, because the name is prefixed in one place and a failure
     // that did not carry it would have to be written deliberately.
     assert.equal(

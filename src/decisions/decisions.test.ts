@@ -15,11 +15,10 @@
  *
  * The Signal Worker below is never started, which is why the empty queue means what it says:
  * nothing could have consumed a Signal that had been emitted, so the queue being empty is the
- * Signal never existing (ADR-0043).
+ * Signal never existing.
  *
  * A database of this file's own, because no two test files may share one, and a keypair
- * generated here, which is where a keypair may be generated: the framework generates none
- * (ADR-0041).
+ * generated here, which is where a keypair may be generated: the framework generates none.
  */
 
 import assert from "node:assert/strict";
@@ -74,8 +73,7 @@ before(async () => {
     publicServer,
     logger: silent,
   });
-  // Nothing is held: everything under test is a route the constructor registered itself
-  // (ADR-0032).
+  // Nothing is held: everything under test is a route the constructor registered itself.
   createDecisions({ db, signatures, agentServer, publicServer });
 
   await applySchema(db, signalsSchema, decisionsSchema);
@@ -93,7 +91,7 @@ describe("publishing a Decision", () => {
 
     // The whole body against a literal the type checker holds to the record type: add a field
     // to `DecisionRecord` and this file stops compiling, leave it out of the response schema
-    // and this comparison fails, because a response schema is a serializer (ADR-0040).
+    // and this comparison fails, because a response schema is a serializer.
     assert.deepEqual(published, {
       seq: published.seq,
       statement: "the first thing we committed to",
@@ -113,7 +111,7 @@ describe("publishing a Decision", () => {
 
     // Consecutive rather than absolute, because this file publishes in several tests and the
     // sequence is one log's. What is asserted is that the number moves by one per publish and
-    // belongs to nobody: there is no parameter anywhere naming a User (ADR-0043).
+    // belongs to nobody: there is no parameter anywhere naming a User.
     assert.equal(second.seq, first.seq + 1);
   });
 
@@ -121,7 +119,7 @@ describe("publishing a Decision", () => {
     // The claim the write path's whole ordering exists for: the number is drawn first and the
     // timestamp second precisely so that both can go inside the signature, and the values
     // signed have to be the values kept. Read by **splitting the emitted string**, which is
-    // the only reading that could disagree with the record (ADR-0042, ADR-0043).
+    // the only reading that could disagree with the record.
     const published = await publish("the statement whose payload is read back");
 
     assert.deepEqual(payloadOf(published.jws), {
@@ -142,7 +140,7 @@ describe("publishing a Decision", () => {
     // There is no field for the signature and nowhere for one to arrive: a `jws` in the body
     // is stripped before the handler by `additionalProperties: false` and reaches nothing, so
     // "no path writes a Decision with a caller's bytes in it" is a fact about the surface
-    // rather than a check that could be got wrong (ADR-0043).
+    // rather than a check that could be got wrong.
     const published = await publish("mine, whatever else I sent with it", {
       jws: "not.a.signature",
     });
@@ -159,7 +157,7 @@ describe("publishing a Decision", () => {
     // A Decision is published *during* a Run and the worker is serial, so emitting a Signal
     // would have the agent's own action queue work behind the Run still in flight, and the
     // Handler it woke could publish again. Nothing here is started, so an emitted Signal would
-    // still be sitting in the queue for this read to find (ADR-0043).
+    // still be sitting in the queue for this read to find.
     await publish("this one notifies nobody");
 
     const queue = await agentJson<{ signals: SignalRecord[] }>("/signals");
@@ -169,8 +167,8 @@ describe("publishing a Decision", () => {
 
 describe("the agent reading the log", () => {
   it("answers the whole log ascending, which is what a fresh Session reads", async () => {
-    // A Session is a lossy cache, so an agent with no memory of what it decided reads it here
-    // (ADR-0011). `after=0` is how a reader with nothing in hand asks from the beginning.
+    // A Session is a lossy cache, so an agent with no memory of what it decided reads it here.
+    // `after=0` is how a reader with nothing in hand asks from the beginning.
     const before = await read("?after=0&limit=200");
     const published = await publish("and something after everything else");
     const whole = await read("?after=0&limit=200");
@@ -214,12 +212,12 @@ describe("the agent citing a Decision by number", () => {
     const published = await publish("the one that gets quoted back by its number");
 
     // The record whole, so a field this route's response schema forgot to declare differs from
-    // the record the publish answered with (ADR-0040).
+    // the record the publish answered with.
     const cited = await agentJson<DecisionRecord>(`${prefix}/${published.seq}`);
     assert.deepEqual(cited, published);
 
     // And the same record the long way round, which is the spelling this route exists to
-    // replace: `?after=<n-1>&limit=1`. They agree because they are one read (ADR-0043).
+    // replace: `?after=<n-1>&limit=1`. They agree because they are one read.
     assert.deepEqual(await read(`?after=${published.seq - 1}&limit=1`), [cited]);
   });
 
@@ -301,7 +299,7 @@ async function seqs(window: string): Promise<number[]> {
   return (await read(window)).map((decision) => decision.seq);
 }
 
-/** One read of the Agent server, which takes no credential of any kind (ADR-0010). */
+/** One read of the Agent server, which takes no credential of any kind. */
 async function agentJson<T>(url: string): Promise<T> {
   const answered = await agentServer.fastify.inject({ url });
   assert.equal(answered.statusCode, 200, `${url} should have answered: ${answered.body}`);

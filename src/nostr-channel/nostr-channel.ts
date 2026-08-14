@@ -1,8 +1,7 @@
 /**
  * Four shapes here are load-bearing, and each has a way of looking like an accident.
  *
- * **Outbound is two halves and they must stay two**
- * ([ADR-0049](../../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)). `send` runs
+ * **Outbound is two halves and they must stay two**. `send` runs
  * inside the caller's transaction and settles everything knowable there; `drain` is the network act
  * and runs after that transaction commits. Moving the publish up into `send` either holds a
  * transaction open across a round trip to the Relay or leaves a recipient holding words a rollback
@@ -14,7 +13,7 @@
  * transaction is opened, so an unrecorded key leaves no row anywhere, not even a processed one.
  * Only then is the wrap's id claimed and the Message written, in one transaction.
  *
- * **The subscription asks for no `since`** (ADR-0049). NIP-59 randomises a wrap's timestamp up to
+ * **The subscription asks for no `since`**. NIP-59 randomises a wrap's timestamp up to
  * two days into the past, so a watermark silently discards most of what is in flight. The whole
  * store is re-read on every connect and `received`'s primary key absorbs the repeats.
  *
@@ -454,11 +453,11 @@ export function createNostrChannel(options: NostrChannelOptions): NostrChannel {
   /**
    * One queued wrap, published once: forgotten if the Relay took it, retired with a reason if not.
    *
-   * There is no retry and no attempt cap, which is
-   * [ADR-0017](../../docs/adr/0017-failed-runs-are-not-retried.md) applied to publishing: a row
-   * nobody cleared is a Message an Operator can see was not delivered, and a loop hiding it would
-   * make that invisible. The one thing that is not a refusal is a `stop`, which aborts the wait and
-   * leaves the row exactly as it was, so the next start attempts it and nothing here is half done.
+   * There is no retry and no attempt cap, which is the framework's own rule applied to publishing:
+   * a row nobody cleared is a Message an Operator can see was not delivered, and a loop hiding it
+   * would make that invisible. The one thing that is not a refusal is a `stop`, which aborts the
+   * wait and leaves the row exactly as it was, so the next start attempts it and nothing here is
+   * half done.
    */
   async function publish(
     row: Awaited<ReturnType<typeof selectUnpublished>>[number],

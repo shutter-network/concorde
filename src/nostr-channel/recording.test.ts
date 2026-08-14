@@ -7,8 +7,7 @@
  * transaction, and it proves nothing — the framework verifies nothing about it and cannot. And
  * **nothing else can record one**: there is no route on either server, so a prompt that talked the
  * agent into calling every capability it has still cannot claim a User's key and take over their
- * conversation
- * ([ADR-0049](../../docs/adr/0049-the-nostr-channel-speaks-nip-17-to-one-relay.md)).
+ * conversation.
  *
  * The refusals are the other subject. A key already recorded cannot be claimed by a second User,
  * and one User cannot hold two keys, because either would make "whose Message is this" ambiguous

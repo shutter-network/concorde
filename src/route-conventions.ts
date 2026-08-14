@@ -11,7 +11,7 @@
  * Wholly internal: nothing here reaches a specifier, and an Operator writing routes of their own
  * brings Fastify and writes them however they like. `CursorWindow` used to be the exception,
  * exported from the package root as the one parameter two components' `history` methods share.
- * With the root emptied there is nowhere for it (ADR-0051): a component is one subpath (ADR-0047),
+ * With the root emptied there is nowhere for it: a component is one subpath,
  * and putting it on one of the two would make the other's signature name a type from a part it has
  * nothing to do with. So both spell the window out as an inline object literal in the public
  * method, and each keeps its alias of this type internal. Reaching for that alias in a public
@@ -237,8 +237,7 @@ export const unknownParameter =
  * A sentence per route rather than one in `info.description`, because the useful thing to know is
  * which route is the exception. It lived in the Users component while that component owned the
  * login; the login is Password Auth's now and the hook is the Public server's, so the sentence
- * belongs to neither and sits here with the other shared wording
- * ([ADR-0052](../docs/adr/0052-authentication-is-a-component-again-and-the-public-server-aggregates.md)).
+ * belongs to neither and sits here with the other shared wording.
  *
  * It names the Token because every route interpolating it is reached with one in the deployments
  * that exist. `GET /users/me` deliberately does not interpolate it: that route echoes the
@@ -264,6 +263,6 @@ export const authenticationFailed =
  * each takes `publicServer.requireUser` as one route option, so the refusal is the server's and is
  * the same on every protected route it serves. It does **not** say which component or which scheme
  * refused, because more than one scheme can, and a sentence naming one would be false in a
- * deployment running another (ADR-0052).
+ * deployment running another.
  */
 export const notAuthenticated = `${authenticationFailed} This part authenticates nobody: the refusal is \`publicServer.requireUser\`, taken as one option on the route, so it is the same 401 every protected route on this server answers, whichever scheme the deployment accepts.`;

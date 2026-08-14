@@ -17,8 +17,8 @@ no separate step.
 **The site is published at
 [shutter-network.github.io/concorde](https://shutter-network.github.io/concorde/)**, which is where
 it lands once the repository is moved to the `shutter-network` organisation and renamed. `base`
-below already names the new one, so the first deploy after the move is what makes the two agree
-([ADR-0056](../docs/adr/0056-the-framework-is-called-concorde.md)). Two things follow and neither is
+below already names the new one, so the first deploy after the move is what makes the two agree.
+Two things follow and neither is
 guarded. **`base` in `.vitepress/config.ts` has to be the repository name**, because these are
 project pages and every asset resolves below that segment: absent or wrong, the HTML loads and
 every stylesheet, script and font 404s. A custom domain moves the site to the root of that

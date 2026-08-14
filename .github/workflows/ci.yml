@@ -14,7 +14,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
 
-    # PostgreSQL is real in every test (ADR-0022); nothing about the Db is
+    # PostgreSQL is real in every test; nothing about the Db is
     # mocked. Test files create and drop a database each on this server, so the
     # database named below is only ever connected to in order to manage those.
     services:
@@ -48,7 +48,7 @@ jobs:
 
       # Separate because it packs, installs from the registry, and is slow. It needs
       # the network and no database at all: the framework applies no DDL any more, so
-      # nothing in it connects (ADR-0046).
+      # nothing in it connects.
       - run: npm run check:package
 
       # Separate for the same reason: it installs `site/`'s own dependency tree, which

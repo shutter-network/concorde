@@ -2,10 +2,10 @@
  * What trusted code can do that no request can: answer somebody from inside its own
  * transaction, and read a whole Message log without one.
  *
- * A Signal Handler and an Operator's entry point are trusted code (ADR-0009, ADR-0020) and
+ * A Signal Handler and an Operator's entry point are trusted code and
  * hold the object the constructor returns. These two methods are the whole of that object,
  * and the pair is what makes the **post phase** useful for messaging: a Handler told that a
- * Run failed can tell the person who asked (ADR-0017), which nothing else in the framework
+ * Run failed can tell the person who asked, which nothing else in the framework
  * can do.
  *
  * The subject is still what a client can observe. There is no second seam for these methods
@@ -19,7 +19,7 @@
  * Two tests are the reason the file exists:
  *
  *  - `commits with the caller's own write, and a rollback loses both` is what taking the
- *    transaction first buys (ADR-0023). A Handler answering somebody and recording in its own
+ * transaction first buys. A Handler answering somebody and recording in its own
  *    tables why must commit as one, and the rollback half is the failure the split exists to
  *    prevent: a Message sent about a decision that was never recorded.
  *  - `is not capped at the limit the routes cap` is the one place the two surfaces
@@ -114,9 +114,9 @@ before(async () => {
     logger: silent,
   });
   // Users first, because the Messenger's foreign key names it; the foreign key's ordering is
-  // the push's to arrange (ADR-0046). Password Auth is the login under `/auth` a Token here is
+  // the push's to arrange. Password Auth is the login under `/auth` a Token here is
   // bought at, and registering it with the Public server is what lets the Channel's routes
-  // authenticate anybody (ADR-0052).
+  // authenticate anybody.
   users = createUsers({ db, agentServer, publicServer });
   passwordAuth = createPasswordAuth({ db, users, publicServer, tokenTtl: hour, scrypt: cheap });
   // And the Messenger is held, which this file is the first to have a reason to do.
@@ -124,8 +124,8 @@ before(async () => {
   createHttpChannel({ db, messenger, publicServer });
 
   // The schema of Users alongside the Messenger's, because `messages.user_id` references
-  // `concorde_users.users.id` and one push has to see both (ADR-0036, ADR-0046). Password Auth's is
-  // there because both of its columns reference that table too (ADR-0052).
+  // `concorde_users.users.id` and one push has to see both. Password Auth's is
+  // there because both of its columns reference that table too.
   await applySchema(db, signalsSchema, usersSchema, passwordAuthSchema, messengerSchema);
 });
 
@@ -140,7 +140,7 @@ after(async () => {
  * A User with a password, admitted from trusted code, holding a Token they logged in for.
  *
  * Two writes in one transaction, which is the only way a User who can log in exists: no route
- * anywhere creates one (ADR-0052).
+ * anywhere creates one.
  */
 async function admitted(): Promise<Client> {
   const { id } = await db.tx(async (tx) => {
@@ -222,13 +222,13 @@ describe("a Handler sending a Message", () => {
   it("writes it inside its own transaction, and the User reads it back", async () => {
     const client = await admitted();
 
-    // The call as a Handler writes it: the transaction first, then who and what (ADR-0023).
+    // The call as a Handler writes it: the transaction first, then who and what.
     const answered = await db.tx((tx) => messenger.send(tx, client.id, "the deploy finished"));
 
     assert.match(answered.id, /^[0-9a-f-]{36}$/);
     assert.equal(answered.userId, client.id);
     // Outbound, with no parameter that could have said otherwise: trusted code has no path
-    // that writes an inbound Message (ADR-0034).
+    // that writes an inbound Message.
     assert.equal(answered.direction, "outbound");
     assert.equal(answered.seq, 1);
     assert.equal(answered.text, "the deploy finished");
@@ -237,12 +237,12 @@ describe("a Handler sending a Message", () => {
     // Read back on the User's own route, which is the only confirmation that matters: the
     // person the Handler was answering can see the answer.
     assert.deepEqual(await own(client), [answered]);
-    // And on the agent's, byte for byte: one shape on every surface (ADR-0034).
+    // And on the agent's, byte for byte: one shape on every surface.
     assert.deepEqual(await asAgent(client.id), [answered]);
 
     // One log across both directions, numbered in the order the writes arrived: a person
     // replying to what a Handler said is the next number, and the Handler's next answer the
-    // one after (ADR-0035).
+    // one after.
     const replied = await posted(client, "thanks for letting me know");
     const again = await db.tx((tx) => messenger.send(tx, client.id, "and the migration ran"));
     assert.equal(replied.direction, "inbound");
@@ -295,7 +295,7 @@ describe("a Handler sending a Message", () => {
     const client = await admitted();
 
     // A read takes no transaction, so it is on another connection and cannot see an
-    // uncommitted write (ADR-0023). Everything the caller needs is what `send` returned,
+    // uncommitted write. Everything the caller needs is what `send` returned,
     // which is why there is no read-back for this to be a surprise about.
     const inside = await db.tx(async (tx) => {
       const message = await messenger.send(tx, client.id, "written but not committed");
@@ -313,7 +313,7 @@ describe("a Handler sending a Message", () => {
 
     // The foreign key refusing, which is the only enforcement: there is no lookup in front of
     // the write, and trusted code gets the refusal as an error because there is no reply to
-    // write a 404 into (ADR-0036).
+    // write a 404 into.
     await assert.rejects(
       db.tx((tx) => messenger.send(tx, nobody, "into the void")),
       new RegExp(`no User ${nobody} exists`),
@@ -355,7 +355,7 @@ describe("a Handler reading a Message log", () => {
 
     // The same query reached three ways, by a Token, a query parameter and an argument. The
     // whole point of there being one implementation is that these cannot disagree about what
-    // a cursor means (ADR-0035).
+    // a cursor means.
     for (const [window, asked] of [
       ["", {}],
       ["?limit=3", { limit: 3 }],
@@ -378,7 +378,7 @@ describe("a Handler reading a Message log", () => {
       ["outbound", "inbound"],
     );
 
-    // Any User's log, and not only the one a Run is serving (ADR-0011).
+    // Any User's log, and not only the one a Run is serving.
     const other = await admitted();
     await db.tx((tx) => messenger.send(tx, other.id, "meant for somebody else"));
     assert.deepEqual(
@@ -447,12 +447,12 @@ describe("the object the constructor answers with", () => {
     // An assertion of **absence**, and the reason it is the object's own keys rather than a
     // list of names to probe: a method added later appears here and fails this. There is no
     // `receive`, no `submit` and no `direction` parameter anywhere on it, because trusted code
-    // does not get a path that puts words in a User's mouth (ADR-0034). `register` answers with
-    // the inbound write, and a Channel's constructor is what calls it (ADR-0048), which is
+    // does not get a path that puts words in a User's mouth. `register` answers with
+    // the inbound write, and a Channel's constructor is what calls it, which is
     // `channels.test.ts`'s subject.
     //
     // `start` and `stop` are the two that do nothing, and they are here because this part is
-    // in the Gateway's record like every other one (ADR-0037). They are the whole of what
+    // in the Gateway's record like every other one. They are the whole of what
     // membership added: two names, and no further capability.
     assert.deepEqual(Object.keys(messenger).sort(), [
       "history",

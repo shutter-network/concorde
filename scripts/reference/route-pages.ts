@@ -3,15 +3,13 @@
  *
  * The reader is the Developer who has deployed nothing. Every route arrives with the summary and
  * the description its plugin declares, word for word, because those sentences **are** the API
- * documentation ([ADR-0040](../../docs/adr/0040-the-gateway-describes-its-own-http-api.md)) and a
- * paraphrase here would be a second wording to keep true. What a running Gateway serves at
- * `GET /openapi.json` and what this page says come out of the same declaration.
+ * documentation and a paraphrase here would be a second wording to keep true. What a running
+ * Gateway serves at `GET /openapi.json` and what this page says come out of the same declaration.
  *
  * **The two servers are separate sections.** The difference between them is the difference between
  * what the agent can call and what a User's client can, and the Agent server has no authentication
- * of any kind ([ADR-0003](../../docs/adr/0003-prompt-injection-is-an-accepted-risk.md)). A
- * component with a plugin on each gets both sections on one page, because a page is about a
- * component.
+ * of any kind. A component with a plugin on each gets both sections on one page, because a page is
+ * about a component.
  *
  * **Paths are relative and no page names a prefix.** The extraction registers none, so what is
  * printed is what the plugin declares, under whatever the constructor mounts it at. Naming the
@@ -63,7 +61,7 @@ export function routePages(extraction: RouteExtraction): PageSet {
 
 /** What each server is, said once per page rather than once per route. */
 const whatTheServerIs: Record<ServerName, string> = {
-  agent: `**The Agent server has no authentication of any kind.** Everything below is reachable by the agent, and therefore by an injected prompt ([ADR-0003](https://github.com/shutter-network/concorde/blob/main/docs/adr/0003-prompt-injection-is-an-accepted-risk.md)). Nothing on it names a credential.`,
+  agent: `**The Agent server has no authentication of any kind.** Everything below is reachable by the agent, and therefore by an injected prompt. Nothing on it names a credential.`,
   public: `**The Public server is what a User's client calls.** Which credential each route wants, and which wants none, is in that route's own description below.`,
 };
 
@@ -74,7 +72,7 @@ function page(component: ComponentRoutes): string {
     //
     // Quoted, and `JSON.stringify` rather than a pair of `"` characters: the package is scoped, so
     // every specifier begins with `@`, which YAML reserves. Bare, the frontmatter does not parse
-    // and the site build fails on the file rather than on the line (ADR-0056).
+    // and the site build fails on the file rather than on the line.
     "---",
     `title: ${JSON.stringify(`${component.specifier} routes`)}`,
     "---",

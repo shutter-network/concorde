@@ -3,13 +3,11 @@
  * PostgreSQL schema it lives in. Keep it to the table and the values that define it.
  *
  * The one import of another component's schema in here is deliberate and is the mechanism rather
- * than an accident: `user_id` references `concorde_users.users.id`
- * ([ADR-0036](../../../docs/adr/0036-the-http-messengers-user-id-is-a-foreign-key.md)), and one
- * generation graph is what makes that legal. Nothing of the Users component's is re-exported. What
- * costs an Operator is stated on the table below, where they can act on it.
+ * than an accident: `user_id` references `concorde_users.users.id`, and one generation graph is
+ * what makes that legal. Nothing of the Users component's is re-exported. What costs an Operator is
+ * stated on the table below, where they can act on it.
  *
- * One table for both directions, whichever medium a Message travelled by, is the whole of
- * [ADR-0048](../../../docs/adr/0048-the-messenger-owns-the-log-and-channels-reach-people.md): the log
+ * One table for both directions, whichever medium a Message travelled by, is deliberate: the log
  * is the Messenger's and no Channel's, and the HTTP Channel owns no table at all.
  */
 

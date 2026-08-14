@@ -4,7 +4,7 @@
  *
  * Two seams, both from the Messenger's prior art. Timing is deterministic: the Scheduler
  * takes an injected clock, and this file sets `now`, awaits `tick`, and asserts what fired, with no
- * sleeping (ADR-0018). And the fired Signal is read back over a **real, unstarted** Signal Worker's
+ * sleeping. And the fired Signal is read back over a **real, unstarted** Signal Worker's
  * `GET /signals` route — `src/messenger/trusted.test.ts` does exactly this: the worker is
  * constructed with its Agent routes and never started, so nothing drains the queue and the Signal
  * the Scheduler emitted sits there to be read. Because the emit and the schedule's retirement share
@@ -61,7 +61,7 @@ before(async () => {
   database = await createTestDatabase("scheduler_firing");
   db = database.db;
   // The two schemas a deployment with a Scheduler lists, pushed once up front the way an
-  // Operator's own `drizzle-kit` applies them (ADR-0046).
+  // Operator's own `drizzle-kit` applies them.
   await applySchema(db, signalsSchema, schedulerSchema);
 
   agentServer = serverComponent(Fastify(), nowhere);
@@ -209,7 +209,7 @@ describe("a once Schedule", () => {
     const instance = scheduler();
 
     // A once whose instant is behind now has no future occurrence: it is not a future fire, so it
-    // is dropped and marked spent rather than stored as something a tick would fire (ADR-0018).
+    // is dropped and marked spent rather than stored as something a tick would fire.
     const outcome = await instance.schedule({
       name: "stale",
       spec: { kind: "once", at: iso(t0 - hour) },
@@ -230,7 +230,7 @@ describe("a once Schedule", () => {
     const instance = scheduler();
     // Armed as a future fire, then now jumps clean across it before any tick — a live process
     // frozen through the fire time. The accepted residual is one late fire, not a drop, which is
-    // the difference from a past-at-creation once above (ADR-0018).
+    // the difference from a past-at-creation once above.
     await instance.schedule({
       name: "frozen",
       spec: { kind: "once", at: iso(t0 + hour) },
@@ -262,8 +262,8 @@ describe("a once Schedule", () => {
 
     // The instant passes while the process is down, then it restarts. Boot re-derives forward, and a
     // once with no future instant is dropped rather than replayed — the same rule creation applies,
-    // now at boot too, so a reminder for a moment the process was down is simply lost, not fired late
-    // (ADR-0018). This is the restart counterpart of the live-frozen "fires late" case above.
+    // now at boot too, so a reminder for a moment the process was down is simply lost, not fired late.
+    // This is the restart counterpart of the live-frozen "fires late" case above.
     clockNow = new Date(t0 + 2 * hour);
     const rebooted = await restart();
     assert.deepEqual(await names(rebooted), []);
@@ -332,7 +332,7 @@ describe("cancelling a Schedule", () => {
     assert.equal(await instance.cancel("abandon"), true);
     assert.deepEqual(await names(instance), []);
     // Cancelling one already gone says so, rather than an idempotent success it cannot honestly
-    // claim (ADR-0018).
+    // claim.
     assert.equal(await instance.cancel("abandon"), false);
     assert.equal(await instance.cancel("never-existed"), false);
 

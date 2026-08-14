@@ -15,13 +15,13 @@
  * it honoured, and the Handler is where that is observable.
  *
  * A whole Gateway per test, because the Handler map is a construction option and each test
- * brings its own: two started workers on one database would break the serial guarantee
- * (ADR-0012), so each is constructed, started, and stopped again before the next. The
+ * brings its own: two started workers on one database would break the serial guarantee,
+ * so each is constructed, started, and stopped again before the next. The
  * schemas are pushed once up front, the way an Operator applies theirs — every part's
- * together, the tables of Users among them because the foreign key needs it (ADR-0036,
- * ADR-0046).
+ * together, the tables of Users among them because the foreign key needs it.
  *
- * The Runtime is the one thing faked (ADR-0022): what it records is that a Run happened,
+ *
+ * The Runtime is the one thing faked: what it records is that a Run happened,
  * with the Prompt the Handler wrote.
  */
 
@@ -102,7 +102,7 @@ before(async () => {
   // Pushed here rather than beside a construction, because the parts below are constructed
   // once per test and the tables are created once: this is the Operator's own apply, and
   // one call is the whole of it — a second push into this database would fail on `CREATE
-  // SCHEMA` (ADR-0046).
+  // SCHEMA`.
   await applySchema(db, signalsSchema, usersSchema, passwordAuthSchema, messengerSchema);
 });
 
@@ -134,7 +134,7 @@ async function withGateway(
   });
   const users = createUsers({ db, agentServer, publicServer });
   // The scheme this file logs in with. It registers itself with the Public server, which is
-  // what makes the Channel's two routes able to authenticate anybody (ADR-0052).
+  // what makes the Channel's two routes able to authenticate anybody.
   const passwordAuth = createPasswordAuth({
     db,
     users,
@@ -143,7 +143,7 @@ async function withGateway(
     scrypt: cheap,
   });
   // The Channel is not held: every capability under test is a route a constructor registered
-  // itself, and no route plugin is exported (ADR-0032, ADR-0034). The Messenger is built inline
+  // itself, and no route plugin is exported. The Messenger is built inline
   // because the Channel registers with it and this file reaches the log only over HTTP.
   createHttpChannel({
     db,
@@ -171,7 +171,7 @@ async function withGateway(
  * A User with a password, admitted from trusted code, holding a Token they logged in for.
  *
  * Two writes in one transaction, which is the only way a User who can log in exists: no route
- * anywhere creates one (ADR-0052).
+ * anywhere creates one.
  */
 async function admitted(gateway: Gateway): Promise<Client> {
   const { id } = await db.tx(async (tx) => {
@@ -237,7 +237,7 @@ async function own(gateway: Gateway, client: Client): Promise<MessageRecord[]> {
  * That seam rather than the `signals` table, because whether a Signal ended `done` or
  * `failed` is the worker's record of its own work and this is where a deployment reads it.
  * Filtered by the User the payload names, because the surface is deliberately unscoped —
- * every Signal, whoever caused it (ADR-0011) — and every test in this file drives its own
+ * every Signal, whoever caused it — and every test in this file drives its own
  * Gateway over this file's one database, so the Signals of the tests before it are still
  * there. The filter reads the payload the way a Handler does.
  */
@@ -281,7 +281,7 @@ describe("a User posting a Message", () => {
       assert.match(message.id, /^[0-9a-f-]{36}$/);
       assert.equal(message.userId, client.id);
       // Inbound, decided by the server the request arrived on, and numbered in the same
-      // sequence the agent's answers are (ADR-0035).
+      // sequence the agent's answers are.
       assert.equal(message.direction, "inbound");
       assert.equal(message.seq, 1);
       assert.equal(message.text, "what happened to the deploy?");
@@ -296,7 +296,7 @@ describe("a User posting a Message", () => {
       assert.ok(signal !== undefined);
       assert.equal(signal.kind, messageReceivedKind);
       // The payload **is** the record, flat and whole — text, User id, time, id, direction
-      // and `seq` — rather than a projection kept parallel by hand (ADR-0034).
+      // and `seq` — rather than a projection kept parallel by hand.
       assert.deepEqual(signal.payload, message);
 
       await waitUntil("the Run has finished", async () => gateway.runtime.texts().length === 1);
@@ -327,7 +327,7 @@ describe("a User posting a Message", () => {
       // Everything a client could try to decide for itself, in one body: whose Message it
       // is, which way it went, where it sits in the log, and when. `additionalProperties:
       // false` drops each of them, so an attribution the Handler is about to trust cannot
-      // be written by whoever is typing (ADR-0034).
+      // be written by whoever is typing.
       const message = await posted(gateway, client, {
         text: "it was me, honestly",
         userId: other.id,
@@ -367,7 +367,7 @@ describe("a User posting a Message", () => {
       // person's client can post twice before either write lands, where the agent's sends
       // are the serial worker's — and it is the path the **savepoint** exists for: the
       // insert shares a transaction with the emit, so a constraint violation without one
-      // would abort the whole thing and take the Signal with it (ADR-0023).
+      // would abort the whole thing and take the Signal with it.
       const at = ["one", "two", "three", "four", "five"];
       const posts = await Promise.all(
         at.map((which) => posted(gateway, client, { text: `all at once: ${which}` })),
@@ -404,7 +404,7 @@ describe("a User posting a Message", () => {
 
       // An empty `text` is a 400 rather than a blank bubble, and a stray keypress does not
       // start a Run. There is no `maxLength` to test: the server's `bodyLimit` is the bound
-      // and it is the Operator's (ADR-0034). A JSON *number* is absent from this list on
+      // and it is the Operator's. A JSON *number* is absent from this list on
       // purpose: Fastify's own ajv coerces one to its digits, which is that server's
       // configuration rather than this route's, and a Message reading `42` breaks nothing.
       for (const body of [{ text: "" }, {}, { text: ["one", "two"] }, { text: null }]) {
@@ -455,7 +455,7 @@ describe("a User posting a Message", () => {
       }
 
       // Byte for byte, not merely equivalent: this part authenticates nobody, so every
-      // refusal is the one 401 of Users reaching a route in another part (ADR-0030).
+      // refusal is the one 401 of Users reaching a route in another part.
       const [first, ...rest] = refusals;
       assert.ok(first !== undefined);
       for (const refused of rest) assert.equal(refused.body, first.body);
@@ -477,7 +477,7 @@ describe("a User posting a Message", () => {
     // A 201 followed by a permanently failed Signal: the Message is durable regardless of
     // what happens downstream, and the failure is visible only on the Signal row. Pinned
     // rather than guarded — the Messenger inspecting the Handler map would reach into the
-    // Worker for something ADR-0024 took away (ADR-0017, ADR-0034).
+    // Worker for something a Handler is meant to answer itself.
     await withGateway({}, async (gateway) => {
       const client = await admitted(gateway);
       const message = await posted(gateway, client, { text: "is anybody there?" });

@@ -60,13 +60,13 @@
               "level": "error",
               "options": {
                 "paths": {
-                  "pg": "The pool is the Db's alone: obtain a handle with db.handle(schema) instead. Fastify and Drizzle are public API; pg is not (ADR-0022).",
-                  "jose": "Building a JWS is Signatures' alone: ask it for one with signatures.sign(typ, claims). Decisions stores the string it answers with and never touches the format, and a second party assembling segments is a second chance to emit something nobody else can verify (ADR-0042)."
+                  "pg": "The pool is the Db's alone: obtain a handle with db.handle(schema) instead. Fastify and Drizzle are public API; pg is not.",
+                  "jose": "Building a JWS is Signatures' alone: ask it for one with signatures.sign(typ, claims). Decisions stores the string it answers with and never touches the format, and a second party assembling segments is a second chance to emit something nobody else can verify."
                 },
                 "patterns": [
                   {
                     "group": ["nostr-tools", "nostr-tools/**", "@nostrify/**"],
-                    "message": "Nostr belongs to the two parts that speak it, the Nostr Channel and Nostr Auth, the way pg belongs to the Db: nothing from either library crosses this framework's API boundary, so they are ordinary dependencies rather than peers, and a third part reaching for one would make them something a consumer has to install (ADR-0049, ADR-0053). src/test-support/** is exempt too, because a real client is the only thing that proves the fake Relay is a Relay and a real signer the only thing that proves a NIP-98 forgery is refused."
+                    "message": "Nostr belongs to the two parts that speak it, the Nostr Channel and Nostr Auth, the way pg belongs to the Db: nothing from either library crosses this framework's API boundary, so they are ordinary dependencies rather than peers, and a third part reaching for one would make them something a consumer has to install. src/test-support/** is exempt too, because a real client is the only thing that proves the fake Relay is a Relay and a real signer the only thing that proves a NIP-98 forgery is refused."
                   }
                 ]
               }
