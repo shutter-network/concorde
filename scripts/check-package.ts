@@ -3,12 +3,6 @@
  *
  *  - `dist` mirrors `src`, so nothing ships whose source is gone.
  *  - the tarball installs into a fresh project.
- *
- * What it no longer proves is that migration folders ship and that the shipped SQL applies to a
- * real database from inside the installed package. There is no SQL: the framework applies nothing
- * and the Operator generates their own DDL from the tables the component subpaths below export.
- * That is a recorded cost of that ADR and not an oversight — we no longer author the bytes applied
- * to anybody's production database, so no check here can vouch for them.
  *  - **all twenty-three** entries resolve there, both to the type checker and to Node at
  *    runtime, and twenty-three is the whole map. Fifteen are the subpath a Developer imports a part
  *    from: `/gateway`, `/logging`, `/db`, `/agent-container`, `/signals`, `/pi`, `/users`,
@@ -22,14 +16,14 @@
  *  - **two of the fifteen are Auths**, so the whole of what a deployment accepts is which of them
  *    it constructs. `main.ts` below constructs Password Auth and Nostr Auth and writes an Auth of
  *    the consumer's own beside them, and all three register themselves with the Public server.
- *  The second of them
- *    registers **no route**, so its whole surface here is one construction, one method and the
- *    two tables on its specifier.
- *  - **there is no `.` in that map, and the last step below reads Node saying so.** Every value
- *    the root used to carry now sits on `/gateway`, `/logging`, `/db` or `/agent-container`, and
- *    a bare `@shutter-network/concorde` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`. What that buys
- *    is that nothing lands on the root by accident: a re-export written there resolves to
- *    nowhere, so adding a root export back is a deliberate edit to `exports` and not a slip.
+ *    The second of them registers **no route**, so its whole surface here is one construction,
+ *    one method and the two tables on its specifier.
+ *  - **there is no `.` in that map, and the last step below reads Node saying so.** The assembly
+ *    is on `/gateway`, the logging seam on `/logging`, the Db on `/db` and the container plumbing
+ *    on `/agent-container`, and a bare `@shutter-network/concorde` fails with
+ *    `ERR_PACKAGE_PATH_NOT_EXPORTED`. What that buys is that nothing lands on the root by
+ *    accident: a re-export written there resolves to nowhere, so adding a root export is a
+ *    deliberate edit to `exports` and not a slip.
  *  - a component's tables arrive on its `/schema` specifier as **top-level named exports**.
  *    That shape is the whole contract: `drizzle-kit`'s exporter takes `Object.values` of a module
  *    and keeps what passes `is(x, PgTable)`, never descending into a plain object, so a table
@@ -46,10 +40,15 @@
  *    both places would put every table behind two specifiers, and a `/schema` module that stopped
  *    re-exporting one would leave the table queryable and absent from the DDL.
  *
+ * It says nothing about SQL, because there is none: the framework applies no DDL and this
+ * repository holds no `.sql` at all. An Operator generates their own from the tables the component
+ * subpaths below export, so the bytes that reach a production database are theirs and no check
+ * here can vouch for them.
+ *
  * Run with `npm run check:package`. Deliberately not part of `npm run check`: it
  * installs from the registry, so it is far slower than the inner loop should be,
- * and it would make the inner loop need the network. It needs no database: nothing
- * here applies DDL any more, so nothing here connects.
+ * and it would make the inner loop need the network. It needs no database: it applies
+ * no DDL itself, so nothing here connects.
  */
 
 import assert from "node:assert/strict";
@@ -814,10 +813,9 @@ try {
       "  nostrChannelTables, decisionsTables, schedulerTables,",
       "];",
       "",
-      "// The consequence the ADR records rather than mitigates: an exported table object is",
-      "// both migratable and queryable, so the same `db.handle` that takes the Operator's own",
-      "// tables above takes a framework part's. Written as a real projection, so a column",
-      "// renamed out from under an Operator fails here.",
+      "// An exported table object is both migratable and queryable, so the same `db.handle`",
+      "// that takes the Operator's own tables above takes a framework part's. Written as a real",
+      "// projection, so a column renamed out from under an Operator fails here.",
       "export async function readMessages(): Promise<{ seq: number; text: string }[]> {",
       "  return db",
       "    .handle({ messages })",

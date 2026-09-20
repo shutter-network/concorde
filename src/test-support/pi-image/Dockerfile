@@ -7,13 +7,15 @@
 #  - a POSIX shell, which the agent's own `bash` tool needs. Nothing of the Gateway's
 #    does: it starts no container but the Run's.
 #  - `curl`, because `pi` ships no HTTP client and reaching the Agent server is the
-#    agent's own `bash` plus `curl` (ADR-0010).
+#    agent's own `bash` plus `curl`. The agent runs in a container and reaches the
+#    Gateway over HTTP and by no other route, which is the trust boundary
+#    `site/architecture.md` describes under "The two servers".
 #  - nothing about a user: the container is run with `--user <the Gateway's uid:gid>`,
 #    which is an id the image knows nothing about, so nothing may depend on a home
 #    directory or a passwd entry existing for it.
 #  - the **two paths below**. The framework passes neither and knows neither, so an
 #    image that omits them is one every Run fails in — or worse, for the second one,
-#    an agent that forgets every Session and says nothing (ADR-0025, ADR-0033).
+#    an agent that forgets every Session and says nothing.
 #
 # `pi` is the entry point here, and no longer has to be: the Runtime passes one, so
 # this line is what the test's image happens to do rather than a requirement.
@@ -21,7 +23,7 @@ FROM node:24-alpine
 
 RUN apk add --no-cache curl
 
-# Pinned to the version every fact in ADR-0025 and `src/pi/` was verified against.
+# Pinned to the version every fact in `src/pi/` was verified against.
 RUN npm install -g @earendil-works/pi-coding-agent@0.83.0
 
 # Where `pi` runs, which is therefore where it looks for an `AGENTS.md` — in this

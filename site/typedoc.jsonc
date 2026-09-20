@@ -19,11 +19,9 @@
   // The other eight are the `/schema` subpaths, and they are deliberately absent: a component's
   // tables are documented by the table pages `scripts/reference/render.ts` writes, and a TypeDoc
   // page for one would print `PgTableWithColumns<{}>` for every table, `excludeExternals` having
-  // emptied drizzle's type parameter
-  // ([ADR-0055](../docs/adr/0055-a-components-tables-are-a-subpath-of-their-own.md)). There is no
-  // `.` among them either: the package root exports nothing, so nothing lands on it by default
-  // ([ADR-0051](../docs/adr/0051-the-package-root-exports-nothing.md)). `examples/` is absent too:
-  // those are deployments that consume the package, not public API.
+  // emptied drizzle's type parameter. There is no `.` among them either: the package root exports
+  // nothing, so nothing lands on it by default. `examples/` is absent too: those are deployments
+  // that consume the package, not public API.
   // `specifier-titles.mjs` holds every entry in `exports` against exactly one of the two
   // generators, both ways, and fails the generation on any disagreement, so an entry point added
   // to one place and not the other is loud.

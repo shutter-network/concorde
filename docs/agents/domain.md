@@ -51,7 +51,5 @@ inventing language the project doesn't use (reconsider) or there's a real gap
 ## Flag ADR conflicts
 
 If your output contradicts an existing ADR, surface it explicitly rather than
-silently overriding:
-
-> _Contradicts ADR-0003 (a Message is one entity with a direction) — but worth
-> reopening because…_
+silently overriding. Name the ADR, say which of its claims you are contradicting,
+and say why it is worth reopening.
