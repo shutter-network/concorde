@@ -158,5 +158,8 @@
   "peerDependencies": {
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.11.0"
+  },
+  "overrides": {
+    "@esbuild-kit/esm-loader": "npm:tsx@^4.21.0"
   }
 }
