@@ -75,17 +75,17 @@ its own environment**, which is what point 2 is for, and the two are often confu
 
 ### A failure that reaches the person
 
-`templateHandler` has no post phase, so a failed Run is silence: the person waits for an answer
-that cannot come, because a Signal is never retried. This example spreads it and adds one.
+Without a post phase a failed Run is silence: the person waits for an answer that cannot come,
+because a Signal is never retried. This example gives `templateHandler` one.
 
 ```ts
-const answer: SignalHandler<MessageRecord> = {
-  ...templateHandler<MessageRecord>({ /* template, session, data */ }),
+templateHandler<MessageRecord>({
+  /* template, session, data */
   async post(signal, outcome) {
     if (!outcome.failed) return;
     await db.tx((tx) => messenger.send(tx, signal.payload.userId, "Sorry - ..."));
   },
-};
+});
 ```
 
 It matters more here than in `00_minimal`, because the proxy is a new single point of failure: a
