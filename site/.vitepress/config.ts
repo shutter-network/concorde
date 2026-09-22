@@ -50,7 +50,7 @@ export default defineConfig({
 
     // The authored pages first and the generated sections after them, which is the order somebody
     // adopting the framework meets them in. Every entry below `API reference` is generated: the
-    // fifteen entry-point pages TypeDoc writes, then the table and route sections the renderer
+    // fourteen entry-point pages TypeDoc writes, then the table and route sections the renderer
     // writes.
     sidebar: [
       {

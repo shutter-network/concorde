@@ -134,6 +134,19 @@ describe("the shape of one Run", () => {
     assert.deepEqual(commandTypes(instance), ["switch_session"]);
   });
 
+  it("fails the Run when an answer carries the right id under another command's name", async () => {
+    // The second correlation guard, and the one an id alone cannot make: an instance that numbers
+    // its answers correctly and labels them wrongly is still an instance whose answers cannot be
+    // read. `switch_session` and `get_state` differ in exactly the field the next step branches on,
+    // so taking one for the other is a Prompt sent into an unverified Session.
+    const { outcome, instance } = await runAgainst((command) => [
+      { type: "response", id: command.id, command: "get_state", success: true, data: {} },
+    ]);
+
+    assert.match(failure(outcome), /"get_state".*"switch_session"|"switch_session".*"get_state"/s);
+    assert.deepEqual(commandTypes(instance), ["switch_session"]);
+  });
+
   it("closes the connection, whether the Run succeeded or failed", async () => {
     // With `socat ...,fork` every connection is a `pi` process, so one left open is one left
     // running. The Operator's listener started it and nothing else will reap it.

@@ -132,7 +132,7 @@ this process can see, so it is refused in the file where you wrote it.
 :::
 
 ::: tip An agent that is not listening is a failed message, never a failed boot
-`createPiRuntime` connects to nothing and probes nothing. If the agent service is down, the
+`createPiRuntime` connects to nothing and probes nothing. If the Agent Instance is not up, the
 Gateway still starts and everybody can still log in and read their log; each Run fails with the
 address in its message. A Gateway that refused to start over it would take every person's access
 down along with the agent's.
