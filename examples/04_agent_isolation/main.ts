@@ -7,7 +7,7 @@ import {
 } from "@shutter-network/concorde/messenger";
 import { createPasswordAuth } from "@shutter-network/concorde/password-auth";
 import { createPiRuntime } from "@shutter-network/concorde/pi";
-import { type SignalHandler, templateHandler } from "@shutter-network/concorde/signals";
+import { templateHandler } from "@shutter-network/concorde/signals";
 import { createUsers } from "@shutter-network/concorde/users";
 
 const password = process.env.USER_PASSWORD!;
@@ -36,19 +36,15 @@ const gateway = createGateway({
 
     return { users, passwordAuth, messenger, httpChannel };
   },
-  handlers: ({ db, messenger }) => {
-    // `templateHandler` has no post phase, and gains one by being spread: the object below is an
-    // ordinary Signal Handler with `handle` from the template and `post` of our own
-    const answer: SignalHandler<MessageRecord> = {
-      ...templateHandler<MessageRecord>({
-        template: `A message arrived for you from user {{userId}}. They said:
+  handlers: ({ db, messenger }) => ({
+    [messageReceivedKind]: templateHandler<MessageRecord>({
+      template: `A message arrived for you from user {{userId}}. They said:
 
 {{text}}
 
 Answer them by sending them a Message. Your final reply here reaches nobody.`,
-        session: (signal) => `user_${signal.payload.userId}`,
-        data: (signal) => signal.payload,
-      }),
+      session: (signal) => `user_${signal.payload.userId}`,
+      data: (signal) => signal.payload,
 
       // The whole of this deployment's failure handling. A Signal is never retried, so without
       // this a failed Run is silence: the person who asked waits for an answer that cannot come.
@@ -62,10 +58,8 @@ Answer them by sending them a Message. Your final reply here reaches nobody.`,
           ),
         );
       },
-    };
-
-    return { [messageReceivedKind]: answer };
-  },
+    }),
+  }),
 });
 
 await gateway.start();
