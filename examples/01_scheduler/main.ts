@@ -33,28 +33,19 @@ const scheduleFired: SignalHandler<ScheduleFiredRecord> = {
 };
 
 const runtime = createPiRuntime({
-  image: process.env.AGENT_IMAGE!,
-  env: {
-    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY!,
-    AGENT_SERVER_URL: process.env.AGENT_SERVER_URL!,
-  },
-  networks: [process.env.AGENT_NETWORK!],
-  mounts: {
-    runtimeDir: process.env.RUNTIME_DIR_HOST!,
-    entries: [
-      { agentPath: "/workspace", path: "state/workspace" },
-      { agentPath: "/home/agent/.pi/agent", path: "state/agent" },
-      { agentPath: "/workspace/AGENTS.md", path: "AGENTS.md", readOnly: true },
-      { agentPath: "/home/agent/.pi/agent/settings.json", path: "settings.json", readOnly: true },
-    ],
-  },
+  host: process.env.AGENT_INSTANCE_HOST!,
+  port: Number(process.env.AGENT_INSTANCE_PORT),
+  sessionsDir: process.env.AGENT_SESSIONS_DIR!,
 });
 
 const gateway = createGateway({
   databaseUrl: process.env.DATABASE_URL!,
   runtime,
   publicListen: { host: process.env.PUBLIC_HOST!, port: Number(process.env.PUBLIC_PORT) },
-  agentListen: { host: process.env.AGENT_HOST!, port: Number(process.env.AGENT_PORT) },
+  agentListen: {
+    host: process.env.AGENT_SERVER_HOST!,
+    port: Number(process.env.AGENT_SERVER_PORT),
+  },
   extend: ({ db, worker, agentServer }) => ({
     scheduler: createScheduler({ db, worker, agentServer }),
   }),
