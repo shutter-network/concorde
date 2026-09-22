@@ -27,8 +27,8 @@
  * a self-consistent verifier accepts it happily while every other library rejects it.
  *
  * The refusals are asserted at the **constructor**, synchronously, on the precedent of
- * `createUsers` refusing a `tokenTtl` and `createAgentContainerRuntime` refusing an empty
- * image: an ambiguous key throws before any server exists, so there is no HTTP surface it
+ * `createUsers` refusing a `tokenTtl` and `createPiRuntime` refusing a relative
+ * `sessionsDir`: an ambiguous key throws before any server exists, so there is no HTTP surface it
  * could have. Each of them is checked for naming what to pass and not merely for throwing,
  * because a refusal that does not say `signingAlg` leaves an Operator exactly where they were.
  *

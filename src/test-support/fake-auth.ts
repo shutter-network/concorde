@@ -4,7 +4,7 @@
  * The aggregate's whole subject is the walk: the order the schemes are asked in, where it stops,
  * what the refusal looks like on the wire, and what happens with nothing registered. A real Auth
  * would drag scrypt or a NIP-98 signature through every one of those assertions and prove none of
- * them better. It exists for the reason `fake-runtime.ts` and `fake-container.ts` do.
+ * them better. It exists for the reason `fake-runtime.ts` and `agent-instance.ts` do.
  *
  * It does not register itself, where a real Auth registers at the end of its own constructor. A
  * test that calls `registerAuth` by hand is a test whose registration order is a line the reader

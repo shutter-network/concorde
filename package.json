@@ -26,10 +26,6 @@
       "types": "./dist/db/index.d.ts",
       "default": "./dist/db/index.js"
     },
-    "./agent-container": {
-      "types": "./dist/agent-container/index.d.ts",
-      "default": "./dist/agent-container/index.js"
-    },
     "./signals": {
       "types": "./dist/signals/index.d.ts",
       "default": "./dist/signals/index.js"
@@ -121,7 +117,7 @@
     "lint": "biome check .",
     "format": "biome check --write .",
     "test": "node --test \"src/**/*.test.ts\"",
-    "test:container": "CONCORDE_CONTAINER_TESTS=1 node --test \"src/pi/container.test.ts\"",
+    "test:container": "CONCORDE_CONTAINER_TESTS=1 node --test \"src/pi/agent-instance.test.ts\"",
     "check": "npm run typecheck && npm run build && npm run lint && npm test",
     "check:package": "node scripts/check-package.ts",
     "extract:routes": "node scripts/reference/extract-routes.ts",

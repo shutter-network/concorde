@@ -1,249 +1,397 @@
 /**
- * What `pi` adds to a container, which is three flags, a Prompt on stdin and a reader.
+ * One Run against an Agent Instance, over a real socket to a fake one.
  *
- * The subject is `commandFor` on a constructed Runtime, so what is asserted is what a Run
- * would really start, an Agent Implementation's own defaults included. Everything generic
- * — the confinement flags, the mounts, the user, the networks, the redaction, the order —
- * is `src/container/agent-container.test.ts` and is deliberately not restated here: this
- * file is only the `pi`-shaped half, which is now most of what there is to say about `pi`.
+ * The fake is `../test-support/agent-instance.ts`: a TCP server speaking `pi`'s RPC framing, driven
+ * by a script. That is the whole seam now — the Gateway starts nothing, so everything between "a
+ * Prompt exists" and "a Run is recorded" is a connection, three commands and a stream of events, and
+ * all of it is exercised here with no Docker, no image, no model and no network beyond loopback.
  *
- * No Docker, no credentials, no network, no filesystem. `piRun` is a **pure and total**
- * function of its Prompt, with no case left over: the Session arrives already named,
- * because the Signal Worker answered a Handler's request for a fresh one before any of
- * this ran, and that is asserted in `src/signals/worker.test.ts` where it
- * happens. What none of this can prove is that the mounts resolve, that the image
- * declares the two things `pi` needs of it, or that a Session resumes: nothing but a real
- * container can, and that is `./container.test.ts`.
+ * What this file cannot prove is the one thing the design rests on: that `pi`'s `switch_session`
+ * creates a Session at a path that does not exist and resumes one that does. A fake that was
+ * scripted to do it would only pin our reading of the protocol. `./agent-instance.test.ts` drives
+ * the real program and is where that claim lives.
  *
- * Assertions are on the composed argv rather than on a rendered string, and several are
- * on flag *pairs*, because that is the property a mistake breaks: `pi` is not the process
- * being started, `docker` is, and a flag on the wrong side of the image name reaches the
- * wrong program.
+ * The assertions are on the **sequence** as much as on the outcome, because that is the property a
+ * mistake breaks. A Run that prompts after a switch it did not check is a Prompt delivered into
+ * whatever Session the instance was already in, and the outcome of such a Run is a perfectly
+ * ordinary success.
  */
 
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
-import type { AgentContainer, ComposedCommand } from "../agent-container/index.ts";
-import type { RunPrompt } from "../signals/runtime.ts";
-import { createPiRuntime, piRun } from "./runtime.ts";
+import { createServer } from "node:net";
+import { after, describe, it } from "node:test";
+import type { RunOutcome, RunPrompt } from "../signals/runtime.ts";
+import {
+  dropsTheConnection,
+  type FakeInstance,
+  type Received,
+  type Reply,
+  resetsTheConnection,
+  scriptedInstance,
+  startFakeInstance,
+  type Written,
+} from "../test-support/agent-instance.ts";
+import { createPiRuntime } from "./runtime.ts";
 
-/** The least container a `pi` deployment declares, plus what one really mounts. */
-const minimal: AgentContainer = {
-  image: "concorde/pi:latest",
-  mounts: {
-    entries: [
-      { agentPath: "/workspace", path: "workspace" },
-      { agentPath: "/home/agent/.pi/agent", path: "agent" },
-    ],
-    runtimeDir: "/srv/concorde",
-  },
-};
+/** Where Sessions live as the Agent Instance sees them, which is the only path anything names. */
+const sessionsDir = "/sessions";
 
 const prompt: RunPrompt = { session: "user_42", text: "what happened?" };
 
-/** The command line one Prompt composes, without starting anything. */
-function commandFor(
-  container: Partial<AgentContainer> = {},
+/** Every fake started by a case, closed when the file is done. */
+const running: FakeInstance[] = [];
+
+after(async () => {
+  await Promise.all(running.map((instance) => instance.close()));
+});
+
+/** A fake on loopback, and the Runtime pointed at it. */
+async function instanceOf(reply: Reply): Promise<FakeInstance> {
+  const instance = await startFakeInstance(reply);
+  running.push(instance);
+  return instance;
+}
+
+/** What the Runtime makes of one Run against `reply`, and what that fake saw. */
+async function runAgainst(
+  reply: Reply,
   given: RunPrompt = prompt,
-): ComposedCommand {
-  return createPiRuntime({ ...minimal, ...container }).commandFor(given);
+): Promise<{ outcome: RunOutcome; instance: FakeInstance }> {
+  const instance = await instanceOf(reply);
+  const runtime = createPiRuntime({
+    host: instance.host,
+    port: instance.port,
+    sessionsDir,
+    logger: silent,
+  });
+  return { outcome: await runtime.run(given), instance };
 }
 
-/** The argument after `flag`, asserting the flag appears exactly once. */
-function argumentAfter(composed: ComposedCommand, flag: string): string {
-  const occurrences = composed.args.filter((arg) => arg === flag);
-  assert.equal(occurrences.length, 1, `${flag} should appear once in ${composed.args.join(" ")}`);
-  const value = composed.args[composed.args.indexOf(flag) + 1];
-  assert.ok(value !== undefined, `${flag} should be followed by a value`);
-  return value;
+/** The failure of a Run that must have failed. */
+function failure(outcome: RunOutcome): string {
+  assert.equal(outcome.ok, false, `this Run should have failed; it was ${JSON.stringify(outcome)}`);
+  return outcome.ok ? "" : outcome.error;
 }
 
-/** Every value given to a flag that may repeat, in order. */
-function valuesOf(composed: ComposedCommand, flag: string): string[] {
-  return composed.args.flatMap((arg, at) => (arg === flag ? [composed.args[at + 1] ?? ""] : []));
+/** The commands a fake was sent, by type, which is what "in that order" is asserted on. */
+function commandTypes(instance: FakeInstance): string[] {
+  return instance.received.map((command) => command.type);
 }
 
-/** The arguments after the image name, which are the only ones that reach `pi`. */
-function agentArgsOf(composed: ComposedCommand): string[] {
-  const at = composed.args.indexOf(minimal.image);
-  assert.notEqual(at, -1, "the image should appear in the arguments");
-  return composed.args.slice(at + 1);
-}
+/** Nothing on the console: a Run logs at debug, and these cases run by the dozen. */
+const silent = {
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+};
 
-describe("what the agent is told", () => {
-  it("is three flags and nothing else, after the image and after the entry point", () => {
-    // Written out whole, because the whole of it is now short enough to read: the flags
-    // `pi` needs, and no value the Operator did not state somewhere else.
-    assert.deepEqual(agentArgsOf(commandFor()), [
-      "--mode",
-      "json",
-      "--session-id",
-      "user_42",
-      "--no-approve",
-    ]);
+describe("the shape of one Run", () => {
+  it("switches, verifies, prompts and reads to the settle, in that order", async () => {
+    const { outcome, instance } = await runAgainst(scriptedInstance());
+
+    assert.deepEqual(outcome, { ok: true });
+    // Three commands and no fourth. Nothing asks the Agent Instance what model it holds, what
+    // extensions it has or where its agent directory is: everything about it is the Operator's.
+    assert.deepEqual(commandTypes(instance), ["switch_session", "get_state", "prompt"]);
   });
 
-  it("asks for the machine-readable event stream", () => {
-    assert.equal(argumentAfter(commandFor(), "--mode"), "json");
+  it("addresses the Session as one file under the directory the Operator named", async () => {
+    const { instance } = await runAgainst(scriptedInstance());
+
+    assert.equal(instance.received[0]?.sessionPath, "/sessions/user_42.jsonl");
   });
 
-  it("names no model and no provider, because the mounted settings.json carries both", () => {
-    // Verified against pi@0.83.0: `settings.json` holds `defaultModel` and
-    // `defaultProvider`, and `pi` falls back to them when no flag is given. The cost is
-    // that nothing refuses a deployment with no usable model any more — it is a Gateway
-    // that starts, serves, and fails its first Run permanently.
-    for (const flag of ["--model", "--provider"]) {
-      assert.ok(!commandFor().args.includes(flag), `${flag} should not be passed`);
+  it("writes the Prompt as the message, byte for byte, whatever it starts with", async () => {
+    // There is no argv any more, so the two treatments that made stdin the only safe channel are
+    // gone with it: `pi` reads a leading `@word` on a command line as a file to include and refuses
+    // an argument starting with `-`. A JSON string is a JSON string.
+    for (const text of ["@file.md and more", "--help", "-p", "  leading space", "it's <b>&</b>"]) {
+      const { instance } = await runAgainst(scriptedInstance(), { session: "user_42", text });
+      assert.equal(instance.received[2]?.message, text);
     }
   });
 
-  it("names no directory, and sets no variable saying where one is", () => {
-    // All three container paths are gone. The image declares the first two — `WORKDIR`
-    // and `ENV PI_CODING_AGENT_DIR` — and `pi` resolves the third under the second. A
-    // path the framework does not carry is a path it cannot get wrong.
-    const composed = commandFor();
+  it("correlates every response by id rather than by arrival", async () => {
+    const { instance } = await runAgainst(scriptedInstance());
 
-    for (const flag of ["--workdir", "-w", "--session-dir"]) {
-      assert.ok(!composed.args.includes(flag), `${flag} should not be passed`);
-    }
+    // Distinct, and per connection: a connection is per Run, so nothing is correlated across Runs.
     assert.deepEqual(
-      valuesOf(composed, "--env").filter((value) => value.startsWith("PI_CODING_AGENT_DIR=")),
-      [],
-      "the agent's directory is the image's to declare",
+      instance.received.map((command) => command.id),
+      ["1", "2", "3"],
     );
   });
 
-  it("resolves the Session with the flag that creates it if missing", () => {
-    const composed = commandFor();
+  it("fails the Run when an answer carries another request's id, rather than matching it up", async () => {
+    // The whole correlation claim, made testable: commands are never pipelined, so a response
+    // arriving under some other id means the assumption underneath the channel is false. Reading it
+    // as this command's answer is how a Run comes to be switched into a Session nobody asked for.
+    const { outcome, instance } = await runAgainst((command) => [
+      { type: "response", id: "99", command: command.type, success: true, data: {} },
+    ]);
 
-    assert.equal(argumentAfter(composed, "--session-id"), "user_42");
-    // `--session` resolves only an existing Session and exits 1 otherwise, which would
-    // fail every first Run of a named Session.
-    for (const flag of ["--session", "--no-session", "--continue", "--resume"]) {
-      assert.ok(!composed.args.includes(flag), `${flag} should not be passed`);
+    assert.match(failure(outcome), /"99".*"1"|"1".*"99"/s);
+    assert.deepEqual(commandTypes(instance), ["switch_session"]);
+  });
+
+  it("closes the connection, whether the Run succeeded or failed", async () => {
+    // With `socat ...,fork` every connection is a `pi` process, so one left open is one left
+    // running. The Operator's listener started it and nothing else will reap it.
+    for (const reply of [scriptedInstance(), refusing("prompt", "already streaming")]) {
+      const { instance } = await runAgainst(reply);
+      assert.equal(instance.connections(), 1);
+      await waitFor(() => instance.ended() === 1, "the connection should have been closed");
     }
   });
 
-  it("is whatever the Handler wrote, including a name pi will not accept", () => {
-    // Nothing here holds a copy of `pi`'s session-id grammar. `pi` checks `--session-id`
-    // itself and exits 1 with its own message, which reaches the Operator through the
-    // failed Run's `error` beside the name in its `session` — a diagnostic that cannot go
-    // stale, unlike a transcribed pattern. Nothing is joined onto a
-    // path either, here or anywhere, so a name that climbs is a name and not a traversal.
-    for (const session of ["../escape", "user:42", "a/b", ""]) {
-      assert.equal(argumentAfter(commandFor({}, { session, text: "hi" }), "--session-id"), session);
-    }
-  });
+  it("opens one connection per Run and holds none between them", async () => {
+    const instance = await instanceOf(scriptedInstance());
+    const runtime = createPiRuntime({
+      host: instance.host,
+      port: instance.port,
+      sessionsDir,
+      logger: silent,
+    });
 
-  it("names no file of the framework's, because the framework writes none", () => {
-    // What used to be here was `--append-system-prompt <the agent directory>/…`, pointing
-    // at a file rewritten before every Run. The Operator places an `AGENTS.md` in the
-    // Workspace instead and `pi` finds it in its own working directory, so there is no
-    // flag to pass and nothing to know.
-    const composed = commandFor({ extraArgs: ["--memory", "2g"] });
+    await runtime.run(prompt);
+    await runtime.run({ session: "user_7", text: "and then?" });
 
-    for (const flag of ["--append-system-prompt", "--system-prompt", "--prompt-file"]) {
-      assert.ok(!composed.args.includes(flag), `${flag} should not be passed`);
-    }
-    // Nor by any other spelling: every argument is a flag, an image, a Session name, a
-    // mount the Operator declared, or something else they wrote themselves.
-    assert.ok(
-      !composed.args.some((arg) => arg.endsWith(".md")),
-      `no argument should name a Markdown file: ${composed.args.join(" ")}`,
-    );
-  });
-
-  it("ignores project-local configuration in the Workspace", () => {
-    // The Workspace is writable by the agent and `trust.json` persists between Runs, so
-    // without this one Run could arrange for the next to load its settings out of the
-    // Workspace — a reconfiguration that survives the Run that managed it.
-    assert.ok(agentArgsOf(commandFor()).includes("--no-approve"));
-    assert.ok(!commandFor().args.includes("--approve"));
+    assert.equal(instance.connections(), 2);
+    assert.deepEqual(commandTypes(instance), [
+      "switch_session",
+      "get_state",
+      "prompt",
+      "switch_session",
+      "get_state",
+      "prompt",
+    ]);
   });
 });
 
-describe("the defaults pi contributes to the container", () => {
-  it("runs pi, so an image whose entry point is something else still works", () => {
-    assert.equal(argumentAfter(commandFor(), "--entrypoint"), "pi");
+describe("the switch, which is the step everything else assumes", () => {
+  it("fails the Run and never prompts when the Agent Instance refuses it", async () => {
+    const { outcome, instance } = await runAgainst(refusing("switch_session", "no such directory"));
+
+    assert.match(failure(outcome), /\/sessions\/user_42\.jsonl.*no such directory/s);
+    assert.deepEqual(commandTypes(instance), ["switch_session"]);
   });
 
-  it("keeps pi from reaching pi.dev, because a Run should not depend on it", () => {
-    assert.deepEqual(valuesOf(commandFor(), "--env"), ["PI_OFFLINE=1"]);
+  it("fails the Run and never prompts when an extension cancelled it", async () => {
+    // `success: true` with `cancelled: true`, which is the shape that would otherwise pass every
+    // check: the command worked, and the switch did not happen. The agent is in some other Session,
+    // and a Prompt sent now goes to it.
+    const { outcome, instance } = await runAgainst(
+      answering("switch_session", { cancelled: true }),
+    );
+
+    assert.match(failure(outcome), /cancelled/);
+    assert.match(failure(outcome), /Session user_42/);
+    assert.deepEqual(commandTypes(instance), ["switch_session"]);
   });
 
-  it("loses both to an Operator who states them, because they are defaults and not rules", () => {
-    // The whole extension mechanism: two values spread beneath the Operator's own. A
-    // Gateway has no use for `pi`'s startup version check, and an Operator who asks for
-    // it anyway gets it.
-    const own = commandFor({
-      entrypoint: ["/opt/pi/bin/pi"],
-      env: { PI_OFFLINE: "0", ANTHROPIC_API_KEY: "sk-test" },
-    });
+  it("is verified with get_state, and a disagreement fails the Run naming both paths", async () => {
+    // Why the verification exists at all: `switch_session` is create-or-resume, which is
+    // undocumented behaviour of `pi`'s that the whole design rests on. Reading `sessionFile` back is
+    // what tells "it created the Session I named" apart from "it did something and reported
+    // success".
+    const { outcome, instance } = await runAgainst(
+      answering("get_state", { sessionFile: "/sessions/somebody-else.jsonl" }),
+    );
 
-    assert.equal(argumentAfter(own, "--entrypoint"), "/opt/pi/bin/pi");
-    assert.deepEqual(valuesOf(own, "--env"), ["PI_OFFLINE=0", "ANTHROPIC_API_KEY=sk-test"]);
+    const error = failure(outcome);
+    assert.match(error, /\/sessions\/user_42\.jsonl/);
+    assert.match(error, /\/sessions\/somebody-else\.jsonl/);
+    assert.deepEqual(commandTypes(instance), ["switch_session", "get_state"]);
   });
 
-  it("leaves everything else about the container to the Operator", () => {
-    // `pi` contributes no field of its own at all, so the least a deployment can declare
-    // is an image — and what comes out is a container line with `pi` on the end of it.
-    const composed = createPiRuntime({ image: "concorde/pi:latest" }).commandFor(prompt);
+  it("fails the Run when get_state names no file at all", async () => {
+    const { outcome } = await runAgainst(answering("get_state", { isStreaming: false }));
 
-    assert.equal(composed.command, "docker");
-    assert.ok(!composed.args.includes("--mount"));
-    assert.ok(!composed.args.includes("--network"));
-    assert.deepEqual(composed.args.slice(-6), [
-      "concorde/pi:latest",
-      "--mode",
-      "json",
-      "--session-id",
-      "user_42",
-      "--no-approve",
-    ]);
+    assert.match(failure(outcome), /\/sessions\/user_42\.jsonl/);
   });
 });
 
 describe("the Prompt", () => {
-  it("is written to stdin rather than passed as an argument", () => {
-    const composed = commandFor({}, { session: "user_42", text: "read @notes.md" });
+  it("fails the Run when the Agent Instance rejects it before accepting it", async () => {
+    // The only failure `prompt` reports as a response: everything that goes wrong after acceptance
+    // arrives in the event stream instead.
+    const { outcome, instance } = await runAgainst(refusing("prompt", "already streaming"));
 
-    assert.equal(composed.stdin, "read @notes.md");
-    // `pi` reads a leading `@word` as a file to include and refuses an argument starting
-    // with `-`. Neither applies to piped stdin, and the whole Prompt is rendered text an
-    // Operator's template produced.
-    assert.ok(!composed.args.includes("read @notes.md"));
+    assert.match(failure(outcome), /already streaming/);
+    assert.deepEqual(commandTypes(instance), ["switch_session", "get_state", "prompt"]);
   });
 
-  it("reaches stdin byte for byte, whatever it starts with", () => {
-    for (const text of ["@file.md and more", "--help", "-p", "  leading space", "it's <b>&</b>"]) {
-      const composed = commandFor({}, { session: "user_42", text });
-      assert.equal(composed.stdin, text);
-      assert.ok(!composed.args.includes(text), `${JSON.stringify(text)} must not reach argv`);
+  it("is refused when it is empty, without opening a connection at all", async () => {
+    for (const text of ["", "   ", "\n\n"]) {
+      const { outcome, instance } = await runAgainst(scriptedInstance(), {
+        session: "user_42",
+        text,
+      });
+
+      assert.match(failure(outcome), /no text/);
+      assert.equal(instance.connections(), 0);
+    }
+  });
+});
+
+describe("a Session name outside pi's grammar", () => {
+  /** `pi`'s own `assertValidSessionId`, which this Runtime now carries a copy of. */
+  const refused = ["../escape", "user:42", "a/b", "", ".", "..", "-leading", "trailing-", "a b"];
+  const accepted = ["user_42", "a", "1", "run_01K9-x.y", "A.B_C-1"];
+
+  it("fails that Run alone, naming the Session, and reaches the Agent Instance not at all", async () => {
+    for (const session of refused) {
+      const { outcome, instance } = await runAgainst(scriptedInstance(), {
+        session,
+        text: "hello",
+      });
+
+      assert.match(failure(outcome), new RegExp(`^Session ${escaped(session)} is not a name pi`));
+      // Nothing was sent, which is the point: `pi` will open any path it is handed over RPC, so a
+      // name that climbs would be a traversal rather than a refusal.
+      assert.equal(instance.connections(), 0);
     }
   });
 
-  it("is refused when it is empty, rather than reaching the agent as nothing", () => {
-    for (const text of ["", "   ", "\n\n"]) {
+  it("lets through every name pi would take, so no deployment's Sessions are renamed", async () => {
+    for (const session of accepted) {
+      const { outcome, instance } = await runAgainst(scriptedInstance(), {
+        session,
+        text: "hello",
+      });
+
+      assert.deepEqual(outcome, { ok: true }, session);
+      assert.equal(instance.received[0]?.sessionPath, `/sessions/${session}.jsonl`);
+    }
+  });
+});
+
+describe("the Agent Instance the Operator has to run", () => {
+  it("is not reached at construction, so an unreachable one is not a boot failure", async () => {
+    // The **Relay** precedent, and there is no startup probe: a remote thing the Operator runs is an
+    // outage, and a Gateway that would not start takes every other Party's access down with the
+    // agent's.
+    assert.doesNotThrow(() =>
+      createPiRuntime({ host: "127.0.0.1", port: 1, sessionsDir, logger: silent }),
+    );
+  });
+
+  it("is a failed Run carrying the address when nothing is listening", async () => {
+    const port = await unusedPort();
+    const runtime = createPiRuntime({ host: "127.0.0.1", port, sessionsDir, logger: silent });
+
+    const error = failure(await runtime.run(prompt));
+    assert.match(error, /^Session user_42 could not reach the Agent Instance at 127\.0\.0\.1:/);
+    assert.match(error, new RegExp(`127\\.0\\.0\\.1:${port}`));
+  });
+
+  it("is a failed Run saying the stream ended when it hangs up mid-Run", async () => {
+    const { outcome } = await runAgainst(
+      scriptedInstance([{ type: "agent_start" }, dropsTheConnection]),
+    );
+
+    assert.match(failure(outcome), /without an agent_settled record/);
+  });
+
+  it("says so as well when the connection fails rather than ending", async () => {
+    // An RST rather than a FIN: the process died. The reader sees the same absence either way, so
+    // without the socket's own word the two produce the same sentence.
+    const { outcome } = await runAgainst(
+      scriptedInstance([{ type: "agent_start" }, resetsTheConnection]),
+    );
+
+    const error = failure(outcome);
+    assert.match(error, /without an agent_settled record/);
+    assert.match(error, /connection failed/);
+  });
+
+  it("is a failed Run when it goes away before answering a command", async () => {
+    const { outcome } = await runAgainst(() => [dropsTheConnection]);
+
+    assert.match(failure(outcome), /without answering the switch_session command/);
+  });
+});
+
+describe("the sessionsDir an Operator declares", () => {
+  it("is required, because every Run names a file under it", () => {
+    for (const missing of [undefined, "", "   "]) {
       assert.throws(
-        () => commandFor({}, { session: "user_42", text }),
-        /no text/,
-        `${JSON.stringify(text)} should be refused`,
+        () =>
+          createPiRuntime({
+            host: "agent",
+            port: 4000,
+            sessionsDir: missing as unknown as string,
+          }),
+        /sessionsDir/,
+        JSON.stringify(missing),
       );
     }
   });
-});
 
-describe("the outcome reader one Run gets", () => {
-  /** A stream that says nothing at all, which is the shortest failure there is. */
-  const silence = (): AsyncIterable<Uint8Array> => (async function* () {})();
+  it("must be absolute, refused where the Operator wrote it rather than at the first Run", () => {
+    // The check the container-per-Run design could not make: it named no path at all, so a
+    // deployment with the wrong one was a Gateway that started, served, and failed every Run.
+    for (const relative of ["sessions", "./sessions", "../sessions", "sessions/nested"]) {
+      assert.throws(
+        () => createPiRuntime({ host: "agent", port: 4000, sessionsDir: relative }),
+        /absolute/,
+        relative,
+      );
+    }
+  });
 
-  it("names that Run's Session in a failure, which is why it is made per Run", async () => {
-    // The Run's `error` column is the only thing an Operator has to go on, and a message
-    // that named nothing left them with no transcript to open. A reader supplied once at
-    // construction could not have said this.
-    const outcome = await piRun({ session: "user_99", text: "hi" }).outcome(silence());
+  it("takes any absolute path, including one with a trailing slash", async () => {
+    const instance = await instanceOf(scriptedInstance());
+    const runtime = createPiRuntime({
+      host: instance.host,
+      port: instance.port,
+      sessionsDir: "/srv/agent/sessions/",
+      logger: silent,
+    });
 
-    assert.equal(outcome.ok, false);
-    assert.match(outcome.ok ? "" : outcome.error, /^Session user_99 produced no output/);
+    assert.deepEqual(await runtime.run(prompt), { ok: true });
+    assert.equal(instance.received[0]?.sessionPath, "/srv/agent/sessions/user_42.jsonl");
   });
 });
+
+/** A fake that answers one command with `success: false` and drives the rest normally. */
+function refusing(command: string, why: string): Reply {
+  const healthy = scriptedInstance();
+  return (received) =>
+    received.type === command
+      ? [{ type: "response", id: received.id, command, success: false, error: why }]
+      : healthy(received);
+}
+
+/** A fake that answers one command successfully but with `data` of the test's choosing. */
+function answering(command: string, data: Written): Reply {
+  const healthy = scriptedInstance();
+  return (received: Received) =>
+    received.type === command
+      ? [{ type: "response", id: received.id, command, success: true, data }]
+      : healthy(received);
+}
+
+/** A regular expression's worth of a Session name, several of which are not literal. */
+function escaped(session: string): string {
+  return session.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+}
+
+/** A TCP port nothing is listening on, taken and given back. */
+async function unusedPort(): Promise<number> {
+  const socket = createServer();
+  await new Promise<void>((listening) => socket.listen(0, "127.0.0.1", listening));
+  const address = socket.address();
+  if (address === null || typeof address === "string") throw new Error("no port");
+  await new Promise<void>((closed) => socket.close(() => closed()));
+  return address.port;
+}
+
+/** Waits for something the other end of a socket does, which is never synchronous with our side. */
+async function waitFor(done: () => boolean, why: string): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (done()) return;
+    await new Promise((later) => setTimeout(later, 5));
+  }
+  assert.fail(why);
+}

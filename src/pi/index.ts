@@ -1,30 +1,31 @@
 /**
- * The `pi` Agent Implementation drives the `pi` coding agent as the Signal Worker's Runtime. An
- * Agent Implementation is the interchangeable agent program a Run happens in, and `pi` is the one
- * this package adapts.
+ * The `pi` Agent Implementation, driven as an **Agent Instance** the Operator runs.
  *
- * {@link createPiRuntime} is the whole of it for an Operator: hand it an Agent Container, and pass
- * what comes back as the Signal Worker's `runtime`. {@link piRun} and {@link interpretPiOutput} are
- * pure functions, exported to be called from a test and to be read. `piRun` holds everything
- * specific to `pi` and nothing else does, so it is the entire size of the job for an author writing
- * a second Agent Implementation.
+ * An Agent Implementation is the interchangeable agent program a Run happens in, and `pi` is the
+ * one this package adapts. The Gateway does not start it: an Operator runs `pi --mode rpc` behind a
+ * listener, in a container of their own, and {@link createPiRuntime} builds the Runtime the
+ * Signal Worker performs each Run through — one connection per Run, opened when a Prompt exists and
+ * closed when the agent has settled.
  *
- * Nothing about a container is here. The Agent Container, the Mount Table, the argument assembly,
- * the confinement flags, the process handling and the diagnosis appended to a failure are all on
- * `@shutter-network/concorde/agent-container`, generic over which agent runs, so a second Agent
- * Implementation takes them unchanged. Read that subpath for what an Agent Container declares:
- * `createPiRuntime` takes one written exactly as it is written there.
+ * {@link PiInstance} is the whole of the configuration and it is three values: where the instance
+ * is, and where it keeps Sessions. There is no model, no provider, no image, no mount and no
+ * credential here, because none of that is the Gateway's any more. What `pi` reads on disk and what
+ * it is started with belong to the Operator's own compose file, and this subpath cannot refuse a
+ * deployment that got them wrong: that deployment is a Gateway which starts, serves, and then fails
+ * its Runs with whatever the agent says.
  *
- * Nothing `pi`-shaped is here either, and there is no configuration type at all. The model and the
- * provider are `defaultModel` and `defaultProvider` in a `settings.json` the Operator mounts. The
- * working directory and the agent's own directory are `WORKDIR` and `PI_CODING_AGENT_DIR` in an
- * image the Operator builds, no `pi` image being published. The Session directory is `pi`'s own to
- * resolve. Nothing here writes a file or names a path, and so nothing here can refuse a deployment
- * that is missing one: that deployment is a Gateway which starts, serves, and then fails its first
- * Run permanently.
+ * Two things this subpath does refuse, and both are the Operator's mistake rather than the agent's.
+ * A `sessionsDir` that is relative or missing is refused at construction, where the Operator wrote
+ * it. A Session name outside `pi`'s own grammar fails that one Run, naming the Session: a Session is
+ * addressed by path over RPC and `pi` will open any path it is handed, so the grammar is carried
+ * here and a Handler's string can neither escape the directory nor reach the agent unchecked.
+ *
+ * An unreachable Agent Instance is a failed Run and never a boot failure, on the **Relay**
+ * precedent. There is no startup probe, and adding one would turn an outage in a part the Operator
+ * runs into a Gateway that will not start for any Party.
  *
  * @example
- * A Gateway whose Runtime is `pi`, in a container the Operator declared.
+ * A Gateway whose Runtime is an Agent Instance on the agent network.
  * ```ts
  * import { readFileSync } from "node:fs";
  * import { createGateway } from "@shutter-network/concorde/gateway";
@@ -32,21 +33,14 @@
  * import { templateHandler } from "@shutter-network/concorde/signals";
  *
  * const runtime = createPiRuntime({
- *   image: "my-agent:1",
- *   networks: ["concorde_default"],
- *   // Only what is named here reaches the agent. None of the Gateway's own environment does.
- *   env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "" },
- *   mounts: {
- *     runtimeDir: "/srv/concorde",
- *     entries: [
- *       { agentPath: "/workspace", path: "workspace" },
- *       { agentPath: "/workspace/AGENTS.md", path: "AGENTS.md", readOnly: true },
- *     ],
- *   },
+ *   // The service the Operator's compose file runs `pi --mode rpc` in, and the port its
+ *   // listener accepts on. Nothing of the agent's environment is named here.
+ *   host: "agent",
+ *   port: 4000,
+ *   // As the Agent Instance sees it, not as this process does: the Gateway never opens it.
+ *   // `<sessionsDir>/<session>.jsonl` is the file one Session lives in.
+ *   sessionsDir: "/sessions",
  * });
- *
- * // The command line, without starting a container: the one way to see the defaults applied.
- * console.log(runtime.commandFor({ session: "notes", text: "say hello" }).redactedArgs);
  *
  * const gateway = createGateway({
  *   databaseUrl: process.env.DATABASE_URL ?? "",
@@ -69,5 +63,5 @@
  * @module
  */
 
-export { interpretPiOutput } from "./output.ts";
-export { createPiRuntime, piRun } from "./runtime.ts";
+export type { PiInstance } from "./runtime.ts";
+export { createPiRuntime } from "./runtime.ts";
