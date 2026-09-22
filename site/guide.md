@@ -5,7 +5,8 @@ sends a message, and the agent answers.
 
 You build four components of your own: Users, Password Auth, the Messenger, and the HTTP Channel.
 `createGateway` builds the infrastructure under them. The whole deployment runs as a Docker
-Compose stack with PostgreSQL.
+Compose stack: PostgreSQL, the Gateway, and the agent, which you run yourself and the Gateway
+connects to.
 
 Where a step builds something the [Architecture](./architecture) page explains, it links to that
 section. Read this guide first and that page second.
@@ -14,8 +15,9 @@ section. Read this guide first and that page second.
 
 You need three things:
 
-- **Docker**, with Compose. The Gateway starts the agent in a container, so it holds the host's
-  Docker socket.
+- **Docker**, with Compose. Every part of this deployment is a service in one stack, the agent
+  included. Nothing here reaches the Docker daemon: the Gateway starts no container and is given
+  no socket.
 - **Node.js 24 or later**, for the type check. The stack itself runs in containers.
 - **An API key for a model provider.** This guide uses Anthropic.
 
@@ -87,10 +89,14 @@ Then install:
 npm install
 ```
 
-## Step 2: Build the Runtime
+## Step 2: Point the Runtime at the agent
 
-The **Runtime** is what a Prompt is handed to. It starts the agent, waits for it, and answers
-with an outcome. This deployment runs `pi` in a container.
+The **Runtime** is what a Prompt is handed to. For each one it opens a connection to the agent,
+prompts it, waits until the agent has settled, and answers with an outcome.
+
+**It does not start the agent.** You do. The agent is a second service in the same Compose stack,
+which step 9 writes, and it is yours from the image down: yours to build, yours to give a model
+key to, yours to pass flags to. The Gateway is told where it is and nothing else about it.
 
 Start `main.ts`:
 
@@ -98,21 +104,9 @@ Start `main.ts`:
 import { createPiRuntime } from "@shutter-network/concorde/pi";
 
 const runtime = createPiRuntime({
-  image: process.env.AGENT_IMAGE!,
-  env: {
-    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY!,
-    AGENT_SERVER_URL: process.env.AGENT_SERVER_URL!,
-  },
-  networks: [process.env.AGENT_NETWORK!],
-  mounts: {
-    runtimeDir: process.env.RUNTIME_DIR_HOST!,
-    entries: [
-      { agentPath: "/workspace", path: "state/workspace" },
-      { agentPath: "/home/agent/.pi/agent", path: "state/agent" },
-      { agentPath: "/workspace/AGENTS.md", path: "AGENTS.md", readOnly: true },
-      { agentPath: "/home/agent/.pi/agent/settings.json", path: "settings.json", readOnly: true },
-    ],
-  },
+  host: process.env.AGENT_INSTANCE_HOST!,
+  port: Number(process.env.AGENT_INSTANCE_PORT),
+  sessionsDir: process.env.AGENT_SESSIONS_DIR!,
 });
 ```
 
@@ -121,19 +115,30 @@ Three facts about this block matter.
 **The package has no root export.** Every import names a subpath, such as
 `@shutter-network/concorde/pi`. An import from `"@shutter-network/concorde"` resolves to nothing.
 
-**Only the environment you name here reaches the agent.** None of the Gateway's own environment
-is passed through.
+**Three values are the whole of the agent's configuration here, and there is no fourth.** No
+image, no model, no provider, no credential, no flag. Every one of those is written on the agent
+service in step 9, and none of them is ever given to the Gateway, the model key included.
 
-**`runtimeDir` is a path on the host, not in the Gateway container.** The Docker daemon resolves
-a bind source on the host. Each entry's `path` is written relative to `runtimeDir`.
+**`sessionsDir` is a path the agent sees**, and neither a path on your host nor one inside the
+Gateway container. The Gateway never opens it and does not need to be able to reach it. A Session
+named `user_abc` is the file `<sessionsDir>/user_abc.jsonl` in the agent's own filesystem, which
+is where you read a transcript. You write this string twice, here and as a mount target in step 9,
+and nothing can check that the two agree: one end is resolved by `pi` and the other by the Docker
+daemon, and neither can see the other's filesystem.
 
-::: warning A leading slash on an entry is refused
-Write `path: "state/workspace"`, never `path: "/state/workspace"`. The framework joins the entry
-onto `runtimeDir`, so a leading slash resolves against the root a second time. Construction fails
-with a message that names the entry.
+::: warning sessionsDir must be absolute, and is refused when the Gateway is built
+Not at the first message. A relative path would be resolved against a working directory nothing in
+this process can see, so it is refused in the file where you wrote it.
 :::
 
-See [Architecture: the Runtime](./architecture#the-runtime-and-the-agent-implementation).
+::: tip An agent that is not listening is a failed message, never a failed boot
+`createPiRuntime` connects to nothing and probes nothing. If the agent service is down, the
+Gateway still starts and everybody can still log in and read their log; each Run fails with the
+address in its message. A Gateway that refused to start over it would take every person's access
+down along with the agent's.
+:::
+
+See [Architecture: the Agent Instance](./architecture#the-agent-instance).
 
 ## Step 3: Call createGateway
 
@@ -149,7 +154,10 @@ const gateway = createGateway({
   databaseUrl: process.env.DATABASE_URL!,
   runtime,
   publicListen: { host: process.env.PUBLIC_HOST!, port: Number(process.env.PUBLIC_PORT) },
-  agentListen: { host: process.env.AGENT_HOST!, port: Number(process.env.AGENT_PORT) },
+  agentListen: {
+    host: process.env.AGENT_SERVER_HOST!,
+    port: Number(process.env.AGENT_SERVER_PORT),
+  },
   extend: ({ db, agentServer, publicServer, worker }) => {
     // step 4 fills this in
     return {};
@@ -171,6 +179,15 @@ There are two servers, and the difference between them is the whole trust bounda
 Reaching the Agent server port is full read and write access to every route on it. Bind it where
 only the agent can reach it. In this stack it is published to nobody, and the agent reaches it by
 service name on a private Docker network.
+
+The agent's own RPC port is the same arrangement pointing the other way, and it takes no
+credential either. The private network is what protects both.
+:::
+
+::: warning Two addresses cross on that network, so both names are long
+`AGENT_SERVER_HOST` and `AGENT_SERVER_PORT` here are where **this** Gateway listens for the agent.
+`AGENT_INSTANCE_HOST` and `AGENT_INSTANCE_PORT` in step 2 are where the **agent** listens for this
+Gateway. A short `AGENT_HOST` could be read as either one.
 :::
 
 `createGateway` connects to nothing and listens on nothing. That happens in step 6, at
@@ -386,12 +403,13 @@ See [Architecture: data ownership](./architecture#data-ownership).
 
 ## Step 8: Write the container files
 
-The Gateway image runs your entry point and holds the Docker CLI. Write `Dockerfile`:
+Two images, one for each of the two services that matter, and neither holds anything of the
+other's.
+
+The Gateway image runs your entry point. Write `Dockerfile`:
 
 ```dockerfile
 FROM node:24-alpine
-
-RUN apk add --no-cache docker-cli
 
 WORKDIR /app
 
@@ -403,24 +421,30 @@ COPY main.ts drizzle.config.ts schema.ts ./
 CMD ["node", "main.ts"]
 ```
 
-The agent image is separate. Write `Dockerfile.agent`:
+No Docker CLI in it, and step 9 gives it no socket to talk to one with. The Gateway starts no
+container.
+
+The agent image is the other one. Write `Dockerfile.agent`:
 
 ```dockerfile
 FROM node:24-alpine
 
-RUN apk add --no-cache curl
+RUN apk add --no-cache curl socat
 
-RUN npm install -g @earendil-works/pi-coding-agent@0.83.0
+RUN npm install -g @earendil-works/pi-coding-agent@0.85.1
 
 WORKDIR /workspace
 ENV PI_CODING_AGENT_DIR=/home/agent/.pi/agent
-
-ENTRYPOINT ["pi"]
 ```
 
-`curl` is there because the agent reads the Agent server's own API document with it.
+`socat` is the listener the Gateway connects to, and step 9 is where it is started. `curl` is
+there because `pi` ships no HTTP client, and reaching the Agent server is the agent's own shell
+tool plus `curl`.
 
-Write `settings.json`, which step 2 mounts read-only into the agent:
+**There is no `ENTRYPOINT`.** The process this container starts is the listener, and the agent is
+what the listener starts, once per connection.
+
+Write `settings.json`, which step 9 mounts read-only into the agent:
 
 ```json
 {
@@ -439,8 +463,8 @@ state
 
 ## Step 9: Write the Compose stack
 
-The stack has five services: PostgreSQL, a one-shot migration, the agent image build, the
-Gateway, and a terminal client held behind a profile. Write `compose.yml`:
+Five services: the Gateway, the **Agent Instance**, PostgreSQL, a one-shot migration, and a
+terminal client held behind a profile. Write `compose.yml`:
 
 ```yaml
 name: my-shared-agent
@@ -453,21 +477,15 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?put your model key in .env}
       DATABASE_URL: *database-url
       USER_PASSWORD: ${USER_PASSWORD:?copy .env.example to .env}
       PUBLIC_HOST: 0.0.0.0
       PUBLIC_PORT: "8081"
-      AGENT_HOST: 0.0.0.0
-      AGENT_PORT: "7411"
-      AGENT_SERVER_URL: http://gateway:7411
-      AGENT_IMAGE: my-shared-agent-agent:0.83.0
-      AGENT_NETWORK: my_shared_agent_agent
-      RUNTIME_DIR_HOST: ${PWD}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./state/workspace:/app/state/workspace
-      - ./state/agent:/app/state/agent
+      AGENT_SERVER_HOST: 0.0.0.0
+      AGENT_SERVER_PORT: "7411"
+      AGENT_INSTANCE_HOST: agent
+      AGENT_INSTANCE_PORT: "4000"
+      AGENT_SESSIONS_DIR: /sessions
     ports:
       - "127.0.0.1:8081:8081"
     networks: [db, agent, public]
@@ -476,9 +494,30 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-      agent-image:
-        condition: service_completed_successfully
+      agent:
+        condition: service_started
     stop_grace_period: 300s
+
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    command:
+      - socat
+      - TCP-LISTEN:4000,reuseaddr,fork
+      - EXEC:pi --mode rpc --no-approve
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?put your model key in .env}
+      AGENT_SERVER_URL: http://gateway:7411
+      PI_OFFLINE: "1"
+      PI_CODING_AGENT_DIR: /home/agent/.pi/agent
+    volumes:
+      - ./state/workspace:/workspace
+      - ./state/agent:/home/agent/.pi/agent
+      - ./state/sessions:/sessions
+      - ./AGENTS.md:/workspace/AGENTS.md:ro
+      - ./settings.json:/home/agent/.pi/agent/settings.json:ro
+    networks: [agent]
 
   migrate:
     build:
@@ -508,15 +547,6 @@ services:
       timeout: 3s
       retries: 20
 
-  agent-image:
-    build:
-      context: .
-      dockerfile: Dockerfile.agent
-    image: my-shared-agent-agent:0.83.0
-    command: ["--version"]
-    restart: "no"
-    networks: [agent]
-
   tui:
     build:
       context: .
@@ -540,16 +570,45 @@ volumes:
   db:
 ```
 
-Four details in this file are load-bearing.
+**What `agent` starts is a listener, not the agent.** `socat` accepts on 4000 and starts one `pi`
+per connection, and the Gateway opens one connection per Run and closes it when the agent has
+settled. So a Run is still a process of its own, started for it and gone with it. What carries
+over from one Run to the next is this container and the directories mounted into it, which is your
+arrangement and nobody else's.
 
-**`RUNTIME_DIR_HOST: ${PWD}`.** The Gateway cannot in general reach that directory itself. It
-hands the path to the Docker daemon, which resolves it on the host. If you bring the stack up
-from another directory, the agent's mounts resolve against a tree nobody is looking at.
+::: danger No commas in the `EXEC:` argument
+A comma is `socat`'s own option separator, so a comma anywhere in the `EXEC:` argument is read as
+an option rather than as part of the command, and what runs is quietly not what you wrote. For
+the same reason, never add `socat`'s `stderr` option: `EXEC` wires stdin and stdout to the
+socket, `pi` writes its diagnostics to stderr, and merging the two puts non-JSON into the record
+stream and fails every Run.
+:::
+
+`--no-approve` is yours to pass, and this line is the only place it appears. It is the flag that
+stops a Run arranging for the next one to load configuration out of the writable Workspace, and no
+framework can fasten a flag to a command line it does not write. `PI_OFFLINE` is the same kind of
+thing: an environment variable on this service, because there is nowhere else left for it to be.
+
+Six further details in this file are load-bearing.
+
+**The model key is on `agent` and on no other service.** So is the image, so are the flags, and so
+are the files `pi` reads. The Gateway is given a host, a port and a directory name, and nothing
+else about the agent at all.
+
+**`AGENT_SESSIONS_DIR` and the `/sessions` mount target are the same string, written twice.**
+Nothing can check that they agree, because one end is resolved by `pi` and the other by the Docker
+daemon. A Session named `user_abc` is then `/sessions/user_abc.jsonl` in the agent's container and
+`state/sessions/user_abc.jsonl` here, which is where you read a transcript.
+
+**There is no healthcheck on `agent`, deliberately.** With `fork`, every connection starts a `pi`,
+so a probe on an interval would boot and discard one for ever. A plain `depends_on` is enough,
+because an instance that is not listening is an ordinary failed Run and not a boot failure.
 
 **The Gateway waits on the migration** with `condition: service_completed_successfully`. The
 schema exists before the first query.
 
-**The Agent server port is never published.** Only `8081` is, and only to `127.0.0.1`.
+**The Agent server port is never published.** Neither is the agent's. Only `8081` is, and only to
+`127.0.0.1`.
 
 **`stop_grace_period: 300s`** gives a Run in flight time to finish before Docker kills the
 Gateway.
@@ -557,12 +616,20 @@ Gateway.
 The `tui` service is a line-oriented terminal client. It ships with the framework as a `bin`, so
 it needs no separate image.
 
+::: warning Write `AGENTS.md` before you bring the stack up
+Step 10 writes it, and `compose.yml` mounts it. Docker creates a missing bind source as an empty
+**directory**, so a first `docker compose up` with no `AGENTS.md` beside `compose.yml` leaves you
+with a directory of that name and an agent that was told nothing.
+:::
+
 Write `.env.example` last:
 
 ```
 ANTHROPIC_API_KEY=
 USER_PASSWORD=correct horse battery staple
 ```
+
+The model key in it is the agent's, and reaches only the `agent` service.
 
 ::: warning A password in the environment is a demo affordance
 This deployment reads a password from the environment so that `docker compose up` is the whole
