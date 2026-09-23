@@ -93,6 +93,16 @@ export async function openRpcChannel(host: string, port: number): Promise<RpcCha
   // The commands are tiny and strictly sequential, so Nagle's algorithm has nothing to coalesce and
   // everything to delay: a 40-millisecond wait on each of three commands, three times per Run.
   socket.setNoDelay(true);
+  // A Run has no timeout anywhere by design, and the Signal Worker is serial, so an Agent Instance
+  // that dies without closing its end wedges every Party's queue until somebody restarts the
+  // Gateway. Nothing else would notice: a peer that has stopped existing is indistinguishable from
+  // a peer that is thinking, which is the failure a local child process could not have because its
+  // death arrived as an exit. Thirty seconds is the idle time before the *first* probe, and the
+  // interval and count after it belong to the operating system, so this bounds the wait at roughly
+  // ten minutes rather than at thirty seconds. Where a NAT or a firewall sits in the path it is
+  // also what keeps the flow from being collected in the first place, which is the better half of
+  // the bargain and the immediate one.
+  socket.setKeepAlive(true, 30_000);
 
   // Node emits exactly one of these two, and both are awaited because a later stream error cannot
   // answer whether there was anything listening in the first place.
