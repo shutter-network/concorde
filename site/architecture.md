@@ -278,7 +278,8 @@ the person who asked.
 
 `templateHandler` is the common case. It renders a Handlebars template into one Prompt. The
 template is source text, never a path, and it compiles when the Gateway is built. A template that
-does not compile therefore fails construction rather than a Signal.
+does not compile therefore fails construction rather than a Signal. It takes a post phase as an
+option and hands it over as written.
 
 ### At-most-once
 
