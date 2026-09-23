@@ -139,7 +139,7 @@
     "@types/ws": "8.18.1",
     "drizzle-kit": "0.31.10",
     "drizzle-orm": "0.45.2",
-    "fastify": "5.11.0",
+    "fastify": "5.12.5",
     "typescript": "7.0.2",
     "ws": "8.21.2"
   },
@@ -157,6 +157,9 @@
   },
   "peerDependencies": {
     "drizzle-orm": "^0.45.2",
-    "fastify": "^5.11.0"
+    "fastify": "^5.12.5"
+  },
+  "overrides": {
+    "@esbuild-kit/esm-loader": "npm:tsx@^4.21.0"
   }
 }

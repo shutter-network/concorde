@@ -43,7 +43,7 @@ Make a directory and write `package.json` into it:
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",
-    "fastify": "^5.11.0",
+    "fastify": "^5.12.5",
     "@shutter-network/concorde": "^0.1.0"
   },
   "devDependencies": {
