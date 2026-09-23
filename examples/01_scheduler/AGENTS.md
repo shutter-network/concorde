@@ -21,8 +21,8 @@ fired and carries the `data` whoever created it supplied. There is no Messenger 
 Channel in this deployment, so nobody is waiting on a reply and nothing you say leaves the
 Gateway.
 
-**Write what you did into your Workspace instead.** `/workspace` is a directory on the host
-that survives the container. Append a line, do not rewrite a file, and keep it short.
+**Write what you did into your Workspace instead.** `/workspace` is a mounted directory that
+outlives any one Run. Append a line, do not rewrite a file, and keep it short.
 
 ## Schedules of your own
 

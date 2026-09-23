@@ -165,10 +165,24 @@ Four ways that fails quietly, all of them a deployment's to get right:
   generation to the first render**, so `src/signals/template-handler.ts` calls `precompile` above it
   and throws the result away; dropping that puts the case back on a Signal. What it costs is live
   editing: changing a prompt is a rebuild.
-- **Nothing in `src/agent-container/` knows about an Agent Implementation.** That directory is what
-  `docker run` takes and what to do with the result; `src/pi/` is the other half and imports from
-  it. Nothing imports back, no lint rule enforces that, and an import of `../pi/` from there is the
-  thing to refuse in review.
+- **`switch_session` is create-or-resume, that behaviour is undocumented, and the `get_state` that
+  follows it in `src/pi/runtime.ts` is the only thing holding it to account.** A path the Agent
+  Instance has never seen becomes a fresh Session kept there; a path it has seen is loaded; and the
+  same `success: true` comes back either way, so the second step reads `sessionFile` out of the
+  instance's own state and compares it to what was asked for. Deleting that round trip costs a Run
+  nothing any test of the happy path would notice and buys a Prompt delivered into whichever Session
+  the previous connection happened to leave open. `success: true` carrying `cancelled: true`, which
+  is an extension of the Operator's refusing the switch, is the same failure by a documented route
+  and is refused two lines above it.
+- **`sessionNames` in `src/pi/runtime.ts` is a transcription of `pi`'s own `assertValidSessionId`,
+  and nothing anywhere checks that it still matches.** The framework never had to carry one before:
+  `pi` was handed `--session-id` and refused a bad one itself, with its own message. A Session is
+  addressed **by path** over RPC now and `pi` opens any path it is handed, so the grammar has to
+  live on this side and a copy goes stale in silence. It is also the whole of the traversal
+  argument, there being no `/` in it and both ends required to be alphanumeric, so nothing resolves
+  a path and compares it against a prefix. Widening that character class is therefore a Signal
+  Handler's Session name climbing out of `sessionsDir` and not a cosmetic edit; re-read
+  `core/session-manager` against it whenever the pinned `pi` version moves.
 - **`src/http-client-tui/` is the one shipped directory that is not a subpath.** It is a `bin`, so
   the export map is untouched. **It has zero dependencies and must keep them**: a dependency added
   here lands in every consumer's install, and the answer to needing one is a second package.

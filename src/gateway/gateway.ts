@@ -77,9 +77,9 @@ export type GatewayOptions<E extends GatewayExtension> = {
   /**
    * What a Prompt is handed to, and what an outcome comes back from.
    *
-   * `createPiRuntime` on `@shutter-network/concorde/pi` returns one for `pi`, and
-   * `createAgentContainerRuntime` on `@shutter-network/concorde/agent-container` builds one for any
-   * other agent program.
+   * `createPiRuntime` on `@shutter-network/concorde/pi` returns one that performs each Run against
+   * an Agent Instance the Operator runs. Any other agent program is a `Runtime` of the Operator's
+   * own, which is one method.
    */
   readonly runtime: Runtime;
   /**

@@ -20,11 +20,12 @@ of this site is written for that reader.
 
 ![The parts of a shared agent. A dashed boundary encloses the Gateway, holding the Db, the Signal
 Worker, the Agent server and the Public server, together with the Messenger and its two Channels
-and Users with its two Auths. Outside it are the Agent Implementation, a person's client, and a
-Nostr Relay.](/architecture.svg)
+and Users with its two Auths. Outside it are the Agent Instance, a person's client, and a Nostr
+Relay.](/architecture.svg)
 
-Everything inside the dashed boundary is the Gateway. The [Architecture](./architecture#the-shape)
-page reads the picture part by part.
+Everything inside the dashed boundary is the Gateway. The agent is drawn outside it because the
+Operator runs it and the Gateway only connects to it. The
+[Architecture](./architecture#the-shape) page reads the picture part by part.
 
 ## Where to start
 
@@ -56,7 +57,7 @@ The framework does not do these things, and each omission is deliberate:
 - **Confidentiality between parties.** The agent reads every Message and decides what to send to
   whom.
 - **Resistance to prompt injection.** This risk is accepted, not solved.
-- **Confinement of the Agent Implementation.** Your deployment confines it.
+- **Confinement of the Agent Implementation.** You run it, so you confine it.
 - **Rate limiting.** The login route is unthrottled.
 
 The [Architecture](./architecture#what-you-must-provide-yourself) page states the full list. Read

@@ -16,24 +16,19 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?copy .env.example to .env and put your model key in it}
       DATABASE_URL: *database-url
       ALICE_PASSWORD: ${ALICE_PASSWORD:?copy .env.example to .env}
       BOB_PASSWORD: ${BOB_PASSWORD:?copy .env.example to .env}
       SIGNING_KEY_FILE: /app/insecure-example-only-signing-key.pem
       PUBLIC_HOST: 0.0.0.0
       PUBLIC_PORT: "8082"
-      AGENT_HOST: 0.0.0.0
-      AGENT_PORT: "7411"
-      AGENT_SERVER_URL: http://gateway:7411
-      AGENT_IMAGE: concorde-decisions-agent:0.83.0
-      AGENT_NETWORK: concorde_decisions_agent
-      RUNTIME_DIR_HOST: ${PWD}
+      AGENT_SERVER_HOST: 0.0.0.0
+      AGENT_SERVER_PORT: "7411"
+      AGENT_INSTANCE_HOST: agent
+      AGENT_INSTANCE_PORT: "4000"
+      AGENT_SESSIONS_DIR: /sessions
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - ./insecure-example-only-signing-key.pem:/app/insecure-example-only-signing-key.pem:ro
-      - ./state/workspace:/app/state/workspace
-      - ./state/agent:/app/state/agent
     ports:
       - "127.0.0.1:8082:8082"
     networks: [db, agent, public]
@@ -42,9 +37,30 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-      agent-image:
-        condition: service_completed_successfully
+      agent:
+        condition: service_started
     stop_grace_period: 300s
+
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    command:
+      - socat
+      - TCP-LISTEN:4000,reuseaddr,fork
+      - EXEC:pi --mode rpc --no-approve
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?copy .env.example to .env and put your model key in it}
+      AGENT_SERVER_URL: http://gateway:7411
+      PI_OFFLINE: "1"
+      PI_CODING_AGENT_DIR: /home/agent/.pi/agent
+    volumes:
+      - ./state/workspace:/workspace
+      - ./state/agent:/home/agent/.pi/agent
+      - ./state/sessions:/sessions
+      - ./AGENTS.md:/workspace/AGENTS.md:ro
+      - ./settings.json:/home/agent/.pi/agent/settings.json:ro
+    networks: [agent]
 
   migrate:
     build:
@@ -73,15 +89,6 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
-
-  agent-image:
-    build:
-      context: .
-      dockerfile: Dockerfile.agent
-    image: concorde-decisions-agent:0.83.0
-    command: ["--version"]
-    restart: "no"
-    networks: [agent]
 
   tui-alice:
     <<: *tui

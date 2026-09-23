@@ -75,7 +75,7 @@ export type SignaturesOptions = {
    * Where `POST /sign` is registered.
    *
    * The key stays in this process, and the agent reaches it only over that route, so a compromised
-   * Agent Container mints nothing once the Gateway is stopped.
+   * Agent Instance mints nothing once the Gateway is stopped.
    *
    * Structural: anything carrying a Fastify instance satisfies it.
    */

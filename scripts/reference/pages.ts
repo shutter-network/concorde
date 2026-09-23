@@ -17,7 +17,7 @@
  * authored pages as well now. Written once here because both renderers need the identical value
  * and a wrong one is quiet: VitePress reports a dead link written in a page and never one written
  * in a sidebar, so a link that reaches nothing survives the build and is found by a reader.
- * `typedoc.jsonc`'s `docsRoot` states the same fact to TypeDoc, which computes its own fifteen
+ * `typedoc.jsonc`'s `docsRoot` states the same fact to TypeDoc, which computes its own fourteen
  * links from it.
  */
 export const referenceBase = "/reference";

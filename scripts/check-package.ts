@@ -3,9 +3,9 @@
  *
  *  - `dist` mirrors `src`, so nothing ships whose source is gone.
  *  - the tarball installs into a fresh project.
- *  - **all twenty-three** entries resolve there, both to the type checker and to Node at
- *    runtime, and twenty-three is the whole map. Fifteen are the subpath a Developer imports a part
- *    from: `/gateway`, `/logging`, `/db`, `/agent-container`, `/signals`, `/pi`, `/users`,
+ *  - **all twenty-two** entries resolve there, both to the type checker and to Node at
+ *    runtime, and twenty-two is the whole map. Fourteen are the subpath a Developer imports a part
+ *    from: `/gateway`, `/logging`, `/db`, `/signals`, `/pi`, `/users`,
  *    `/password-auth`, `/nostr-auth`, `/messenger`, `/http-channel`, `/nostr-channel`,
  *    `/signatures`, `/decisions` and `/scheduler`. The other **eight are `/schema`**, one per
  *    component that owns tables, because `drizzle-kit`'s config takes file paths and an export
@@ -13,14 +13,14 @@
  *    one of the two, and the runtime step below is what proves the component subpath carries none
  *    of them. `/messenger` carries the log and `/http-channel` reaches a person over HTTP, which is
  *    the split; `/nostr-channel` is the other Channel and the one Channel that owns tables.
- *  - **two of the fifteen are Auths**, so the whole of what a deployment accepts is which of them
+ *  - **two of the fourteen are Auths**, so the whole of what a deployment accepts is which of them
  *    it constructs. `main.ts` below constructs Password Auth and Nostr Auth and writes an Auth of
  *    the consumer's own beside them, and all three register themselves with the Public server.
  *    The second of them registers **no route**, so its whole surface here is one construction,
  *    one method and the two tables on its specifier.
  *  - **there is no `.` in that map, and the last step below reads Node saying so.** The assembly
- *    is on `/gateway`, the logging seam on `/logging`, the Db on `/db` and the container plumbing
- *    on `/agent-container`, and a bare `@shutter-network/concorde` fails with
+ *    is on `/gateway`, the logging seam on `/logging` and the Db on `/db`, and a bare
+ *    `@shutter-network/concorde` fails with
  *    `ERR_PACKAGE_PATH_NOT_EXPORTED`. What that buys is that nothing lands on the root by
  *    accident: a re-export written there resolves to nowhere, so adding a root export is a
  *    deliberate edit to `exports` and not a slip.
@@ -69,12 +69,12 @@ import { fileURLToPath } from "node:url";
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 /**
- * The consumer's imports, spelled once: the type checker and Node see the same twenty-three.
+ * The consumer's imports, spelled once: the type checker and Node see the same twenty-two.
  *
- * **Twenty-three lines, one per entry point, and a component's tables are on a line of their
+ * **Twenty-two lines, one per entry point, and a component's tables are on a line of their
  * own.** That is the whole of the split: `drizzle-kit`'s config takes file paths, so the tables
  * need an export entry of their own, and having one they are on it and on nothing else. No line
- * names the bare package, because there is no `.` export left: the four infrastructure specifiers
+ * names the bare package, because there is no `.` export left: the three infrastructure specifiers
  * at the top carry what the root used to, and the last step in this script is what proves the root
  * itself resolves to nothing.
  *
@@ -88,10 +88,10 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
  * apart. **An alias added to a line below removes the check for that name.** Reach for a rename in
  * the package instead.
  *
- * The four infrastructure lines own no tables. `/gateway` carries the two assembly constructors
- * and the server adapter, `/logging` the default Logger, `/db` the one call that opens a pool, and
- * `/agent-container` what `docker run` takes: nothing under it has heard of an Agent
- * Implementation, so a second one needs all of it unchanged.
+ * The three infrastructure lines own no tables. `/gateway` carries the two assembly constructors
+ * and the server adapter, `/logging` the default Logger, and `/db` the one call that opens a pool.
+ * The fourth of them is gone with container-per-Run: the Gateway starts no agent, so there is no
+ * subpath carrying what `docker run` takes and no module here that knows what a container is.
  *
  * The HTTP Channel's line carries a constructor and nothing beside it, and it has no `/schema` line
  * at all, because it owns no tables: the log is the Messenger's, whichever medium a Message
@@ -119,13 +119,12 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
  * component's vocabulary and belongs beside it.
  */
 const consumerImports = [
-  'import { createAgentContainerRuntime, mountArguments } from "@shutter-network/concorde/agent-container";',
   'import { openDb } from "@shutter-network/concorde/db";',
   'import { createBareGateway, createGateway, NoAuthRegisteredError, serverComponent } from "@shutter-network/concorde/gateway";',
   'import { defaultLogger } from "@shutter-network/concorde/logging";',
   'import { createSignalWorker, runStates, signalStates, templateHandler } from "@shutter-network/concorde/signals";',
   'import { runs, signals, signalsSchema, signalsTables } from "@shutter-network/concorde/signals/schema";',
-  'import { createPiRuntime, interpretPiOutput, piRun } from "@shutter-network/concorde/pi";',
+  'import { createPiRuntime } from "@shutter-network/concorde/pi";',
   'import { createUsers } from "@shutter-network/concorde/users";',
   'import { users, usersSchema, usersTables } from "@shutter-network/concorde/users/schema";',
   'import { createPasswordAuth } from "@shutter-network/concorde/password-auth";',
@@ -231,26 +230,21 @@ try {
     "dist/logging/logging.d.ts",
     "dist/pi/index.js",
     "dist/pi/index.d.ts",
-    // The `pi` Agent Implementation's own modules, which are now two. `dist/pi/`
-    // mirroring `src/pi/` is what makes the subpath resolve to the same relative imports
-    // in the repository and in the package, and the fixtures beside them must not come
-    // along.
+    // The `pi` Agent Implementation's own modules, which are now four and none of which
+    // spawns anything. `dist/pi/` mirroring `src/pi/` is what makes the subpath resolve to
+    // the same relative imports in the repository and in the package, and the fixtures
+    // beside them must not come along.
     "dist/pi/runtime.js",
     "dist/pi/runtime.d.ts",
+    // The RPC channel, which is the whole of the client: `node:net`, one connection per
+    // Run, and no runtime dependency behind it.
+    "dist/pi/rpc.js",
+    "dist/pi/rpc.d.ts",
+    // The one module that turns bytes into records, and the one place the LF-only framing
+    // rule lives.
+    "dist/pi/framing.js",
+    "dist/pi/framing.d.ts",
     "dist/pi/output.js",
-    // The Agent Container and its Runtime, which belong to no Agent Implementation: they
-    // ship under their own directory and are reachable on `/agent-container`, because
-    // nothing in them knows about one and the next one needs them unchanged.
-    //  `process.js` is here rather than under `dist/pi/` for the same reason,
-    // and it moved rather than being rewritten.
-    "dist/agent-container/index.js",
-    "dist/agent-container/index.d.ts",
-    "dist/agent-container/agent-container.js",
-    "dist/agent-container/agent-container.d.ts",
-    "dist/agent-container/mount-table.js",
-    "dist/agent-container/mount-table.d.ts",
-    "dist/agent-container/process.js",
-    "dist/agent-container/process.d.ts",
     // `dist` mirrors `src`, so `src/db/db.ts` becomes `dist/db/db.js`. Nothing is
     // resolved from `import.meta.url` any more — that trick existed only to reach a
     // shipped migration folder, and there is none.
@@ -441,6 +435,14 @@ try {
     "dist/container/agent-container.js",
     "dist/container/mount-table.js",
     "dist/container/process.js",
+    // And the whole of the subpath that carried container-per-Run. The Gateway starts no
+    // agent, so nothing ships that knows how: an Operator runs the Agent Instance, and an
+    // Operator who wants a container per Run writes a Runtime, which is one method.
+    "dist/agent-container/index.js",
+    "dist/agent-container/index.d.ts",
+    "dist/agent-container/agent-container.js",
+    "dist/agent-container/mount-table.js",
+    "dist/agent-container/process.js",
   ]) {
     assert.ok(!entries.has(gone), `the tarball should no longer ship ${gone}`);
   }
@@ -597,18 +599,6 @@ try {
       // `skipLibCheck: false` here, so an export it does not mention is an export
       // nothing checks: a declaration that resolved to `any`, or went missing
       // altogether, would type-check in this project without it.
-      // The Agent Container's own types, on the specifier that carries what `docker run` takes.
-      // Nothing under it has heard of an Agent Implementation, so `/pi` names none of these and
-      // an author of a second Implementation reaches for exactly this set.
-      "import type {",
-      "  AgentContainer,",
-      "  AgentContainerRuntime,",
-      "  AgentContainerRuntimeSpec,",
-      "  ComposedCommand,",
-      "  Mount,",
-      "  MountTable,",
-      "  RunPlan,",
-      '} from "@shutter-network/concorde/agent-container";',
       // The Db's own types: the handle, the transaction it hands a callback, the `LISTEN`
       // registration and the listener it calls back. `pg` is nowhere among them, which is what
       // keeps the pool out of the public API.
@@ -668,11 +658,13 @@ try {
       "  SignalWorkerOptions,",
       "  TemplateHandlerOptions,",
       '} from "@shutter-network/concorde/signals";',
-      // The `pi` subpath exports **no type at all**, which is the shape one function
-      // leaves it in: there is no configuration to name, and everything the Runtime it returns
-      // is made of — the Agent Container, the Run plan, the composed command line — comes
-      // from `/agent-container`, because none of it is `pi`-shaped. The three values it
-      // does export are in `consumerImports` above.
+      // The `pi` subpath exports **one type and one function**, and nothing else is reachable
+      // through it. There is no Agent Container, no Mount Table and no command line to name,
+      // because the Gateway starts nothing: what an Operator declares is where the Agent
+      // Instance is and where it keeps Sessions.
+      "import type {",
+      "  PiInstance,",
+      '} from "@shutter-network/concorde/pi";',
       // The Users component's own types, from its own subpath, for the same reason:
       // a deployment with no identity in it imports nothing from there. There is no
       // `IssuedToken` and no `ScryptParameters` among them any more: a credential is an Auth's,
@@ -1378,108 +1370,23 @@ try {
       "export const assembledPublic: FastifyInstance = assembled.components.publicServer.fastify;",
       "export const assembledAgent: FastifyInstance = assembled.components.agentServer.fastify;",
       "",
-      "// What a `pi` deployment declares, which is an Agent Container and nothing else.",
-      "// There is no configuration type on the `/pi` subpath any more: no model, no",
-      "// provider and no container path, because the agent reads all of those out of a",
-      "// `settings.json` the Operator mounts and a `Dockerfile` they build.",
-      "// The Mount Table comes from `/agent-container`, not from `/pi`: it knows nothing",
-      "// about an Agent Implementation, and an entry may name a directory or a single",
-      "// file and may be read-only — which is how the `AGENTS.md` below, and the",
-      "// `settings.json` beside it, are protected from the agent that reads them",
-      "//.",
-      'const workspace: Mount = { agentPath: "/workspace", path: "workspace" };',
-      "const mounts: MountTable = {",
-      "  entries: [",
-      "    workspace,",
-      '    { agentPath: "/home/agent/.pi/agent", path: "agent" },',
-      '    { agentPath: "/workspace/AGENTS.md", path: "AGENTS.md", readOnly: true },',
-      '    { agentPath: "/home/agent/.pi/agent/settings.json", path: "settings.json", readOnly: true },',
-      "  ],",
-      "  // The one namespace the table has: the host's path to the Runtime Directory, which",
-      "  // is what the daemon resolves a bind source in. Every entry above is written",
-      " // relative to it, and a leading `/` on one is refused.",
-      '  runtimeDir: "/srv/concorde",',
-      "};",
-      "// One exported function and no resolved layer beside it: what a consumer holds is",
-      "// the `--mount` argument list itself. Type-annotated, so a declaration that resolved",
-      "// to `any` or went missing fails here.",
-      "export const piMountArguments: readonly string[] = mountArguments(mounts);",
-      "",
-      "// The Agent Container and the generic Runtime built from it, from `/agent-container`",
-      "// rather than from `/pi`, because nothing in either has heard of an Agent",
-      "// Implementation and the next one needs both unchanged. Only `image` is",
-      "// required; everything else here is a field an Operator may leave out. What an Agent",
-      "// Implementation adds is the one function below, whose outcome reader is produced",
-      "// per Run so it can name the Session in a failure.",
-      "const container: AgentContainer = {",
-      '  image: "concorde/agent:latest",',
-      "  mounts,",
-      '  entrypoint: ["agent"],',
-      '  networks: ["concorde-agent", "concorde-models"],',
-      '  env: { ANTHROPIC_API_KEY: "sk-not-a-key" },',
-      '  extraArgs: ["--memory", "2g"],',
-      '  containerCommand: ["docker"],',
+      "// What a `pi` deployment declares, which is where the Agent Instance is and where it",
+      "// keeps its Sessions. Three values and no fourth: the Gateway starts nothing, so",
+      "// there is no image, no mount, no model, no provider and no credential to name here.",
+      "// Everything the agent reads on disk and everything it is started with belongs to the",
+      "// Operator's own compose file, on the other side of this address.",
+      "const instance: PiInstance = {",
+      '  host: "agent",',
+      "  port: 4000,",
+      "  // As the Agent Instance sees it. Absolute, and refused at construction if it is not:",
+      "  // the Gateway never opens this directory and could not check what is in it.",
+      '  sessionsDir: "/sessions",',
       "  logger: log,",
       "};",
-      "function agentRun(asked: RunPrompt): RunPlan {",
-      "  return {",
-      '    args: ["--session-id", asked.session],',
-      "    stdin: asked.text,",
-      "    async outcome(stdout: AsyncIterable<Uint8Array>): Promise<RunOutcome> {",
-      "      for await (const chunk of stdout) void chunk;",
-      "      return { ok: true };",
-      "    },",
-      "  };",
-      "}",
-      "const containerSpec: AgentContainerRuntimeSpec = { container, run: agentRun };",
-      "export const containerRuntime: AgentContainerRuntime =",
-      "  createAgentContainerRuntime(containerSpec);",
-      "// A Runtime like any other, so it goes straight into the Signal Worker's option —",
-      "// and one that can also show its command line without starting anything, which is",
-      "// what makes an author's argument tests pure.",
-      "export const asRuntime: Runtime = containerRuntime;",
-      "export const composed: ComposedCommand = containerRuntime.commandFor({",
-      '  session: "user_42",',
-      '  text: "what happened?",',
-      "});",
-      "// The `pi` Runtime itself, which is what an Operator actually passes to the Signal",
-      "// Worker: one call taking one value, with no second call to remember and no type of",
-      "// its own to hold one. It contributes two defaults to the container — the entry",
-      "// point and `PI_OFFLINE` — and `piRun`, and nothing else.",
-      "export const pi: AgentContainerRuntime = createPiRuntime({",
-      '  image: "concorde/pi:latest",',
-      "  mounts,",
-      '  networks: ["concorde-agent"],',
-      '  env: { ANTHROPIC_API_KEY: "sk-not-a-key" },',
-      '  extraArgs: ["--memory", "2g"],',
-      "  logger: log,",
-      "});",
-      "// Annotated as a Runtime because that is the seam the Signal Worker is given, and a",
-      "// `pi` Runtime is one like any other.",
-      "export const piAsRuntime: Runtime = pi;",
-      "export const piCommand: ComposedCommand = pi.commandFor({",
-      '  session: "user_42",',
-      '  text: "what happened?",',
-      "});",
-      "",
-      "// The two pure functions the subpath ships beside it, which are the whole of what",
-      "// `pi` adds to a container. An Operator could spawn the container themselves out of",
-      "// these, and an author of a second Agent Implementation writes the equivalent of the",
-      "// first one and nothing else — which is what this pair is exported to demonstrate.",
-      "export const piByHand: Runtime = {",
-      "  async run(prompt: RunPrompt): Promise<RunOutcome> {",
-      "    const plan: RunPlan = piRun(prompt);",
-      "    const stdout: AsyncIterable<Uint8Array> = (async function* () {",
-      '      yield new TextEncoder().encode(plan.args.join(" ") + plan.stdin);',
-      "    })();",
-      "    return plan.outcome(stdout);",
-      "  },",
-      "};",
-      "// The reader on its own, which takes the Session so a failure can name it.",
-      "export const piOutcome: Promise<RunOutcome> = interpretPiOutput(",
-      "  (async function* () {})(),",
-      '  "user_42",',
-      ");",
+      "// Annotated as a Runtime because that is the seam the Signal Worker is given, and the",
+      "// `pi` Runtime is one like any other. Nothing connects here: an Agent Instance that is",
+      "// not listening is a failed Run and never a boot failure.",
+      "export const pi: Runtime = createPiRuntime(instance);",
       "",
       "// A Producer of the Operator's own, told when something arrives on a channel",
       "// it shares with whoever notifies it. The connection is the Db's, so `pg`",
@@ -1709,38 +1616,28 @@ try {
         // our own `node_modules` would hide a missing entry in every other check.
         //
         // The `/pi` subpath, actually run rather than only resolved: `createPiRuntime`
-        // reaches across to `../agent-container/index.ts` for the generic half and down to
-        // `./output.ts` for the reader, so this is what proves a relative `.ts` import
-        // *inside and out of* the subpath survives being compiled and installed — the
-        // thing the deleted placeholder used to stand for.
-        // The Mount Table, constructed and resolved from `/agent-container` the way an
-        // Operator meets it: this is what proves `--mount type=bind` arguments come out
-        // of an installed package rather than only out of this repository.
-        "const mounts = { runtimeDir: '/srv/concorde', entries: [",
-        "  { agentPath: '/workspace', path: 'workspace' },",
-        "  { agentPath: '/srv/concorde/agent', path: 'agent' },",
-        "  { agentPath: '/workspace/AGENTS.md', path: 'AGENTS.md', readOnly: true },",
-        "] };",
-        "const mountArgs = mountArguments(mounts);",
-        // And the generic Runtime, constructed and asked for a command line from
-        // `/agent-container`. `commandFor` is pure, so this proves the whole of the argument
-        // assembly runs out of an installed package with no Docker anywhere near it —
-        // the image, the mounts, the user, the networks, the entry point and the agent's
-        // own arguments, in that order.
-        "const generic = createAgentContainerRuntime({",
-        "  container: { image: 'concorde/agent:latest', mounts, networks: ['concorde-agent'], entrypoint: ['agent'], env: { ANTHROPIC_API_KEY: 'sk-not-a-key' } },",
-        "  run: (asked) => ({ args: ['--session-id', asked.session], stdin: asked.text, outcome: async () => ({ ok: true }) }),",
-        "});",
-        "const composed = generic.commandFor({ session: 'user_42', text: 'what happened?' });",
-        // And the `pi` Runtime itself, constructed the way an Operator constructs it:
-        // an image and what the container sees, with no model, no provider and no
-        // container path anywhere. It refuses a container it cannot work with at
-        // construction, so this also proves that check runs from the installed package.
-        "const pi = createPiRuntime({ image: 'concorde/pi:latest', mounts, networks: ['concorde-agent'], env: { ANTHROPIC_API_KEY: 'sk-not-a-key' } });",
-        "const piCommand = pi.commandFor({ session: 'user_42', text: 'what happened?' });",
-        // The one function `pi` adds, on its own, which is what an author of a second
-        // Agent Implementation writes the equivalent of.
-        "const plan = piRun({ session: 'user_42', text: 'what happened?' });",
+        // reaches down to `./rpc.ts`, `./framing.ts` and `./output.ts`, so this is what
+        // proves a relative `.ts` import inside the subpath survives being compiled and
+        // installed — the thing the deleted placeholder used to stand for.
+        //
+        // Three values and no image anywhere: the Gateway starts nothing now, so what an
+        // Operator declares is where the Agent Instance is and where it keeps Sessions. The
+        // logger is silenced inline because stdout is this step's assertion channel.
+        "const hush = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };",
+        "const pi = createPiRuntime({ host: '127.0.0.1', port: 1, sessionsDir: '/sessions', logger: hush });",
+        // A `sessionsDir` that is relative is refused at construction, which is the one thing
+        // this subpath can refuse on an Operator's behalf — so this proves that check runs
+        // from the installed package and not only out of this repository.
+        "let refusedDir = 'a relative sessionsDir was accepted';",
+        "try { createPiRuntime({ host: 'agent', port: 4000, sessionsDir: 'sessions', logger: hush }); } catch (error) { refusedDir = String(error.message).split(',')[0]; }",
+        // And two Runs, which is what makes this an import *and* a call. The first reaches an
+        // address nothing is listening on, so it exercises the `node:net` client out of the
+        // installed package and proves an unreachable Agent Instance is a failed Run carrying
+        // the address rather than a throw. The second never leaves the process: a Session name
+        // outside `pi`'s grammar fails that Run alone, and the grammar is carried here now
+        // because a Session is addressed by path and `pi` will open any path it is handed.
+        "const unreachable = await pi.run({ session: 'user_42', text: 'what happened?' });",
+        "const badName = await pi.run({ session: '../escape', text: 'what happened?' });",
         // Users, constructed as an Operator constructs it. `openDb`
         // connects lazily, so this reaches the database not at all: what it proves is
         // that the subpath resolves at runtime and that construction is free of side
@@ -1867,14 +1764,6 @@ try {
         "byHand.register(async (f) => { f.get('/healthz', async () => ({ ok: true })); });",
         "await byHand.ready();",
         "const byHandDocument = (await byHand.inject({ method: 'GET', url: '/docs/json' })).json();",
-        "const encoder = new TextEncoder();",
-        "const settled = await plan.outcome((async function* () {",
-        "  yield encoder.encode(JSON.stringify({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop' } }) + '\\n');",
-        "  yield encoder.encode(JSON.stringify({ type: 'agent_settled' }) + '\\n');",
-        "})());",
-        // And the reader on its own, on a stream that says nothing, because naming the
-        // Session in the failure is what the per-Run reader is for.
-        "const silent = await interpretPiOutput((async function* () {})(), 'user_7');",
         // The Scheduler's calendar arithmetic, run from the installed package's own dependency: the
         // next 09:00 UTC strictly after noon on 2030-06-01 is the following day, and the zone checks
         // hold — which is what proves `cron-parser` and `luxon` are declared and resolve here.
@@ -1932,11 +1821,10 @@ try {
         // `drizzle.config.ts` hands `drizzle-kit` as its `schema`. Nothing else here
         // asks that question, every other check being an import.
         "const resolvesToFiles = owners.every((owner) => { const url = import.meta.resolve('@shutter-network/concorde/' + owner + '/schema'); return url.startsWith('file:') && url.endsWith('/dist/' + owner + '/schema/index.js'); });",
-        // Nothing writes anything: there is no call between composing and interpreting,
-        // because the module that used to hold one is gone from the package, and the
-        // composed command line names no file for the agent to read either — the
-        // Operator's `AGENTS.md` above is a mount and `pi` discovers it.
-        "const built = [typeof openDb, typeof templateHandler, piCommand.command + ' ' + piCommand.args.slice(-6).join(' '), plan.args.join(' '), String(settled.ok), mountArgs[1], composed.command + ' ' + composed.args.slice(-5).join(' '), composed.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', piCommand.redactedArgs.join(' ').includes('sk-not-a-key') ? 'leaked' : 'redacted', String(['--model', '--provider', '--workdir', '--session-dir', '--append-system-prompt'].some((flag) => piCommand.args.includes(flag))), silent.error.split(' ').slice(0, 2).join(' '), String(Object.keys(pi).sort()), usersSchema.schemaName, String(Object.keys(directory).sort()), 'password auth ' + passwordAuth.scheme + ' ' + String(Object.keys(passwordAuth).sort()) + ' in ' + passwordAuthSchema.schemaName, 'nostr auth ' + nostrAuth.scheme + ' ' + String(Object.keys(nostrAuth).sort()) + ' in ' + nostrAuthSchema.schemaName, messengerSchema.schemaName, String(Object.keys(messenger).sort()), 'channel ' + httpChannel.name + ' ' + String(Object.keys(httpChannel).sort()), 'channel ' + nostrChannel.name + ' ' + String(Object.keys(nostrChannel).sort()) + ' as ' + nostrChannel.publicKey + ' in ' + nostrChannelSchema.schemaName, messageReceivedKind, decisionsSchema.schemaName, String(Object.keys(signatures).sort()), String(Object.keys(decisionsComponent).sort()), jws.split('.').length + ' segments, ' + Buffer.from(jwsSignature, 'base64url').length + ' signature bytes, verified ' + checked + ', private member ' + Object.hasOwn(keySet.keys[0], 'd'), String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(','), 'cron ' + cronNext + ' zone ' + zoneKnown, 'scheduler ' + String(Object.keys(scheduler).sort()) + ' fires ' + scheduleFiredKind + ' in ' + schedulerSchema.schemaName, 'tables ' + collectedTables.sort().join(' ') + ' in ' + schemaNames.join(' ') + ', wrappers seen ' + wrappersSeen.length + ', wrappers present ' + wrappersPresent.length, 'schemas ' + distinctSchemas + ', on a component subpath ' + stillOnTheComponent.length + ', resolving to files ' + resolvesToFiles];",
+        // Nothing writes a file anywhere and nothing starts a process: the framework has
+        // no container runtime to reach for any more, and the one thing it opens is a
+        // socket to an address that refuses it.
+        "const built = [typeof openDb, typeof templateHandler, refusedDir, unreachable.ok ? 'it reached something' : unreachable.error.split(':').slice(0, 2).join(':'), badName.ok ? 'it took the name' : badName.error.split(':')[0], String(Object.keys(pi).sort()), usersSchema.schemaName, String(Object.keys(directory).sort()), 'password auth ' + passwordAuth.scheme + ' ' + String(Object.keys(passwordAuth).sort()) + ' in ' + passwordAuthSchema.schemaName, 'nostr auth ' + nostrAuth.scheme + ' ' + String(Object.keys(nostrAuth).sort()) + ' in ' + nostrAuthSchema.schemaName, messengerSchema.schemaName, String(Object.keys(messenger).sort()), 'channel ' + httpChannel.name + ' ' + String(Object.keys(httpChannel).sort()), 'channel ' + nostrChannel.name + ' ' + String(Object.keys(nostrChannel).sort()) + ' as ' + nostrChannel.publicKey + ' in ' + nostrChannelSchema.schemaName, messageReceivedKind, decisionsSchema.schemaName, String(Object.keys(signatures).sort()), String(Object.keys(decisionsComponent).sort()), jws.split('.').length + ' segments, ' + Buffer.from(jwsSignature, 'base64url').length + ' signature bytes, verified ' + checked + ', private member ' + Object.hasOwn(keySet.keys[0], 'd'), String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(','), 'cron ' + cronNext + ' zone ' + zoneKnown, 'scheduler ' + String(Object.keys(scheduler).sort()) + ' fires ' + scheduleFiredKind + ' in ' + schedulerSchema.schemaName, 'tables ' + collectedTables.sort().join(' ') + ' in ' + schemaNames.join(' ') + ', wrappers seen ' + wrappersSeen.length + ', wrappers present ' + wrappersPresent.length, 'schemas ' + distinctSchemas + ', on a component subpath ' + stillOnTheComponent.length + ', resolving to files ' + resolvesToFiles];",
         "process.stdout.write(built.join(':'));",
       ].join("\n"),
     ],
@@ -1944,12 +1832,12 @@ try {
   );
   assert.equal(
     imported,
-    "function:function:docker concorde/pi:latest --mode json --session-id user_42 --no-approve:--mode json --session-id user_42 --no-approve:true:type=bind,source=/srv/concorde/workspace,target=/workspace:docker --entrypoint agent concorde/agent:latest --session-id user_42:redacted:redacted:false:Session user_7:commandFor,run:concorde_users:agentRoutes,create,get,list,setAttributes,start,stop:password auth Bearer authenticate,issueToken,revoke,scheme,setPassword,start,stop in concorde_password_auth:nostr auth Nostr authenticate,recordPublicKey,scheme,start,stop in concorde_nostr_auth:concorde_messenger:history,register,send,start,stop:channel http name,send,start,stop:channel nostr drain,name,publicKey,recordPublicKey,send,start,stop as 1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f in concorde_nostr_channel:message.received:concorde_decisions:sign,start,stop:history,publish,start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,passwordAuth,signatures,decisions,messenger,httpChannel,ownLoop,worker:Concorde Gateway: Agent server describes 10 paths:by hand /healthz:cron 2030-06-02T09:00:00.000Z zone true:scheduler cancel,list,schedule,start,stop,tick fires concorde_schedule_fired in concorde_scheduler:tables concorde_decisions.decisions concorde_messenger.messages concorde_nostr_auth.admitted concorde_nostr_auth.grants concorde_nostr_channel.outbox concorde_nostr_channel.pubkeys concorde_nostr_channel.received concorde_password_auth.passwords concorde_password_auth.tokens concorde_scheduler.schedules concorde_signals.runs concorde_signals.signals concorde_users.users in concorde_decisions concorde_messenger concorde_nostr_auth concorde_nostr_channel concorde_password_auth concorde_scheduler concorde_signals concorde_users, wrappers seen 0, wrappers present 8:schemas 8 of 8 distinct, on a component subpath 0, resolving to files true",
-    "all twenty-three entries should resolve at runtime and none of them is the bare package, the Signal Worker's constructor and the template Handler both arriving off `/signals`, the template Handler should load handlebars, the Mount Table should emit a bind mount, the Agent Container Runtime should compose a whole command line from `/agent-container` without starting anything — the entry point before the image and the agent's own arguments after it — and hide every environment value in the loggable copy, the pi Runtime should construct from an image and its mounts alone and compose a line carrying its own three flags and no model, provider or container path, its one function should produce that plan and read an outcome from it, its reader should name the Session in a failure, and Users should construct into its own schema with its read plugin and its four operations — the two writes the agent's surface has no route for included, and no credential of any kind among them — and Password Auth should construct off the eighth subpath into a schema of its own from the Users component and a Public server, register its four routes and itself as an Auth with that server in its own constructor, and answer with the scheme a challenge names, the one member the server walks and its three trusted-code methods and no route plugin, and Nostr Auth should construct off its own subpath into a schema of its own, register itself with that same server and **no route anywhere**, and answer with the scheme a challenge names, the one member the server walks and the one trusted-code method that grants a public key, and the Messenger should construct into a schema of its own from all four of its required arguments and answer with an object carrying exactly its three trusted-code methods, because every other capability it has is a route it registered itself, and the HTTP Channel should construct off the ninth subpath, register itself with that Messenger and answer with a name fixed by its type and the three methods a Channel is and no trusted-code method at all, and the Nostr Channel should construct off the tenth from 32 raw bytes and a Relay address with no server anywhere, register itself with a second Messenger because one Channel per Messenger is refused at registration, derive the agent's public key from those bytes inside the installed package, and answer with the one trusted-code method that records a public key, the drain that is the half of a send a transaction cannot hold, and no route plugin beside them, and all of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the five parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone, and the Scheduler itself should construct from the installed `/scheduler` subpath and carry its management surface and its Component lifecycle, filing its table under a schema of its own, and each of the eight `/schema` subpaths, which is what an Operator lists in their own barrel and where the tables are, should hand `drizzle-kit`'s own per-module collection rule its own tables and its own schema, thirteen tables and eight schemas between them — the HTTP Channel absent because that Channel owns no log and no tables, and the Nostr Channel present because the three things only it can know are its own —, and none of the `<component>Tables` wrappers, because a table reachable only through a wrapper object is dropped in silence and generates an empty migration, while all eight wrappers should nevertheless resolve on their own specifiers, and those eight schema objects should be eight distinct values, and the eight **component** subpaths should carry no table and no schema object at all, because a component's tables are on exactly one specifier, and every one of the eight should resolve to a file inside the installed package, that path being the only thing `drizzle-kit`'s config takes and the whole reason the entries exist",
+    "function:function:the pi Runtime's sessionsDir must be absolute:Session user_42 could not reach the Agent Instance at 127.0.0.1:1:Session ../escape is not a name pi will accept:run:concorde_users:agentRoutes,create,get,list,setAttributes,start,stop:password auth Bearer authenticate,issueToken,revoke,scheme,setPassword,start,stop in concorde_password_auth:nostr auth Nostr authenticate,recordPublicKey,scheme,start,stop in concorde_nostr_auth:concorde_messenger:history,register,send,start,stop:channel http name,send,start,stop:channel nostr drain,name,publicKey,recordPublicKey,send,start,stop as 1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f in concorde_nostr_channel:message.received:concorde_decisions:sign,start,stop:history,publish,start,stop:3 segments, 64 signature bytes, verified true, private member false:db,agentServer,publicServer,users,passwordAuth,signatures,decisions,messenger,httpChannel,ownLoop,worker:Concorde Gateway: Agent server describes 10 paths:by hand /healthz:cron 2030-06-02T09:00:00.000Z zone true:scheduler cancel,list,schedule,start,stop,tick fires concorde_schedule_fired in concorde_scheduler:tables concorde_decisions.decisions concorde_messenger.messages concorde_nostr_auth.admitted concorde_nostr_auth.grants concorde_nostr_channel.outbox concorde_nostr_channel.pubkeys concorde_nostr_channel.received concorde_password_auth.passwords concorde_password_auth.tokens concorde_scheduler.schedules concorde_signals.runs concorde_signals.signals concorde_users.users in concorde_decisions concorde_messenger concorde_nostr_auth concorde_nostr_channel concorde_password_auth concorde_scheduler concorde_signals concorde_users, wrappers seen 0, wrappers present 8:schemas 8 of 8 distinct, on a component subpath 0, resolving to files true",
+    "all twenty-two entries should resolve at runtime and none of them is the bare package, the Signal Worker's constructor and the template Handler both arriving off `/signals`, the template Handler should load handlebars, the pi Runtime should refuse a relative sessionsDir where the Operator wrote it rather than at the first Run, answer an Agent Instance that is not listening with a failed Run carrying the address — over `node:net`, out of the installed package, with no dependency behind it — and refuse a Session name outside `pi`'s grammar without reaching the network at all, carrying the one method a Runtime is and no second one, and Users should construct into its own schema with its read plugin and its four operations — the two writes the agent's surface has no route for included, and no credential of any kind among them — and Password Auth should construct off the eighth subpath into a schema of its own from the Users component and a Public server, register its four routes and itself as an Auth with that server in its own constructor, and answer with the scheme a challenge names, the one member the server walks and its three trusted-code methods and no route plugin, and Nostr Auth should construct off its own subpath into a schema of its own, register itself with that same server and **no route anywhere**, and answer with the scheme a challenge names, the one member the server walks and the one trusted-code method that grants a public key, and the Messenger should construct into a schema of its own from all four of its required arguments and answer with an object carrying exactly its three trusted-code methods, because every other capability it has is a route it registered itself, and the HTTP Channel should construct off the ninth subpath, register itself with that Messenger and answer with a name fixed by its type and the three methods a Channel is and no trusted-code method at all, and the Nostr Channel should construct off the tenth from 32 raw bytes and a Relay address with no server anywhere, register itself with a second Messenger because one Channel per Messenger is refused at registration, derive the agent's public key from those bytes inside the installed package, and answer with the one trusted-code method that records a public key, the drain that is the half of a send a transaction cannot hold, and no route plugin beside them, and all of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the five parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone, and the Scheduler itself should construct from the installed `/scheduler` subpath and carry its management surface and its Component lifecycle, filing its table under a schema of its own, and each of the eight `/schema` subpaths, which is what an Operator lists in their own barrel and where the tables are, should hand `drizzle-kit`'s own per-module collection rule its own tables and its own schema, thirteen tables and eight schemas between them — the HTTP Channel absent because that Channel owns no log and no tables, and the Nostr Channel present because the three things only it can know are its own —, and none of the `<component>Tables` wrappers, because a table reachable only through a wrapper object is dropped in silence and generates an empty migration, while all eight wrappers should nevertheless resolve on their own specifiers, and those eight schema objects should be eight distinct values, and the eight **component** subpaths should carry no table and no schema object at all, because a component's tables are on exactly one specifier, and every one of the eight should resolve to a file inside the installed package, that path being the only thing `drizzle-kit`'s config takes and the whole reason the entries exist",
   );
 
   // And the claim nothing above can see, because everything above imports a subpath: **the bare
-  // specifier resolves to nothing.** `exports` has twenty-three entries and no `.`, so Node refuses
+  // specifier resolves to nothing.** `exports` has twenty-two entries and no `.`, so Node refuses
   // `import "@shutter-network/concorde"` before it reads a byte of any module, and names the
   // refusal `ERR_PACKAGE_PATH_NOT_EXPORTED`. The code is read rather than the exit status, because
   // a module that threw on load would also exit non-zero and would prove the opposite of this.
@@ -1987,7 +1875,7 @@ try {
   // that failed to resolve from the installed tree fails here. No arguments at all proves the
   // refusal path answers on stderr with the exit code a shell script can branch on.
   //
-  // Nothing here asserts that the export map still has twenty-three entries and no twenty-fourth
+  // Nothing here asserts that the export map still has twenty-two entries and no twenty-third
   // for this command. A `bin` is not importable, so the export map is untouched, and `check:docs` already
   // fails a subpath that no generator documents.
   step("checking the bin runs from the installed package");

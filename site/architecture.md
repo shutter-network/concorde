@@ -11,15 +11,18 @@ A shared agent is one deployable application, assembled from parts:
 infrastructure the framework builds, the Db, the Signal Worker and the two servers, and the
 components a deployment builds by hand: the Messenger with a Nostr Channel and an HTTP Channel
 above it, and Users with Nostr Auth and Password Auth below it. Outside it are the Agent
-Implementation, a person's client, and a Nostr Relay.](/architecture.svg)
+Instance, a person's client, and a Nostr Relay.](/architecture.svg)
 
 The dashed boundary is the Gateway, and it is the only path between a person and the agent. What
 is drawn inside it in blue is the infrastructure `createGateway` builds for every deployment. What
 is drawn in green is components, which a deployment builds by hand and picks for itself: these
 four are the messaging and identity half, and **Signatures, Decisions and the Scheduler are not
 drawn**, so read the green boxes as examples of a component rather than as the whole set. What is
-drawn outside is what the Gateway does not own: the Agent Implementation in its container, the
-person's own client, and a Relay.
+drawn outside is what the Gateway does not own: the **Agent Instance**, which the Operator runs
+and the Gateway merely connects to, the person's own client, and a Relay. The agent is drawn
+outside the boundary because it *is* outside it, and that is the one thing about the picture worth
+arguing over: the Gateway holds a TCP address for the agent and nothing else about it, so the box
+is the Operator's in the same way the Relay and the client are somebody's.
 
 The wiring the picture is most exact about is Users and the Messenger, and it is worth reading
 twice. Each Channel hands what it received to the one Messenger, and each Auth answers with a
@@ -50,8 +53,9 @@ This is the path that one message takes through the same parts:
                          v
                       Runtime
                          |
+                         |  one connection, opened for this Run
                          v
-              Agent Implementation         in a container
+                  Agent Instance           the Operator's, not the Gateway's
                          |
                          |  calls back over HTTP
                          v
@@ -60,8 +64,9 @@ This is the path that one message takes through the same parts:
 
 Those parts sit in three rings, from the inside out:
 
-1. **The Agent Implementation** runs the model. It is `pi` by default, driven by a Runtime, and
-   it runs in a container.
+1. **The Agent Implementation** runs the model. It is `pi` by default, driven by a Runtime. It is
+   not started by anything here: the Operator runs it, and the innermost ring is therefore the one
+   ring the Gateway does not own.
 2. **The Signal Worker** owns the Signal queue, the dispatch to Handlers, and the Runs. It holds
    no identity and knows nothing about messaging.
 3. **Producers** are trusted parts that emit Signals into the Worker. The Messenger and the
@@ -79,7 +84,7 @@ One message produces one pass through this loop:
 3. The **Signal Worker** takes the oldest pending Signal.
 4. It dispatches on the Signal's `kind` to exactly one **Signal Handler**.
 5. The Handler returns zero or more **Prompts**, each naming a **Session**.
-6. For each Prompt the **Runtime** starts a **Run**.
+6. For each Prompt the **Runtime** performs a **Run** against the Agent Instance.
 7. During the Run the agent calls the Agent server. It reads Messages, sends Messages, and reads
    Users.
 8. An outbound Message is written to the log and handed to the Channel.
@@ -153,6 +158,14 @@ that only your own code can call.
 Reaching the Agent server port is access to every route on it. Keeping that port unreachable is
 the deployment's responsibility.
 
+**Two unauthenticated privileged addresses sit on the agent network, and they point opposite
+ways.** The Agent server is the inbound one: the agent reaches it and is asked for nothing. The
+Agent Instance's RPC is the outbound one: the Gateway reaches that and is asked for nothing there
+either, `pi`'s RPC carrying no authentication of any kind and a command set that includes `bash`.
+Neither is a new trust. The network is the boundary for both, it is the same boundary the Agent
+server has always rested on, and what changed is that the same network now carries traffic in both
+directions.
+
 A person reaches Users, their Auth's own routes, a Channel, Decisions, and two of the three
 Signature routes. Over HTTP with Password Auth, those Auth routes are a login, a logout, and a
 change of their **own** password. People never see a Signal, and they never reach `POST /sign`.
@@ -177,28 +190,63 @@ The Runtime is held by the Signal Worker and is never started. It is not a Compo
 
 It is called one Run at a time, never concurrently. No implementation needs locking.
 
-`createPiRuntime` runs `pi` in a container. The Prompt goes on standard input, never in the
-argument list. Nothing about the model, the provider, or the session directory comes from the
-framework: those come from a mounted settings file and from the image.
+### The Agent Instance
 
-### The Agent Container
+`createPiRuntime` starts nothing, and what it takes says so:
 
-The container plumbing is separate from `pi`, on its own subpath, because a second Agent
-Implementation needs it unchanged. It is what `docker run` takes, and what to do with the result.
+```ts
+const runtime = createPiRuntime({
+  host: "agent",
+  port: 4000,
+  sessionsDir: "/sessions",
+});
+```
 
-A **Mount Table** declares what the container reaches on disk. It has one required
-`runtimeDir`, which is a path on the **host**, and every entry is written relative to it. The
-table verifies nothing about the filesystem, and it refuses four things that cannot mean what
-they say:
+Three values and no fourth. There is no image, no model, no provider, no credential, no flag and
+no path on this host, because the Gateway does not run the agent. An Operator runs an **Agent
+Instance**, which is `pi --mode rpc` behind a listener in a container of their own, and everything
+`pi` reads on disk and everything it is started with belongs to that container. The Gateway
+therefore holds no container runtime socket, names no host path, and carries no part of the
+agent's environment.
 
-- An `agentPath` that is not absolute.
-- A leading slash on an entry's `path`.
-- A `.` or `..` segment in a resolved path.
-- Two entries that resolve to one target.
+The separation that buys is stronger than the one it replaced, and it is worth being clear about
+why. Driving `pi` in process through its TypeScript SDK was always refused, because `pi`'s shell
+tool hands its child the whole of `process.env`: an in-process agent would hold the Gateway's
+`DATABASE_URL` and could write every table directly, going round the Agent server. Running one
+container per Run answered that from inside the framework. Handing it to the Operator answers it
+from outside, and the agent's process now never shared an address space, a filesystem or an
+environment with the Gateway to begin with.
 
-Every Run is `--rm` and `--interactive`, which holds stdin open and gives the container no TTY.
-It runs as the Gateway process's own user and group, where the platform reports them. Env values
-are redacted in the loggable copy of the command.
+What the framework gave up is container-per-Run, and the isolation that bought did not disappear:
+it moved into the Operator's compose file, where a container has always been better expressed. An
+Operator who wants a fresh container for every Run writes a Runtime, which is one method.
+
+**One Run is one connection**, opened when a Prompt exists and closed when the agent has settled.
+Over it go four commands, strictly in sequence and never pipelined: `switch_session` to the file
+this Session lives in, `get_state` to confirm the instance went where it was asked, `prompt`, and
+then the stream is read until the agent settles. The second command looks redundant and is not:
+`switch_session` is create-or-resume and answers the same success either way, so reading the
+instance's own state back is the only thing that tells "opened the Session I named" apart from
+"did something else and reported no error". A Prompt delivered into whichever Session the previous
+connection happened to leave open is the failure that step exists to make impossible.
+
+`sessionsDir` is a path in the **Agent Instance's** filesystem and never in the Gateway's.
+`<sessionsDir>/<session>.jsonl` is the file one Session lives in. The Gateway never opens it,
+creates nothing in it, and does not need to be able to reach it: the two ends agree because the
+Operator wrote the same string in the compose file and in the entry point. Nothing can check that
+agreement, since neither end can see the other's filesystem, so a `sessionsDir` that is missing or
+relative is refused when the Runtime is built, which is the one part of it that can be checked
+where the Operator wrote it.
+
+A Session name is checked against `pi`'s own grammar before the path is joined, so a Signal
+Handler's string can neither climb out of `sessionsDir` nor reach the agent unchecked. A bad name
+fails that one Run and names the Session, because a Signal that produced several Prompts must not
+lose the rest of them to one.
+
+**An Agent Instance that is not listening is a failed Run, never a boot failure.** Nothing is
+connected or probed when the Gateway starts. That is the same rule a Relay gets: a remote thing
+the Operator runs is an outage, and a Gateway that refused to start over it would take every other
+party's access down with the agent's.
 
 ## Signals, Runs, and Handlers
 
@@ -402,9 +450,12 @@ Each of these is a deliberate decision, not an omission. Read the whole list bef
   whom.
 - **Resistance to prompt injection.** This risk is accepted. Guidance to Handler authors is the
   only mitigation.
-- **Confinement of the Agent Implementation.** The deployment confines it.
-- **An unreachable Agent server.** There is no authentication on it. The bind address your entry
-  point states is the whole of the protection.
+- **Confinement of the Agent Implementation.** The deployment runs the Agent Instance, so the
+  deployment confines it. The framework names no image, no mount and no flag.
+- **An unreachable Agent server, and an unreachable agent.** There is no authentication on the
+  Agent server, and none on the Agent Instance's RPC port either. The bind address your entry
+  point states and the network you put the agent on are the whole of the protection, in both
+  directions.
 - **Rate limiting.** The login route is unthrottled and no lockout exists. Rate limiting belongs
   at your edge, where it survives a second Gateway process.
 - **Account recovery.** There is no email, no reset flow, and no security questions. A forgotten

@@ -1,20 +1,21 @@
 /**
- * The highest-risk logic in the `pi` adapter, which is why it is a module of its own with no
- * process in it. Three properties of `pi --mode json` each produce a plausible wrong answer rather
- * than an error, so getting a Run to work once catches none of them and only a test over a crafted
+ * The highest-risk logic in the `pi` adapter, which is why it is a module of its own with no socket
+ * in it. Three properties of `pi`'s event stream each produce a plausible wrong answer rather than
+ * an error, so getting a Run to work once catches none of them and only a test over a crafted
  * stream does.
  *
- * Two of the three are the worthless exit code and the terminal record, and both are rendered on the
- * function, having consequences a caller acts on. The third is here, because it has none until
- * somebody undoes it: framing is strictly LF, and nothing here may reach for `node:readline`. That
- * splits on U+2028 and U+2029 as well. Both are legal inside a JSON string and `JSON.stringify`
- * emits them literally, so one record would arrive as two malformed halves.
+ * Two of the three are rendered on the function below, having consequences a caller acts on: the
+ * terminal record is not the obvious one, and an error the model returned is announced nowhere but
+ * inside an assistant message. The third is framing, and it moved to `./framing.ts` when the
+ * RPC channel arrived, because a response to a command and an event of a Run are the same bytes
+ * read the same way. Nothing here sees a byte.
  *
- * `agent_settled` is missing from `pi`'s own `docs/json.md`, which is stale. Read the code rather
- * than that page before changing which record ends a Run.
+ * `agent_settled` is missing from `pi`'s own `docs/json.md`, which is stale; `docs/rpc.md` has it.
+ * Read the code rather than either page before changing which record ends a Run.
  */
 
 import type { RunOutcome } from "../signals/runtime.ts";
+import type { Framed } from "./framing.ts";
 
 /**
  * The stop reasons that mean the agent finished answering. Anything else is a failed Run.
@@ -37,127 +38,111 @@ type Answer = {
   readonly errorMessage: string | undefined;
 };
 
-/** What one interpretation carries across the stream. Mutable, and never shared between two. */
-type Reading = {
-  /** Bytes decoded but not yet terminated by an LF. */
-  pending: string;
-  /** How many records were read, for a message about a stream that stopped early. */
-  records: number;
-  /** The first line that could not be read as a record, and why, if there was one. */
-  unreadable: { readonly line: string; readonly why: string } | undefined;
-  /** The last assistant message seen so far. */
-  answer: Answer | undefined;
-  /** The answer as it stood at the settle, which is the one the outcome is read from. */
-  settledAnswer: Answer | undefined;
-  /** Whether `agent_settled` has been seen. */
-  settled: boolean;
-};
-
 /**
- * Reads one Run's `pi --mode json` output and reports how the Run ended.
+ * Reads the events of one Run and reports how it ended, **stopping at the settle**.
  *
- * No exit code is read and none is taken, because `--mode json` exits 0 on a model error and on an
- * API error. What decides the outcome is the stop reason on the last assistant message before the
- * agent settled. An `agent_end` record is not that settle: it fires per low-level agent run, and a
- * retry or a compaction can follow it and continue the same Run, so a stream ending after one is a
- * Run that did not finish.
+ * No exit status is read and there is none to read: the Agent Instance is a process the Operator
+ * runs and the Gateway only ever holds a connection to it. That is the same trade the old
+ * container-per-Run reader made for a different reason — `--mode json` exits 0 on a model error —
+ * and it is now structural rather than a choice. What decides the outcome is the stop reason on the
+ * last assistant message before the agent settled. An `agent_end` record is not that settle: it
+ * fires per low-level agent run, and a retry or a compaction can follow it and continue the same
+ * Run, so a stream ending after one is a Run that did not finish.
  *
- * The `source` is the container's stdout as raw chunks rather than as decoded text, a chunk boundary
- * falling wherever the operating system puts it, including inside a multi-byte character.
+ * An `AsyncIterator` and not an `AsyncIterable`, which is the whole point of this signature. The
+ * records are the channel's, shared with the commands that were sent before the Prompt, and this
+ * reader must take exactly what it needs and leave the iterator alone: `for await` would call
+ * `return()` on it at the settle and close the connection from underneath the caller, which is the
+ * caller's to do and to log. It also means the reader never drains to EOF. Nothing closes the
+ * connection but us, so draining would be waiting for a peer with no reason to hang up.
  *
  * Bad output never throws. A stream that stopped early, ended mid-record, or carried a line that is
  * not a record is a failed Run with a reason, and never a success inferred from the records that did
  * parse. Every reason names the `session`, because a Run's `error` column is the only thing an
- * Operator has to go on, and `Session user_42 produced no output at all` says where to look.
- *
- * The whole source is consumed even once the outcome is known, a subprocess whose stdout stops being
- * read blocking as soon as the pipe fills, which would turn a finished Run into a hang. There is no
- * timeout here or anywhere else, so a stream that never ends never returns.
+ * Operator has to go on, and `Session user_42 said nothing at all` says where to look.
  */
-export async function interpretPiOutput(
-  source: AsyncIterable<Uint8Array>,
+export async function readOutcome(
+  records: AsyncIterator<Framed>,
   session: string,
 ): Promise<RunOutcome> {
-  const reading: Reading = {
-    pending: "",
-    records: 0,
-    unreadable: undefined,
-    answer: undefined,
-    settledAnswer: undefined,
-    settled: false,
-  };
-  // `stream: true` is what makes a character split across two chunks survive. A per-chunk
-  // `toString()` would produce U+FFFD and a record that no longer parses.
-  const decoder = new TextDecoder("utf-8");
+  // Every failure below is this Session's, so it says so once here rather than seven times.
+  const failed = (why: string): RunOutcome => ({ ok: false, error: `Session ${session} ${why}` });
+  /** How many records were read, for a message about a stream that stopped early. */
+  let read = 0;
+  /** The last assistant message seen so far, which at the settle is the one that decides. */
+  let answer: Answer | undefined;
 
-  for await (const chunk of source) {
-    frameLines(reading, decoder.decode(chunk, { stream: true }));
-  }
-  frameLines(reading, decoder.decode());
-
-  return outcomeOf(reading, session);
-}
-
-/** Cuts `text` into lines on LF and on nothing else, for the reason the file header gives. */
-function frameLines(reading: Reading, text: string): void {
-  reading.pending += text;
   for (;;) {
-    const end = reading.pending.indexOf("\n");
-    if (end === -1) return;
-    const line = reading.pending.slice(0, end);
-    reading.pending = reading.pending.slice(end + 1);
-    readRecord(reading, line);
+    const step = await records.next();
+    if (step.done === true) {
+      // The dropped connection, and the one failure mode a Runtime over a socket has that a
+      // Runtime over a pipe did not: the Agent Instance is somebody else's process on somebody
+      // else's schedule, and it can go away in the middle of a Run.
+      return read === 0
+        ? failed(
+            "said nothing at all after the Prompt was accepted, so nothing says whether the Run happened",
+          )
+        : failed(
+            `ended after ${read} records without an agent_settled record, so the Run did not finish. An agent_end is not the end: it can be followed by a retry or a compaction`,
+          );
+    }
+    const framed = step.value;
+    if (framed.kind === "unreadable") {
+      // Reported the moment it is seen, and a settle after it cannot rescue it. The half that was
+      // lost might have been the half that mattered, and "the rest of it parsed" is not evidence
+      // of anything.
+      return failed(
+        `wrote a line that could not be read as a record (${framed.why}), so its output cannot be trusted: ${excerpt(framed.line)}`,
+      );
+    }
+    if (framed.kind === "truncated") {
+      return failed(
+        `ended mid-record after ${read} records, so the Run did not finish: ${excerpt(framed.line)}`,
+      );
+    }
+
+    read += 1;
+    const record = framed.record;
+    switch (record.type) {
+      case "message_end":
+      case "turn_end":
+        answer = answerIn(record.message) ?? answer;
+        break;
+      case "agent_end":
+        // `agent_end` carries the whole message list. Read for the answer, never as the end of the
+        // Run: a retry or a compaction can follow it and continue the same Run.
+        if (Array.isArray(record.messages)) {
+          const found = record.messages.map(answerIn).findLast((one) => one !== undefined);
+          if (found !== undefined) answer = found;
+        }
+        break;
+      case "agent_settled":
+        return settlement(failed, answer, read);
+      default:
+        break;
+    }
   }
 }
 
-/** Reads one framed line as a record, or notes why it could not be read as one. */
-function readRecord(reading: Reading, line: string): void {
-  // `pi` writes no blank lines, but a trailing LF leaves one behind here, and a reader that failed
-  // on it would fail on every well-formed stream.
-  if (line.trim() === "") return;
-
-  let record: unknown;
-  try {
-    record = JSON.parse(line);
-  } catch {
-    reading.unreadable ??= { line, why: "it is not JSON" };
-    return;
+/** What the settle means, given the answer as it stood when it arrived. */
+function settlement(
+  failed: (why: string) => RunOutcome,
+  answer: Answer | undefined,
+  read: number,
+): RunOutcome {
+  if (answer === undefined) {
+    return failed(
+      `settled after ${read} records with no assistant message, so there is nothing that says the Run succeeded`,
+    );
   }
-  if (typeof record !== "object" || record === null || Array.isArray(record)) {
-    reading.unreadable ??= { line, why: "it is JSON but not an object" };
-    return;
+  if (!answeredStopReasons.has(answer.stopReason)) {
+    // The stop reason is named because nothing else says anything: the agent settled, the
+    // connection is healthy, and this string is all the Operator gets.
+    return failed(
+      `settled with stopReason ${JSON.stringify(answer.stopReason)} and reported no failure of its own: ${answer.errorMessage ?? `the agent's last message was not an answer (${answer.stopReason})`}`,
+    );
   }
-  const fields = record as Record<string, unknown>;
-  if (typeof fields.type !== "string") {
-    reading.unreadable ??= { line, why: "it has no type field" };
-    return;
-  }
-
-  reading.records += 1;
-  // Past the settle the Run's outcome is already decided, so nothing is read from what follows.
-  // Still counted and still framed, so the stream keeps draining.
-  if (reading.settled) return;
-
-  switch (fields.type) {
-    case "message_end":
-    case "turn_end":
-      reading.answer = answerIn(fields.message) ?? reading.answer;
-      return;
-    case "agent_end":
-      // `agent_end` carries the whole message list. Read for the answer, never as the end of the
-      // Run: a retry or a compaction can follow it and continue the same Run.
-      if (Array.isArray(fields.messages)) {
-        const answer = fields.messages.map(answerIn).findLast((found) => found !== undefined);
-        if (answer !== undefined) reading.answer = answer;
-      }
-      return;
-    case "agent_settled":
-      reading.settled = true;
-      reading.settledAnswer = reading.answer;
-      return;
-    default:
-      return;
-  }
+  return { ok: true };
 }
 
 /** The answer a message holds, if that message is one of the agent's own. */
@@ -169,53 +154,6 @@ function answerIn(message: unknown): Answer | undefined {
     stopReason: fields.stopReason,
     errorMessage: typeof fields.errorMessage === "string" ? fields.errorMessage : undefined,
   };
-}
-
-/**
- * The outcome, with the reasons in the order they take precedence.
- *
- * A stream that could not be read whole is reported as such, and that holds even where the records
- * which did parse settled successfully. The half that was lost might have been the half that
- * mattered, and "some of it parsed" is not evidence of anything.
- */
-function outcomeOf(reading: Reading, session: string): RunOutcome {
-  // Every failure below is this Session's, so it says so once here rather than six times. The Run's
-  // `error` column is the only thing an Operator has to go on.
-  const failed = (why: string): RunOutcome => ({ ok: false, error: `Session ${session} ${why}` });
-
-  if (reading.unreadable !== undefined) {
-    const { line, why } = reading.unreadable;
-    return failed(
-      `wrote a line that could not be read as a record (${why}), so its output cannot be trusted: ${excerpt(line)}`,
-    );
-  }
-  if (reading.pending.trim() !== "") {
-    return failed(
-      `ended mid-record after ${reading.records} records, so the Run did not finish: ${excerpt(reading.pending)}`,
-    );
-  }
-  if (reading.records === 0) {
-    return failed("produced no output at all, so nothing says whether the Run happened");
-  }
-  if (!reading.settled) {
-    return failed(
-      `ended after ${reading.records} records without an agent_settled record, so the Run did not finish. An agent_end is not the end: it can be followed by a retry or a compaction`,
-    );
-  }
-  const answer = reading.settledAnswer;
-  if (answer === undefined) {
-    return failed(
-      `settled after ${reading.records} records with no assistant message, so there is nothing that says the Run succeeded`,
-    );
-  }
-  if (!answeredStopReasons.has(answer.stopReason)) {
-    // The stop reason is named because the exit code was zero and this string is all the Operator
-    // gets.
-    return failed(
-      `settled with stopReason ${JSON.stringify(answer.stopReason)} and exited successfully anyway: ${answer.errorMessage ?? `the agent's last message was not an answer (${answer.stopReason})`}`,
-    );
-  }
-  return { ok: true };
 }
 
 /** Enough of a line to recognise it by, without putting a whole Session into a log. */

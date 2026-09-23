@@ -1,5 +1,5 @@
 /**
- * The Agent Implementation's JSONL output, and the three traps in reading it.
+ * The Agent Implementation's event stream, and the three traps in reading it.
  *
  * The fixtures under `./fixtures/` are **real** `pi --mode json` output, captured
  * from `@earendil-works/pi-coding-agent` 0.83.0 driven against a local
@@ -10,9 +10,15 @@
  * fixture invented from the documentation would pin our reading of the documentation
  * rather than the behaviour — `docs/json.md` does not even list `agent_settled`.
  *
- * Every case here is a pure function over one of those streams. No Docker, no
- * credentials, no network: that is the whole reason this ticket is separate from the
- * one that starts a container.
+ * They were captured from `--mode json`, where the same events go to stdout, rather than
+ * over the RPC channel that carries them now. That is deliberate and it is what a fixture
+ * is for: the records are the agent's, the channel is only how they arrive, and a capture
+ * is worth having precisely because nobody can talk it into saying something convenient.
+ *
+ * Every case here is the framing and the reader together, over one of those streams, and
+ * nothing else: no socket, no Docker, no credentials, no network. The bytes go in as
+ * chunks the way a pipe or a socket delivers them, and what comes out is the outcome of a
+ * Run.
  */
 
 import assert from "node:assert/strict";
@@ -21,7 +27,8 @@ import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import { describe, it } from "node:test";
 import type { RunOutcome } from "../signals/runtime.ts";
-import { interpretPiOutput } from "./output.ts";
+import { type Framed, framedRecords } from "./framing.ts";
+import { readOutcome } from "./output.ts";
 
 /**
  * The two characters `node:readline` splits on and JSON does not. Written as escapes
@@ -96,7 +103,7 @@ const session = "user_42";
 
 /** What a Run of that Session would report for this output. */
 async function outcomeOf(text: string, chunkSize = 4096): Promise<RunOutcome> {
-  return interpretPiOutput(chunks(text, chunkSize), session);
+  return readOutcome(framedRecords(chunks(text, chunkSize)), session);
 }
 
 /** The failure message, with an assertion that there was a failure at all. */
@@ -133,15 +140,43 @@ describe("a settled run", () => {
 
     assert.deepEqual(await outcomeOf(asStream(records)), { ok: true });
   });
+
+  it("returns at the settle rather than reading to the end of the stream", async () => {
+    // Not a nicety. The records are the channel's, the connection stays open until the
+    // Runtime closes it, and the Agent Instance has no reason to hang up: a reader that
+    // drained to EOF would wait for a peer that is waiting for the next command.
+    const records = await recordsOf("settled-ok");
+    const settleAt = records.findIndex((record) => record.type === "agent_settled");
+    assert.notEqual(settleAt, -1);
+    // Three more records after it, which a reader that drained would go on to pull.
+    const trailing = [{ type: "turn_start" }, { type: "turn_end" }, { type: "agent_start" }];
+
+    let pulled = 0;
+    const framed = framedRecords(chunks(asStream([...records, ...trailing]), 4096));
+    const counted: AsyncIterator<Framed> = {
+      next() {
+        pulled += 1;
+        return framed.next();
+      },
+    };
+
+    assert.deepEqual(await readOutcome(counted, session), { ok: true });
+    assert.equal(
+      pulled,
+      settleAt + 1,
+      "the reader should have pulled the settle and stopped there",
+    );
+  });
 });
 
 /**
- * **Trap 1.** `--mode json` exits 0 on model and API errors — only `mode: "text"`
- * sets a non-zero exit, and it does so by inspecting the last assistant message
- * itself. So the outcome is read from that message's `stopReason` and never from the
- * exit code, and this function is not given one to be tempted by.
+ * **Trap 1.** A model error is announced nowhere but inside an assistant message. It
+ * was `--mode json` exiting 0 on model and API errors that made this a trap worth a
+ * name; over the RPC channel there is no exit status to be tempted by at all, since
+ * the agent's process is the Operator's and outlives the Run. Either way the outcome
+ * is read from the last assistant message's `stopReason` and from nothing else.
  */
-describe("a model error while the process exits zero", () => {
+describe("a model error the agent reports as an ordinary settle", () => {
   it("is a failed Run carrying the error", async () => {
     const error = await failureOf(await fixture("model-error-exit-zero"));
 
@@ -330,8 +365,10 @@ describe("output that cannot be read", () => {
     assert.match(await failureOf(asStream(records)), /type/);
   });
 
-  it("fails the Run when there was no output at all", async () => {
-    assert.match(await failureOf(""), /no output/);
+  it("fails the Run when the agent said nothing at all", async () => {
+    // A Prompt accepted and then a connection that ended, which is the shape of an Agent
+    // Instance that went away between the acknowledgement and the first event.
+    assert.match(await failureOf(""), /said nothing at all/);
   });
 
   it("fails the Run when it settled without the agent ever answering", async () => {
@@ -358,7 +395,7 @@ describe("output that cannot be read", () => {
     // that did not carry it would have to be written deliberately.
     assert.equal(
       await failureOf(""),
-      `Session ${session} produced no output at all, so nothing says whether the Run happened`,
+      `Session ${session} said nothing at all after the Prompt was accepted, so nothing says whether the Run happened`,
     );
   });
 });

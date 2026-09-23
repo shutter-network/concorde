@@ -30,7 +30,7 @@ The framework gives you the Gateway. You state what your deployment is made of, 
 A Gateway is a set of components. Four are core, and every deployment gets them:
 
 - A **Db**, the PostgreSQL connection every other component stores its state through.
-- A **Signal Worker** that runs the agent, one thing at a time and never two at once.
+- A **Signal Worker** that drives the agent, one thing at a time and never two at once.
 - An **Agent server**, the HTTP API the running agent calls back into.
 - A **Public server**, the HTTP API the parties' own clients talk to.
 
@@ -50,10 +50,12 @@ stopped with it, and can serve its own routes on either server.
 
 ![The parts of a shared agent. A dashed boundary encloses the Gateway, holding the Db, the Signal
 Worker, the Agent server and the Public server, together with the Messenger and its two Channels
-and Users with its two Auths. Outside it are the Agent Implementation, a person's client, and a
-Nostr Relay.](./site/public/architecture.svg)
+and Users with its two Auths. Outside it are the Agent Instance, a person's client, and a Nostr
+Relay.](./site/public/architecture.svg)
 
-Everything inside the dashed boundary is the Gateway. The
+Everything inside the dashed boundary is the Gateway. The agent is drawn outside it because it is
+outside it: you run the agent, and the Gateway connects to it over a TCP address that is the whole
+of what it knows about it. The
 [architecture page](https://shutter-network.github.io/concorde/architecture) reads the picture
 part by part.
 
@@ -82,16 +84,9 @@ import { createUsers } from "@shutter-network/concorde/users";
 const tokenTtl = 30 * 24 * 60 * 60 * 1000;
 
 const runtime = createPiRuntime({
-  image: process.env.AGENT_IMAGE!,
-  env: { AGENT_SERVER_URL: process.env.AGENT_SERVER_URL! },
-  networks: [process.env.AGENT_NETWORK!],
-  mounts: {
-    runtimeDir: process.env.RUNTIME_DIR_HOST!,
-    entries: [
-      { agentPath: "/workspace", path: "state/workspace" },
-      { agentPath: "/workspace/AGENTS.md", path: "AGENTS.md", readOnly: true },
-    ],
-  },
+  host: process.env.AGENT_INSTANCE_HOST!,
+  port: Number(process.env.AGENT_INSTANCE_PORT),
+  sessionsDir: process.env.AGENT_SESSIONS_DIR!,
 });
 
 const gateway = createGateway({
@@ -102,8 +97,8 @@ const gateway = createGateway({
     port: Number(process.env.PUBLIC_PORT),
   },
   agentListen: {
-    host: process.env.AGENT_HOST!,
-    port: Number(process.env.AGENT_PORT),
+    host: process.env.AGENT_SERVER_HOST!,
+    port: Number(process.env.AGENT_SERVER_PORT),
   },
   extend: ({ db, agentServer, publicServer, worker }) => {
     const users = createUsers({ db, agentServer, publicServer });
@@ -133,10 +128,16 @@ Answer them by sending them a Message. Your final reply here reaches nobody.`,
 await gateway.start();
 ```
 
-That is close to the whole of a working deployment. It waits for a message, and runs the agent in
-a container each time one arrives. What
-[`examples/00_minimal/main.ts`](./examples/00_minimal/main.ts) adds to it is the block that seeds
-the first person and a signal handler for shutdown.
+That is close to the whole of a working deployment. It waits for a message, and each time one
+arrives it opens a connection to the agent, prompts it, and closes the connection when the agent
+has settled. What [`examples/00_minimal/main.ts`](./examples/00_minimal/main.ts) adds to it is the
+block that seeds the first person and a signal handler for shutdown.
+
+**You run the agent; the framework does not.** `createPiRuntime` takes an address and the
+directory the agent keeps its Sessions in, and that is all it takes: no image, no model, no
+credential and no path on your host. The agent is `pi` behind a listener in a container of your
+own, on a private network with the Gateway, and every example's `compose.yml` is one service for
+each of the two.
 
 Each component is its own import subpath, and the package root exports nothing. A component that
 owns tables ships them on a `/schema` subpath, which your own `drizzle.config.ts` applies. Your

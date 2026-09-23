@@ -1,102 +1,223 @@
 /**
- * A container rather than this process, which is the load-bearing decision underneath all of
- * `src/pi/`. Driving `pi` in-process through its TypeScript SDK is real, and it was rejected on
- * exposure: `pi`'s shell tool hands its child `{ ...process.env }`, so an in-process agent would
- * hold the Gateway's `DATABASE_URL` and could write to every table directly, bypassing the Agent
- * server. Only what the container's `env` names reaches the agent.
+ * The Gateway does not run the agent, which is the load-bearing decision underneath all of
+ * `src/pi/`. An Operator runs an **Agent Instance** — `pi --mode rpc` behind a listener, in a
+ * container of their own — and this Runtime opens one connection to it per Run. What that buys is
+ * that the Gateway holds no container runtime socket, names no host path, and carries no part of
+ * the agent's environment: the image, the model credential, the files the agent reads and the flags
+ * it is started with are all on the other side of a TCP address.
  *
- * The split with `src/agent-container/` runs one way. Everything about running an agent as a
- * container lives there and knows nothing about `pi`: the argument assembly, the confinement flags,
- * the mounts, the networks, the environment, the spawning, stdin, stderr, the exit status and the
- * diagnosis appended to a failure. This file imports from it and nothing there imports back, and an
- * import of `../pi/` into that directory is the thing to refuse in review, because the whole point
- * of the split is that a second Agent Implementation takes it unchanged.
+ * Driving `pi` in-process through its TypeScript SDK is the alternative, and it stays refused on
+ * the same ground it always was: `pi`'s shell tool hands its child `{ ...process.env }`, so an
+ * in-process agent would hold the Gateway's `DATABASE_URL` and could write every table directly,
+ * bypassing the Agent server. The separation is now the Operator's arrangement rather than the
+ * framework's, and it is a stronger one — the agent's process never shared an address space, a
+ * filesystem or an environment with the Gateway to begin with.
+ *
+ * Container-per-Run is gone with the Docker socket. The isolation it bought did not disappear; it
+ * moved into the Operator's compose file, where it was always better expressed. An Operator who
+ * wants a fresh container per Run writes a {@link Runtime}, which is one method.
  */
 
-import {
-  type AgentContainer,
-  type AgentContainerRuntime,
-  createAgentContainerRuntime,
-  type RunPlan,
-} from "../agent-container/index.ts";
-import type { RunPrompt } from "../signals/runtime.ts";
-import { interpretPiOutput } from "./output.ts";
-
-/**
- * Builds a Runtime that runs `pi` as one fresh container per Run, of the image the container names.
- *
- * Two defaults sit beneath the Operator's own, and a container stating either one gets what it
- * asked for. `entrypoint` is `["pi"]`, so an image that starts something else, or a `pi` installed
- * somewhere unusual, is a field rather than a workaround. `PI_OFFLINE` is set, because a Gateway has
- * no use for `pi`'s version check and its update telemetry, and a Run must not depend on reaching
- * `pi.dev`.
- *
- * @throws If the container names no image, or if its Mount Table cannot mean what it says.
- */
-export const createPiRuntime = (container: AgentContainer): AgentContainerRuntime =>
-  createAgentContainerRuntime({
-    container: {
-      entrypoint: ["pi"],
-      ...container,
-      env: { PI_OFFLINE: "1", ...container.env },
-    },
-    run: piRun,
-  });
+import { posix } from "node:path";
+import { defaultLogger, type Logger } from "../logging/index.ts";
+import type { RunOutcome, RunPrompt, Runtime } from "../signals/runtime.ts";
+import { readOutcome } from "./output.ts";
+import { openRpcChannel, type RpcChannel } from "./rpc.ts";
 
 /**
- * Plans one Run as `pi` needs it performed: three flags, the Prompt on stdin, and a reader for the
- * JSONL that comes back. The flags are `--mode json`, `--session-id <session>` and `--no-approve`,
- * and nothing else is passed.
+ * Where the Agent Instance is and where its Sessions are kept.
  *
- * The Prompt goes on stdin, never argv, and that is not a style choice. `pi` reads a leading `@word`
- * on argv as a file to include, and refuses an argument starting with `-` as an unknown option. Both
- * are ordinary Handlebars output. Piped stdin becomes the initial message with neither treatment
- * applied.
- *
- * Pure, and a total function of its Prompt. Nothing is started, nothing is written, and no Session
- * name is invented: the Session is already a name by the time it arrives here, the Signal Worker
- * having answered a Handler's request for a fresh one against the Run row it had just written. The
- * reader is {@link interpretPiOutput}, closed over that Session, so a failure says which Session it
- * was.
- *
- * @throws If the Prompt has no text. The agent drops an empty message rather than answering it, so
- *   the Run would settle having said nothing.
+ * Three required values and no fourth. There is no model, no provider, no image, no flag and no
+ * credential, because the Gateway starts nothing: everything `pi` reads on disk or takes on its
+ * command line is the Operator's to place in the instance they run, and a field here would be a
+ * second place to say it.
  */
-export function piRun(prompt: RunPrompt): RunPlan {
-  if (prompt.text.trim() === "") {
+export type PiInstance = {
+  /** The host the Agent Instance accepts RPC on, as this process resolves it. */
+  readonly host: string;
+  /** The port it accepts on. */
+  readonly port: number;
+  /**
+   * The directory Sessions live in, **as the Agent Instance sees it**.
+   *
+   * Absolute, and refused in {@link createPiRuntime} rather than at the first Run. This is the check
+   * the container-per-Run design could not make and recorded its regret at not making: it named no
+   * path at all, so a deployment that had mounted the wrong thing was a Gateway which started,
+   * served, and then failed every Run permanently. A path can be checked for what it *is* even
+   * where it cannot be checked for what is *there*, and the Operator wrote it in the same file as
+   * this option, which is where a refusal belongs.
+   *
+   * It is not a path on this host and must not be read as one. The Gateway never opens it, creates
+   * nothing in it and does not need to be able to reach it; the two ends agree on it because the
+   * Operator wrote the same string in the compose file and here.
+   */
+  readonly sessionsDir: string;
+  readonly logger?: Logger;
+};
+
+/**
+ * `pi`'s own Session id grammar, copied verbatim from `assertValidSessionId` in its
+ * `core/session-manager`.
+ *
+ * Copied, which the framework never had to do before: `pi` used to be handed `--session-id` and to
+ * refuse a bad one itself, so the framework carried no transcription that could go stale and the
+ * Operator got `pi`'s own message. A Session is addressed **by path** over RPC, and `pi` will open
+ * any path it is handed, so the grammar has to live somewhere and the only honest place is beside
+ * the code that joins the path.
+ *
+ * Traversal-safe by construction rather than by a second check: there is no `/` in it, and `.` and
+ * `..` are excluded because both ends must be alphanumeric. So a Signal Handler's Session name
+ * cannot climb out of `sessionsDir`, and nothing here needs to compare a resolved path against a
+ * prefix.
+ */
+const sessionNames = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
+
+/**
+ * Builds the Runtime that performs each Run against an Agent Instance.
+ *
+ * Nothing is connected here and nothing is probed. An Agent Instance that is not listening is a
+ * failed Run carrying the address, on the **Relay** precedent: a remote thing the Operator runs is
+ * an outage, and a Gateway that refused to start would take every other Party's access down with
+ * the agent's. What is refused here is only what an Operator got wrong in the file in front of
+ * them.
+ *
+ * @throws If `sessionsDir` is missing, empty or relative.
+ */
+export function createPiRuntime(instance: PiInstance): Runtime {
+  const { host, port, sessionsDir } = instance;
+  const log = instance.logger ?? defaultLogger();
+
+  if (typeof sessionsDir !== "string" || sessionsDir.trim() === "") {
     throw new Error(
-      "the Prompt has no text, and the Agent Implementation drops an empty message rather than answering it, so the Run would settle having said nothing",
+      "the pi Runtime needs a sessionsDir: the directory Sessions are kept in, as the Agent Instance sees it. Every Run names a file under it, so there is no default that could be right",
+    );
+  }
+  // `posix` and not the platform's `path`, deliberately: this is a path in the Agent Instance's
+  // filesystem, which is a container, and a Gateway that happened to be running on Windows would
+  // otherwise refuse `/sessions` and join with a backslash.
+  if (!posix.isAbsolute(sessionsDir)) {
+    throw new Error(
+      `the pi Runtime's sessionsDir must be absolute, and ${JSON.stringify(sessionsDir)} is not. It is resolved by the Agent Instance and never by this process, so a relative path would be read against a working directory nothing here can see`,
     );
   }
 
   return {
-    args: [
-      // The machine-readable event stream. Note it exits 0 on model and API errors, so the outcome
-      // is read from the stream and never from the exit code (see output.ts).
-      "--mode",
-      "json",
-      // `--session-id`, never `--session`: this one creates the Session if it is missing, which is
-      // the fresh-or-named behaviour a Prompt asks for. The other resolves only an existing Session
-      // and exits 1 otherwise.
-      "--session-id",
-      prompt.session,
-      // No `--model`, no `--provider`, no `--session-dir`, and no flag naming a file. The first two
-      // are `defaultModel` and `defaultProvider` in a `settings.json` the Operator mounts. The third
-      // is `pi`'s own to resolve, under the agent directory the image declares. The framework writes
-      // no file, so it has none to name. That last one would make things worse rather than merely
-      // being unnecessary: `--append-system-prompt` resolves a missing path to its own literal
-      // argument, and the Run then settles happily knowing nothing.
-      //
-      // Project-local `.pi` settings and extensions are ignored, and that is load-bearing rather
-      // than tidy. The Workspace is writable by the agent, so a saved trust decision in the
-      // persisted `trust.json` would let one Run arrange for the next one to load configuration out
-      // of the Workspace. Context files are not project-local configuration and are unaffected,
-      // which is what makes a read-only `AGENTS.md` both readable and unchangeable.
-      "--no-approve",
-    ],
-    stdin: prompt.text,
-    // Closed over the Session, which is the whole reason the reader is produced per Run: a failure
-    // says which Session it was, and that is what a Run's `error` column needs to be worth reading.
-    outcome: (stdout) => interpretPiOutput(stdout, prompt.session),
+    async run(prompt: RunPrompt): Promise<RunOutcome> {
+      // Every failure below is this Run's Session, which is the only thing an Operator has to find
+      // a transcript by.
+      const failed = (why: string): RunOutcome => ({
+        ok: false,
+        error: `Session ${prompt.session} ${why}`,
+      });
+
+      if (!sessionNames.test(prompt.session)) {
+        // This Run and no other. A Handler that writes a bad name writes it for one Prompt, and a
+        // Signal that produced several must not lose the rest of them to it.
+        return failed(
+          `is not a name pi will accept: a Session name is one or more of A-Z, a-z, 0-9, '.', '_' and '-', beginning and ending with a letter or a digit`,
+        );
+      }
+      if (prompt.text.trim() === "") {
+        // The agent drops an empty message rather than answering it, so the Run would settle having
+        // said nothing and be recorded as a success. A failed Run rather than a throw, because
+        // everything else that can go wrong here is one and the Signal Worker treats them alike.
+        return failed("was given a Prompt with no text, so the agent would answer nothing");
+      }
+
+      const sessionFile = posix.join(sessionsDir, `${prompt.session}.jsonl`);
+
+      let rpc: RpcChannel;
+      try {
+        rpc = await openRpcChannel(host, port);
+      } catch (error) {
+        return failed(messageOf(error));
+      }
+
+      // No Run id on this line. The Signal Worker is serial globally, so its own "Run started" and
+      // "Run finished" lines bracket this one, and the Run a connection belongs to is the one
+      // immediately above it.
+      log.debug({ session: prompt.session, sessionFile, host, port }, "connected to the agent");
+
+      try {
+        return await performRun(rpc, prompt, sessionFile, failed);
+      } catch (error) {
+        return failed(messageOf(error));
+      } finally {
+        // Whatever happened. A connection left open is a `pi` process the Operator's listener
+        // started and will not reap, and with `fork` there is one per Run.
+        rpc.close();
+        log.debug({ session: prompt.session, dropped: rpc.dropped() }, "closed the connection");
+      }
+    },
   };
+}
+
+/**
+ * The four steps of one Run, strictly in sequence.
+ *
+ * `switch_session` is **create-or-resume**: a path that does not exist becomes a fresh Session kept
+ * at that path, and a path that does is loaded. That behaviour is undocumented, the whole design
+ * rests on it, and `get_state` is here because of it — the one thing that can tell "created it"
+ * apart from "did something else and said it went fine". Reading `sessionFile` back and comparing it
+ * to what was asked for costs one round trip per Run and is the difference between a Session that
+ * continues and a Session that silently starts over, or worse, a Prompt delivered into the Session
+ * the previous connection happened to leave open.
+ */
+async function performRun(
+  rpc: RpcChannel,
+  prompt: RunPrompt,
+  sessionFile: string,
+  failed: (why: string) => RunOutcome,
+): Promise<RunOutcome> {
+  const switched = await rpc.send("switch_session", { sessionPath: sessionFile });
+  if (!switched.success) {
+    return failed(
+      `could not be opened at ${sessionFile}: ${switched.error ?? "the Agent Instance refused the switch and said why nowhere"}`,
+    );
+  }
+  if (switched.data?.cancelled === true) {
+    // `success: true` with `cancelled: true`, which is an extension of the Operator's refusing the
+    // switch in a `session_before_switch` handler. Prompting anyway would deliver this Prompt into
+    // whichever Session the instance is in, which is the failure this whole sequence exists to make
+    // impossible.
+    return failed(
+      `was not opened at ${sessionFile}: an extension of the Agent Instance cancelled the switch, so the agent is in some other Session and this Prompt is not for it`,
+    );
+  }
+
+  const state = await rpc.send("get_state");
+  if (!state.success) {
+    return failed(
+      `could not be confirmed: the Agent Instance refused to say what state it is in${state.error === undefined ? "" : `: ${state.error}`}`,
+    );
+  }
+  const reached = state.data?.sessionFile;
+  if (reached !== sessionFile) {
+    // Both, because either one alone leaves the reader guessing which end was wrong.
+    return failed(
+      `was asked for at ${sessionFile} and the Agent Instance is in ${typeof reached === "string" ? reached : JSON.stringify(reached)}, so the Prompt would go to the wrong Session`,
+    );
+  }
+
+  const prompted = await rpc.send("prompt", { message: prompt.text });
+  if (!prompted.success) {
+    // A refusal before acceptance, which is the only failure `prompt` reports this way: anything
+    // that goes wrong afterwards arrives in the event stream instead.
+    return failed(
+      `was refused the Prompt: ${prompted.error ?? "the Agent Instance rejected it and said why nowhere"}`,
+    );
+  }
+
+  // Accepted, not finished. What ends the Run is `agent_settled` in the stream that follows.
+  const outcome = await readOutcome(rpc.records, prompt.session);
+  const dropped = rpc.dropped();
+  if (outcome.ok || dropped === undefined) return outcome;
+  // The reader saw records stop; only the socket knows whether that was a failure. Appended rather
+  // than replacing the reader's sentence, because which record was missing is the useful half.
+  return { ok: false, error: `${outcome.error}. The connection failed: ${dropped}` };
+}
+
+/** What a thrown value says, for a Run's `error` column, which nothing parses. */
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

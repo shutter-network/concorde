@@ -42,7 +42,7 @@
  *
  * const gateway = createGateway({
  *   databaseUrl: process.env.DATABASE_URL ?? "",
- *   runtime: createPiRuntime({ image: "my-agent:1" }),
+ *   runtime: createPiRuntime({ host: "agent", port: 4000, sessionsDir: "/sessions" }),
  *   // Not loopback: the agent reaches this server from a container of its own.
  *   agentListen: { host: "0.0.0.0", port: 8081 },
  *   publicListen: { host: "0.0.0.0", port: 8080 },

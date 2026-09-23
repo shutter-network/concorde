@@ -1,16 +1,15 @@
 /**
- * What the one opt-in container test needs of the machine it runs on.
+ * What the one opt-in end-to-end test needs of the machine it runs on.
  *
  * That test is **opt-in and skipped**, which is a deliberate trade rather than
  * timidity. It needs a container runtime, an image built from the network, and about
  * ten seconds; `npm run check` is the inner loop and the command CI is measured by, so
- * a test that slow does not belong in it by default. Everything else about running an
- * agent in a container is a fast test — the composed command line in
- * `../pi/runtime.test.ts`, the pure functions over captured output in
- * `../pi/output.test.ts`, and the stub container runtime in
- * `../container/agent-container.test.ts` — so what is being skipped is exactly the three
- * things nothing else can prove: that mounts resolve, that user ids match, and that a
- * Session resumes.
+ * a test that slow does not belong in it by default. Everything the framework does with
+ * an Agent Instance is a fast test against a fake one — `../pi/runtime.test.ts` over a
+ * real socket, `../pi/framing.test.ts` and `../pi/output.test.ts` over bytes — so what is
+ * being skipped is exactly the claims that are `pi`'s own rather than ours: that
+ * `switch_session` creates a Session at a path that does not exist, that it resumes one
+ * that does, and that `get_state` answers with the path it was switched to.
  *
  * `npm run test:container` sets the variable. CI runs it as its own step.
  */
@@ -49,8 +48,8 @@ export const hostFromContainer = "host.docker.internal";
  */
 export const addHostToGateway = `--add-host=${hostFromContainer}:host-gateway`;
 
-/** The image the container test runs, built from `./pi-image/Dockerfile`. */
-export const piImageTag = "concorde-pi-test:0.83.0";
+/** The image the end-to-end test runs, built from `./pi-image/Dockerfile`. */
+export const piImageTag = "concorde-pi-test:0.85.1";
 
 /**
  * Why the container tests are being skipped, or `false` when they are not.
@@ -89,11 +88,12 @@ export async function buildPiImage(): Promise<string> {
 /**
  * A TCP port nothing is listening on.
  *
- * Needed because the agent is told where the Agent server is in a file written before the
- * Run, and that file has to carry the port, while the port is only known after listening
- * — so the port is chosen first and both values are built from it. The gap between
- * closing this socket and the server taking the port is a race in principle and has never
- * been one in practice.
+ * Needed twice over. The agent is told where the Agent server is in a file written before
+ * any Run, and that file has to carry the port, while the port is only known after
+ * listening — so the port is chosen first and both values are built from it. The Agent
+ * Instance needs one for the same reason: the container publishes its listener on a port
+ * the Gateway is given before the container exists. The gap between closing this socket
+ * and something taking the port is a race in principle and has never been one in practice.
  */
 export async function reservePort(): Promise<number> {
   const socket = createServer();
