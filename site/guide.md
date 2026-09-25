@@ -497,6 +497,17 @@ services:
       agent:
         condition: service_started
     stop_grace_period: 300s
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8081/openapi.json').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   agent:
     build:
@@ -704,6 +715,91 @@ To stop and remove the data:
 ```sh
 docker compose down -v
 ```
+
+## Isolating the agent
+
+What you have built gives the agent a provider key in its own environment, `curl`, and ordinary
+outbound network access. That is the shortest thing that works, and it is worth knowing what it
+costs before you copy it into production.
+
+**An agent can read its own environment.** It has a shell. Asked an innocent question about itself,
+a model will run `env` and put the result in its answer — which then sits in its transcript on disk
+and in the context sent to your provider. Anything you put on the `agent` service is something you
+have handed to the agent, to whoever it talks to, and to whoever reads its Messages.
+
+[`examples/04_agent_isolation`](https://github.com/shutter-network/concorde/tree/main/examples/04_agent_isolation)
+is this deployment with the controls below applied.
+
+### Container hardening, as defence in depth
+
+These are optional defence-in-depth controls. They are cheap and worth having, and **none of them
+solves the problem above**:
+
+```yaml
+agent:
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 512
+  mem_limit: 2g
+```
+
+They bound what an escape reaches. They do not stop the agent reading the key beside it, and
+treating them as the answer is the mistake this section exists to prevent.
+
+### A credential the agent cannot spend for long
+
+The cheapest real improvement is the credential itself: **scope it narrowly, and give it a short
+life.** A key restricted to one model, with a spend cap and an expiry, is worth more than any flag
+above, because it limits what a leak is good for rather than hoping there is not one.
+
+### A proxy, when the agent should not hold the key at all
+
+Put something on the agent's network that holds the credential and adds it on the way out. The
+agent is pointed at the proxy, so what its environment carries is **an address, not a secret**:
+
+```yaml
+agent:
+  environment:
+    ANTHROPIC_BASE_URL: http://model-proxy:8080   # an address
+    ANTHROPIC_API_KEY: not-a-real-key             # a placeholder the SDK insists on
+  networks: [agent]
+
+model-proxy:
+  environment:
+    MODEL_AUTH_VALUE: ${MODEL_API_KEY:?}          # the real credential, here and nowhere else
+  networks: [agent, egress]
+```
+
+`ANTHROPIC_BASE_URL` is read by the SDK `pi` bundles, so no extra configuration file is needed.
+Check the result with `docker compose exec agent env`: the only key there should be the
+placeholder.
+
+### An internal network, and what it breaks
+
+```yaml
+networks:
+  agent:
+    internal: true    # the agent reaches this stack and nothing else
+  egress:             # the proxy's outside line, and the only service on it
+```
+
+`internal: true` is a property of the Docker network, so it holds whatever the agent tries. **On its
+own it also blocks the model API**, and any other public service your agent legitimately needs — a
+dashboard, an internal endpoint, a package registry. That is why the proxy above exists: the agent
+stays on the internal network, and exactly one way out is drilled through it.
+
+If your agent needs the open internet rather than one upstream, run an **allowlisting proxy** and
+name the hosts it may reach. A forwarding proxy to a single upstream, like the one above, is not
+that.
+
+### What none of it fixes
+
+**The agent can still put a secret in a Message.** Every control here is about what the agent
+*holds* and what it can *reach*. None of them touches the reply channel, which is the agent's job
+and therefore always open. If the agent learns something it should not have, it can tell somebody.
+
+Isolation is not confidentiality. The framework says so on the
+[Architecture](./architecture) page, and nothing in this section changes it.
 
 ## What to change next
 
