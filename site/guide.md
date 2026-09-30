@@ -723,17 +723,20 @@ outbound network access. That is the shortest thing that works, and it is worth 
 costs before you copy it into production.
 
 **An agent can read its own environment.** It has a shell. Asked an innocent question about itself,
-a model will run `env` and put the result in its answer — which then sits in its transcript on disk
-and in the context sent to your provider. Anything you put on the `agent` service is something you
-have handed to the agent, to whoever it talks to, and to whoever reads its Messages.
+a model will run `env` and put the result in its answer, which then sits in its transcript on disk
+and in the context sent to your provider. Nobody has to attack it for that to happen.
+
+So the rule is the ordinary one: **give the agent only what it needs to do its job.** The controls
+below are defence in depth, each narrowing what the agent holds or what it can reach. Layers above
+them still decide what leaves the Gateway, and those layers are worth having too, but they are not
+a reason to hand the agent more than it needs.
 
 [`examples/04_agent_isolation`](https://github.com/shutter-network/concorde/tree/main/examples/04_agent_isolation)
 is this deployment with the controls below applied.
 
-### Container hardening, as defence in depth
+### Container hardening
 
-These are optional defence-in-depth controls. They are cheap and worth having, and **none of them
-solves the problem above**:
+These are cheap and worth having, and they are the layer furthest from the credential:
 
 ```yaml
 agent:
@@ -760,17 +763,22 @@ agent is pointed at the proxy, so what its environment carries is **an address, 
 ```yaml
 agent:
   environment:
-    ANTHROPIC_BASE_URL: http://model-proxy:8080   # an address
-    ANTHROPIC_API_KEY: not-a-real-key             # a placeholder the SDK insists on
+    ANTHROPIC_API_KEY: not-a-real-key    # a placeholder the SDK insists on
+  volumes:
+    - ./models.json:/home/agent/.pi/agent/models.json:ro   # an address, not a secret
   networks: [agent]
 
-model-proxy:
+litellm:
   environment:
-    MODEL_AUTH_VALUE: ${MODEL_API_KEY:?}          # the real credential, here and nowhere else
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?}   # the real credential, here and nowhere else
   networks: [agent, egress]
 ```
 
-`ANTHROPIC_BASE_URL` is read by the SDK `pi` bundles, so no extra configuration file is needed.
+Redirect `pi` with `models.json`, which holds
+`{"providers":{"anthropic":{"baseUrl":"http://litellm:4000"}}}` and nothing else.
+`ANTHROPIC_BASE_URL` will not do it: the SDK `pi` bundles reads that variable only as a default, and
+`pi` passes its own `baseUrl`, so the agent keeps dialling the real provider.
+
 Check the result with `docker compose exec agent env`: the only key there should be the
 placeholder.
 
@@ -784,9 +792,9 @@ networks:
 ```
 
 `internal: true` is a property of the Docker network, so it holds whatever the agent tries. **On its
-own it also blocks the model API**, and any other public service your agent legitimately needs — a
-dashboard, an internal endpoint, a package registry. That is why the proxy above exists: the agent
-stays on the internal network, and exactly one way out is drilled through it.
+own it also blocks the model API**, and any other public service your agent legitimately needs,
+such as a dashboard, an internal endpoint or a package registry. That is why the proxy exists: the
+agent stays on the internal network, and exactly one way out is drilled through it.
 
 If your agent needs the open internet rather than one upstream, run an **allowlisting proxy** and
 name the hosts it may reach. A forwarding proxy to a single upstream, like the one above, is not
@@ -800,6 +808,9 @@ and therefore always open. If the agent learns something it should not have, it 
 
 Isolation is not confidentiality. The framework says so on the
 [Architecture](./architecture) page, and nothing in this section changes it.
+
+That is a boundary, not an argument against the controls above. An agent that cannot reach the
+internet and holds no credential is still a smaller problem than one that can and does.
 
 ## What to change next
 

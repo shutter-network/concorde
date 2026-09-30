@@ -52,11 +52,9 @@ services:
       AGENT_SERVER_URL: http://gateway:7411
       PI_OFFLINE: "1"
       PI_CODING_AGENT_DIR: /home/agent/.pi/agent
-      # An address, not a credential. It points pi's built-in provider at the proxy instead of
-      # the provider, so `settings.json` is the other examples' own and needs no change.
-      ANTHROPIC_BASE_URL: http://model-proxy:8080
-      # The SDK will not start a request without one. The proxy replaces this header on the way
-      # out, so this string is the whole of what the agent holds, and it is worth nothing.
+      # The SDK will not start a request without one, and `models.json` sends the request to
+      # LiteLLM, which replaces this header on the way out. So this string is the whole of what
+      # the agent holds, and it is worth nothing.
       ANTHROPIC_API_KEY: not-a-real-key
     volumes:
       - ./state/workspace:/workspace
@@ -64,6 +62,9 @@ services:
       - ./state/sessions:/sessions
       - ./AGENTS.md:/workspace/AGENTS.md:ro
       - ./settings.json:/home/agent/.pi/agent/settings.json:ro
+      # Points pi's built-in anthropic provider at LiteLLM. It carries an address and no
+      # credential, and it is read-only because nothing in the agent has cause to rewrite it.
+      - ./models.json:/home/agent/.pi/agent/models.json:ro
     networks: [agent]
     restart: unless-stopped
     cap_drop: [ALL]
@@ -72,16 +73,21 @@ services:
     pids_limit: 512
     mem_limit: 2g
 
-  model-proxy:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: ["node", "model-proxy.ts"]
+  # The only service that holds the model credential, and the only one with a route off the
+  # stack. Pinned rather than `latest`, as LiteLLM's own deployment guide asks.
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.103.1
+    command:
+      - --config
+      - /app/config.yaml
+      - --port
+      - "4000"
+      - --telemetry
+      - "False"
     environment:
-      MODEL_PROXY_PORT: "8080"
-      MODEL_UPSTREAM_URL: ${MODEL_UPSTREAM_URL:-https://api.anthropic.com}
-      MODEL_AUTH_HEADER: ${MODEL_AUTH_HEADER:-x-api-key}
-      MODEL_AUTH_VALUE: ${MODEL_AUTH_VALUE:?copy .env.example to .env and put your model credential in it}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?copy .env.example to .env and put your model key in it}
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml:ro
     networks: [agent, egress]
     restart: unless-stopped
     cap_drop: [ALL]
