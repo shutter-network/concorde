@@ -156,8 +156,9 @@ registry, so an example's import lines are the lines you write.
 | [`01_scheduler`](./examples/01_scheduler/) | Time waking the agent, with no Users component at all   |
 | [`02_decisions`](./examples/02_decisions/) | Two people, and a signed log both of them read          |
 | [`03_nostr`](./examples/03_nostr/)         | Messaging over Nostr, against a Relay in the same stack |
+| [`04_agent_isolation`](./examples/04_agent_isolation/) | An agent with no credential and no network |
 
-Start with `00_minimal`. They are four independent examples and not a ladder.
+Start with `00_minimal`. They are five independent examples and not a ladder.
 
 ## Documentation
 

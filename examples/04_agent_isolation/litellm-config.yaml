@@ -1,0 +1,7 @@
+model_list:
+  # The name is the one `settings.json` already asks for, so the agent needs no change to reach
+  # it. What it maps to is the Operator's business and the agent never learns it.
+  - model_name: claude-sonnet-5
+    litellm_params:
+      model: anthropic/claude-sonnet-5
+      api_key: os.environ/ANTHROPIC_API_KEY

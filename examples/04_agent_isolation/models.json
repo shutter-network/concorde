@@ -1,0 +1,7 @@
+{
+  "providers": {
+    "anthropic": {
+      "baseUrl": "http://litellm:4000"
+    }
+  }
+}
