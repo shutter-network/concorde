@@ -25,13 +25,13 @@
  * `#if` block with none throws from the built-in helper, which runs only with a context, so it
  * stays a render failure and there is no place to move it to.
  *
- * The two Operator callbacks are awaited outside the try/catch below on purpose. An error thrown by
- * one of them is theirs to recognise, and wrapping it in a sentence about a template would put our
- * words on their bug.
+ * The Operator's own callbacks are awaited outside the try/catch below on purpose, and `post` is
+ * handed to the Worker unwrapped for the same reason. An error thrown by one of them is theirs to
+ * recognise, and wrapping it in a sentence about a template would put our words on their bug.
  */
 
 import Handlebars from "handlebars";
-import type { Prompt, Signal, SignalHandler } from "./handlers.ts";
+import type { PostOutcome, Prompt, Signal, SignalHandler } from "./handlers.ts";
 
 export type TemplateHandlerOptions<TPayload = unknown> = {
   /**
@@ -81,6 +81,21 @@ export type TemplateHandlerOptions<TPayload = unknown> = {
    * hold inside them too.
    */
   readonly partials?: Readonly<Record<string, string>>;
+
+  /**
+   * The post phase, run once after every Run arising from the Signal has finished, whether they
+   * succeeded, failed or were never created. It produces no Prompts.
+   *
+   * It is the whole of the framework's failure handling, because nothing retries a Signal: a
+   * Signal that came to nothing came to nothing for good, and telling somebody so is written here
+   * or nowhere. `outcome.failed` is true if any Run failed and true as well if the render failed
+   * before there were any.
+   *
+   * It is carried to the Signal Worker as written and never called from here, and what it throws
+   * is not wrapped: the Worker records it as `the post phase failed: ...`, beside whatever else
+   * went wrong. What it closes over is yours, exactly as the Handler contract has it.
+   */
+  readonly post?: (signal: Signal<TPayload>, outcome: PostOutcome) => void | Promise<void>;
 };
 
 // Both are load-bearing and both are argued in the file header. What they do to a template is
@@ -91,8 +106,9 @@ const compileOptions: CompileOptions = { noEscape: true, strict: true };
  * Builds a Signal Handler that renders one Prompt per Signal from a Handlebars template.
  *
  * One Prompt, always. It never fans a Signal out across several Sessions and never declines one,
- * although the Handler contract allows both. It has no post phase either, and gains one by being
- * spread: `{ ...templateHandler(options), post }` is a Handler.
+ * although the Handler contract allows both. A post phase it does carry: `post` is an option here
+ * and reaches the Worker as the Handler's own, so the Signal's payload is narrowed in it the way
+ * it is in `session` and `data`.
  *
  * A template that compiles and then does not render fails the Signal, with a message naming the
  * Signal's kind. Handlebars names the variable, the line and the column, and never says which
@@ -141,6 +157,11 @@ export function templateHandler<TPayload = unknown>(
 
       return [{ session, text }];
     },
+
+    // Spread rather than `post: options.post`, which `exactOptionalPropertyTypes` refuses against
+    // an optional method: a Handler that was given no post phase must not carry the property at
+    // all, because the Worker asks `handler.post !== undefined` before running one.
+    ...(options.post === undefined ? {} : { post: options.post }),
   };
 }
 

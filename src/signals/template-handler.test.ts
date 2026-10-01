@@ -24,7 +24,7 @@ import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { type FakeRuntime, fakeRuntime } from "../test-support/fake-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
-import type { Prompt, Signal, SignalHandler, SignalHandlers } from "./handlers.ts";
+import type { PostOutcome, Prompt, Signal, SignalHandler, SignalHandlers } from "./handlers.ts";
 import * as signalsSchema from "./schema/index.ts";
 import { signals } from "./schema/index.ts";
 import { templateHandler } from "./template-handler.ts";
@@ -355,6 +355,42 @@ describe("a Handler's Handlebars environment", () => {
 });
 
 /**
+ * The post phase, as far as it can be seen without a worker: the Handler carries the
+ * Operator's function and nothing more.
+ *
+ * The absence assertion is the one with teeth. The worker asks `handler.post !== undefined`
+ * before running a post phase, so a Handler built without one that carries the property
+ * anyway would run a phase nobody wrote, and `exactOptionalPropertyTypes` is the only thing
+ * standing between those two spellings.
+ */
+describe("the template Handler's post phase", () => {
+  it("is absent from a Handler built without one", () => {
+    const handler = handlerOver("a Prompt that renders");
+
+    assert.equal("post" in handler, false, "no post phase should be carried");
+    assert.equal(handler.post, undefined);
+  });
+
+  it("is the Operator's own function, carried across unwrapped", async () => {
+    const seen: { signal: Signal<{ readonly userId: string }>; outcome: PostOutcome }[] = [];
+    const post = (signal: Signal<{ readonly userId: string }>, outcome: PostOutcome): void => {
+      seen.push({ signal, outcome });
+    };
+    const handler = templateHandler<{ readonly userId: string }>({
+      template: "a Prompt that renders",
+      session: () => null,
+      data: () => ({}),
+      post,
+    });
+
+    assert.equal(handler.post, post, "the function should reach the Handler as it was written");
+    const signal = aSignal({ userId: "u_1" });
+    await handler.post?.(signal, { failed: true });
+    assert.deepEqual(seen, [{ signal, outcome: { failed: true } }]);
+  });
+});
+
+/**
  * The two criteria that are about the Signal log rather than the Handler.
  *
  * PostgreSQL is real and the Runtime is the only fake. "Does not stop the
@@ -466,6 +502,75 @@ describe("the template Handler under the worker", () => {
         runtime.recorded.map((prompt) => prompt.text),
         ["a Prompt that renders"],
       );
+    });
+  });
+
+  /**
+   * What the post phase is told, for the two outcomes a template Handler can reach: a Run
+   * that ran, and a template that did not render and so produced no Run at all. The second
+   * is the whole reason an Operator writes one here, since a Signal is never retried.
+   */
+  it("runs the post phase after the Run, and again when no Run was ever created", async () => {
+    const outcomes: Record<string, PostOutcome> = {};
+    const post =
+      (kind: string) =>
+      (_signal: Signal, outcome: PostOutcome): void => {
+        outcomes[kind] = outcome;
+      };
+    const handlers: SignalHandlers = {
+      "prompt.good": templateHandler({
+        template: "a Prompt that renders",
+        session: () => null,
+        data: () => ({}),
+        post: post("prompt.good"),
+      }),
+      "prompt.unsupplied": templateHandler({
+        template: "Hello {{whoever}}",
+        session: () => null,
+        data: () => ({}),
+        post: post("prompt.unsupplied"),
+      }),
+    };
+
+    await withWorker(handlers, async (worker, runtime) => {
+      const good = await emit(worker, "prompt.good");
+      const unsupplied = await emit(worker, "prompt.unsupplied");
+
+      assert.deepEqual(await settled(good), { state: "done", error: null });
+      assert.equal((await settled(unsupplied)).state, "failed");
+
+      assert.deepEqual(outcomes, {
+        "prompt.good": { failed: false },
+        "prompt.unsupplied": { failed: true },
+      });
+      // The Run had finished before its post phase was told about it.
+      assert.deepEqual(runtime.texts(), ["a Prompt that renders"]);
+    });
+  });
+
+  /**
+   * A post phase that throws reaches the Signal log in the Operator's own words. Nothing
+   * here wraps it, so the reason must not read as a template that failed to render: the
+   * template rendered, and a reader chasing the wrong file is the damage.
+   */
+  it("records what a failing post phase said, and says nothing about the template", async () => {
+    const handler = templateHandler({
+      template: "a Prompt that renders",
+      session: () => null,
+      data: () => ({}),
+      post: () => {
+        throw new Error("the notification could not be delivered");
+      },
+    });
+
+    await withWorker({ "prompt.render": handler }, async (worker, runtime) => {
+      const signalId = await emit(worker, "prompt.render");
+      const outcome = await settled(signalId);
+
+      assert.equal(outcome.state, "failed");
+      assert.equal(outcome.error, "the post phase failed: the notification could not be delivered");
+      // The Prompt itself was rendered and run: only the phase after it failed.
+      assert.deepEqual(runtime.texts(), ["a Prompt that renders"]);
     });
   });
 });
