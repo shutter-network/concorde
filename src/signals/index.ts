@@ -13,6 +13,11 @@
  * {@link createSignalWorker} builds the Worker itself, and {@link SignalWorker} is what comes back.
  * Its programmatic API is `emit`, which a Producer writes a Signal through.
  *
+ * A Prompt may carry a `context`, which the Worker records on the Run and writes onto every
+ * request the Agent server takes while that Run is in flight, as `request.concordeRun`.
+ * {@link CurrentRun} is its type, for a hook of your own on that server; the framework's own
+ * routes read none of it.
+ *
  * {@link templateHandler} is a Handler most deployments start from rather than writing
  * {@link SignalHandler} by hand: it renders one Prompt per Signal from a Handlebars template, and
  * {@link TemplateHandlerOptions} is where the template source, the Session and the values it
@@ -69,5 +74,10 @@ export type { RunState, SignalState } from "./schema/index.ts";
 export { runStates, signalStates } from "./schema/index.ts";
 export type { TemplateHandlerOptions } from "./template-handler.ts";
 export { templateHandler } from "./template-handler.ts";
-export type { EmittedSignal, SignalWorker, SignalWorkerOptions } from "./worker.ts";
+export type {
+  CurrentRun,
+  EmittedSignal,
+  SignalWorker,
+  SignalWorkerOptions,
+} from "./worker.ts";
 export { createSignalWorker } from "./worker.ts";

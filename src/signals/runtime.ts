@@ -34,8 +34,14 @@ export type RunOutcome = { readonly ok: true } | { readonly ok: false; readonly 
  * naming that Session after the Run it belongs to. So there is no fresh-Session case to handle
  * here, no naming convention for a Runtime to invent, and every Run records the name it really ran
  * under.
+ *
+ * `context` is left out on purpose, and the `Omit` is what keeps it out when a field is added to
+ * {@link Prompt}. A Prompt's context is the Agent server's business: it is readable from every
+ * request the Agent server takes while the Run is in flight, and an Operator who wants the agent
+ * itself to know writes it into the text. Carrying it here would give a second Agent
+ * Implementation something new to receive and nothing to do with it.
  */
-export type RunPrompt = Omit<Prompt, "session"> & {
+export type RunPrompt = Omit<Prompt, "session" | "context"> & {
   readonly session: string;
 };
 

@@ -275,10 +275,43 @@ const roundTripAttributes = { groups: ["reviewers"], nested: awkwardJson };
  */
 const roundTripSubmission = "and one from me, while everything is still up";
 
-/** A Handler whose only job is to produce one Run for the round trip to read. */
-const roundTripping: SignalHandler<{ readonly text: string }> = {
-  handle: (signal) => [{ session: roundTripSession, text: signal.payload.text }],
+/**
+ * What the round-trip Handler writes beside its Prompt: the User its Run may message, and the
+ * awkward JSON again, because `context` is declared with an empty schema too and a flat object
+ * would not show that it survives the wire.
+ *
+ * A function of the User rather than a constant, since the User is admitted after the Gateway
+ * is built and this is what the Operator's hook below compares the in-flight Run against.
+ */
+function roundTripContext(user: string): { readonly user: string; readonly nested: unknown } {
+  return { user, nested: awkwardJson };
+}
+
+/**
+ * A Handler whose only job is to produce one Run for the round trip to read, carrying the
+ * context the payload names a User for.
+ */
+const roundTripping: SignalHandler<{ readonly text: string; readonly user: string }> = {
+  handle: (signal) => [
+    {
+      session: roundTripSession,
+      text: signal.payload.text,
+      context: roundTripContext(signal.payload.user),
+    },
+  ],
 };
+
+/**
+ * What the round-trip Run reached while it was in flight, in the order it reached it.
+ *
+ * One line, and the one the Operator's hook on the Agent server decides: a Message to the User
+ * the Run's context names. A 403 here is the hook having found no Run on the request, and
+ * reported as a line rather than thrown for the reason `duringTheDrain` is.
+ */
+const duringTheRoundTrip: string[] = [];
+
+/** What the round-trip Run says to the User its context names. */
+const roundTripReply = "said back, by the Run whose context named you";
 
 /**
  * A Handler for the Scheduler's fixed `kind`, written `SignalHandler<ScheduleFiredRecord>` the way
@@ -353,6 +386,22 @@ const duringTheDrain: string[] = [];
  * Run parked before them would be a Gateway that never got to them at all.
  */
 const runtime = fakeRuntime(async (prompt) => {
+  if (prompt.session === roundTripSession) {
+    // The round-trip Run messaging the User its context names, over the Agent server and
+    // through the Operator's hook in `extend`. The hook reads `request.concordeRun`, which the
+    // Worker wrote from inside this very await, so a 201 is the decoration having reached a
+    // plugin registered in `extend` and a 403 is the hook having read nothing.
+    duringTheRoundTrip.push(
+      await reaching("the Messenger took a Message for the named User", async () => {
+        const sent = await postJson(`${agentUrl}/messages`, {
+          userId: client.id,
+          text: roundTripReply,
+        });
+        return String(sent.status);
+      }),
+    );
+    return { ok: true };
+  }
   if (prompt.text !== inFlightAtShutdown) return { ok: true };
   await shuttingDown.promise;
   duringTheDrain.push(...(await whatIsStillUp()));
@@ -378,6 +427,22 @@ before(async () => {
       // Given the four infrastructure Components, and *not* the handlers: a Component that needed
       // a Handler would be a Component that wanted to be a Signal Worker.
       assert.deepEqual(Object.keys(infra), theInfra);
+      // An Operator's own hook on the Agent server, and the whole of what `request.concordeRun`
+      // exists for: a Message may only be sent to the User the in-flight Run's Handler named.
+      // `onRequest`, where no body has been parsed, so the User compared against is the one this
+      // file is built around rather than the one the body names. It is written straight onto the
+      // instance, as an Operator writes one, and reaches the Messenger's own plugin because a root
+      // hook reaches every child registered on the instance.
+      infra.agentServer.fastify.addHook("onRequest", async (request, reply) => {
+        if (request.method !== "POST" || !request.url.startsWith("/messages")) return;
+        const context = request.concordeRun?.context;
+        if (isObject(context) && context.user === client.id) return;
+        return reply.code(403).send({
+          statusCode: 403,
+          error: "Forbidden",
+          message: "this Run may not message that User",
+        });
+      });
       // The four parts, plus the Operator's own notebook keyed last of them: this is a mirror of
       // an example's `main.ts` with one Component added, which is what proves `extend` reaches the
       // infrastructure and returns Components of its own.
@@ -588,8 +653,10 @@ describe("a whole deployment from one call", () => {
     // checker holds to the record type. Add a field to `SignalRecord` and this file stops
     // compiling; declare it nowhere and the comparison below fails. Either way somebody
     // finds out here rather than from an agent that read a field and saw nothing.
+    // The payload names the one User, so the Handler can write a context naming them.
+    const payload = { ...roundTripPayload, user: client.id };
     const signalId = await components.db.tx((tx) =>
-      components.worker.emit(tx, { kind: roundTripKind, payload: roundTripPayload }),
+      components.worker.emit(tx, { kind: roundTripKind, payload }),
     );
     await waitUntil("the emitted Signal has been handled and its Run has finished", async () => {
       const signal = await agentJson<SignalRecord>(`/signals/${signalId}`);
@@ -603,7 +670,7 @@ describe("a whole deployment from one call", () => {
       // Byte intact, nesting and nulls and all, which is what the empty schema on
       // `payload` is for: the Signal Worker never interpreted this and the wire does not
       // start.
-      payload: roundTripPayload,
+      payload,
       // The one field with nothing in process to compare against, so it is checked rather
       // than copied, and the check is what closes the hole in copying it, since a
       // dropped `emittedAt` is `undefined` on both sides of a `deepEqual` and passes.
@@ -629,11 +696,19 @@ describe("a whole deployment from one call", () => {
       signalId,
       session: roundTripSession,
       prompt: roundTripPayload.text,
+      // What the Handler wrote beside the Prompt, byte intact for the reason `payload` is: the
+      // column, the serializer and the record agree, or this comparison says which does not.
+      context: roundTripContext(client.id),
       state: "done",
       error: null,
       startedAt: run.startedAt,
       endedAt: run.endedAt,
     } satisfies RunRecord);
+
+    // And the context was a fact on the Agent server while the Run was in flight: the Operator's
+    // hook in `extend` let the Run message the User its context names, and nothing else. A 403
+    // here is the hook having found no Run on the request.
+    assert.deepEqual(duringTheRoundTrip, ["the Messenger took a Message for the named User: 201"]);
     // The two timings, checked rather than copied for the reason `emittedAt` was. The
     // `String` is what makes a dropped one fail here instead of failing to compile: the
     // field is `string | null` on a finished Run only because a row written before it
@@ -2351,6 +2426,11 @@ async function agentJson<T>(path: string): Promise<T> {
   const body = await response.text();
   assert.equal(response.status, 200, `${path} should have answered: ${body}`);
   return JSON.parse(body);
+}
+
+/** A context the Operator's hook can read a `user` out of, which is the hook's own convention. */
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 /** One segment of a compact JWS as the JSON it is, decoded from the string that was emitted. */

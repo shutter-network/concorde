@@ -124,13 +124,17 @@ _Avoid_: trigger, processor, adapter, hook, listener
 **Prompt**:
 What a Signal Handler produces from a Signal, and the only form in which anything from outside reaches the agent. A Signal may yield none, one, or many. It names the Session it goes to, or writes `null` to ask for a fresh one — and *that* form of it reaches the Handler seam only: the Signal Worker answers the request before calling a Runtime, so a Prompt at the Runtime seam always names a Session and is a type of its own (`RunPrompt`) rather than the same type re-checked.
 
+**Context**:
+Operator-defined JSON a Signal Handler writes on a Prompt beside the Session and the text, saying what the Run is for: which User wrote the Message it answers, what a Schedule-woken Run may not do. The Signal Worker stores it on the Run row, hands it to every request the Agent server takes while that Run is in flight as `request.concordeRun`, and interprets none of it, exactly as it treats a Signal payload and a User's Attributes. No framework route reads it; a hook the Operator writes on the Agent server reads it and refuses, or a route of their own reads it and answers differently. It is the Agent server's mirror of the Public server's `request.concordeUser`: there, who is calling; here, which Run is calling and what its Handler said about it. The unit is the Prompt and not the Signal, since one Signal's Prompts may need different access and the post phase runs with no agent on the wire. Absent and `null` are the same thing. **It is not the model's context window** and never reaches the Runtime: what the agent itself is to be told goes into the Prompt's text. Nor is it a security boundary: the current Run is a fact about the agent loop and not about who sent a request, so a detached process an earlier Run left behind arrives under the current one's Context. Not to be confused with the `ctx` object the Handler seam refuses as input, which this is not; it is Handler output.
+_Avoid_: scope, claims, permissions, grant, ACL
+
 **Post phase**:
 The Signal Handler's second entry point, for cleanup. Runs once after all Runs arising from a Signal have finished, receives a flag saying whether one failed, and cannot produce Prompts.
 _Avoid_: post handler, teardown, finalizer, callback
 
 **Session**:
 The Agent Implementation's unit of conversational continuity. A Signal Handler routes each Prompt to a fresh or a named Session. Organises context; does not isolate it. A Handler asking for a fresh one is answered by the Signal Worker, which names it after the Run it belongs to before any Runtime sees it. So every Run records the Session it actually used, and no Runtime invents a naming convention of its own.
-_Avoid_: chat, conversation, thread, context
+_Avoid_: chat, conversation, thread, context (as a name for a Session; a Prompt's Context, below, is a different thing)
 
 **Run**:
 One execution of the agent: a single Prompt, in one Session, producing whatever the agent emits.

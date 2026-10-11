@@ -113,7 +113,9 @@ before(async () => {
 
   // Arrival order matters to every ordering assertion below, so each Signal is
   // emitted in its own transaction and awaited.
-  await emit("one prompt", "alpha", [{ session: "user_a", text: "for a" }]);
+  // The one Prompt in this fixture carrying a context, so the read surface has one Run that
+  // shows what a Handler wrote and four that show `null`.
+  await emit("one prompt", "alpha", [{ session: "user_a", text: "for a", context: { for: "a" } }]);
   await emit("two prompts", "beta", [
     { session: "user_b", text: "for b" },
     { session: null, text: "fresh" },
@@ -178,7 +180,9 @@ describe("reading prior Signals over the Agent server", () => {
     assert.equal(settled.id, idOf("one prompt"));
     assert.equal(settled.state, "done");
     assert.equal(settled.error, null);
-    assert.deepEqual(settled.payload, { prompts: [{ session: "user_a", text: "for a" }] });
+    assert.deepEqual(settled.payload, {
+      prompts: [{ session: "user_a", text: "for a", context: { for: "a" } }],
+    });
     assert.equal(new Date(settled.emittedAt).toISOString(), settled.emittedAt);
 
     // A Signal that failed carries why, which is the whole reason a state without an
@@ -255,6 +259,15 @@ describe("reading Runs over the Agent server", () => {
     assert.equal(fresh.session, `run_${fresh.id}`);
     assert.equal(fresh.state, "done");
     assert.equal(fresh.error, null);
+
+    // What the Handler wrote beside the Prompt, as written, and `null` on a Run whose Handler
+    // wrote none. The agent reads it here to explain a refusal it met; the framework reads it
+    // nowhere.
+    const forA = list.find((run) => run.prompt === "for a");
+    assert.ok(forA !== undefined);
+    assert.deepEqual(forA.context, { for: "a" });
+    assert.equal(failed.context, null);
+    assert.equal(fresh.context, null);
   });
 
   it("reports the Runs of one Signal, and one Run by id", async () => {

@@ -15,6 +15,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { asc, eq, sql } from "drizzle-orm";
+import Fastify from "fastify";
 import type { Db, Listening } from "../db/index.ts";
 import type { LogFields, Logger } from "../logging/logging.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
@@ -570,52 +571,101 @@ describe("the worker", () => {
     );
   });
 
-  it("has each Run recorded and running by the time the Runtime is called", async () => {
-    const observed: { found: number; prompt: string | undefined; state: string | undefined }[] = [];
+  it("has each Run recorded and running by the time the Runtime is called, and the Agent server carrying it", async () => {
+    // The Agent server, as bare as an Operator's own and never listening: `inject` boots it,
+    // and the one route on it is this test's, answering with what the Worker wrote onto the
+    // request. The Worker is handed the instance, so the hook is the constructor's doing.
+    const fastify = Fastify();
+    fastify.get("/whose", async (request) => request.concordeRun ?? null);
+
+    type Observed = {
+      found: number;
+      prompt: string | undefined;
+      state: string | undefined;
+      context: unknown;
+      carried: unknown;
+    };
+    const observed: Observed[] = [];
     // Reading the Run mid-flight is the one intermediate read in this file, and it is
     // here because the Prompt is only worth handing over if the Run behind it already
-    // exists — this is what the agent sees over the Agent server while its own Run is
+    // exists: this is what the agent sees over the Agent server while its own Run is
     // going. The Runtime used to be handed the Run's id to make this checkable; it takes
     // one argument now, so the lookup is by Session, and `found` is asserted
     // rather than assumed: a Session name is unique here only because these two are, and
     // taking the first of two matches would make this test pass by luck.
+    //
+    // The request on the Agent server is made from the same place and for the same reason:
+    // what it carries is only a fact while the Runtime is being awaited.
     const runtime = fakeRuntime(async (prompt) => {
       const found = await db
         .handle({ runs })
         .select()
         .from(runs)
         .where(eq(runs.session, prompt.session));
-      observed.push({ found: found.length, prompt: found[0]?.prompt, state: found[0]?.state });
+      const carried = await fastify.inject({ method: "GET", url: "/whose" });
+      observed.push({
+        found: found.length,
+        prompt: found[0]?.prompt,
+        state: found[0]?.state,
+        context: found[0]?.context,
+        carried: carried.json(),
+      });
       return { ok: true };
     });
 
-    await withWorker(
-      {
+    const worker = createSignalWorker({
+      db,
+      runtime,
+      handlers: {
         paired: {
           handle: () => [
-            { session: "paired_1", text: "first" },
+            { session: "paired_1", text: "first", context: { for: "one" } },
             { session: "paired_2", text: "second" },
           ],
         },
       },
-      runtime,
-      async (worker) => {
-        const id = await emit(worker, "paired");
-        await settled(id);
+      agentServer: { fastify },
+      logger: recordingLogger([]),
+      sweepIntervalMs: sweepingMs,
+    });
+    await worker.start();
+    try {
+      const id = await emit(worker, "paired");
+      await settled(id);
 
-        assert.deepEqual(observed, [
-          { found: 1, prompt: "first", state: "running" },
-          { found: 1, prompt: "second", state: "running" },
-        ]);
-        assert.deepEqual(
-          runtime.recorded.map((prompt) => [prompt.session, prompt.text]),
-          [
-            ["paired_1", "first"],
-            ["paired_2", "second"],
-          ],
-        );
-      },
-    );
+      const [first, second] = await runsOf(id);
+      assert.ok(first !== undefined && second !== undefined, "both Runs should exist");
+      assert.deepEqual(observed, [
+        {
+          found: 1,
+          prompt: "first",
+          state: "running",
+          // On the row in the same insert as the Prompt, and `null` where the Handler wrote
+          // none: the Worker cannot tell an omission from a meaningful nothing and does not
+          // try.
+          context: { for: "one" },
+          // And on every request the Agent server took while the Run was in flight: the Run,
+          // the Signal it came from, the Session it is in and what the Handler said about it.
+          carried: { id: first.id, signalId: id, session: "paired_1", context: { for: "one" } },
+        },
+        {
+          found: 1,
+          prompt: "second",
+          state: "running",
+          context: null,
+          carried: { id: second.id, signalId: id, session: "paired_2", context: null },
+        },
+      ]);
+      // The Runtime seam is untouched: the context went to the row and the request, and the
+      // Prompt the Runtime was handed is the Session and the text and nothing beside them.
+      assert.deepEqual(runtime.recorded, [
+        { session: "paired_1", text: "first" },
+        { session: "paired_2", text: "second" },
+      ]);
+    } finally {
+      await worker.stop();
+      await fastify.close();
+    }
   });
 
   it("names a fresh Session after the Run it belongs to, and hands the Runtime that name", async () => {

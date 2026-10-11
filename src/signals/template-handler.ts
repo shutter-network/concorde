@@ -68,6 +68,18 @@ export type TemplateHandlerOptions<TPayload = unknown> = {
   readonly data: (signal: Signal<TPayload>) => unknown;
 
   /**
+   * What the Prompt carries beside its text, for the Agent server rather than for the agent: the
+   * answer is written onto the Prompt as `context`, stored on the Run row, and readable as
+   * `request.concordeRun` from every request the Agent server takes while that Run is in flight.
+   * Nothing renders it and no framework route reads it; an Operator's own hook does.
+   *
+   * A returned Promise is awaited, so this can be `async` like `data`. Absent means the Prompt
+   * carries none, which the Run records as `null`. Something the agent itself has to know goes
+   * into the template, as everything else does.
+   */
+  readonly context?: (signal: Signal<TPayload>) => unknown;
+
+  /**
    * Handlebars helpers, registered on an environment belonging to this Handler alone. Another
    * Handler built by another call cannot see them, and neither can the shared `Handlebars`
    * instance. What a helper returns is substituted unescaped, like everything else.
@@ -108,7 +120,8 @@ const compileOptions: CompileOptions = { noEscape: true, strict: true };
  * One Prompt, always. It never fans a Signal out across several Sessions and never declines one,
  * although the Handler contract allows both. A post phase it does carry: `post` is an option here
  * and reaches the Worker as the Handler's own, so the Signal's payload is narrowed in it the way
- * it is in `session` and `data`.
+ * it is in `session` and `data`. A context it carries the same way: `context` is a function of the
+ * Signal beside those two, and its answer goes onto the Prompt unrendered.
  *
  * A template that compiles and then does not render fails the Signal, with a message naming the
  * Signal's kind. Handlebars names the variable, the line and the column, and never says which
@@ -142,6 +155,13 @@ export function templateHandler<TPayload = unknown>(
       // Outside the wrapping below on purpose; see the file header.
       const session = await options.session(signal);
       const data = await options.data(signal);
+      // Awaited here with the other two, so a context function that throws fails the Signal in
+      // the Operator's own words rather than after a render it would have made pointless. Left
+      // off the Prompt entirely when there is no function: `context: undefined` is a key an
+      // Operator's deepEqual sees and a Prompt with no context is the shape of every Prompt
+      // before this option existed.
+      const context =
+        options.context === undefined ? {} : { context: await options.context(signal) };
 
       let text: string;
       try {
@@ -155,7 +175,7 @@ export function templateHandler<TPayload = unknown>(
         });
       }
 
-      return [{ session, text }];
+      return [{ session, text, ...context }];
     },
 
     // Spread rather than `post: options.post`, which `exactOptionalPropertyTypes` refuses: a

@@ -19,7 +19,7 @@
 
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import type { FastifyInstance, FastifyPluginAsync } from "fastify";
+import type { FastifyInstance, FastifyPluginAsync, onRequestHookHandler } from "fastify";
 import type { Db, Handle, Listening } from "../db/index.ts";
 import type { Component } from "../gateway/components.ts";
 import { defaultLogger, type Logger } from "../logging/logging.ts";
@@ -47,6 +47,59 @@ export type EmittedSignal = {
   readonly payload: unknown;
 };
 
+/**
+ * The Run in flight, as every request on the Agent server sees it while the Runtime is being
+ * awaited: which Run is calling, and what its Signal Handler said about it.
+ *
+ * `context` is what the Handler wrote on the Prompt, or `null` if it wrote none. The framework
+ * reads none of it; an Operator's hook or route reads it as `request.concordeRun.context` and
+ * decides. The other three are there so that a hook can say which Run it refused.
+ *
+ * Well defined because the Signal Worker is serial across the whole Gateway: at any instant there
+ * is at most one Run in flight. Exported so that a hook an Operator writes is typed without
+ * reaching into the request augmentation.
+ */
+export type CurrentRun = {
+  readonly id: string;
+  readonly signalId: string;
+  readonly session: string;
+  readonly context: unknown;
+};
+
+/**
+ * Global, like `concordeUser` on the Public server and for the same reason: any `FastifyRequest`
+ * in a program importing this subpath has the field, whether or not the program builds the
+ * Worker, and the name is namespaced because `@fastify/jwt` claims unqualified ones.
+ *
+ * Typed `CurrentRun | undefined` where `concordeUser` is not optional, because "no Run in flight"
+ * is a real state rather than a hook that was forgotten: a request arriving outside any Run is
+ * something an Operator's hook has to decide about, and the type is what makes it decide.
+ */
+declare module "fastify" {
+  interface FastifyRequest {
+    /**
+     * The Run in flight when this request arrived, assigned by the Signal Worker's `decorateRun`
+     * hook and by nothing else, and `undefined` when no Run was in flight.
+     *
+     * Read it from a hook or a route of your own on the Agent server, and refuse or answer
+     * differently by what its `context` says. A hook reads it in `onRequest`, and must not read
+     * the body there: Fastify parses the body after `onRequest`, so a refusal that compares the
+     * context against `request.body` belongs in `preHandler`, where both are present.
+     *
+     * The current Run is a fact about the agent loop and not about who sent a request. A Run
+     * ends when the Agent Implementation says the model has nothing more to say, and nothing in
+     * the framework counts processes, so a detached child an earlier Run left behind arrives here
+     * under the current Run's context, with whatever that context allows. What closes that is the
+     * Operator's confinement of the Agent Instance (a fresh container per Run, or a sandbox that
+     * kills the process group when the Run settles), which is where every other such claim about
+     * the Agent server already lives. A per-Run credential was refused: it would make the Agent
+     * server authenticated, against every document that says it is not, and a child that captured
+     * the credential during its own Run would still hold it.
+     */
+    concordeRun: CurrentRun | undefined;
+  }
+}
+
 export type SignalWorkerOptions = {
   readonly db: Db;
   /**
@@ -67,14 +120,17 @@ export type SignalWorkerOptions = {
    */
   readonly handlers: SignalHandlers;
   /**
-   * The Agent server, if the agent is to read prior Signals and Runs.
+   * The Agent server, if the agent is to read prior Signals and Runs, and if every request on it
+   * is to carry the Run in flight.
    *
    * Given one, the constructor registers `agentRoutes` on its Fastify instance at no prefix:
-   * `/signals`, `/signals/:id`, `/runs` and `/runs/:id`. Omit it and nothing is registered
-   * anywhere, which is how the group is switched off.
+   * `/signals`, `/signals/:id`, `/runs` and `/runs/:id`. It also adds `decorateRun` as a root
+   * `onRequest` hook on that instance, so `request.concordeRun` is set on every route the server
+   * has, whichever part registered it. Omit it and nothing is registered anywhere, which is how
+   * the group is switched off and how the decoration is left to you.
    *
    * Structural: anything carrying a Fastify instance satisfies it. A server built on http2 does
-   * not, and takes the `agentRoutes` plugin instead.
+   * not, and takes the `agentRoutes` plugin and the `decorateRun` hook instead.
    */
   readonly agentServer?: {
     readonly fastify: FastifyInstance;
@@ -131,6 +187,24 @@ export type SignalWorker = Component & {
    * and unscoped: every Signal and every Run, whatever Session the reading Run is in.
    */
   readonly agentRoutes: FastifyPluginAsync;
+
+  /**
+   * The hook that writes the Run in flight onto a request as `request.concordeRun`, for a server
+   * the Worker was not handed: `fastify.addHook("onRequest", worker.decorateRun)`.
+   *
+   * It is the mirror of `agentRoutes`: passing `agentServer` installs it at the root for you, and
+   * holding it is the door out for a server built another way. Install it at the root rather
+   * than inside an encapsulated plugin, or the routes outside that plugin read `undefined` and a
+   * hook on them refuses every Run. Install it **before any hook of your own that reads
+   * `request.concordeRun`**: Fastify runs the hooks of one phase in the order they were added,
+   * so a hook added ahead of this one reads `undefined` on every request and refuses every Run,
+   * and nothing reports it. `createGateway` constructs the Worker before it calls `extend`, which
+   * is what puts this hook ahead of yours there.
+   *
+   * What it writes is the Worker's own knowledge of what it is awaiting, and nothing a request
+   * says: there is no header to forge and no body to read. It is `undefined` outside a Run.
+   */
+  readonly decorateRun: onRequestHookHandler;
 
   /**
    * Records a Signal as pending, wakes the worker when the caller's transaction commits, and
@@ -204,6 +278,18 @@ const strandedRun = "the worker stopped before this Run finished; Runs are never
 type WakeupReason = "start" | "notification" | "listening" | "sweep";
 
 /**
+ * A Run as the Worker holds it between writing its row and starting it: the id the row was
+ * written under, the Prompt the Runtime is handed, and the context that goes to the row and the
+ * request and never to the Runtime. One shape, so the three cannot come apart between the insert
+ * and the start.
+ */
+type QueuedRun = {
+  readonly id: string;
+  readonly prompt: RunPrompt;
+  readonly context: unknown;
+};
+
+/**
  * Builds a Signal Worker over a Db, a Runtime and a map of Signal Handlers, and registers the read
  * routes on the Agent server if one was passed.
  *
@@ -219,12 +305,33 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   // The Signal Worker's own handle, typed to its own schema. `pg` never leaves the Db.
   const handle = options.db.handle(signalsTables);
 
-  // The one act of wiring, here so that an Operator's entry point does not do it.
+  /**
+   * The Run being awaited, set around the one call to the Runtime and `undefined` otherwise:
+   * during `handle`, during `post`, and between Signals. Private, and read by nothing but the
+   * hook below. Serial execution is what makes a single variable the whole truth.
+   */
+  let current: CurrentRun | undefined;
+
+  /**
+   * A plain assignment and no lookup: the request is decorated with what this Worker knows it is
+   * awaiting, which is why there is nothing a caller can forge. It takes `done` rather than being
+   * `async`, because it does nothing asynchronous and Fastify tells the two apart by arity.
+   */
+  const decorateRun: onRequestHookHandler = (request, _reply, done) => {
+    request.concordeRun = current;
+    done();
+  };
+
+  // The two acts of wiring, here so that an Operator's entry point does not do them.
   const agentRoutes = agentReadRoutes(handle);
   // At no prefix, and not awaited. Fastify defers a plugin until the server is ready. So this is
   // a registration made at construction and loaded at `listen`. That is also why a server which
   // is already listening refuses one.
   options.agentServer?.fastify.register(agentRoutes);
+  // At the root, and therefore on every route of every part registered on this instance: a
+  // child plugin inherits the hooks of the context it is registered in, and every part registers
+  // inside its own constructor, so a hook added here reaches a Messenger built in `extend`.
+  options.agentServer?.fastify.addHook("onRequest", decorateRun);
 
   let started = false;
   let ticker: NodeJS.Timeout | undefined;
@@ -348,22 +455,27 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
     // Ids are generated here rather than by the database, so each Run is paired with its own
     // Prompt. Nothing depends on the order a multi-row insert returns. Having the id in hand
     // before the insert also lets the Session be named from it, in the same row.
-    const queued = prompts.map((prompt) => {
+    //
+    // The context is taken off the Prompt here and travels beside the `RunPrompt` rather than in
+    // it: the row and the request get it, and the Runtime never does. An absent one is `null`
+    // from this point on, there being no row and no record that can say "absent".
+    const queued: QueuedRun[] = prompts.map((prompt) => {
       const id = randomUUID();
-      return { id, prompt: promptForRun(id, prompt) };
+      return { id, prompt: promptForRun(id, prompt), context: prompt.context ?? null };
     });
     await handle.insert(runs).values(
-      queued.map(({ id, prompt }) => ({
+      queued.map(({ id, prompt, context }) => ({
         id,
         signalId: signal.id,
         session: prompt.session,
         prompt: prompt.text,
+        context,
       })),
     );
 
     const failures: string[] = [];
-    for (const { id, prompt } of queued) {
-      const outcome = await executeRun(signal, id, prompt);
+    for (const run of queued) {
+      const outcome = await executeRun(signal, run);
       if (!outcome.ok) failures.push(outcome.error);
     }
 
@@ -374,19 +486,32 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
       : `${failures.length} of ${queued.length} Runs failed, the first with: ${first}`;
   }
 
-  async function executeRun(signal: Signal, runId: string, prompt: RunPrompt): Promise<RunOutcome> {
+  /**
+   * One Run, over one entry of the queue above: the id the row was written under, the Prompt
+   * the Runtime is handed, and the context the row and the request carry but the Prompt does
+   * not.
+   */
+  async function executeRun(signal: Signal, run: QueuedRun): Promise<RunOutcome> {
+    const { id: runId, prompt, context } = run;
     log.info({ runId, signalId: signal.id, session: prompt.session }, "Run started");
     await handle
       .update(runs)
       .set({ state: "running", startedAt: sql`clock_timestamp()` })
       .where(eq(runs.id, runId));
 
+    // The Run is in flight from here to the `finally`, and that is exactly the span in which
+    // a request on the Agent server carries it. Set after the row says `running`, so what a
+    // hook reads is a Run the agent can also read back, and cleared whether the Runtime
+    // answered or threw.
+    current = { id: runId, signalId: signal.id, session: prompt.session, context };
     let outcome: RunOutcome;
     try {
       outcome = await runtime.run(prompt);
     } catch (error) {
       // An adapter that throws is a failed Run, not a dead worker.
       outcome = { ok: false, error: describe(error) };
+    } finally {
+      current = undefined;
     }
 
     await handle
@@ -496,6 +621,7 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
 
   return {
     agentRoutes,
+    decorateRun,
 
     async emit(tx, signal) {
       // The query-builder form, not the relational one. It generates SQL from the table object,
@@ -579,9 +705,13 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
  * Here and not in each Runtime, because the Worker owns the Run row and already holds the id before
  * the row is written. The name therefore reaches `runs.session` in the same statement, and a second
  * Agent Implementation inherits the convention instead of inventing one.
+ *
+ * Two fields named rather than the Prompt spread, so the context stays behind: it is the Agent
+ * server's and the row's, and `RunPrompt` leaves it out by type. A spread would carry it to the
+ * Runtime as an undeclared extra that no type would mention and every Runtime would receive.
  */
 function promptForRun(runId: string, prompt: Prompt): RunPrompt {
-  return { ...prompt, session: prompt.session ?? `run_${runId}` };
+  return { session: prompt.session ?? `run_${runId}`, text: prompt.text };
 }
 
 /** What an `error` column holds: the message alone. The stack belongs in the log. */
