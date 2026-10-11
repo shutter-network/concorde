@@ -139,6 +139,35 @@ describe("the template Handler", () => {
       text: "hi from a query",
     });
   });
+
+  it("writes what the context function answers onto the Prompt, awaited if it has to be", async () => {
+    // The third function beside `session` and `data`, and the only one whose answer is not
+    // rendered: it reaches the Prompt as written, for the Agent server to carry while the Run
+    // is in flight, and nothing here reads it.
+    const synchronous = templateHandler<{ readonly userId: string }>({
+      template: "for {{who}}",
+      session: () => null,
+      data: (signal) => ({ who: signal.payload.userId }),
+      context: (signal) => ({ user: signal.payload.userId }),
+    });
+    const asynchronous = templateHandler<{ readonly userId: string }>({
+      template: "for {{who}}",
+      session: () => null,
+      data: (signal) => ({ who: signal.payload.userId }),
+      context: async (signal) => ({ user: signal.payload.userId, looked: "up" }),
+    });
+
+    assert.deepEqual(await onlyPrompt(synchronous, { userId: "42" }), {
+      session: null,
+      text: "for 42",
+      context: { user: "42" },
+    });
+    assert.deepEqual(await onlyPrompt(asynchronous, { userId: "42" }), {
+      session: null,
+      text: "for 42",
+      context: { user: "42", looked: "up" },
+    });
+  });
 });
 
 describe("a substituted value", () => {

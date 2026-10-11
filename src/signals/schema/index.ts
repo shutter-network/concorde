@@ -115,6 +115,12 @@ export const runs = signalsSchema.table(
     session: text("session"),
     // The text delivered to the agent, as delivered. Not the template it came from.
     prompt: text("prompt").notNull(),
+    // What the Signal Handler wrote beside the Prompt, as written, and never interpreted here:
+    // the Agent server carries it on every request while this Run is in flight, and an
+    // Operator's own hook is what reads it. `null` when the Prompt carried none, so the audit
+    // record says what each Run was told it was for, beside its Prompt and its Session.
+    // `jsonb` for the reason `signals.payload` is.
+    context: jsonb("context"),
     state: text("state").$type<RunState>().notNull().default("pending"),
     // The Runtime's failure message, or the message it threw. Null unless failed.
     error: text("error"),

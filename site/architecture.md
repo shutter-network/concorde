@@ -465,6 +465,13 @@ Each of these is a deliberate decision, not an omission. Read the whole list bef
 - **Key rotation, for either identity.** No record carries a key identifier.
 - **Non-repudiation of the conversation.** No party can prove what the agent was told or replied.
   Signed Statements are not an exception to this.
+- **A process that outlives its Run.** The Run in flight, which a Prompt's context is read
+  against on the Agent server, is a fact about the agent loop and not about who sent a request.
+  A Run ends when the model has nothing more to say, and nothing counts processes, so a detached
+  child one Run leaves behind makes its requests during the next Run, under the next Run's
+  context. A fresh container per Run, or a sandbox that kills the process group when the Run
+  settles, is yours to arrange. There is no per-Run credential, because that would make the
+  Agent server authenticated, and a child that captured one during its own Run would still hold it.
 - **Isolation of any kind.** A deployment that needs real isolation runs two shared agents.
 
 ## Known limits

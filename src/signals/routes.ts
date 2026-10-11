@@ -70,6 +70,10 @@ export type SignalRecord = {
  * nothing. Every Run the Worker records now carries one, and it stays nullable because rows written
  * before that still hold `null`.
  *
+ * `context` is what the Handler wrote beside the Prompt, as written, or `null` when it wrote
+ * none. The framework reads none of it; it is here so that a refusal the agent met from an
+ * Operator's hook can be explained by reading its own Run.
+ *
  * The timings are ISO 8601 strings, or `null` for a Run that has not reached that point, so a
  * `running` Run has a `startedAt` and no `endedAt`.
  */
@@ -78,6 +82,7 @@ export type RunRecord = {
   readonly signalId: string;
   readonly session: string | null;
   readonly prompt: string;
+  readonly context: unknown;
   readonly state: RunState;
   readonly error: string | null;
   readonly startedAt: string | null;
@@ -161,6 +166,13 @@ const runRecordSchema = {
       nullable: true,
     },
     prompt: { type: "string" },
+    // No `type`, as on `payload`: an empty schema passes whatever the Handler wrote through byte
+    // intact, `null` included, and constraining it would be the Signal Worker having an opinion
+    // about a value it never reads. Declaring it at all is the whole of putting it on the wire.
+    context: {
+      description:
+        "What this Run's Signal Handler wrote beside the Prompt, exactly as written, or `null` if it wrote none. Operator-defined JSON that the framework stores and hands to the Agent server while the Run is in flight, and reads none of: a refusal you met from a hook on this server is explained by this field, and by the Operator's hook, rather than by anything the framework decided.",
+    },
     state: {
       type: "string",
       enum: runStates,
@@ -171,7 +183,17 @@ const runRecordSchema = {
     startedAt: { type: "string", nullable: true },
     endedAt: { type: "string", nullable: true },
   },
-  required: ["id", "signalId", "session", "prompt", "state", "error", "startedAt", "endedAt"],
+  required: [
+    "id",
+    "signalId",
+    "session",
+    "prompt",
+    "context",
+    "state",
+    "error",
+    "startedAt",
+    "endedAt",
+  ],
 } as const;
 
 /**
@@ -351,6 +373,7 @@ function asRunRecord(row: typeof runs.$inferSelect): RunRecord {
     signalId: row.signalId,
     session: row.session,
     prompt: row.prompt,
+    context: row.context,
     state: row.state,
     error: row.error,
     startedAt: row.startedAt?.toISOString() ?? null,

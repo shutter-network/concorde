@@ -5,7 +5,9 @@
  * keeping identity and messaging out of the Worker bought. A minimal `{ log, workspace,
  * signals }` lost too: it is a second way to obtain what the Operator's entry point already holds,
  * and a Handler's dependencies read better in its own factory than arriving ambiently. Do not add
- * one back.
+ * one back. `Prompt.context` below shares the word and is a different thing: it is Handler
+ * output, written onto a Prompt for the Agent server to carry while the Run is in flight, and
+ * nothing about it is handed in.
  *
  * `post` cannot produce Prompts, and that is the same argument. A failure Signal was considered, so
  * that retry and notification could be written as ordinary Handlers, and rejected as indirection
@@ -45,10 +47,24 @@ export type Signal<TPayload = unknown> = {
  * one per Run and any mixture of those are written here and nowhere else. Any string reaches the
  * Runtime as it was written, and a name the Agent Implementation refuses fails that one Prompt's
  * Run, carrying that program's own message, while the Prompts beside it still run.
+ *
+ * `context` is Operator-defined JSON the framework stores on the Run row, hands to the Agent
+ * server as `request.concordeRun` for as long as this Prompt's Run is in flight, and never
+ * interprets. It is the Handler's chance to say what a Run is for: which User wrote the Message
+ * it answers, what a Schedule-woken Run may not do. No framework route reads it. An Operator's
+ * hook on the Agent server reads it and refuses, or a route of their own reads it and behaves
+ * differently, and the shape is whatever that hook expects. It is not the model's context window
+ * and does not reach the Runtime at all: what the agent is to be told goes into `text`.
+ *
+ * Optional, and absent is `null`: the row holds `null`, the in-flight record reports `null`, and
+ * the framework cannot tell a meaningful `{}` from an omission and does not try. The unit is the
+ * Prompt rather than the Signal, because one Signal's Prompts may need different access and the
+ * post phase runs with no agent on the wire.
  */
 export type Prompt = {
   readonly session: string | null;
   readonly text: string;
+  readonly context?: unknown;
 };
 
 /**

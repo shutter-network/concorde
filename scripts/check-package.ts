@@ -641,6 +641,7 @@ try {
       // them was at the root until that decision, and no block above names any of them, so a
       // symbol that failed to move fails here rather than passing on two specifiers.
       "import type {",
+      "  CurrentRun,",
       "  EmittedSignal,",
       "  PostOutcome,",
       "  Prompt,",
@@ -760,7 +761,7 @@ try {
       // package: `skipLibCheck` would swallow an unresolved import inside our own
       // declarations and quietly leave the Signal Worker's route plugin `any`.
       'import Fastify from "fastify";',
-      'import type { FastifyInstance, FastifyPluginAsync } from "fastify";',
+      'import type { FastifyInstance, FastifyPluginAsync, onRequestHookHandler } from "fastify";',
       // The two plugins the default assembly registers on both servers. They are the
       // framework's own `dependencies` rather than the consumer's, and this project asked
       // npm for the tarball, `@types/node` and `fastify` and nothing else, so an import
@@ -997,6 +998,9 @@ try {
       "  signalId: readSignal.id,",
       '  session: "user_u1",',
       '  prompt: "hello",',
+      "  // What the Handler wrote beside the Prompt, as the Run route answers it: `null` here, and",
+      "  // a required field all the same.",
+      "  context: null,",
       '  state: "failed",',
       '  error: "the agent gave up",',
       "  startedAt: new Date().toISOString(),",
@@ -1066,6 +1070,15 @@ try {
       "// the door out — a prefix of the consumer's own, or their own encapsulated scope",
       "//.",
       "const workerRoutes: FastifyPluginAsync = worker.agentRoutes;",
+      "// And the hook that writes the Run in flight onto a request, exported for the same",
+      "// reason: a server the Worker was not handed installs it at its own root. Typed",
+      "// against the request augmentation, which is what proves the augmentation shipped.",
+      "const workerDecoration: onRequestHookHandler = worker.decorateRun;",
+      "const readingTheRun: onRequestHookHandler = (request, _reply, done) => {",
+      "  const current: CurrentRun | undefined = request.concordeRun;",
+      "  if (current !== undefined) log.debug({ runId: current.id }, 'a Run is in flight');",
+      "  done();",
+      "};",
       "",
       "// The Messenger: the Db, the Users component its `user_id` references with a",
       "// foreign key, the Signal Worker an inbound Message wakes, and the **Agent** server —",
@@ -1419,6 +1432,10 @@ try {
       "  // construction; the same plugin goes up again under a prefix of the consumer's",
       "  // own, which is the escape hatch holding it is for.",
       '  await agentServer.register(workerRoutes, { prefix: "/v1/worker" });',
+      "  // And the decoration, installed a second time at the root the way a server the Worker",
+      "  // was not handed would install it once, with the consumer's own hook reading behind it.",
+      '  agentServer.addHook("onRequest", workerDecoration);',
+      '  agentServer.addHook("onRequest", readingTheRun);',
       '  await agentServer.register(userRoutes, { prefix: "/users" });',
       '  await publicServer.register(ownRoutes, { prefix: "/ops" });',
       '  await publicServer.register(authenticatedRoutes, { prefix: "/me" });',
