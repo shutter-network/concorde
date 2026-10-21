@@ -114,6 +114,8 @@ const compileOptions: CompileOptions = { noEscape: true, strict: true };
  * Signal's kind. Handlebars names the variable, the line and the column, and never says which
  * Handler was rendering, which is the one thing an Operator running several of them needs.
  *
+ * Text from outside the Gateway belongs inside `quote`, which this takes as a helper.
+ *
  * @throws if `template` does not compile. The message is Handlebars' own and names the line and
  * the column. A helper's complaint about its own arguments is not among these, because a helper
  * runs only with a context.

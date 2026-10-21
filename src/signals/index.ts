@@ -19,6 +19,12 @@
  * substitutes are stated. It is an ordinary Handler built by an ordinary function, so a deployment
  * that outgrows it returns one of its own from the same place and unwires nothing.
  *
+ * {@link quote} is for the text in a Prompt that somebody outside the Gateway wrote, a Message
+ * above all. It fences that text with a line of backticks and random characters that
+ * {@link fence} draws fresh for every Prompt, so a sender cannot close the fence and pass their own
+ * words off as the Operator's. Use it on every such value, and name the exact fence line in the
+ * Prompt. It makes prompt injection harder and does not make it impossible.
+ *
  * `createGateway` builds a Worker already, so reach for the constructor only when you assemble a
  * Gateway by hand. Either way the Handler map is a construction option, so a Handler that emits
  * back into the same Worker is built after the Worker and assigned in.
@@ -58,6 +64,7 @@ export type {
   SignalHandler,
   SignalHandlers,
 } from "./handlers.ts";
+export { fence, quote } from "./quote.ts";
 export type { RunRecord, SignalRecord } from "./routes.ts";
 export type { RunOutcome, RunPrompt, Runtime } from "./runtime.ts";
 // The tables are on `@shutter-network/concorde/signals/schema` and on nothing else. These two

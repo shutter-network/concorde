@@ -449,8 +449,10 @@ Each of these is a deliberate decision, not an omission. Read the whole list bef
 
 - **Confidentiality between parties.** The agent reads everything and decides what to send to
   whom.
-- **Resistance to prompt injection.** This risk is accepted. Guidance to Handler authors is the
-  only mitigation.
+- **Resistance to prompt injection.** This risk is accepted. The mitigation is `quote`, which a
+  Handler wraps around text from outside the Gateway (see
+  [the guide's Step 5](./guide#step-5-write-the-signal-handler)). It makes injection harder, not
+  impossible.
 - **Confinement of the Agent Implementation.** The deployment runs the Agent Instance, so the
   deployment confines it. The framework names no image, no mount and no flag.
 - **An unreachable Agent server, and an unreachable agent.** There is no authentication on the

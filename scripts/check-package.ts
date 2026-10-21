@@ -122,7 +122,7 @@ const consumerImports = [
   'import { openDb } from "@shutter-network/concorde/db";',
   'import { createBareGateway, createGateway, NoAuthRegisteredError, serverComponent } from "@shutter-network/concorde/gateway";',
   'import { defaultLogger } from "@shutter-network/concorde/logging";',
-  'import { createSignalWorker, runStates, signalStates, templateHandler } from "@shutter-network/concorde/signals";',
+  'import { createSignalWorker, fence, quote, runStates, signalStates, templateHandler } from "@shutter-network/concorde/signals";',
   'import { runs, signals, signalsSchema, signalsTables } from "@shutter-network/concorde/signals/schema";',
   'import { createPiRuntime } from "@shutter-network/concorde/pi";',
   'import { createUsers } from "@shutter-network/concorde/users";',
@@ -262,6 +262,9 @@ try {
     // scratch project imports it below rather than at an Operator's first Signal.
     "dist/signals/template-handler.js",
     "dist/signals/template-handler.d.ts",
+    // The random-delimiter helper beside it, which a template takes as a helper.
+    "dist/signals/quote.js",
+    "dist/signals/quote.d.ts",
     // Every component that owns tables declares them in one module, which is both what the
     // component's own modules import and what `./<component>/schema` in the export map names.
     // It has to resolve for Node and for an Operator's type checker.
@@ -1024,14 +1027,16 @@ try {
       "//. The options are annotated separately, so a field that went missing from",
       "// the declaration fails here rather than being silently ignored. What is",
       "// being checked is that the declaration accepts template source, a Session-naming",
-      "// function, a data function, helpers, partials and a post phase, and that the",
+      "// function, a data function that makes a fence line with `fence`, helpers (`quote`",
+      "// among them, as the framework ships it),",
+      "// partials and a post phase, and that the",
       "// payload type reaches the post phase the way it reaches the other two that are",
       "// handed a Signal.",
       "const promptOptions: TemplateHandlerOptions<MessageRecord> = {",
       '  template: "You were told: {{said}}\\n{{> footer}}",',
       '  session: (signal: Signal<MessageRecord>) => "user_" + signal.payload.userId,',
-      "  data: (signal: Signal<MessageRecord>) => ({ said: signal.payload.text }),",
-      "  helpers: { shout: (value: string) => value.toUpperCase() },",
+      "  data: (signal: Signal<MessageRecord>) => ({ said: signal.payload.text, fence: fence(signal.payload.text) }),",
+      "  helpers: { shout: (value: string) => value.toUpperCase(), quote },",
       '  partials: { footer: "-- sent by the Gateway" },',
       "  post: (signal: Signal<MessageRecord>, outcome: PostOutcome) => {",
       '    if (outcome.failed) log.warn({ userId: signal.payload.userId }, "nothing was sent");',
