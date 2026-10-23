@@ -27,22 +27,21 @@ export type CredentialOperations = {
 };
 
 const credentialsAreNotInUrls =
-  "These routes take no query parameters at all. A credential travels in the body or in the Authorization header, never in a URL.";
+  "Send credentials in the request body or Authorization header, not in query parameters.";
 
 const rejectQuery = unknownQueryRefusal(credentialsAreNotInUrls);
 
-const unknownParameter =
-  "An unknown query parameter is a **400**, not a filter that did nothing and a request answered with everything.";
+const unknownParameter = "Unknown query parameters return 400.";
 
 const noParameters = `${credentialsAreNotInUrls} ${unknownParameter}`;
 
 const bearerRequired =
-  "**Requires a bearer Token**, presented as `Authorization: Bearer <token>` and obtained from `POST /auth/tokens`. The User acted on is the one the Gateway authenticated, and no parameter anywhere names another.";
+  "Requires authentication through a scheme installed in this deployment. For bearer tokens, use `Authorization: Bearer <token>`. The authenticated user determines whose credentials are changed.";
 
 const authenticationFailed =
-  "Authentication failed, which is the whole of what is said: a wrong password, an id nobody holds, a User with no password, and a Token that is missing, malformed, unknown or expired are one status and one message, so nothing here answers who exists.";
+  "Authentication failed. The response does not distinguish unknown users, incorrect passwords, or missing, invalid, or expired credentials.";
 
-const aQueryParameterWasWritten = "A query parameter was written, and these routes take none.";
+const aQueryParameterWasWritten = "Query parameters are not accepted.";
 
 const userRecordSchema = {
   type: "object",
@@ -50,7 +49,7 @@ const userRecordSchema = {
     id: { type: "string" },
     attributes: {
       description:
-        "Arbitrary JSON, defined by the deployment and interpreted by nothing in the Gateway. This is where grouping and therefore authorization live. Nothing on this surface can write them: a password names a User who already exists.",
+        "Application-defined JSON. Updated only through the trusted programmatic API, not these routes.",
     },
     createdAt: { type: "string" },
   },
@@ -64,7 +63,7 @@ const issuedTokenSchema = {
     expiresAt: {
       type: "string",
       description:
-        "When the Token stops working, ISO 8601. Always present: a Token that never expires is unrepresentable, and the lifetime is the Gateway's rather than the client's to choose. Nothing renews a Token and nothing reaps an expired one: it simply stops being accepted, and a client past this time logs in again.",
+        "Token expiry in ISO 8601. The deployment sets the lifetime. Expired tokens are rejected but not automatically deleted. Log in again to obtain a new token.",
     },
     user: userRecordSchema,
   },
@@ -121,17 +120,17 @@ export function passwordRoutes(
       {
         schema: {
           tags: ["Authentication"],
-          summary: "Trade a password for a Token",
-          description: `A User's own opaque id and their password, for a bearer Token to present on everything else. **This response is the only place the Token's plaintext ever exists.** It is stored as a digest and cannot be read back. A client that loses it logs in again rather than recovering it.\n\nThis is the one route here that requires no Token, and the one a client calls first. ${noParameters}`,
+          summary: "Log in with a password",
+          description: `Returns a bearer token for an existing user after checking their password. No credential is required to call this route. Only the token digest is stored, so a lost token cannot be recovered; log in again. ${noParameters}`,
           body: credentialsSchema,
           response: {
             201: {
               ...issuedTokenSchema,
               description:
-                "The Token, when it stops working, and the User it belongs to, so that a client needs no second request to know who it is.",
+                "The token, expiry time, and authenticated user. Save the token; it cannot be retrieved later.",
             },
             400: refused(
-              `The \`user\` is not a uuid, or the password is missing, empty or longer than ${maxPasswordLength} characters. A well-formed id nobody holds is a 401 and not a 400, since a 400 would answer who exists.`,
+              `A UUID user id and a password of 1–${maxPasswordLength} characters are required. Unknown users return 401.`,
             ),
             401: refused(authenticationFailed),
           },
@@ -149,15 +148,13 @@ export function passwordRoutes(
       {
         schema: {
           tags: ["Authentication"],
-          summary: "Replace the authenticated User's password",
-          description: `A User rotating their own credential by proving they hold the current one. There is **no \`user\` field**: the User is the one the Gateway authenticated. So no request can change another User's password, and there is no check to get wrong. There is no recovery path either. Proving identity *without* the credential is what this framework declined to build. A forgotten password is replaced by the Operator's own trusted code, or not at all.\n\nA User who holds no password cannot get one here, having nothing to prove, and is refused with the same 401 a wrong one gets. A changed password **revokes nothing**: a User who changed theirs out of fear is served by \`DELETE /auth/tokens\`, which is one request away. ${bearerRequired} ${noParameters}`,
+          summary: "Change your password",
+          description: `Replaces the authenticated user's password after checking currentPassword. Extra body fields, including user, are stripped. Users without a password cannot set one here; recovery requires trusted application code. Existing tokens remain valid. Use DELETE /auth/tokens to revoke them. ${bearerRequired} ${noParameters}`,
           body: passwordChangeSchema,
           response: {
-            204: noBody(
-              "The password is replaced. Every Token issued before it, the presented one included, still works.",
-            ),
+            204: noBody("Password replaced. Existing tokens remain valid."),
             400: refused(
-              `A password is missing, empty or longer than ${maxPasswordLength} characters, or a query parameter was written. A \`user\` field in the body is not refused: it is stripped before the handler and reaches nothing.`,
+              `Both passwords must contain 1–${maxPasswordLength} characters. Query parameters are not accepted. Extra body fields are stripped.`,
             ),
             401: refused(authenticationFailed),
           },
@@ -180,12 +177,10 @@ export function passwordRoutes(
       {
         schema: {
           tags: ["Authentication"],
-          summary: "Revoke the presented Token",
-          description: `Logging out. The presented Token stops working, and no other Token of this User's does. So a Token on a device they no longer trust is droppable from a device they still use. Idempotent: the row is gone afterwards, whether or not this call removed it.\n\nIt acts on the Token in the \`Authorization\` header and on nothing else, so a request the Gateway authenticated by some other scheme answers 204 and drops nothing. ${bearerRequired} ${noParameters}`,
+          summary: "Revoke the presented token",
+          description: `Revokes only the bearer token in the Authorization header. Other tokens remain valid. If another auth scheme authenticates the request, returns 204 without revoking a token. ${bearerRequired} ${noParameters}`,
           response: {
-            204: noBody(
-              "The Token no longer works. Nothing is answered, including how many Tokens there were: a count is a number about Tokens the caller does not hold.",
-            ),
+            204: noBody("No response body. The presented bearer token, if any, was revoked."),
             400: refused(aQueryParameterWasWritten),
             401: refused(authenticationFailed),
           },
@@ -205,12 +200,10 @@ export function passwordRoutes(
       {
         schema: {
           tags: ["Authentication"],
-          summary: "Revoke every Token of the authenticated User",
-          description: `The answer to "I think I have been compromised", and the only one there is. Nothing removes a User, so every credential of this scheme that stops working before it expires stops working here. Every Token of the authenticated User goes, **including the one presented**, so the caller is logged out too. It is the only compaction a User has over their own row count, because nothing reaps an expired Token.\n\nIt drops no password and no credential of any other scheme, so a User who is also reached another way keeps that way. ${bearerRequired} ${noParameters}`,
+          summary: "Revoke all your tokens",
+          description: `Revokes all password auth tokens for the authenticated user, including the presented token. Keeps the password and credentials belonging to other auth schemes. ${bearerRequired} ${noParameters}`,
           response: {
-            204: noBody(
-              "Every Token that User held, including the presented one, has stopped working.",
-            ),
+            204: noBody("All password auth tokens for this user were revoked."),
             400: refused(aQueryParameterWasWritten),
             401: refused(authenticationFailed),
           },

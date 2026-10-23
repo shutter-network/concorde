@@ -118,7 +118,7 @@ export function createNostrChannel(options: NostrChannelOptions): NostrChannel {
       if (signal.aborted) return;
       log.warn(
         { err: error, relay: options.relayUrl },
-        "the Relay would not take the agent's Nostr relay list, so a client that requires one may refuse to message this agent",
+        "Relay list publication failed; clients that require it may refuse to send messages",
       );
     }
   }
@@ -126,7 +126,7 @@ export function createNostrChannel(options: NostrChannelOptions): NostrChannel {
   async function admit(wrap: NostrEvent): Promise<void> {
     const opened = openEnvelope(wrap, options.secretKey, publicKey);
     if (!opened.ok) {
-      log.debug({ event: wrap.id, reason: opened.reason }, "a Nostr envelope was dropped");
+      log.debug({ event: wrap.id, reason: opened.reason }, "Nostr envelope rejected");
       return;
     }
 
@@ -134,7 +134,7 @@ export function createNostrChannel(options: NostrChannelOptions): NostrChannel {
     if (userId === undefined) {
       log.debug(
         { event: wrap.id, author: opened.rumor.pubkey },
-        "a Nostr message came from a public key no User holds, and was dropped",
+        "Nostr message rejected: sender key is not recorded",
       );
       return;
     }
@@ -149,7 +149,7 @@ export function createNostrChannel(options: NostrChannelOptions): NostrChannel {
       await inbound.receive(tx, userId, opened.rumor.content);
       return true;
     });
-    if (stored) log.info({ event: wrap.id, userId }, "a Nostr message became a Message");
+    if (stored) log.info({ event: wrap.id, userId }, "Inbound Nostr message recorded");
   }
 
   async function readStored(client: NRelay1, signal: AbortSignal): Promise<void> {
@@ -172,13 +172,13 @@ export function createNostrChannel(options: NostrChannelOptions): NostrChannel {
         else if (message[0] === "EOSE") await readStored(client, signal);
       }
       if (!signal.aborted) {
-        log.warn({ relay: options.relayUrl }, "the Relay ended the Nostr Channel's subscription");
+        log.warn({ relay: options.relayUrl }, "Relay subscription ended");
       }
     } catch (error) {
       if (signal.aborted) return;
       log.error(
         { err: error, relay: options.relayUrl },
-        "the Nostr Channel's subscription failed and is not being retried",
+        "Relay subscription failed; no retry is scheduled",
       );
     }
   }
@@ -203,12 +203,12 @@ export function createNostrChannel(options: NostrChannelOptions): NostrChannel {
       await recordRefusal(handle, row.eventId, reason);
       log.error(
         { event: row.eventId, userId: row.userId, message: row.messageId, reason },
-        "the Relay would not take a Nostr reply, and it is not being attempted again",
+        "Relay refused an outbound envelope; no retry is scheduled",
       );
       return;
     }
     await deletePublished(handle, row.eventId);
-    log.info({ event: row.eventId, userId: row.userId }, "a Message reached the Relay");
+    log.info({ event: row.eventId, userId: row.userId }, "Relay accepted an outbound envelope");
   }
 
   async function drainOnce(): Promise<void> {
@@ -232,10 +232,7 @@ export function createNostrChannel(options: NostrChannelOptions): NostrChannel {
 
   function wakeDrain(why: string): void {
     void drain().catch((error) => {
-      log.error(
-        { err: error, why },
-        "the Nostr Channel's outbound drain stopped short, and retries when next woken",
-      );
+      log.error({ err: error, why }, "Outbound drain failed; retrying on the next wakeup");
     });
   }
 
@@ -276,7 +273,7 @@ export function createNostrChannel(options: NostrChannelOptions): NostrChannel {
         lost: (error) =>
           log.warn(
             { err: error, channel: outboxChannel },
-            "the Nostr Channel's outbound notifications dropped; reconnecting, and a queued reply waits until they are back",
+            "Outbound notification connection lost; reconnecting. Queued messages wait for the next wakeup.",
           ),
       });
     },

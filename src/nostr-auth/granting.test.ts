@@ -91,7 +91,7 @@ describe("recording a public key", () => {
     for (const offered of ["npub1qqqq", "AB".repeat(32), `0x${"ab".repeat(32)}`, "ab"]) {
       await assert.rejects(
         db.tx((tx) => nostrAuth.recordPublicKey(tx, user.id, offered)),
-        /not a Nostr public key/,
+        /Invalid Nostr public key/,
         offered,
       );
     }
@@ -102,7 +102,7 @@ describe("recording a public key", () => {
       db.tx((tx) =>
         nostrAuth.recordPublicKey(tx, "00000000-0000-4000-8000-000000000000", signer().publicKey),
       ),
-      /no User .* exists/,
+      /user .* does not exist/,
     );
   });
 
@@ -236,7 +236,7 @@ describe("the surface this component has", () => {
     for (const windowMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
       assert.throws(
         () => createNostrAuth({ db, users, publicServer, externalBaseUrl, windowMs }),
-        /windowMs must be a positive number of milliseconds/,
+        /windowMs must be a finite, positive number of milliseconds/,
         String(windowMs),
       );
     }

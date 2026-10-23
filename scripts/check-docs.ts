@@ -39,23 +39,15 @@ function hasLinkedBlock(page: string): boolean {
 }
 
 console.log("\n> installing the site's own dependency tree\n");
-run(
-  "npm",
-  ["ci", "--no-audit", "--no-fund"],
-  siteRoot,
-  "Installing site/node_modules failed. Nothing below could run.",
-);
+run("npm", ["ci", "--no-audit", "--no-fund"], siteRoot, "Could not install site dependencies.");
 
 console.log("\n> regenerating site/reference from the doc comments\n");
-run("npm", ["run", "generate"], siteRoot, "TypeDoc failed. There are no pages to read.");
+run("npm", ["run", "generate"], siteRoot, "Reference generation failed.");
 
 console.log("\n> checking that every page has a linked signature block\n");
 const pages = generatedPages();
 if (pages.length === 0) {
-  console.error(
-    `\nTypeDoc wrote no page into site/reference, so there is nothing to check and a pass ` +
-      `here would mean nothing.\n`,
-  );
+  console.error(`\nNo API pages generated in site/reference.\n`);
   process.exit(1);
 }
 
@@ -64,9 +56,7 @@ if (unlinked.length > 0) {
   console.error(
     `\nNo preformatted block on these pages contains a link:\n` +
       `${unlinked.map((page) => `  ${path.relative(repoRoot, page)}`).join("\n")}\n\n` +
-      `A page renders that way when the renderer in site/expanded-object-methods.mjs is no ` +
-      `longer wired into the partials it overrides by name, so the plugin's own fenced blocks ` +
-      `are written instead: correctly coloured, entirely unlinked, and impossible to click.\n`,
+      `Check the TypeDoc partial overrides in site/expanded-object-methods.mjs; an incompatible plugin version can disable signature links.\n`,
   );
   process.exit(1);
 }

@@ -54,7 +54,7 @@ export function createSignatures(options: SignaturesOptions): Signatures {
 
     log.info(
       { typ, statementSha256: createHash("sha256").update(claims.statement).digest("hex") },
-      "signed a Statement",
+      "Statement signed",
     );
     return jws;
   };
@@ -90,7 +90,7 @@ function exportedJwk(publicKey: KeyObject): JsonWebKey {
     return publicKey.export({ format: "jwk" });
   } catch (error) {
     throw new Error(
-      `the signing key is ${publicKey.asymmetricKeyType} and cannot be exported as a JWK, so this shared agent would have no public key to serve and no algorithm to derive: ${reason(error)}. An rsa-pss key is what reaches this: its PSS parameters are part of its algorithm identifier and a JWK has nowhere to put them, and no re-encoding of the same key gets round it. Supply a plain RSA key and pass signingAlg "PS256": PSS is the padding, not the key.`,
+      `Cannot export ${publicKey.asymmetricKeyType} signing key as JWK: ${reason(error)}. For RSA-PSS, supply a plain RSA key and signingAlg: "PS256".`,
       { cause: error },
     );
   }
@@ -106,14 +106,14 @@ const algorithmForCurve: Readonly<Record<string, string>> = {
 function algorithmFor(publicJwk: JsonWebKey): string {
   if (publicJwk.kty === "RSA") {
     throw new Error(
-      'the signing key is RSA, which does not settle its own algorithm: RS256, RS384, RS512, PS256, PS384 and PS512 are all valid for it, and neither the key nor its JWK export says which was meant. Pass signingAlg: "PS256" unless a verifier you have to satisfy requires PKCS#1 v1.5, in which case "RS256".',
+      "RSA requires an explicit signingAlg. Use PS256, or RS256 when required by your verifier.",
     );
   }
 
   const derived = publicJwk.crv === undefined ? undefined : algorithmForCurve[publicJwk.crv];
   if (derived === undefined) {
     throw new Error(
-      `no algorithm can be derived from the signing key, whose JWK export is ${described(publicJwk)}. What is derived is EdDSA for an OKP key on Ed25519, and ES256, ES384 or ES512 for an EC key on P-256, P-384 or P-521. Pass signingAlg if this key signs with something else, though not for an Ed448 or a secp256k1 key: JOSE calls their algorithms EdDSA and ES256K, and jose can perform neither, so naming one here buys a Gateway that starts and cannot sign.`,
+      `Cannot derive an algorithm from ${described(publicJwk)}. Automatic selection supports Ed25519 and P-256/P-384/P-521. Pass signingAlg for another supported key; Ed448 and secp256k1 are not supported.`,
     );
   }
   return derived;

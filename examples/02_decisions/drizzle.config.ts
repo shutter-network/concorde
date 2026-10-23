@@ -5,7 +5,7 @@ import * as schema from "./schema.ts";
 
 const databaseUrl = process.env.DATABASE_URL;
 if (databaseUrl === undefined) {
-  throw new Error("set DATABASE_URL to the database this deployment applies its schema to");
+  throw new Error("Set DATABASE_URL to the PostgreSQL connection URL.");
 }
 
 export default defineConfig({

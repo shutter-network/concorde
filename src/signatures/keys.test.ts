@@ -135,7 +135,7 @@ describe("the keys it refuses to be constructed with", () => {
       () => constructedWith(keys.rsaPss),
       (error: Error) => {
         assert.match(error.message, /rsa-pss/);
-        assert.match(error.message, /signingAlg "PS256"/);
+        assert.match(error.message, /signingAlg: "PS256"/);
         assert.match(error.message, /Unsupported JWK Key Type/);
         assert.equal(
           (error.cause as NodeJS.ErrnoException)?.code,
@@ -147,7 +147,7 @@ describe("the keys it refuses to be constructed with", () => {
   });
 
   it("refuses an rsa-pss key even when it was told the algorithm", () => {
-    assert.throws(() => constructedWith(keys.rsaPss, "PS256"), /cannot be exported as a JWK/);
+    assert.throws(() => constructedWith(keys.rsaPss, "PS256"), /Cannot export .* as JWK/);
   });
 
   for (const [what, key] of [
@@ -159,7 +159,7 @@ describe("the keys it refuses to be constructed with", () => {
       assert.throws(
         () => constructedWith(key),
         (error: Error) => {
-          assert.match(error.message, /no algorithm can be derived/);
+          assert.match(error.message, /Cannot derive an algorithm/);
           const { crv } = createPublicKey(key).export({ format: "jwk" });
           assert.match(error.message, new RegExp(String(crv)));
           assert.match(error.message, /signingAlg/);

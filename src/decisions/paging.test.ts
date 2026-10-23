@@ -170,7 +170,7 @@ describe("the cursor cases, and what a client is refused", () => {
       await asAgent("?after=1&before=7"),
     ]) {
       assert.equal(answered.statusCode, 400, answered.body);
-      assert.match(answered.json<{ message: string }>().message, /two different windows/);
+      assert.match(answered.json<{ message: string }>().message, /not both/);
     }
   });
 
@@ -196,7 +196,7 @@ describe("the cursor cases, and what a client is refused", () => {
     for (const window of ["?statement=ship", "?limt=2", "?user=someone", "?before=4&order=desc"]) {
       const refused = await reading(window);
       assert.equal(refused.statusCode, 400, window);
-      assert.match(refused.json<{ message: string }>().message, /cannot be searched or filtered/);
+      assert.match(refused.json<{ message: string }>().message, /not search or field filters/);
     }
   });
 });

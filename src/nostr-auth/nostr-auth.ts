@@ -54,7 +54,7 @@ export function createNostrAuth(options: NostrAuthOptions): NostrAuth {
         return {
           kind: "refused",
           code: "invalid_request",
-          detail: "the Authorization header named Nostr and carried no event after it",
+          detail: "Missing event after Nostr in the Authorization header",
         };
       }
 
@@ -77,7 +77,7 @@ export function createNostrAuth(options: NostrAuthOptions): NostrAuth {
         return {
           kind: "refused",
           code: "invalid_token",
-          detail: "this event was presented before, and a NIP-98 credential is used once",
+          detail: "NIP-98 event already used. Sign a new event for each request.",
         };
       }
 
@@ -119,7 +119,7 @@ function checkedBaseUrl(externalBaseUrl: string): string {
     parsed = new URL(externalBaseUrl);
   } catch {
     throw new Error(
-      `externalBaseUrl must be an absolute URL such as https://agent.example.com, not ${JSON.stringify(externalBaseUrl)}`,
+      `externalBaseUrl must be an absolute URL; received ${JSON.stringify(externalBaseUrl)}`,
     );
   }
   return parsed.href.replace(/\/+$/, "");
@@ -127,7 +127,9 @@ function checkedBaseUrl(externalBaseUrl: string): string {
 
 function checkedWindow(windowMs: number): number {
   if (!Number.isFinite(windowMs) || windowMs <= 0) {
-    throw new Error(`windowMs must be a positive number of milliseconds, not ${windowMs}`);
+    throw new Error(
+      `windowMs must be a finite, positive number of milliseconds; received ${windowMs}`,
+    );
   }
   return windowMs;
 }

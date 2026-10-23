@@ -73,10 +73,10 @@ describe("a line that is not a record", () => {
       },
     ]);
     assert.deepEqual(await framingOf("[1,2,3]\n"), [
-      { kind: "unreadable", line: "[1,2,3]", why: "it is JSON but not an object" },
+      { kind: "unreadable", line: "[1,2,3]", why: "JSON value is not an object" },
     ]);
     assert.deepEqual(await framingOf('{"notAType":true}\n'), [
-      { kind: "unreadable", line: '{"notAType":true}', why: "it has no type field" },
+      { kind: "unreadable", line: '{"notAType":true}', why: "Missing string field: type" },
     ]);
   });
 

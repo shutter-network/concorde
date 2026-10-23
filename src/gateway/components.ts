@@ -45,7 +45,7 @@ export function createBareGateway<C extends Record<string, Component>>(component
           if (failures.length === 0) throw error;
           throw new AggregateError(
             [error, ...failures],
-            `${key} failed to start, and stopping what had started failed too`,
+            `Component ${key} failed to start; cleanup also failed`,
           );
         }
         started.push(component);
@@ -55,7 +55,7 @@ export function createBareGateway<C extends Record<string, Component>>(component
     async stop(): Promise<void> {
       const failures = await unwind();
       if (failures.length > 0) {
-        throw new AggregateError(failures, "the Gateway did not stop cleanly");
+        throw new AggregateError(failures, "Gateway shutdown failed");
       }
     },
   };

@@ -268,7 +268,7 @@ describe("the agent saying where it can be messaged", () => {
       assert.deepEqual(relay.published, []);
 
       await waitUntil("the refusal is on the log", async () => warnings.length > 0);
-      assert.match(warnings[0] ?? "", /relay list/);
+      assert.match(warnings[0] ?? "", /Relay list/);
     } finally {
       await channel.stop();
       await relay.stop();

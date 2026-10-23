@@ -25,7 +25,7 @@ export type OutgoingMessage = {
 
 export class UnknownUserError extends Error {
   constructor(userId: string) {
-    super(`no User ${userId} exists`);
+    super(`No user ${userId} exists`);
     this.name = "UnknownUserError";
   }
 }
@@ -33,7 +33,7 @@ export class UnknownUserError extends Error {
 export class SeqContentionError extends Error {
   constructor(userId: string, attempts: number) {
     super(
-      `a Message for User ${userId} lost the race for its seq ${attempts} times; the log is intact and the send was not recorded`,
+      `Could not allocate a message sequence for user ${userId} after ${attempts} attempts. Nothing was recorded; retry the send.`,
     );
     this.name = "SeqContentionError";
   }
@@ -76,7 +76,7 @@ async function insertOnce<TSchema extends Record<string, unknown>>(
     })
     .returning();
   if (inserted === undefined) {
-    throw new Error("sending a Message inserted no row");
+    throw new Error("Message insert returned no row");
   }
   return asMessageRecord(inserted);
 }

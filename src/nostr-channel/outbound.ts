@@ -10,7 +10,7 @@ export const outboxChannel = "concorde_nostr_outbox";
 export class UnrecordedPublicKeyError extends Error {
   constructor(userId: string) {
     super(
-      `no Nostr public key is recorded for User ${userId}, so there is nowhere to send this Message; record one first, and nothing was written`,
+      `No Nostr public key recorded for user ${userId}. Record one before sending; nothing was written.`,
     );
     this.name = "UnrecordedPublicKeyError";
   }
@@ -19,7 +19,7 @@ export class UnrecordedPublicKeyError extends Error {
 export class MessageTooLargeError extends Error {
   constructor(userId: string, bytes: number, limit: number) {
     super(
-      `the reply to User ${userId} wraps to ${bytes} bytes and the Relay accepts ${limit}; shorten it, and nothing was written`,
+      `Message for user ${userId} requires ${bytes} bytes; relay limit is ${limit}. Shorten the text; nothing was written.`,
     );
     this.name = "MessageTooLargeError";
   }

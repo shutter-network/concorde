@@ -17,7 +17,7 @@ export async function insertGrant<TSchema extends Record<string, unknown>>(
 ): Promise<void> {
   if (!publicKeyPattern.test(publicKey)) {
     throw new Error(
-      `${JSON.stringify(publicKey)} is not a Nostr public key: 64 lowercase hex characters are wanted, and an npub is not one: decode it yourself with nip19.decode`,
+      `Invalid Nostr public key ${JSON.stringify(publicKey)}. Expected 64 lowercase hex characters; decode npub values with nip19.decode.`,
     );
   }
   try {
@@ -27,11 +27,11 @@ export async function insertGrant<TSchema extends Record<string, unknown>>(
   } catch (error) {
     const code = sqlState(error);
     if (code === foreignKeyViolation) {
-      throw new Error(`no User ${userId} exists, so no Nostr public key can be granted to them`);
+      throw new Error(`Cannot grant a public key: user ${userId} does not exist`);
     }
     if (code === uniqueViolation) {
       throw new Error(
-        `${publicKey} is already granted, and a key acts as one User: delete the row to move it`,
+        `Public key ${publicKey} is already granted. Remove the existing grant before assigning it again.`,
       );
     }
     throw error;

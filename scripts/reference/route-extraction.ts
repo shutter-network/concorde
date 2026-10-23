@@ -170,9 +170,7 @@ async function declaredRoutes(listed: ListedPlugin): Promise<readonly RouteDescr
   }
   if (routes.length === 0) {
     throw new Error(
-      `The ${listed.server} plugin of src/${listed.subpath}/routes.ts declared no route. A page ` +
-        `for it would be complete-looking and empty, so this is a failure rather than a section ` +
-        `left out.`,
+      `No routes found in the ${listed.server} plugin of src/${listed.subpath}/routes.ts.`,
     );
   }
   assertNothingIsHalfDescribed(listed, routes);
@@ -232,7 +230,7 @@ function onlyMediaType(
   if (entries.length > 1) {
     throw new Error(
       `A route offers ${entries.length} media types (${entries.map(([name]) => name).join(", ")}). ` +
-        `The pages name one per body, so add the section to scripts/reference/route-pages.ts.`,
+        `Add support for multiple media types in scripts/reference/route-pages.ts.`,
     );
   }
   const first = entries[0];
@@ -258,11 +256,9 @@ function assertNothingIsHalfDescribed(
 
   throw new Error(
     [
-      `The ${listed.server} plugin of src/${listed.subpath}/routes.ts has a route the pages ` +
-        `cannot describe, so its page would be a heading with the answer missing:`,
+      `Incomplete route documentation in the ${listed.server} plugin of src/${listed.subpath}/routes.ts:`,
       ...half,
-      `Either the route is half-described, or @fastify/swagger has renamed a field ` +
-        `this extraction reads by name.`,
+      `Check the route schemas and the @fastify/swagger output fields.`,
     ].join("\n"),
   );
 }
@@ -314,12 +310,11 @@ function assertNothingIsDropped(listed: ListedPlugin, document: OpenApiDocument)
   if (refs.length === 0 && dropped.size === 0) return;
   throw new Error(
     [
-      `The ${listed.server} plugin of src/${listed.subpath}/routes.ts declares things the route ` +
-        `pages do not render, so its page would be complete-looking and wrong:`,
-      ...refs.map((entry) => `  a reference nothing resolves: ${entry}`),
+      `Unsupported route documentation in the ${listed.server} plugin of src/${listed.subpath}/routes.ts:`,
+      ...refs.map((entry) => `  unresolved reference: ${entry}`),
       ...(dropped.size === 0
         ? []
-        : [`  schema keywords nothing describes: ${[...dropped].sort().join(", ")}`]),
+        : [`  unsupported schema keywords: ${[...dropped].sort().join(", ")}`]),
       `Add them to SchemaNode and describedKeywords here, and to scripts/reference/route-pages.ts.`,
     ].join("\n"),
   );

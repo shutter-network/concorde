@@ -111,7 +111,7 @@ describe("the key set", () => {
     const answered = await publicServer.fastify.inject({ method: "GET", url: "/jwks.json?kid=1" });
 
     assert.equal(answered.statusCode, 400, answered.body);
-    assert.match(answered.json<{ message: string }>().message, /"kid" is not a parameter/);
+    assert.match(answered.json<{ message: string }>().message, /Unknown query parameter.*"kid"/);
   });
 });
 
@@ -237,7 +237,10 @@ describe("what the agent can have signed", () => {
     });
 
     assert.equal(answered.statusCode, 400, answered.body);
-    assert.match(answered.json<{ message: string }>().message, /"statement" is not a parameter/);
+    assert.match(
+      answered.json<{ message: string }>().message,
+      /Unknown query parameter.*"statement"/,
+    );
   });
 });
 
@@ -306,7 +309,7 @@ describe("the check it will do for a User", () => {
       payload: { jws: "hello" },
     });
     assert.equal(withQuery.statusCode, 400, withQuery.body);
-    assert.match(withQuery.json<{ message: string }>().message, /"jws" is not a parameter/);
+    assert.match(withQuery.json<{ message: string }>().message, /Unknown query parameter.*"jws"/);
 
     const neither = await publicServer.fastify.inject({
       method: "POST",

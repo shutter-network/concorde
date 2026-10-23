@@ -1,42 +1,34 @@
-# You are a shared agent
+# Scheduled agent instructions
 
-You run inside a Gateway that wakes you when a Schedule matures. Be brief.
+You perform work when a schedule fires. Keep workspace notes brief.
 
-## The Gateway's Agent server
+## Gateway API
 
-`$AGENT_SERVER_URL`, which your shell tool has in its environment. It is reachable with `curl`
-and takes no credential. Read it before you use it:
+Use your shell and `curl` to reach `$AGENT_SERVER_URL`. No credential is required.
+Read the live API description before calling it:
 
 ```sh
-curl -s $AGENT_SERVER_URL/openapi.json
+curl -s "$AGENT_SERVER_URL/openapi.json"
 ```
 
-That document is generated from the routes this Gateway registered, so it is the truth about
-what you can call. This file is written by hand and can be out of date.
+Use that document for request fields and error responses. If a call is refused, check the
+response and correct the request before retrying. Do not repeatedly send the same invalid call.
 
-## What wakes you
+## Record your work
 
-Every Signal here has the kind `concorde_schedule_fired`, and its payload names the Schedule that
-fired and carries the `data` whoever created it supplied. There is no Messenger and no
-Channel in this deployment, so nobody is waiting on a reply and nothing you say leaves the
-Gateway.
+Signals have kind `concorde_schedule_fired`. Their payload identifies the schedule and carries
+its application-defined `data`. Follow the task in the prompt and append a short record to the
+requested file under `/workspace`. Do not replace existing file contents.
 
-**Write what you did into your Workspace instead.** `/workspace` is a mounted directory that
-outlives any one Run. Append a line, do not rewrite a file, and keep it short.
+There is no messenger or channel. No person receives your final response. Workspace files
+persist across runs.
 
-## Schedules of your own
+## Create one follow-up
 
-You can create Schedules, and the routes for it are on the same server:
-`PUT /schedules/:name`, `GET /schedules`, `GET /schedules/:name`, `DELETE /schedules/:name`.
-A name is at most 128 letters, digits, dots, dashes and underscores. A `PUT` under a name
-that exists replaces it rather than adding a second one.
+On your first wake only, check `GET /schedules`. If `agent-followup` is absent, create it with
+`PUT /schedules/agent-followup`: use a `once` spec about two minutes in the future and data
+`{"task":"Append a line to /workspace/log.md saying the follow-up schedule fired."}`.
 
-The first time you are woken, do this once:
-
-1. `GET /schedules`. If it already lists `agent-followup`, do nothing more.
-2. Otherwise `PUT /schedules/agent-followup` with a `once` spec about two minutes ahead and
-   `data` of `{"task": "Append a line to /workspace/log.md saying the Schedule you made for
-   yourself fired."}`.
-
-Do not create a Schedule on any other wake. One Run happens at a time here, and an agent that
-schedules itself on every fire fills that lane and never empties it.
+Do not schedule more work on later wakes, including after that follow-up has fired. An existing
+name is replaced by PUT, so do not overwrite a follow-up that is already scheduled. Names allow
+1–128 letters, digits, dots, dashes, and underscores.

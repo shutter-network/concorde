@@ -38,11 +38,9 @@ function page(component: ComponentTables, owners: ReadonlyMap<string, string>): 
     "",
     `# ${component.specifier}`,
     "",
-    `The tables this component creates, and the PostgreSQL schema \`${component.schema}\` it ` +
-      `creates them in. A configuration listing \`${component.specifier}\` creates all of them.`,
+    `Tables defined by \`${component.specifier}\` in PostgreSQL schema \`${component.schema}\`. Your application applies these definitions; the component does not create tables.`,
     "",
-    `Generated from the snapshot \`drizzle-kit\` takes of \`src/${component.subpath}/schema/index.ts\`, ` +
-      `which is the snapshot an Operator's own generation reads. Never edited by hand.`,
+    `Generated from \`src/${component.subpath}/schema/index.ts\` using drizzle-kit.`,
     ...crossSchemaWarning(component, tables, owners),
     ...tables.flatMap((table) => ["", ...tableSection(table)]),
     "",
@@ -67,17 +65,16 @@ function crossSchemaWarning(
 
   const sentences = [...leaving].map(([schema, from]) => {
     const owner = owners.get(schema);
-    const creator = owner ? `\`${owner}\`` : `whatever creates \`${schema}\``;
+    const creator = owner ? `\`${owner}\`` : `the definitions for \`${schema}\``;
     const named = [...new Set(from)];
     return (
       `${list(named)} point${named.length === 1 ? "s" : ""} into ` +
-      `\`${schema}\`, which ${creator} creates.`
+      `\`${schema}\`, defined by ${creator}.`
     );
   });
   return [
     "",
-    `**Foreign keys leave this schema.** ${sentences.join(" ")} A configuration that lists ` +
-      `\`${component.specifier}\` without it generates a constraint onto a table nobody creates.`,
+    `**Required schemas:** ${sentences.join(" ")} Include these definitions alongside \`${component.specifier}\` when applying database changes.`,
   ];
 }
 
@@ -205,10 +202,9 @@ function assertNothingIsDropped(
 
   throw new Error(
     [
-      `src/${component.subpath}/schema/index.ts declares things the table pages do not describe, so ` +
-        `its page would be complete-looking and wrong:`,
+      `Unsupported schema features in src/${component.subpath}/schema/index.ts:`,
       ...dropped.map((entry) => `  ${entry}`),
-      `Add the section to scripts/reference/schema-pages.ts.`,
+      `Add rendering support in scripts/reference/schema-pages.ts.`,
     ].join("\n"),
   );
 }

@@ -288,7 +288,7 @@ describe("a Nostr message the agent must not admit", () => {
     });
   });
 
-  it("drops a message from a public key no User holds, and stores nothing whatever for it", async () => {
+  it("drops a message from a public key No user holds, and stores nothing whatever for it", async () => {
     await withDeployment(async ({ relay, messenger, channel }) => {
       const known = await admit(channel);
       const stranger = generateSecretKey();

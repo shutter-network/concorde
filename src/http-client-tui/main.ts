@@ -38,7 +38,7 @@ async function main(): Promise<number> {
     waiting: () => {
       if (announced) return;
       announced = true;
-      terminal.print(`no answer from ${config.baseUrl} yet, still asking`);
+      terminal.print(`Waiting for ${config.baseUrl}; retrying`);
     },
   };
 
@@ -53,7 +53,9 @@ async function main(): Promise<number> {
       () => client.logIn({ user: config.user, password: config.password }),
       connect,
     );
-    terminal.print(`${config.baseUrl} as ${issued.user.id}, until ${issued.expiresAt}`);
+    terminal.print(
+      `Connected to ${config.baseUrl} as ${issued.user.id}. Token expires ${issued.expiresAt}.`,
+    );
     for (const record of await client.open()) terminal.print(formatMessage(record));
   } catch (error) {
     terminal.close();

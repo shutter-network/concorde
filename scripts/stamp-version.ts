@@ -20,8 +20,7 @@ const found = [...source.matchAll(declaration)];
 if (found.length !== 1) {
   console.error(
     `\nExpected one \`export const describedVersion = "…";\` in ${sourcePath}, found ` +
-      `${found.length}. Nothing was written. The declaration this stamps is matched whole, so a ` +
-      `rename or a reformat has to be answered here.\n`,
+      `${found.length}. Update the matcher in scripts/stamp-version.ts if the declaration changed. Nothing was written.\n`,
   );
   process.exit(1);
 }

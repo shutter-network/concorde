@@ -120,7 +120,7 @@ describe("setting Attributes from trusted code", () => {
   it("refuses an id that names nobody, rather than granting nothing quietly", async () => {
     await assert.rejects(
       db.tx((tx) => directory.setAttributes(tx, nobody, { role: "admin" })),
-      new RegExp(`no User ${nobody} exists`),
+      new RegExp(`No user ${nobody} exists`),
     );
   });
 });

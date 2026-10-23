@@ -208,12 +208,12 @@ describe("a Handler sending a Message", () => {
     assert.deepEqual(await own(client), [inside]);
   });
 
-  it("throws when no User has that id, rather than writing a row nobody can read", async () => {
+  it("throws when No user has that id, rather than writing a row nobody can read", async () => {
     const client = await admitted();
 
     await assert.rejects(
       db.tx((tx) => messenger.send(tx, nobody, "into the void")),
-      new RegExp(`no User ${nobody} exists`),
+      new RegExp(`No user ${nobody} exists`),
     );
     assert.deepEqual(await asAgent(nobody), [], "nothing should have been written for nobody");
 

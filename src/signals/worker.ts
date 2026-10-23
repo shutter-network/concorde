@@ -64,8 +64,8 @@ export const signalChannel = "concorde_signals_signal";
 const defaultSweepIntervalMs = 5_000;
 
 const strandedSignal =
-  "the worker stopped while this Signal was processing, and it is failed rather than re-run after the restart: its Runs may already have sent Messages, written the Workspace, or called something outside";
-const strandedRun = "the worker stopped before this Run finished; Runs are never re-run";
+  "Worker restart interrupted this signal. It was not retried because its runs may already have produced effects.";
+const strandedRun = "Worker restart interrupted this run. Runs are not automatically retried.";
 
 type WakeupReason = "start" | "notification" | "listening" | "sweep";
 
@@ -146,7 +146,7 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
 
     const handler = handlers[signal.kind];
     if (handler === undefined) {
-      const failure = `no Signal Handler is registered for kind ${JSON.stringify(signal.kind)}`;
+      const failure = `No signal handler registered for kind ${JSON.stringify(signal.kind)}`;
       log.error({ signalId: signal.id, kind: signal.kind }, failure);
       await settle(signal, failure);
       return;
@@ -159,7 +159,7 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
     } catch (error) {
       prompts = undefined;
       failure = describe(error);
-      log.error({ signalId: signal.id, kind: signal.kind, err: error }, "Signal Handler failed");
+      log.error({ signalId: signal.id, kind: signal.kind, err: error }, "Signal handler failed");
     }
 
     if (prompts !== undefined) {
@@ -172,9 +172,9 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
       } catch (error) {
         log.error(
           { signalId: signal.id, kind: signal.kind, err: error },
-          "Signal Handler post phase failed",
+          "Signal handler post phase failed",
         );
-        const postFailure = `the post phase failed: ${describe(error)}`;
+        const postFailure = `Post phase failed: ${describe(error)}`;
         failure = failure === undefined ? postFailure : `${failure}; ${postFailure}`;
       }
     }
@@ -213,8 +213,8 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
     if (failures.length === 0) return undefined;
     const first = failures[0] ?? "";
     return failures.length === 1
-      ? `the Run failed: ${first}`
-      : `${failures.length} of ${queued.length} Runs failed, the first with: ${first}`;
+      ? `Run failed: ${first}`
+      : `${failures.length} of ${queued.length} runs failed. First error: ${first}`;
   }
 
   async function executeRun(signal: Signal, run: QueuedRun): Promise<RunOutcome> {
@@ -291,7 +291,7 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
     for (const signal of stranded) {
       log.warn(
         { signalId: signal.id, kind: signal.kind },
-        "Signal was left processing by a stopped worker: failed, and not re-run after the restart",
+        "Interrupted signal marked failed after restart; not retried",
       );
     }
   }
@@ -311,7 +311,7 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
           await drain();
         }
       } catch (error) {
-        log.error({ err: error }, "the Signal worker stopped short, and retries when next woken");
+        log.error({ err: error }, "Signal worker drain failed; retrying on the next wakeup");
       } finally {
         working = undefined;
       }
@@ -328,7 +328,7 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
         .values({ kind: signal.kind, payload: signal.payload })
         .returning({ id: signals.id });
       if (inserted === undefined) {
-        throw new Error("emitting a Signal inserted no row");
+        throw new Error("Signal insert returned no row");
       }
 
       await tx.execute(sql`select pg_notify(${signalChannel}, '')`);
@@ -338,7 +338,7 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
     async start() {
       if (started) {
         throw new Error(
-          "worker.start has already been called. One Signal Worker drains one queue, because Runs are serial across the whole Gateway; construct a second Signal Worker if a second queue is really what you want.",
+          "worker.start has already been called. Run one signal worker per database.",
         );
       }
       started = true;
@@ -346,13 +346,13 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
       listening = options.db.listen(signalChannel, {
         notified: () => wakeup("notification"),
         connected: () => {
-          log.debug({ channel: signalChannel }, "listening for Signal notifications");
+          log.debug({ channel: signalChannel }, "Listening for signal notifications");
           wakeup("listening");
         },
         lost: (error) => {
           log.warn(
             { err: error },
-            "the Signal notification connection dropped; reconnecting, and the sweep covers the gap",
+            "Signal notification connection lost; reconnecting. Periodic polling covers the gap.",
           );
         },
       });

@@ -100,7 +100,7 @@ describe("sending a Message to a User over the Agent server", () => {
     assert.deepEqual(refused.json(), {
       statusCode: 404,
       error: "Not Found",
-      message: `no User ${nobody} exists`,
+      message: `No user ${nobody} exists`,
     });
 
     assert.deepEqual(await log(nobody), []);
@@ -189,7 +189,7 @@ describe("reading a User's Message log over the Agent server", () => {
 
     const both = await read(`?user=${user}&after=1&before=4`);
     assert.equal(both.statusCode, 400);
-    assert.match(both.json<{ message: string }>().message, /two different windows/);
+    assert.match(both.json<{ message: string }>().message, /not both/);
   });
 
   it("requires a User, and refuses an unknown query parameter", async () => {
@@ -200,7 +200,7 @@ describe("reading a User's Message log over the Agent server", () => {
     for (const query of ["&text=hello", "&direction=inbound", "&limt=2"]) {
       const refused = await read(`?user=${user}${query}`);
       assert.equal(refused.statusCode, 400, query);
-      assert.match(refused.json<{ message: string }>().message, /read by cursor/);
+      assert.match(refused.json<{ message: string }>().message, /Supports cursor paging/);
     }
   });
 

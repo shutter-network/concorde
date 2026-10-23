@@ -29,12 +29,12 @@ export function createPiRuntime(instance: PiInstance): Runtime {
 
   if (typeof sessionsDir !== "string" || sessionsDir.trim() === "") {
     throw new Error(
-      "the pi Runtime needs a sessionsDir: the directory Sessions are kept in, as the Agent Instance sees it. Every Run names a file under it, so there is no default that could be right",
+      "Missing sessionsDir. Pass the absolute session directory path as seen by the agent instance.",
     );
   }
   if (!posix.isAbsolute(sessionsDir)) {
     throw new Error(
-      `the pi Runtime's sessionsDir must be absolute, and ${JSON.stringify(sessionsDir)} is not. It is resolved by the Agent Instance and never by this process, so a relative path would be read against a working directory nothing here can see`,
+      `sessionsDir must be an absolute path on the agent instance; received ${JSON.stringify(sessionsDir)}`,
     );
   }
 
@@ -42,16 +42,16 @@ export function createPiRuntime(instance: PiInstance): Runtime {
     async run(prompt: RunPrompt): Promise<RunOutcome> {
       const failed = (why: string): RunOutcome => ({
         ok: false,
-        error: `Session ${prompt.session} ${why}`,
+        error: `Session ${prompt.session}: ${why}`,
       });
 
       if (!sessionNames.test(prompt.session)) {
         return failed(
-          `is not a name pi will accept: a Session name is one or more of A-Z, a-z, 0-9, '.', '_' and '-', beginning and ending with a letter or a digit`,
+          `Invalid session name. Use letters, digits, dots, underscores, or dashes, starting and ending with a letter or digit.`,
         );
       }
       if (prompt.text.trim() === "") {
-        return failed("was given a Prompt with no text, so the agent would answer nothing");
+        return failed("Prompt text must not be blank");
       }
 
       const sessionFile = posix.join(sessionsDir, `${prompt.session}.jsonl`);
@@ -85,35 +85,29 @@ async function performRun(
 ): Promise<RunOutcome> {
   const switched = await rpc.send("switch_session", { sessionPath: sessionFile });
   if (!switched.success) {
-    return failed(
-      `could not be opened at ${sessionFile}: ${switched.error ?? "the Agent Instance refused the switch and said why nowhere"}`,
-    );
+    return failed(`Cannot open ${sessionFile}: ${switched.error ?? "switch_session was refused"}`);
   }
   if (switched.data?.cancelled === true) {
-    return failed(
-      `was not opened at ${sessionFile}: an extension of the Agent Instance cancelled the switch, so the agent is in some other Session and this Prompt is not for it`,
-    );
+    return failed(`Session switch to ${sessionFile} was cancelled by an agent extension`);
   }
 
   // switch_session can report success without selecting the requested file; verify before prompting.
   const state = await rpc.send("get_state");
   if (!state.success) {
     return failed(
-      `could not be confirmed: the Agent Instance refused to say what state it is in${state.error === undefined ? "" : `: ${state.error}`}`,
+      `Cannot confirm session: get_state failed${state.error === undefined ? "" : `: ${state.error}`}`,
     );
   }
   const reached = state.data?.sessionFile;
   if (reached !== sessionFile) {
     return failed(
-      `was asked for at ${sessionFile} and the Agent Instance is in ${typeof reached === "string" ? reached : JSON.stringify(reached)}, so the Prompt would go to the wrong Session`,
+      `Session mismatch: requested ${sessionFile}, received ${typeof reached === "string" ? reached : JSON.stringify(reached)}`,
     );
   }
 
   const prompted = await rpc.send("prompt", { message: prompt.text });
   if (!prompted.success) {
-    return failed(
-      `was refused the Prompt: ${prompted.error ?? "the Agent Instance rejected it and said why nowhere"}`,
-    );
+    return failed(`Prompt rejected: ${prompted.error ?? "no error details"}`);
   }
 
   const outcome = await readOutcome(rpc.records, prompt.session);

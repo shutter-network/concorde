@@ -185,7 +185,7 @@ describe("a User reading their own Messages", () => {
 
     const both = await bearing(client.token, "?after=1&before=7");
     assert.equal(both.statusCode, 400);
-    assert.match(both.json<{ message: string }>().message, /two different windows/);
+    assert.match(both.json<{ message: string }>().message, /not both/);
   });
 
   it("reconstructs a log longer than one page, walked backwards then forwards", async () => {
@@ -212,7 +212,7 @@ describe("a User reading their own Messages", () => {
     for (const window of [`?user=${other.id}`, `?userId=${other.id}`, "?direction=inbound"]) {
       const refused = await bearing(client.token, window);
       assert.equal(refused.statusCode, 400, window);
-      assert.match(refused.json<{ message: string }>().message, /read by cursor/);
+      assert.match(refused.json<{ message: string }>().message, /Supports cursor paging/);
     }
 
     assert.deepEqual(
@@ -231,7 +231,7 @@ describe("a User reading their own Messages", () => {
     for (const window of ["?text=hello", "?limt=2", "?before=4&order=desc"]) {
       const refused = await bearing(client.token, window);
       assert.equal(refused.statusCode, 400, window);
-      assert.match(refused.json<{ message: string }>().message, /cannot be searched or filtered/);
+      assert.match(refused.json<{ message: string }>().message, /not search or field filters/);
     }
   });
 });

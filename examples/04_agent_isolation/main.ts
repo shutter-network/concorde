@@ -38,11 +38,11 @@ const gateway = createGateway({
   },
   handlers: ({ db, messenger }) => ({
     [messageReceivedKind]: templateHandler<MessageRecord>({
-      template: `A message arrived for you from user {{userId}}. They said:
+      template: `User {{userId}} sent this message:
 
 {{text}}
 
-Answer them by sending them a Message. Your final reply here reaches nobody.`,
+Send your reply through the gateway messaging API. Your final model response is not delivered.`,
       session: (signal) => `user_${signal.payload.userId}`,
       data: (signal) => signal.payload,
 
@@ -52,7 +52,7 @@ Answer them by sending them a Message. Your final reply here reaches nobody.`,
           messenger.send(
             tx,
             signal.payload.userId,
-            "Sorry - I could not answer that one. Please try again in a minute.",
+            "I could not complete that request. Please try again in a minute.",
           ),
         );
       },

@@ -191,7 +191,7 @@ describe("the Prompt", () => {
         text,
       });
 
-      assert.match(failure(outcome), /no text/);
+      assert.match(failure(outcome), /must not be blank/);
       assert.equal(instance.connections(), 0);
     }
   });
@@ -208,7 +208,10 @@ describe("a Session name outside pi's grammar", () => {
         text: "hello",
       });
 
-      assert.match(failure(outcome), new RegExp(`^Session ${escaped(session)} is not a name pi`));
+      assert.match(
+        failure(outcome),
+        new RegExp(`^Session ${escaped(session)}: Invalid session name`),
+      );
       assert.equal(instance.connections(), 0);
     }
   });
@@ -238,7 +241,7 @@ describe("the Agent Instance the Operator has to run", () => {
     const runtime = createPiRuntime({ host: "127.0.0.1", port, sessionsDir, logger: silent });
 
     const error = failure(await runtime.run(prompt));
-    assert.match(error, /^Session user_42 could not reach the Agent Instance at 127\.0\.0\.1:/);
+    assert.match(error, /^Session user_42: Cannot connect to agent instance at 127\.0\.0\.1:/);
     assert.match(error, new RegExp(`127\\.0\\.0\\.1:${port}`));
   });
 
@@ -247,7 +250,7 @@ describe("the Agent Instance the Operator has to run", () => {
       scriptedInstance([{ type: "agent_start" }, dropsTheConnection]),
     );
 
-    assert.match(failure(outcome), /without an agent_settled record/);
+    assert.match(failure(outcome), /without agent_settled/);
   });
 
   it("says so as well when the connection fails rather than ending", async () => {
@@ -256,14 +259,14 @@ describe("the Agent Instance the Operator has to run", () => {
     );
 
     const error = failure(outcome);
-    assert.match(error, /without an agent_settled record/);
+    assert.match(error, /without agent_settled/);
     assert.match(error, /connection failed/);
   });
 
   it("is a failed Run when it goes away before answering a command", async () => {
     const { outcome } = await runAgainst(() => [dropsTheConnection]);
 
-    assert.match(failure(outcome), /without answering the switch_session command/);
+    assert.match(failure(outcome), /before answering switch_session/);
   });
 });
 

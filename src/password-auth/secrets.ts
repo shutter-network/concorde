@@ -26,7 +26,7 @@ export function checkedScryptParameters(parameters: ScryptParameters): ScryptPar
     isCount(parameters.parallelism);
   if (!bounded) {
     throw new Error(
-      `scrypt parameters must be positive integers with logN at most ${maxLogN}, not ${JSON.stringify(parameters)}`,
+      `Invalid scrypt parameters ${JSON.stringify(parameters)}. Values must be positive integers; logN must not exceed ${maxLogN}.`,
     );
   }
   return parameters;

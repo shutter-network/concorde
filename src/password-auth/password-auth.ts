@@ -83,7 +83,7 @@ export function createPasswordAuth(options: PasswordAuthOptions): PasswordAuth {
         return {
           kind: "refused",
           code: "invalid_request",
-          detail: "the Authorization header named Bearer and carried no token after it",
+          detail: "Missing token after Bearer in the Authorization header",
         };
       }
 
@@ -164,7 +164,7 @@ async function insertToken<TSchema extends Record<string, unknown>>(
     })
     .returning({ expiresAt: tokens.expiresAt });
   if (issued === undefined) {
-    throw new Error("issuing a Token inserted no row");
+    throw new Error("Token insert returned no row");
   }
   return { token: minted.token, expiresAt: issued.expiresAt.toISOString(), user };
 }
@@ -228,7 +228,7 @@ async function userOnHandle<TSchema extends Record<string, unknown>>(
 ): Promise<UserRecord> {
   const [row] = await handle.select().from(users).where(eq(users.id, user));
   if (row === undefined) {
-    throw new Error(`no User ${user} exists`);
+    throw new Error(`No user ${user} exists`);
   }
   return { id: row.id, attributes: row.attributes, createdAt: row.createdAt.toISOString() };
 }
@@ -240,7 +240,9 @@ function dummyDigest(parameters: ScryptParameters): () => Promise<string> {
 
 function checkedTokenTtl(tokenTtl: number): number {
   if (!Number.isFinite(tokenTtl) || tokenTtl <= 0) {
-    throw new Error(`tokenTtl must be a positive number of milliseconds, not ${tokenTtl}`);
+    throw new Error(
+      `tokenTtl must be a finite, positive number of milliseconds; received ${tokenTtl}`,
+    );
   }
   return tokenTtl;
 }

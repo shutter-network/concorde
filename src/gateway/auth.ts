@@ -31,7 +31,7 @@ export type AuthOutcome =
 export class NoAuthRegisteredError extends Error {
   constructor(method: string, url: string) {
     super(
-      `no Auth is registered with this server, so ${method} ${url} can authenticate nobody; construct an Auth with this server, or take requireUser off the route`,
+      `No auth registered for ${method} ${url}. Register an auth with this server or remove requireUser from the route.`,
     );
     this.name = "NoAuthRegisteredError";
   }
@@ -65,7 +65,7 @@ export function createAuthAggregate(logger: Logger) {
         if (outcome.detail !== undefined) {
           logger.warn(
             { scheme: auth.scheme, code: outcome.code, detail: outcome.detail },
-            "an Auth refused a request",
+            "Authentication refused",
           );
         }
         return refuse(reply, auths, { auth, code: outcome.code });

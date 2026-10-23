@@ -48,13 +48,13 @@ const gateway = createGateway({
   },
   handlers: () => ({
     [messageReceivedKind]: templateHandler<MessageRecord>({
-      template: `A message arrived for you from user {{userId}}. They said:
+      template: `User {{userId}} sent this message:
 
 {{text}}
 
-This message is {{userId}}'s. Your answer goes to {{userId}} and to no one else.
+Reply only to user {{userId}}.
 
-Answer them by sending them a Message. Your final reply here reaches nobody.`,
+Send your reply through the gateway messaging API. Your final model response is not delivered.`,
       session: (signal) => `user_${signal.payload.userId}`,
       data: (signal) => signal.payload,
     }),

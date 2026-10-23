@@ -40,15 +40,11 @@ export function load(app) {
         const documentedElsewhere = tables.get(module.name.replace(/\/schema$/, ""));
         if (module.name.endsWith("/schema") && documentedElsewhere) {
           throw new Error(
-            `"${documentedElsewhere}" is documented by a generated table page and TypeDoc has ` +
-              `rendered one for it too. An export entry gets exactly one generator. Take the ` +
-              `entry point out of typedoc.jsonc: a rendered page would print every table as ` +
-              `PgTableWithColumns<{}> and say nothing the table page does not.`,
+            `Duplicate documentation for ${documentedElsewhere}. Remove its entry from typedoc.jsonc; the table renderer already documents it.`,
           );
         }
         throw new Error(
-          `The rendered module "${module.name}" is not an entry point in package.json exports. ` +
-            `Every page in the reference must be a specifier a Developer can import.`,
+          `Module ${module.name} is not exported by package.json. Only public entry points belong in the reference.`,
         );
       }
       typedoc.delete(module.name);
@@ -56,8 +52,7 @@ export function load(app) {
     }
     if (typedoc.size > 0) {
       throw new Error(
-        `These entry points are in package.json exports but rendered no page: ` +
-          `${[...typedoc.values()].join(", ")}. Add them to typedoc.jsonc.`,
+        `Missing API pages for ${[...typedoc.values()].join(", ")}. Add the entry points to typedoc.jsonc.`,
       );
     }
 
@@ -67,17 +62,13 @@ export function load(app) {
       .map(([, specifier]) => specifier);
     if (unrendered.length > 0) {
       throw new Error(
-        `These entry points are in package.json exports and no generator documents them: ` +
-          `${unrendered.join(", ")}. A table page is written for every src/<component>/schema/, ` +
-          `and these have none.`,
+        `Missing schema sources for ${unrendered.join(", ")}. Each schema export needs src/<component>/schema/.`,
       );
     }
     const unexported = [...owners].filter((component) => !tables.has(component));
     if (unexported.length > 0) {
       throw new Error(
-        `These components own tables and have no "./<component>/schema" entry in package.json ` +
-          `exports: ${unexported.join(", ")}. Their table page would document a specifier ` +
-          `nobody can import.`,
+        `Missing schema exports for ${unexported.join(", ")}. Add ./<component>/schema entries to package.json.`,
       );
     }
   });
