@@ -121,7 +121,7 @@ services:
       context: .
       dockerfile: Dockerfile
     profiles: [cli]
-    entrypoint: ["npx", "http-client-tui"]
+    entrypoint: ["npx", "concorde-chat-tui"]
     environment:
       CONCORDE_GATEWAY_URL: http://gateway:8081
       CONCORDE_PASSWORD: ${USER_PASSWORD:?copy .env.example to .env}

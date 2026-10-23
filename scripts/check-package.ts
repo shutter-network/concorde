@@ -206,7 +206,7 @@ try {
     "dist/scheduler/routes.d.ts",
     "dist/scheduler/schema/index.js",
     "dist/scheduler/schema/index.d.ts",
-    "dist/http-client-tui/main.js",
+    "dist/chat-tui/main.js",
   ]) {
     assert.ok(entries.has(file), `the tarball should ship ${file}`);
   }
@@ -1389,11 +1389,11 @@ try {
   );
 
   step("checking the bin runs from the installed package");
-  const command = path.join(consumer, "node_modules", ".bin", "http-client-tui");
+  const command = path.join(consumer, "node_modules", ".bin", "concorde-chat-tui");
   const help = run(command, ["--help"], consumer);
   assert.match(
     help,
-    /^Usage: http-client-tui <user-id>/,
+    /^Usage: concorde-chat-tui <user-id>/,
     "The installed command must start and show usage",
   );
   assert.match(help, /CONCORDE_GATEWAY_URL/, "Help must list the supported environment variables");

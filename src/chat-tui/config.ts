@@ -15,7 +15,7 @@ export type Invocation =
   | { readonly kind: "help" }
   | { readonly kind: "refused"; readonly reason: string };
 
-export const usage = `Usage: http-client-tui <user-id>
+export const usage = `Usage: concorde-chat-tui <user-id>
 
 Send messages through a Concorde HTTP channel. The client logs in, displays your
 message log, and polls for new messages once a second. Type a line to send it.
@@ -41,7 +41,7 @@ export function readInvocation(
   if (argv.includes("--help") || argv.includes("-h")) return { kind: "help" };
 
   const [user, ...extra] = argv;
-  if (user === undefined) return refused("Missing user id. Usage: http-client-tui <user-id>");
+  if (user === undefined) return refused("Missing user id. Usage: concorde-chat-tui <user-id>");
   if (user.startsWith("-")) {
     return refused(`Unknown option: ${user}. Use --help for usage.`);
   }

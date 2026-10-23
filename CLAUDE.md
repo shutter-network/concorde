@@ -183,7 +183,7 @@ Four ways that fails quietly, all of them a deployment's to get right:
   a path and compares it against a prefix. Widening that character class is therefore a Signal
   Handler's Session name climbing out of `sessionsDir` and not a cosmetic edit; re-read
   `core/session-manager` against it whenever the pinned `pi` version moves.
-- **`src/http-client-tui/` is the one shipped directory that is not a subpath.** It is a `bin`, so
+- **`src/chat-tui/` is the one shipped directory that is not a subpath.** It is a `bin`, so
   the export map is untouched. **It has zero dependencies and must keep them**: a dependency added
   here lands in every consumer's install, and the answer to needing one is a second package.
 - **`dependencies` carry caret ranges; `devDependencies` are pinned exactly.** The lockfile is
