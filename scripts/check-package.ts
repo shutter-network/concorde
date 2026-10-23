@@ -307,7 +307,9 @@ try {
   step("checking npm publish leaves the manifest as it is");
   // `npm pack` ships a manifest `npm publish` would rewrite: a `./` before a bin path has
   // publish delete that bin with a warning and exit 0. The version is moved off the real one
-  // so the dry run never meets a version the registry already holds.
+  // so the dry run never meets a version the registry already holds. Without a token it warns
+  // that it needs a login; a dry run only checks one is configured, so a dummy one stands in,
+  // whoever is or is not logged in.
   const unpacked = path.join(workDir, "unpacked");
   mkdirSync(unpacked);
   run("tar", ["-xzf", tarball, "-C", unpacked], workDir);
@@ -316,6 +318,7 @@ try {
   const shipped = JSON.parse(readFileSync(manifestPath, "utf8")) as { version: string };
   shipped.version = `${shipped.version}-package-check`;
   writeFileSync(manifestPath, JSON.stringify(shipped, null, 2));
+  writeFileSync(path.join(publishable, ".npmrc"), "//registry.npmjs.org/:_authToken=dry-run\n");
   const dryRun = spawnSync(
     "npm",
     ["publish", "--dry-run", "--ignore-scripts", "--tag", "package-check"],
