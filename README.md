@@ -84,6 +84,8 @@ Read the [architecture](https://shutter-network.github.io/concorde/architecture)
 
 ## Documentation
 
+The documentation is published at <https://shutter-network.github.io/concorde/>.
+
 - [Guide](https://shutter-network.github.io/concorde/guide): run and adapt an application.
 - [Architecture](https://shutter-network.github.io/concorde/architecture): components, execution, and trust boundaries.
 - [API reference](https://shutter-network.github.io/concorde/reference/): exports, HTTP routes, and database tables.

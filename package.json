@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "A framework for building AI agents that serve several parties at once, where no single party may control the agent or reach it privately.",
   "license": "MIT",
+  "homepage": "https://shutter-network.github.io/concorde/",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/shutter-network/concorde.git"
