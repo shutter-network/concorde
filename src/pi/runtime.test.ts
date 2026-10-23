@@ -259,8 +259,11 @@ describe("the Agent Instance the Operator has to run", () => {
     );
 
     const error = failure(outcome);
-    assert.match(error, /without agent_settled/);
-    assert.match(error, /connection failed/);
+    assert.match(
+      error,
+      /^Session user_42: (No records received|Stream ended after \d+ records without agent_settled)/,
+    );
+    assert.match(error, /The connection failed: .*ECONNRESET/);
   });
 
   it("is a failed Run when it goes away before answering a command", async () => {
