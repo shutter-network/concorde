@@ -44,7 +44,7 @@ function recordingLogger(entries: LogEntry[]): Logger {
 const sweepingMs = 5;
 const sleepingSweepMs = 60_000;
 
-const listeningMessage = "listening for Signal notifications";
+const listeningMessage = "Listening for signal notifications";
 
 type WorkerBody = (worker: SignalWorker, entries: readonly LogEntry[]) => Promise<void>;
 
@@ -395,7 +395,7 @@ describe("the worker", () => {
         const row = await settled(id);
 
         assert.equal(row.state, "failed");
-        assert.match(row.error ?? "", /post phase failed: the cleanup could not cope/);
+        assert.match(row.error ?? "", /Post phase failed: the cleanup could not cope/);
         assert.deepEqual(
           (await runsOf(id)).map((run) => run.state),
           ["done"],

@@ -483,7 +483,7 @@ describe("the template Handler under the worker", () => {
       const outcome = await settled(signalId);
 
       assert.equal(outcome.state, "failed");
-      assert.equal(outcome.error, "the post phase failed: the notification could not be delivered");
+      assert.equal(outcome.error, "Post phase failed: the notification could not be delivered");
       assert.deepEqual(runtime.texts(), ["a Prompt that renders"]);
     });
   });

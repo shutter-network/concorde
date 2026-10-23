@@ -40,7 +40,7 @@ type ScheduleBody = {
 
 const dataSchema = {
   description:
-    "Arbitrary JSON, echoed verbatim in the fired Signal's payload. The Scheduler never interprets it, so what a Schedule carries is the creator's convention and their Signal Handler is where it is read. Omitted, it is stored as null.",
+    "Application-defined JSON copied into the schedule-fired signal payload. Defaults to null.",
 } as const;
 
 const onceSpecInSchema = {
@@ -49,8 +49,7 @@ const onceSpecInSchema = {
     kind: { type: "string", enum: ["once"] },
     at: {
       type: "string",
-      description:
-        "The single absolute instant to fire at, ISO 8601. Refused as a 400 if malformed or already past.",
+      description: "One-shot fire time in ISO 8601. Must be valid and in the future.",
     },
   },
   required: ["kind", "at"],
@@ -63,12 +62,12 @@ const cronSpecInSchema = {
     kind: { type: "string", enum: ["cron"] },
     expr: {
       type: "string",
-      description: "A cron expression, parsed by cron-parser. A malformed one is a 400.",
+      description: "Cron expression. Invalid expressions return 400.",
     },
     tz: {
       type: "string",
       description:
-        "The IANA time zone the expression is evaluated in. Omitted, it is UTC. An unknown zone is a 400.",
+        "IANA time zone for the cron expression. Defaults to UTC; unknown zones return 400.",
     },
   },
   required: ["kind", "expr"],
@@ -83,7 +82,7 @@ const scheduleBodySchema = {
     until: {
       type: "string",
       description:
-        "A cron Schedule's optional end instant, ISO 8601: after its last occurrence at or before this, the Schedule is retired. Meaningless for a once, which bounds itself by firing once, so a once carrying one is a 400.",
+        "Inclusive end time for a recurring schedule, in ISO 8601. Not accepted for one-shot schedules.",
     },
   },
   required: ["spec"],
@@ -117,13 +116,12 @@ const scheduleRecordSchema = {
     until: {
       type: "string",
       nullable: true,
-      description:
-        "The cron end instant if the Schedule has one, else null. Always null for a once.",
+      description: "Recurring schedule end time, or null. Always null for one-shot schedules.",
     },
     nextFireAt: {
       type: "string",
       description:
-        "When the Schedule next fires, ISO 8601. Always present: reads answer only live Schedules, and a create that would resolve to no future fire is a 400 rather than a spent record.",
+        "Next fire time in ISO 8601. Only schedules with a future occurrence can be created through this route.",
     },
   },
   required: ["name", "spec", "data", "until", "nextFireAt"],
@@ -161,7 +159,7 @@ async function rejectUnknownScheduleBody(
   const topUnknown = Object.keys(body).filter((key) => !["spec", "data", "until"].includes(key));
   if (topUnknown.length > 0) {
     return refuse(
-      `${named(topUnknown)} is not a field of a Schedule, which takes spec, data, and (for a cron) until.`,
+      `Unknown schedule field(s): ${named(topUnknown)}. Accepted: spec, data, and until for recurring schedules.`,
     );
   }
 
@@ -173,13 +171,11 @@ async function rejectUnknownScheduleBody(
       const specUnknown = Object.keys(spec).filter((key) => !allowed.includes(key as never));
       if (specUnknown.length > 0) {
         return refuse(
-          `${named(specUnknown)} is not a field of a ${kind} spec, which takes ${allowed.join(", ")}.`,
+          `Unknown ${kind} spec field(s): ${named(specUnknown)}. Accepted: ${allowed.join(", ")}.`,
         );
       }
       if (kind === "once" && "until" in body) {
-        return refuse(
-          "until bounds a cron Schedule; a once fires a single instant and takes none.",
-        );
+        return refuse("until is only supported for recurring schedules.");
       }
     }
   }
@@ -187,11 +183,11 @@ async function rejectUnknownScheduleBody(
 }
 
 const malformedName =
-  "The name in the path is not a legible url-safe key of up to 128 letters, digits, dots, dashes or underscores, or a query parameter was written.";
+  "The name must contain 1–128 letters, digits, dots, dashes, or underscores. Query parameters are not accepted.";
 
 export function scheduleRoutes(operations: ScheduleRouteOperations): FastifyPluginAsync {
   const rejectUnknownQuery = unknownQueryRefusal(
-    "Schedules are not scoped by creator, so there is no such parameter to pass.",
+    "Schedules are shared; there is no creator filter.",
   );
   return async (fastify) => {
     fastify.put<{ Params: { name: string }; Body: ScheduleBody }>(
@@ -199,18 +195,18 @@ export function scheduleRoutes(operations: ScheduleRouteOperations): FastifyPlug
       {
         schema: {
           tags: ["Schedules"],
-          summary: "Create or update a Schedule by name",
-          description: `Create-or-update the Schedule this \`name\` addresses. An upsert, so a retry or a revised plan converges to one Schedule rather than a duplicate. Answers **201** when the name was new and **200** when it already existed, each with the resulting read model. There is no 404, since a \`PUT\` on an absent name creates it. The \`name\` is the sole identifier and comes from the path.\n\nA create that could never fire is a **400** rather than a stored Schedule that never fires. That covers a \`once\` already past, and a cron whose \`until\` sits at or before its next occurrence. This route takes no query parameters at all. ${unknownParameter}`,
+          summary: "Create or replace a schedule",
+          description: `Creates a schedule or replaces the one with this name. Returns 201 for a new name and 200 for an update. Rejects schedules with no future occurrence, including past one-shot times or recurring schedules whose next occurrence is after until. ${unknownParameter}`,
           params: nameParams,
           body: scheduleBodySchema,
           response: {
             200: {
               ...scheduleRecordSchema,
-              description: "The Schedule as it now stands, updated.",
+              description: "The updated schedule.",
             },
-            201: { ...scheduleRecordSchema, description: "The Schedule as created." },
+            201: { ...scheduleRecordSchema, description: "The created schedule." },
             400: refused(
-              "The path `name` is malformed, a query parameter was written, an unknown field or an unknown `kind` was sent, a `once` carried a cron-only `until`, the cron `expr` is invalid or its `tz` unknown, or the `at`/`until` is malformed or the `once` instant already past.",
+              "Invalid name, spec, time zone, or timestamp; no future occurrence; an unknown field or kind; until on a one-shot schedule; or a query parameter.",
             ),
           },
         },
@@ -239,18 +235,16 @@ export function scheduleRoutes(operations: ScheduleRouteOperations): FastifyPlug
       {
         schema: {
           tags: ["Schedules"],
-          summary: "List Schedules, soonest to fire first",
-          description: `Every live Schedule, ascending by \`nextFireAt\` so the next to fire is first. \`name\` breaks a tie. A spent or cancelled Schedule is absent, because the row *is* the arming. ${cappedLimit} There is no cursor and no offset. The Schedules past the cap are reachable only by raising the limit or narrowing the arrangement. ${unknownParameter}`,
+          summary: "List schedules by next fire time",
+          description: `Lists active schedules by nextFireAt, then name. Completed and cancelled schedules are removed. ${cappedLimit} There is no paging or filtering; schedules beyond the maximum list size require a lookup by name. ${unknownParameter}`,
           querystring: {
             type: "object",
             properties: { limit: limitSchema },
             additionalProperties: false,
           },
           response: {
-            200: { ...scheduleListSchema, description: "The live Schedules, soonest fire first." },
-            400: refused(
-              "The `limit` is out of range or not an integer, or a parameter this route does not take was written.",
-            ),
+            200: { ...scheduleListSchema, description: "Active schedules in next-fire order." },
+            400: refused("Invalid limit or an unknown query parameter."),
           },
         },
         preValidation: rejectUnknownQuery("limit"),
@@ -263,13 +257,13 @@ export function scheduleRoutes(operations: ScheduleRouteOperations): FastifyPlug
       {
         schema: {
           tags: ["Schedules"],
-          summary: "Read one Schedule by name",
-          description: `The live Schedule this \`name\` addresses, or a 404 when none does. A Schedule that fired out or was cancelled is gone, so this answers only what is still arranged. This route takes no query parameters at all. ${unknownParameter}`,
+          summary: "Read a schedule by name",
+          description: `Returns an active schedule. Completed, cancelled, and unknown names return 404. ${unknownParameter}`,
           params: nameParams,
           response: {
             200: { ...scheduleRecordSchema, description: "The Schedule." },
             400: refused(malformedName),
-            404: refused("No live Schedule has that name."),
+            404: refused("No active schedule has this name."),
           },
         },
         preValidation: rejectUnknownQuery(),
@@ -286,13 +280,13 @@ export function scheduleRoutes(operations: ScheduleRouteOperations): FastifyPlug
       {
         schema: {
           tags: ["Schedules"],
-          summary: "Cancel a Schedule by name",
-          description: `Cancel the Schedule this \`name\` addresses, and stop every future fire. **204** on success, and **404** on a name that addresses none. An unknown name is refused rather than answered an idempotent 204. So a caller learns a Schedule was already gone rather than being told it stopped nothing. This route takes no query parameters at all. ${unknownParameter}`,
+          summary: "Cancel a schedule",
+          description: `Removes the schedule and prevents future occurrences. Returns 204 on success or 404 if the name is not active. ${unknownParameter}`,
           params: nameParams,
           response: {
-            204: noBody("The Schedule was cancelled; every future fire is stopped."),
+            204: noBody("Schedule cancelled. No response body."),
             400: refused(malformedName),
-            404: refused("No live Schedule has that name to cancel."),
+            404: refused("No active schedule has this name."),
           },
         },
         preValidation: rejectUnknownQuery(),

@@ -21,24 +21,23 @@ export type UserOperations = {
   list(options: { readonly limit: number }): Promise<UserRecord[]>;
 };
 
-const unsearchable =
-  "Users cannot be searched or filtered. Attributes are arbitrary JSON that the Gateway cannot index, and a User has no natural key to match on.";
+const unsearchable = "User search and attribute filters are not supported.";
 
 const rejectUnknownQuery = unknownQueryRefusal(unsearchable);
 
 const credentialsAreNotInUrls =
-  "This route takes no query parameters at all. A credential travels in the body or in the Authorization header, never in a URL.";
+  "Query parameters are not accepted. Send credentials in the request body or Authorization header.";
 
 const rejectPublicQuery = unknownQueryRefusal(credentialsAreNotInUrls);
 
-const capped = `${cappedLimit} There is no cursor and no offset, and nothing to narrow by. The Users past the cap are not reachable through this route.`;
+const capped = `${cappedLimit} There is no paging or filtering. Users beyond the list limit require a lookup by id.`;
 
 const noPublicParameters = `${credentialsAreNotInUrls} ${unknownParameter}`;
 
-const aQueryParameterWasWritten = "A query parameter was written, and this route takes none.";
+const aQueryParameterWasWritten = "Query parameters are not accepted.";
 
 const authenticationRequired =
-  "**Requires authentication.** Present a credential of any scheme this deployment accepts, which is `Authorization: Bearer <token>` wherever the password login is registered. The User answered with is the one the Gateway authenticated, and no parameter anywhere names another.";
+  "Requires a credential from an auth scheme installed in this deployment. Returns the authenticated user; there is no user selector.";
 
 const userRecordSchema = {
   type: "object",
@@ -46,7 +45,7 @@ const userRecordSchema = {
     id: { type: "string" },
     attributes: {
       description:
-        "Arbitrary JSON, defined by the deployment and interpreted by nothing in the Gateway. This is where grouping and therefore authorization live. Nothing on any HTTP surface writes them: a User is admitted from the Operator's own code, and `setAttributes` has no route anywhere.",
+        "Application-defined JSON. Built-in routes do not interpret attributes or enforce an attribute-based policy. Trusted application code updates them through setAttributes.",
     },
     createdAt: { type: "string" },
   },
@@ -66,18 +65,16 @@ export function agentUserRoutes(directory: UserOperations): FastifyPluginAsync {
       {
         schema: {
           tags: ["Users"],
-          summary: "Read Users, newest first",
-          description: `Every User this Gateway has admitted, newest first. **These routes are reads.** There is no create here: an agent that could mint a User and give it a credential has minted itself an account, so admitting a User is the Operator's own code and has no route. ${unsearchable} ${capped} ${unknownParameter}`,
+          summary: "List users, newest first",
+          description: `Lists existing users. User creation and credential management are available only through trusted application code. ${unsearchable} ${capped} ${unknownParameter}`,
           querystring: {
             type: "object",
             properties: { limit: limitSchema },
             additionalProperties: false,
           },
           response: {
-            200: { ...userListSchema, description: "The most recently created Users." },
-            400: refused(
-              "The `limit` is out of range or not an integer, or a parameter this route does not take was written.",
-            ),
+            200: { ...userListSchema, description: "The most recently created users." },
+            400: refused("Invalid limit or an unknown query parameter."),
           },
         },
         preValidation: rejectUnknownQuery("limit"),
@@ -90,20 +87,20 @@ export function agentUserRoutes(directory: UserOperations): FastifyPluginAsync {
       {
         schema: {
           tags: ["Users"],
-          summary: "Read one User by id",
-          description: `One User, by the opaque id whoever admitted them was told. There is no email and no username to find one by. ${unsearchable} ${unknownParameter}`,
+          summary: "Read a user by id",
+          description: `Looks up a user by UUID. ${unsearchable} ${unknownParameter}`,
           params: idParams,
           response: {
             200: { ...userRecordSchema, description: "The User." },
-            400: refused("The id in the path is not a uuid, or a query parameter was written."),
-            404: refused("No User has that id."),
+            400: refused("The id must be a UUID. Query parameters are not accepted."),
+            404: refused("No user has this id."),
           },
         },
         preValidation: rejectUnknownQuery(),
       },
       async (request, reply) => {
         const user = await directory.get(request.params.id);
-        if (user === undefined) return notFound(reply, "User", request.params.id);
+        if (user === undefined) return notFound(reply, "user", request.params.id);
         return user;
       },
     );
@@ -123,10 +120,10 @@ export function publicUserRoutes(authenticated: preHandlerAsyncHookHandler): Fas
       {
         schema: {
           tags: ["Users"],
-          summary: "Read the authenticated User",
-          description: `The User this request is acting as, in the same shape the agent's reads answer with. A client resuming after a restart recovers exactly what it was told. The Attributes governing this User's authorization are included. They are not hidden from the User they are about.\n\nIt echoes the authenticated User and reads nothing else, so it answers the same way whichever scheme this deployment authenticated the request with. ${authenticationRequired} ${noPublicParameters}`,
+          summary: "Read the authenticated user",
+          description: `Returns the authenticated user, including their attributes, regardless of which auth scheme accepted the request. ${authenticationRequired} ${noPublicParameters}`,
           response: {
-            200: { ...userRecordSchema, description: "The User the Gateway authenticated." },
+            200: { ...userRecordSchema, description: "The authenticated user." },
             400: refused(aQueryParameterWasWritten),
             401: refused(authenticationFailed),
           },

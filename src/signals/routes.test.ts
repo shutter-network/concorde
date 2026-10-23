@@ -132,7 +132,7 @@ describe("reading prior Signals over the Agent server", () => {
     const unhandled = list.find((signal) => signal.kind === "unhandled");
     assert.ok(unhandled !== undefined);
     assert.equal(unhandled.state, "failed");
-    assert.match(String(unhandled.error), /no Signal Handler is registered for kind "unhandled"/);
+    assert.match(String(unhandled.error), /No signal handler registered for kind "unhandled"/);
   });
 
   it("reports one Signal by id, and says so when there is none", async () => {

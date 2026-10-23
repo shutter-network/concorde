@@ -75,7 +75,7 @@ async function insertUser<TSchema extends Record<string, unknown>>(
 ): Promise<UserRecord> {
   const [inserted] = await handle.insert(users).values({}).returning();
   if (inserted === undefined) {
-    throw new Error("creating a User inserted no row");
+    throw new Error("User insert returned no row");
   }
   return asUserRecord(inserted);
 }
@@ -91,7 +91,7 @@ async function updateUser<TSchema extends Record<string, unknown>>(
     .where(eq(users.id, user))
     .returning({ id: users.id });
   if (updated.length === 0) {
-    throw new Error(`no User ${user} exists`);
+    throw new Error(`No user ${user} exists`);
   }
 }
 

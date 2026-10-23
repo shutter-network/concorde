@@ -169,7 +169,7 @@ describe("a route of the Operator's own", () => {
 
     const answered = await unguarded("/unguarded", `Bearer ${issued.token}`);
     assert.equal(answered.statusCode, 200, answered.body);
-    assert.equal(answered.body, "", "a route without the preHandler has no User to answer with");
+    assert.equal(answered.body, "", "a route without the preHandler has No user to answer with");
 
     const threw = await unguarded("/unguarded-id", `Bearer ${issued.token}`);
     assert.equal(threw.statusCode, 500, threw.body);
@@ -223,7 +223,7 @@ describe("the three outcomes", () => {
     assert.deepEqual(warned[0]?.fields, {
       scheme: "Bearer",
       code: "invalid_request",
-      detail: "the Authorization header named Bearer and carried no token after it",
+      detail: "Missing token after Bearer in the Authorization header",
     });
 
     warned.length = 0;

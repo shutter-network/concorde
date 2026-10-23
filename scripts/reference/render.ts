@@ -12,8 +12,7 @@ const referenceRoot = path.join(repoRoot, "site", "reference");
 
 if (!existsSync(referenceRoot)) {
   console.error(
-    `\n${path.relative(repoRoot, referenceRoot)} does not exist, so TypeDoc has not run. ` +
-      `These pages go into the directory TypeDoc empties, so they are written after it.\n`,
+    `\nMissing ${path.relative(repoRoot, referenceRoot)}. Run TypeDoc before the route and table renderers.\n`,
   );
   process.exit(1);
 }

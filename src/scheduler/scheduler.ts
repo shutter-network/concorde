@@ -115,7 +115,7 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
     try {
       await tick();
     } catch (error) {
-      log.error({ err: error }, "the Scheduler's firing tick failed, and retries on the next wake");
+      log.error({ err: error }, "Scheduler tick failed; retrying on the next wakeup");
     }
     await arm();
   }

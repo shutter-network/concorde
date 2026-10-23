@@ -498,7 +498,7 @@ describe("a whole deployment from one call", () => {
     );
     assert.equal(bothCursors.status, 400);
     assert.deepEqual(Object.keys(refusal).sort(), ["error", "message", "statusCode"]);
-    assert.match(refusal.message, /after and before describe two different windows/);
+    assert.match(refusal.message, /Use after or before/);
   });
 
   it("answers a Decision as Decisions published it, and a key set with nothing private in it", async () => {
@@ -839,9 +839,9 @@ describe("the description both servers serve", () => {
     const document = await documentOf(described.components.agentServer.fastify);
 
     assert.equal(document.openapi, "3.0.3");
-    assert.equal(document.info.title, "Concorde Gateway: Agent server");
+    assert.equal(document.info.title, "Concorde: agent server");
     assert.equal(document.info.version, describedVersion);
-    assert.match(document.info.description, /no authentication of any kind/);
+    assert.match(document.info.description, /no authentication/);
 
     assert.deepEqual(Object.keys(document.paths).sort(), agentPaths);
     assert.deepEqual(
@@ -857,9 +857,9 @@ describe("the description both servers serve", () => {
     const document = await documentOf(described.components.publicServer.fastify);
 
     assert.equal(document.openapi, "3.0.3");
-    assert.equal(document.info.title, "Concorde Gateway: Public server");
+    assert.equal(document.info.title, "Concorde: public server");
     assert.equal(document.info.version, describedVersion);
-    assert.match(document.info.description, /bearer Token/);
+    assert.match(document.info.description, /bearer token/);
 
     assert.deepEqual(Object.keys(document.paths).sort(), publicPaths);
     for (const agentOnly of ["/signals", "/runs", "/users/", "/users/{id}"]) {
@@ -888,14 +888,14 @@ describe("the description both servers serve", () => {
       assert.ok(route.summary !== undefined && route.summary.length > 0, path);
 
       const description = String(route.description);
-      assert.match(description, /not scoped by Session or by User/, path);
-      assert.match(description, /unknown query parameter is a \*\*400\*\*/, path);
+      assert.match(description, /not restricted by user or session/, path);
+      assert.match(description, /Unknown query parameters return 400/, path);
     }
 
     for (const path of ["/signals", "/runs"]) {
       assert.match(
         String(document.paths[path]?.get?.description),
-        /\*\*refused with a 400\*\* rather than quietly reduced/,
+        /Out-of-range values return 400/,
         path,
       );
     }
@@ -944,12 +944,12 @@ describe("the description both servers serve", () => {
     }
     assert.match(
       String(documents.agent.paths["/users/"]?.get?.description),
-      /\*\*These routes are reads\.\*\*/,
+      /User creation and credential management are available only through trusted application code/,
     );
 
     const me = String(documents.public.paths["/users/me"]?.get?.description);
-    assert.match(me, /\*\*Requires authentication\.\*\*/);
-    assert.match(me, /any scheme this deployment accepts/);
+    assert.match(me, /Requires a credential/);
+    assert.match(me, /auth scheme installed in this deployment/);
 
     const user = schemaOf(documents.agent, "/users/{id}", "get", "200");
     assert.deepEqual(Object.keys(user.properties ?? {}).sort(), ["attributes", "createdAt", "id"]);
@@ -961,7 +961,10 @@ describe("the description both servers serve", () => {
 
     assert.equal(user.properties?.attributes?.type, undefined);
 
-    assert.match(String(user.properties?.attributes?.description), /where grouping/);
+    assert.match(
+      String(user.properties?.attributes?.description),
+      /Built-in routes do not interpret attributes/,
+    );
     assert.equal(user.properties?.id?.description, undefined);
     assert.equal(user.properties?.createdAt?.description, undefined);
 
@@ -1014,14 +1017,18 @@ describe("the description both servers serve", () => {
       ["/auth/password", "put"],
     ] as const) {
       const route = documents.public.paths[path]?.[method];
-      assert.match(String(route?.description), /\*\*Requires a bearer Token\*\*/, path);
+      assert.match(
+        String(route?.description),
+        /Requires authentication through a scheme installed/,
+        path,
+      );
     }
     const trading = String(documents.public.paths["/auth/tokens"]?.post?.description);
-    assert.match(trading, /the one route here that requires no Token/);
+    assert.match(trading, /No credential is required/);
 
     const token = schemaOf(documents.public, "/auth/tokens", "post", "201");
     assert.deepEqual(Object.keys(token.properties ?? {}).sort(), ["expiresAt", "token", "user"]);
-    assert.match(String(token.properties?.expiresAt?.description), /When the Token stops working/);
+    assert.match(String(token.properties?.expiresAt?.description), /Token expiry/);
     assert.equal(token.properties?.token?.description, undefined);
   });
 
@@ -1065,15 +1072,15 @@ describe("the description both servers serve", () => {
 
     for (const surface of ["agent", "public"] as const) {
       const reading = String(documents[surface].paths[messages]?.get?.description);
-      assert.match(reading, /\*\*Three cursor cases, one order\.\*\*/, surface);
-      assert.match(reading, /No cursor answers the newest page/, surface);
-      assert.match(reading, /`before=N` answers the newest page strictly below `N`/, surface);
-      assert.match(reading, /`after=N` walks forwards from `N`/, surface);
-      assert.match(reading, /All three answer \*\*ascending by `seq`\*\*/, surface);
-      assert.match(reading, /Passing `after` and `before` together is a \*\*400\*\*/, surface);
-      assert.match(reading, /no more-results flag/, surface);
-      assert.match(reading, /`messages\.length === limit`/, surface);
-      assert.match(reading, /\*\*refused with a 400\*\* rather than quietly reduced/, surface);
+      assert.match(reading, /Without a cursor, returns the latest page/, surface);
+      assert.match(reading, /Without a cursor, returns the latest page/, surface);
+      assert.match(reading, /`before=N` returns the latest page below N/, surface);
+      assert.match(reading, /`after=N` returns the next page above N/, surface);
+      assert.match(reading, /Results are always ascending by seq/, surface);
+      assert.match(reading, /Supplying both cursors returns 400/, surface);
+      assert.match(reading, /A full page may have more results/, surface);
+      assert.match(reading, /Clients store their own cursors/, surface);
+      assert.match(reading, /Out-of-range values return 400/, surface);
     }
 
     const agentSend = bodyOf(documents.agent, messages, "post");
@@ -1084,7 +1091,7 @@ describe("the description both servers serve", () => {
     assert.deepEqual(submission.required, ["text"]);
     assert.match(
       String(documents.public.paths[messages]?.post?.description),
-      /no field for the submitting User and nowhere for one to arrive/,
+      /body cannot select another user/,
     );
 
     const agentWindow = parametersOf(documents.agent, messages, "get");
@@ -1103,11 +1110,11 @@ describe("the description both servers serve", () => {
     const message = schemaOf(documents.agent, messages, "post", "201");
     assert.deepEqual(Object.keys(message.properties ?? {}).sort(), fields);
     assert.deepEqual([...(message.required ?? [])].sort(), fields);
-    assert.match(String(message.properties?.seq?.description), /It is the cursor/);
+    assert.match(String(message.properties?.seq?.description), /Use it as the paging cursor/);
     assert.deepEqual(message.properties?.direction?.enum, ["inbound", "outbound"]);
     assert.match(
       String(message.properties?.direction?.description),
-      /Decided by the server the request arrived on/,
+      /The route determines the direction/,
     );
     assert.equal(message.properties?.id?.description, undefined);
     assert.equal(message.properties?.userId?.description, undefined);
@@ -1122,19 +1129,23 @@ describe("the description both servers serve", () => {
 
     assert.match(
       String(documents.agent.paths[messages]?.post?.responses["404"]?.description),
-      /foreign key onto the Users component's table/,
+      /No user has this id/,
     );
     for (const surface of ["agent", "public"] as const) {
       assert.match(
         String(documents[surface].paths[messages]?.post?.responses["503"]?.description),
-        /\*\*was not recorded\*\*, and sending it again is the right thing to do/,
+        /message was not recorded; retry the request/,
         surface,
       );
     }
 
     for (const method of ["post", "get"] as const) {
       const route = documents.public.paths[messages]?.[method];
-      assert.match(String(route?.description), /\*\*Requires a bearer Token\*\*/, method);
+      assert.match(
+        String(route?.description),
+        /Requires authentication through a scheme installed/,
+        method,
+      );
       assert.match(String(route?.responses["401"]?.description), /Authentication failed/, method);
     }
   });
@@ -1182,9 +1193,9 @@ describe("the description both servers serve", () => {
 
     for (const surface of ["agent", "public"] as const) {
       const citing = String(documents[surface].paths[cited]?.get?.description);
-      assert.match(citing, /`GET \/decisions\/7` is the Decision numbered 7/, surface);
-      assert.match(citing, /\*\*same read\*\* the log is paged with/, surface);
-      assert.match(citing, /not evidence of a Decision withheld/, surface);
+      assert.match(citing, /`GET \/decisions\/7`/, surface);
+      assert.match(citing, /Fetch a decision by its sequence number/, surface);
+      assert.match(citing, /Rollbacks can leave gaps/, surface);
       assert.deepEqual(
         parametersOf(documents[surface], cited, "get").map((parameter) => parameter.name),
         ["seq"],
@@ -1201,17 +1212,17 @@ describe("the description both servers serve", () => {
         surface,
       );
       const reading = String(documents[surface].paths[log]?.get?.description);
-      assert.match(reading, /\*\*One global log, the same for every reader\.\*\*/, surface);
-      assert.match(reading, /\*\*Three cursor cases, one order\.\*\*/, surface);
-      assert.match(reading, /All three answer \*\*ascending by `seq`\*\*/, surface);
+      assert.match(reading, /All authenticated users read the same decisions/, surface);
+      assert.match(reading, /Without a cursor, returns the latest page/, surface);
+      assert.match(reading, /Results are always ascending by seq/, surface);
     }
 
     const fields = ["createdAt", "jws", "seq", "statement"];
     const record = schemaOf(documents.agent, log, "post", "201");
     assert.deepEqual(Object.keys(record.properties ?? {}).sort(), fields);
     assert.deepEqual([...(record.required ?? [])].sort(), fields);
-    assert.match(String(record.properties?.jws?.description), /compact JWS/);
-    assert.match(String(record.properties?.seq?.description), /Gaps are expected/);
+    assert.match(String(record.properties?.jws?.description), /Compact JWS/);
+    assert.match(String(record.properties?.seq?.description), /Rollbacks can leave gaps/);
     assert.equal(record.properties?.statement?.description, undefined);
 
     assert.deepEqual(
@@ -1220,8 +1231,8 @@ describe("the description both servers serve", () => {
     );
 
     const takingItAway = String(documents.public.paths[log]?.get?.description);
-    assert.match(takingItAway, /off-the-shelf JOSE library/);
-    assert.match(takingItAway, /nothing whatever about how the agent behaved/);
+    assert.match(takingItAway, /Verify the compact JWS/);
+    assert.match(takingItAway, /does not prove correct agent behavior/);
   });
 
   it("says what Signatures' three routes answer with, and what each of them is worth", async () => {
@@ -1263,9 +1274,9 @@ describe("the description both servers serve", () => {
     assert.deepEqual(signing.required, ["statement"]);
     assert.match(
       String(signing.properties?.typ?.description),
-      /Any label, `concorde-decision\+jws`/,
+      /No value is reserved, including concorde-decision\+jws/,
     );
-    assert.match(String(documents.agent.paths["/sign"]?.post?.description), /nothing is reserved/);
+    assert.match(String(documents.agent.paths["/sign"]?.post?.description), /no label is reserved/);
     const verdict = schemaOf(documents.public, "/verify", "post", "200");
     assert.deepEqual(Object.keys(verdict.properties ?? {}).sort(), [
       "header",
@@ -1275,30 +1286,27 @@ describe("the description both servers serve", () => {
     assert.deepEqual(verdict.required, ["verified"]);
     assert.match(
       String(verdict.properties?.header?.description),
-      /not a guarantee of this framework's/,
+      /not validation of the payload shape/,
     );
     assert.equal(verdict.properties?.header?.type, undefined);
     assert.equal(verdict.properties?.payload?.type, undefined);
 
     const check = String(documents.public.paths["/verify"]?.post?.description);
-    assert.match(check, /\*\*it proves less than it looks like it proves\*\*/);
-    assert.match(check, /\*\*Real verification is offline\.\*\*/);
-    assert.match(check, /\*\*Requires a bearer Token\*\*/);
+    assert.match(check, /requires trusting the gateway's answer/);
+    assert.match(check, /For independent verification/);
+    assert.match(check, /Requires authentication through a scheme installed/);
     const unauthenticated = String(
       documents.public.paths["/verify"]?.post?.responses["401"]?.description,
     );
     assert.match(unauthenticated, /Authentication failed/);
-    assert.match(unauthenticated, /the refusal is `publicServer\.requireUser`/);
-    assert.match(
-      unauthenticated,
-      /the same 401 every protected route on this server answers, whichever scheme the deployment accepts/,
-    );
+    assert.match(unauthenticated, /Missing, invalid, or expired credentials/);
+    assert.match(unauthenticated, /return the same response/);
     assert.equal(unauthenticated.includes("of the Users component"), false);
 
     const route = documents.public.paths["/jwks.json"]?.get;
     assert.ok(route !== undefined, "the key set should be described");
-    assert.match(String(route.description), /No Token is required/);
-    assert.match(String(route.description), /without trusting this Gateway/);
+    assert.match(String(route.description), /No authentication is required/);
+    assert.match(String(route.description), /verify artifacts independently/);
 
     const keySet = schemaOf(documents.public, "/jwks.json", "get", "200");
     const key = keySet.properties?.keys?.items;
@@ -1349,7 +1357,7 @@ describe("the description both servers serve", () => {
     assert.equal(JSON.stringify(documents.public.paths).includes("Schedules"), false);
 
     const upsert = documents.agent.paths[byName]?.put;
-    assert.match(String(upsert?.description), /\bupsert\b/);
+    assert.match(String(upsert?.description), /Creates a schedule or replaces/);
     assert.equal(Object.hasOwn(upsert?.responses ?? {}, "404"), false);
 
     const record = schemaOf(documents.agent, byName, "get", "200");

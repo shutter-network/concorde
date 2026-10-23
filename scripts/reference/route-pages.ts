@@ -33,8 +33,8 @@ export function routePages(extraction: RouteExtraction): PageSet {
 }
 
 const whatTheServerIs: Record<ServerName, string> = {
-  agent: `**The Agent server has no authentication of any kind.** Everything below is reachable by the agent, and therefore by an injected prompt. Nothing on it names a credential.`,
-  public: `**The Public server is what a User's client calls.** Which credential each route wants, and which wants none, is in that route's own description below.`,
+  agent: `The agent server is unauthenticated and privileged. Restrict it to a private network.`,
+  public: `The public server serves user clients. Authentication requirements are listed per route.`,
 };
 
 function page(component: ComponentRoutes): string {
@@ -47,12 +47,9 @@ function page(component: ComponentRoutes): string {
     "",
     `The HTTP routes this component serves: ${howMany(component.servers)}.`,
     "",
-    `**Every path is relative.** Each one is printed as the plugin declares it, under whatever ` +
-      `prefix the component's constructor registers that plugin at. This page states no mount ` +
-      `point, because the constructor is where the mount point is decided.`,
+    `Paths are relative to the prefix registered by the component constructor.`,
     "",
-    `Generated from what the route plugins in \`src/${component.subpath}/routes.ts\` declare, ` +
-      `which is what a running Gateway serves at \`GET /openapi.json\`. Never edited by hand.`,
+    `Generated from \`src/${component.subpath}/routes.ts\`. The running gateway serves its full API at \`/openapi.json\`.`,
     ...component.servers.flatMap((server) => serverSection(server)),
     "",
   ].join("\n");
@@ -62,7 +59,7 @@ function howMany(servers: readonly ServerRoutes[]): string {
   return list(
     servers.map(
       (server) =>
-        `${server.routes.length} on the ${server.server === "agent" ? "Agent" : "Public"} server`,
+        `${server.routes.length} on the ${server.server === "agent" ? "agent" : "public"} server`,
     ),
   );
 }
@@ -70,7 +67,7 @@ function howMany(servers: readonly ServerRoutes[]): string {
 function serverSection(server: ServerRoutes): readonly string[] {
   return [
     "",
-    `## ${server.server === "agent" ? "Agent" : "Public"} server`,
+    `## ${server.server === "agent" ? "agent" : "public"} server`,
     "",
     whatTheServerIs[server.server],
     ...server.routes.flatMap((route) => ["", ...routeSection(route)]),

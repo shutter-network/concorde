@@ -64,7 +64,7 @@ export function createGateway<E extends GatewayExtension = Record<string, never>
 ): Gateway<InfraComponents & E> {
   const { databaseUrl } = options;
   if (databaseUrl === undefined) {
-    throw new Error("there is no database to open: pass databaseUrl");
+    throw new Error("Missing databaseUrl. Pass a PostgreSQL connection URL.");
   }
   const db = openDb(databaseUrl);
 
@@ -75,13 +75,13 @@ export function createGateway<E extends GatewayExtension = Record<string, never>
   // Install Swagger before extension constructors register routes; discovery uses an onRoute hook.
   describeSurface(
     agentServer.fastify,
-    "Concorde Gateway: Agent server",
-    "The HTTP surface the agent reaches the Gateway on, and nothing else should. It has no authentication of any kind, so reaching this port is read and write access to everything described here. There is no credential to present and none to find.",
+    "Concorde: agent server",
+    "Privileged HTTP API for the agent. This server has no authentication; restrict access to a private network.",
   );
   describeSurface(
     publicServer.fastify,
-    "Concorde Gateway: Public server",
-    "The HTTP surface exposed outside the Gateway. Trade a password for a bearer Token at `POST /auth/tokens`, then send it as `Authorization: Bearer …` on every route that acts as somebody. A route that asks for none says so.",
+    "Concorde: public server",
+    "HTTP API for user clients. Protected routes require a credential from an auth scheme installed in this deployment. If password auth is installed, obtain a bearer token from POST /auth/tokens.",
   );
 
   const handlers: Record<string, SignalHandler> = {};

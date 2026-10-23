@@ -178,7 +178,7 @@ describe("an agent_end followed by a retry", () => {
     assert.equal(answer?.stopReason, "error");
     assert.match(String(answer?.errorMessage), /rate limited/);
 
-    assert.match(await failureOf(asStream(upToFirstEnd)), /without an agent_settled record/);
+    assert.match(await failureOf(asStream(upToFirstEnd)), /without agent_settled/);
 
     assert.equal((records[firstEnd] as { willRetry?: unknown }).willRetry, true);
     assert.ok(
@@ -269,7 +269,7 @@ describe("output that cannot be read", () => {
   });
 
   it("fails the Run when the agent said nothing at all", async () => {
-    assert.match(await failureOf(""), /said nothing at all/);
+    assert.match(await failureOf(""), /No records received/);
   });
 
   it("fails the Run when it settled without the agent ever answering", async () => {
@@ -279,7 +279,7 @@ describe("output that cannot be read", () => {
       { type: "agent_settled" },
     ]);
 
-    assert.match(await failureOf(text), /no assistant message/);
+    assert.match(await failureOf(text), /without an assistant message/);
   });
 
   it("reports a line it could not read even when the stream settled after it", async () => {
@@ -289,7 +289,7 @@ describe("output that cannot be read", () => {
   it("names the Session, which is what a reader produced per Run buys", async () => {
     assert.equal(
       await failureOf(""),
-      `Session ${session} said nothing at all after the Prompt was accepted, so nothing says whether the Run happened`,
+      `Session ${session}: No records received after the prompt was accepted; completion is unknown`,
     );
   });
 });

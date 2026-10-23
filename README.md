@@ -1,184 +1,101 @@
 # Concorde
 
-A framework to build shared agents.
+Concorde is a TypeScript library for building shared agents: AI agents that serve several
+parties without giving any one party direct control. A trusted operator runs a gateway that
+mediates interactions between users and the agent.
 
-> **Expect breaking changes.** This is `0.1.0` and the public API is not settled. Subpaths get
-> renamed, components get split, and a minor version bump can require edits in your entry point.
+For example, two people could use one agent to coordinate a household budget. Each sends
+messages through the gateway, and the agent can publish signed decisions that both can read.
+The [shared-agent proposal](https://blog.shutter.network/on-shared-agents/) explains the idea.
 
-## What a shared agent is
+The API is experimental. Version `0.1.0` may require application changes between releases.
 
-A **shared agent** is an AI agent that serves several parties at once. No single party owns it,
-and no party can reach it privately. The idea is set out in full in
-[On Shared Agents](https://blog.shutter.network/on-shared-agents/).
+## What you build
 
-Two people who share a household budget are the short example. Both talk to the same agent. Both
-need to know that the agent takes no instruction from the other one in secret.
+Your application chooses the components and defines how incoming signals become prompts.
+Concorde supplies:
 
-Every message into the agent and out of it goes through a **Gateway** that a trusted operator
-runs. Keeping the parties off the agent itself is the reason the Gateway exists. A party with
-direct access to the agent has full control of it: they can change its instructions, read and
-edit its memory, and tell it things the others never see. Whatever the agent does for the other
-parties is then theirs to decide, and nothing stops them from using it against the others'
-rights. Through the Gateway every party gets the same one way in and one way out, and the record
-of what was said sits where no party can rewrite it.
+- Persistent message logs, with an HTTP channel or Nostr channel for delivery.
+- Users and authentication through passwords or signed Nostr requests.
+- A signal worker that executes runs one at a time.
+- Schedules that wake the agent.
+- Signed statements and stored, numbered decisions.
 
-## What the framework gives you
+`createGateway` builds the database connection, HTTP servers, and signal worker. Your `extend`
+callback constructs the optional components. Components expose `start()` and `stop()` methods;
+the gateway manages their lifecycle.
 
-The framework gives you the Gateway. You state what your deployment is made of, and
-`createGateway` assembles and runs it.
+![Gateway components and their connections to the agent instance, a user client, and a Nostr relay.](./site/public/architecture.svg)
 
-A Gateway is a set of components. Four are core, and every deployment gets them:
+The two channels in the diagram are alternatives: a messenger currently accepts one channel.
+You run the agent instance separately. The included pi runtime connects to it over RPC; it does
+not configure the model, credentials, tools, or container.
 
-- A **Db**, the PostgreSQL connection every other component stores its state through.
-- A **Signal Worker** that drives the agent, one thing at a time and never two at once.
-- An **Agent server**, the HTTP API the running agent calls back into.
-- A **Public server**, the HTTP API the parties' own clients talk to.
+## Try it
 
-Beyond the core, the framework ships components for what a particular shared agent needs. A
-deployment constructs the ones it wants and leaves the rest out:
+You need Docker with Compose and a model provider credential. The minimal example uses Anthropic.
 
-- **Users**, which is who exists, and **Password Auth** or **Nostr Auth**, which is how one of
-  them proves it.
-- A **Messenger**, which owns one Message log per person, and an **HTTP Channel** or a **Nostr
-  Channel**, which is what reaches a person over a medium.
-- **Signatures** and **Decisions**, so the agent can commit to something a third party can check.
-- A **Scheduler**, so time can wake the agent.
-
-And a deployment can add components of its own. A component is a `start` and a `stop` and nothing
-more, so anything that follows that shape goes into the Gateway beside the rest, is started and
-stopped with it, and can serve its own routes on either server.
-
-![The parts of a shared agent. A dashed boundary encloses the Gateway, holding the Db, the Signal
-Worker, the Agent server and the Public server, together with the Messenger and its two Channels
-and Users with its two Auths. Outside it are the Agent Instance, a person's client, and a Nostr
-Relay.](./site/public/architecture.svg)
-
-Everything inside the dashed boundary is the Gateway. The agent is drawn outside it because it is
-outside it: you run the agent, and the Gateway connects to it over a TCP address that is the whole
-of what it knows about it. The
-[architecture page](https://shutter-network.github.io/concorde/architecture) reads the picture
-part by part.
-
-Some things the framework deliberately does not give you: confidentiality between the parties,
-resistance to prompt injection, confinement of the agent, and rate limiting. The
-[architecture page](https://shutter-network.github.io/concorde/architecture) states the full list.
-
-## The code
-
-Your deployment is one entry point. It builds the agent Runtime, calls `createGateway`, and
-constructs the components it wants inside `extend`:
-
-```ts
-import { createGateway } from "@shutter-network/concorde/gateway";
-import { createHttpChannel } from "@shutter-network/concorde/http-channel";
-import {
-  createMessenger,
-  type MessageRecord,
-  messageReceivedKind,
-} from "@shutter-network/concorde/messenger";
-import { createPasswordAuth } from "@shutter-network/concorde/password-auth";
-import { createPiRuntime } from "@shutter-network/concorde/pi";
-import { templateHandler } from "@shutter-network/concorde/signals";
-import { createUsers } from "@shutter-network/concorde/users";
-
-const tokenTtl = 30 * 24 * 60 * 60 * 1000;
-
-const runtime = createPiRuntime({
-  host: process.env.AGENT_INSTANCE_HOST!,
-  port: Number(process.env.AGENT_INSTANCE_PORT),
-  sessionsDir: process.env.AGENT_SESSIONS_DIR!,
-});
-
-const gateway = createGateway({
-  databaseUrl: process.env.DATABASE_URL!,
-  runtime,
-  publicListen: {
-    host: process.env.PUBLIC_HOST!,
-    port: Number(process.env.PUBLIC_PORT),
-  },
-  agentListen: {
-    host: process.env.AGENT_SERVER_HOST!,
-    port: Number(process.env.AGENT_SERVER_PORT),
-  },
-  extend: ({ db, agentServer, publicServer, worker }) => {
-    const users = createUsers({ db, agentServer, publicServer });
-    const passwordAuth = createPasswordAuth({
-      db,
-      users,
-      publicServer,
-      tokenTtl,
-    });
-    const messenger = createMessenger({ db, users, worker, agentServer });
-    const httpChannel = createHttpChannel({ db, messenger, publicServer });
-    return { users, passwordAuth, messenger, httpChannel };
-  },
-  handlers: () => ({
-    [messageReceivedKind]: templateHandler<MessageRecord>({
-      template: `A message arrived for you from user {{userId}}. They said:
-
-{{text}}
-
-Answer them by sending them a Message. Your final reply here reaches nobody.`,
-      session: (signal) => `user_${signal.payload.userId}`,
-      data: (signal) => signal.payload,
-    }),
-  }),
-});
-
-await gateway.start();
+```sh
+git clone https://github.com/shutter-network/concorde.git
+cd concorde/examples/00_minimal
+cp .env.example .env
 ```
 
-That is close to the whole of a working deployment. It waits for a message, and each time one
-arrives it opens a connection to the agent, prompts it, and closes the connection when the agent
-has settled. What [`examples/00_minimal/main.ts`](./examples/00_minimal/main.ts) adds to it is the
-block that seeds the first person and a signal handler for shutdown.
+Set `ANTHROPIC_API_KEY` and `USER_PASSWORD` in `.env`, then start the stack:
 
-**You run the agent; the framework does not.** `createPiRuntime` takes an address and the
-directory the agent keeps its Sessions in, and that is all it takes: no image, no model, no
-credential and no path on your host. The agent is `pi` behind a listener in a container of your
-own, on a private network with the Gateway, and every example's `compose.yml` is one service for
-each of the two.
+```sh
+docker compose up -d --build
+docker compose logs -f gateway
+```
 
-Each component is its own import subpath, and the package root exports nothing. A component that
-owns tables ships them on a `/schema` subpath, which your own `drizzle.config.ts` applies. Your
-deployment owns its migrations; the framework applies no DDL.
+Copy the user id printed in the log and open the client in another terminal:
+
+```sh
+docker compose run --rm tui <user-id>
+```
+
+The [guide](https://shutter-network.github.io/concorde/guide) explains how to adapt this example.
+Import library APIs from subpaths such as `@shutter-network/concorde/gateway`; the package root
+exports no API. Your application also selects the `/schema` exports it needs and manages its
+own database migrations.
 
 ## Examples
 
-[`examples/`](./examples/) holds four deployments. Each is a self-contained npm application with
-its own Compose stack, and each runs with `cp .env.example .env` and
-`docker compose up -d --build` from its own directory. They resolve the framework from the
-registry, so an example's import lines are the lines you write.
+Each example is an independent npm application with a Compose stack. It installs Concorde
+from the registry rather than this checkout.
 
-| Example                                    | What it shows                                           |
-| ------------------------------------------ | ------------------------------------------------------- |
-| [`00_minimal`](./examples/00_minimal/)     | One person talking to the agent over HTTP               |
-| [`01_scheduler`](./examples/01_scheduler/) | Time waking the agent, with no Users component at all   |
-| [`02_decisions`](./examples/02_decisions/) | Two people, and a signed log both of them read          |
-| [`03_nostr`](./examples/03_nostr/)         | Messaging over Nostr, against a Relay in the same stack |
-| [`04_agent_isolation`](./examples/04_agent_isolation/) | An agent with no credential and no network |
+| Example | Demonstrates |
+| --- | --- |
+| [Minimal](./examples/00_minimal/) | One user exchanging messages over HTTP |
+| [Scheduler](./examples/01_scheduler/) | Scheduled runs without users or messaging |
+| [Decisions](./examples/02_decisions/) | Two users and a shared record of signed decisions |
+| [Nostr](./examples/03_nostr/) | Encrypted direct messages through a local relay |
+| [Agent isolation](./examples/04_agent_isolation/) | Restricted agent networking and a model proxy that holds the credential |
 
-Start with `00_minimal`. They are five independent examples and not a ladder.
+## Deployment boundaries
+
+All parties must trust the operator. The agent server and agent RPC listener are privileged,
+unauthenticated endpoints; keep them on a private network. Configure agent permissions, TLS,
+rate limiting, secret management, and backups for your application.
+
+Concorde does not prevent prompt injection or enforce confidentiality between users. A valid
+signature authenticates a statement under the signing identity, not the agent's behavior.
+Read the [architecture](https://shutter-network.github.io/concorde/architecture) before deploying.
 
 ## Documentation
 
-The [documentation site](https://shutter-network.github.io/concorde/) is the place to read next:
+- [Guide](https://shutter-network.github.io/concorde/guide): run and adapt an application.
+- [Architecture](https://shutter-network.github.io/concorde/architecture): components, execution, and trust boundaries.
+- [API reference](https://shutter-network.github.io/concorde/reference/): exports, HTTP routes, and database tables.
 
-- [Build a shared agent](https://shutter-network.github.io/concorde/guide) — one deployment, step
-  by step.
-- [Architecture](https://shutter-network.github.io/concorde/architecture) — what the parts are and
-  why they are separate.
-- [API reference](https://shutter-network.github.io/concorde/reference/) — the exact signature of
-  every export, the tables each component creates, and the routes each one serves.
-
-## Work on the framework
+## Develop the library
 
 ```sh
-mise install    # the pinned Node version
+mise install
 npm ci
 docker run -d --name concorde-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:17
-npm run check   # typecheck, build, lint, test
+npm run check
 ```
 
-PostgreSQL is real in every test and nothing about the database is mocked, so that container is a
-prerequisite rather than an extra. `CLAUDE.md` is the full account of the toolchain.
+Tests use real PostgreSQL databases. `npm run check` runs type checking, the build, lint, and
+tests. See [CLAUDE.md](./CLAUDE.md) for development conventions and additional checks.

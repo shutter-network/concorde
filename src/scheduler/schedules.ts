@@ -22,7 +22,7 @@ const urlSafeKey = new RegExp(scheduleNamePattern);
 export function assertScheduleName(name: string): void {
   if (!urlSafeKey.test(name)) {
     throw new ScheduleSpecError(
-      `the Schedule name ${JSON.stringify(name)} is not a url-safe key: letters, digits, dots, dashes and underscores, at most 128 of them`,
+      `Invalid schedule name ${JSON.stringify(name)}. Use 1–128 letters, digits, dots, dashes, or underscores.`,
     );
   }
 }
@@ -66,7 +66,7 @@ function zoneOf(spec: { readonly tz?: string }): string {
 
 function assertKnownZone(tz: string): void {
   if (!IANAZone.isValidZone(tz)) {
-    throw new ScheduleSpecError(`unknown time zone ${JSON.stringify(tz)}`);
+    throw new ScheduleSpecError(`Unknown time zone: ${JSON.stringify(tz)}`);
   }
 }
 
@@ -81,7 +81,7 @@ function cronNextAfter(
   try {
     interval = CronExpressionParser.parse(expr, { currentDate: after, tz });
   } catch {
-    throw new ScheduleSpecError(`invalid cron expression ${JSON.stringify(expr)}`);
+    throw new ScheduleSpecError(`Invalid cron expression: ${JSON.stringify(expr)}`);
   }
   const next = interval.next().toDate();
   if (until !== undefined && next.getTime() > until.getTime()) return undefined;
@@ -91,7 +91,7 @@ function cronNextAfter(
 export function parseUntil(until: string): Date {
   const at = new Date(until);
   if (Number.isNaN(at.getTime())) {
-    throw new ScheduleSpecError(`malformed until instant ${JSON.stringify(until)}`);
+    throw new ScheduleSpecError(`Invalid until timestamp: ${JSON.stringify(until)}`);
   }
   return at;
 }
@@ -113,14 +113,12 @@ export function assertCreatable(input: ScheduleInput, now: Date): void {
   if (input.spec.kind === "once") {
     const at = new Date(input.spec.at);
     if (Number.isNaN(at.getTime())) {
-      throw new ScheduleSpecError(`malformed once instant ${JSON.stringify(input.spec.at)}`);
+      throw new ScheduleSpecError(`Invalid one-shot timestamp: ${JSON.stringify(input.spec.at)}`);
     }
-    throw new ScheduleSpecError(
-      `the once instant ${JSON.stringify(input.spec.at)} is already in the past`,
-    );
+    throw new ScheduleSpecError(`One-shot time ${JSON.stringify(input.spec.at)} is in the past`);
   }
   throw new ScheduleSpecError(
-    `the cron until ${JSON.stringify(input.until)} is at or before the Schedule's next fire, so it would never fire`,
+    `Cron until ${JSON.stringify(input.until)} leaves no future occurrence at or before the end time`,
   );
 }
 
@@ -197,7 +195,7 @@ export async function upsertSchedule(
     })
     .returning({ created: sql<boolean>`(xmax = 0)` });
   if (written === undefined) {
-    throw new Error("upserting a Schedule wrote no row");
+    throw new Error("Schedule upsert returned no row");
   }
   return { created: written.created };
 }
@@ -316,5 +314,5 @@ export function asScheduleRecord(row: typeof schedules.$inferSelect): ScheduleRe
   if (row.kind === "cron" && at !== null && row.cronExpr !== null && row.tz !== null) {
     return cronRecord(row.name, row.cronExpr, row.tz, row.until, at, row.data);
   }
-  throw new Error(`Schedule ${row.name} has an unsupported kind ${JSON.stringify(row.kind)}`);
+  throw new Error(`Schedule ${row.name} has an unsupported kind: ${JSON.stringify(row.kind)}`);
 }

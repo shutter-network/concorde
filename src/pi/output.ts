@@ -12,7 +12,7 @@ export async function readOutcome(
   records: AsyncIterator<Framed>,
   session: string,
 ): Promise<RunOutcome> {
-  const failed = (why: string): RunOutcome => ({ ok: false, error: `Session ${session} ${why}` });
+  const failed = (why: string): RunOutcome => ({ ok: false, error: `Session ${session}: ${why}` });
   let read = 0;
   let answer: Answer | undefined;
 
@@ -20,23 +20,17 @@ export async function readOutcome(
     const step = await records.next();
     if (step.done === true) {
       return read === 0
-        ? failed(
-            "said nothing at all after the Prompt was accepted, so nothing says whether the Run happened",
-          )
+        ? failed("No records received after the prompt was accepted; completion is unknown")
         : failed(
-            `ended after ${read} records without an agent_settled record, so the Run did not finish. An agent_end is not the end: it can be followed by a retry or a compaction`,
+            `Stream ended after ${read} records without agent_settled; the run did not finish`,
           );
     }
     const framed = step.value;
     if (framed.kind === "unreadable") {
-      return failed(
-        `wrote a line that could not be read as a record (${framed.why}), so its output cannot be trusted: ${excerpt(framed.line)}`,
-      );
+      return failed(`Invalid RPC record (${framed.why}): ${excerpt(framed.line)}`);
     }
     if (framed.kind === "truncated") {
-      return failed(
-        `ended mid-record after ${read} records, so the Run did not finish: ${excerpt(framed.line)}`,
-      );
+      return failed(`Stream ended mid-record after ${read} records: ${excerpt(framed.line)}`);
     }
 
     read += 1;
@@ -67,13 +61,11 @@ function settlement(
   read: number,
 ): RunOutcome {
   if (answer === undefined) {
-    return failed(
-      `settled after ${read} records with no assistant message, so there is nothing that says the Run succeeded`,
-    );
+    return failed(`Agent settled after ${read} records without an assistant message`);
   }
   if (!answeredStopReasons.has(answer.stopReason)) {
     return failed(
-      `settled with stopReason ${JSON.stringify(answer.stopReason)} and reported no failure of its own: ${answer.errorMessage ?? `the agent's last message was not an answer (${answer.stopReason})`}`,
+      `Agent settled with stopReason ${JSON.stringify(answer.stopReason)}: ${answer.errorMessage ?? `no error details (${answer.stopReason})`}`,
     );
   }
   return { ok: true };

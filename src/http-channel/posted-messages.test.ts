@@ -300,7 +300,7 @@ describe("a User posting a Message", () => {
         payload: { text: "hello" },
       });
       assert.equal(queried.statusCode, 400, queried.body);
-      assert.match(queried.json<{ message: string }>().message, /read by cursor/);
+      assert.match(queried.json<{ message: string }>().message, /Supports cursor paging/);
 
       assert.deepEqual(await own(gateway, client), []);
       assert.deepEqual(await emitted(gateway, client), []);
@@ -355,10 +355,7 @@ describe("a User posting a Message", () => {
       });
       const [only] = await emitted(gateway, client);
       assert.equal(only?.kind, messageReceivedKind);
-      assert.match(
-        only?.error ?? "",
-        /no Signal Handler is registered for kind "message\.received"/,
-      );
+      assert.match(only?.error ?? "", /No signal handler registered for kind "message\.received"/);
 
       assert.deepEqual(await own(gateway, client), [message]);
       assert.deepEqual(gateway.runtime.texts(), []);

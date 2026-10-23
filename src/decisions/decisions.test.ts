@@ -135,11 +135,11 @@ describe("the agent reading the log", () => {
   it("refuses two windows in one request, and a parameter it does not have", async () => {
     const both = await agentServer.fastify.inject({ url: `${prefix}?after=1&before=4` });
     assert.equal(both.statusCode, 400, both.body);
-    assert.match(both.json<{ message: string }>().message, /two different windows/);
+    assert.match(both.json<{ message: string }>().message, /not both/);
 
     const scoped = await agentServer.fastify.inject({ url: `${prefix}?user=someone` });
     assert.equal(scoped.statusCode, 400, scoped.body);
-    assert.match(scoped.json<{ message: string }>().message, /"user" is not a parameter/);
+    assert.match(scoped.json<{ message: string }>().message, /Unknown query parameter.*"user"/);
   });
 });
 
@@ -168,7 +168,7 @@ describe("the agent citing a Decision by number", () => {
     assert.deepEqual(missing.json(), {
       statusCode: 404,
       error: "Not Found",
-      message: `no Decision ${beyond} exists`,
+      message: `No decision ${beyond} exists`,
     });
   });
 
@@ -186,7 +186,7 @@ describe("the agent citing a Decision by number", () => {
     });
 
     assert.equal(windowed.statusCode, 400, windowed.body);
-    assert.match(windowed.json<{ message: string }>().message, /"limit" is not a parameter/);
+    assert.match(windowed.json<{ message: string }>().message, /Unknown query parameter.*"limit"/);
   });
 });
 

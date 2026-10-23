@@ -29,15 +29,19 @@ export type Checked =
 export function checkNip98(token: string, expected: Expectation): Checked {
   const event = decodeEvent(token);
   if (event === undefined) {
-    return { ok: false, code: "invalid_request", reason: "the credential is not a base64 event" };
+    return {
+      ok: false,
+      code: "invalid_request",
+      reason: "Credential is not a base64-encoded event",
+    };
   }
 
   if (!verifyEvent(event)) {
-    return { ok: false, code: "invalid_token", reason: "the event's signature did not verify" };
+    return { ok: false, code: "invalid_token", reason: "Event signature is invalid" };
   }
 
   if (event.kind !== httpAuthKind) {
-    return { ok: false, code: "invalid_token", reason: `the event is kind ${event.kind}` };
+    return { ok: false, code: "invalid_token", reason: `Unexpected event kind: ${event.kind}` };
   }
 
   // Check future timestamps too; nip98.validateToken only rejects old events.
@@ -47,7 +51,7 @@ export function checkNip98(token: string, expected: Expectation): Checked {
     return {
       ok: false,
       code: "invalid_token",
-      reason: `the event is ${Math.round(Math.abs(age) / 1000)} seconds ${side}`,
+      reason: `Event timestamp is ${Math.round(Math.abs(age) / 1000)} seconds ${side}`,
     };
   }
 
@@ -56,7 +60,7 @@ export function checkNip98(token: string, expected: Expectation): Checked {
     return {
       ok: false,
       code: "invalid_token",
-      reason: `the event names ${url ?? "no URL"} and this request is ${expected.url}`,
+      reason: `Signed URL ${url ?? "no URL"} does not match ${expected.url}`,
     };
   }
 
@@ -65,7 +69,7 @@ export function checkNip98(token: string, expected: Expectation): Checked {
     return {
       ok: false,
       code: "invalid_token",
-      reason: `the event names method ${method ?? "nothing"} and this request is ${expected.method}`,
+      reason: `Signed method ${method ?? "missing"} does not match ${expected.method}`,
     };
   }
 
@@ -75,7 +79,7 @@ export function checkNip98(token: string, expected: Expectation): Checked {
       return {
         ok: false,
         code: "invalid_token",
-        reason: "the event's payload tag is not the hash of this request's body",
+        reason: "Event payload hash does not match the request body",
       };
     }
   }

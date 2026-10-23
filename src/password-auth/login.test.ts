@@ -149,8 +149,8 @@ describe("POST /auth/tokens", () => {
       payload: { user: user.id, password },
     });
     assert.equal(refused.statusCode, 400, refused.body);
-    assert.match(refused.json<{ message: string }>().message, /not a parameter of this route/);
-    assert.match(refused.json<{ message: string }>().message, /never in a URL/);
+    assert.match(refused.json<{ message: string }>().message, /Unknown query parameter/);
+    assert.match(refused.json<{ message: string }>().message, /not in query parameters/);
   });
 });
 
@@ -166,15 +166,15 @@ describe("issuing a Token from trusted code", () => {
     assert.equal(refused.statusCode, 401, refused.body);
   });
 
-  it("throws when no User has that id, and writes nothing", async () => {
+  it("throws when No user has that id, and writes nothing", async () => {
     const nobody = "00000000-0000-4000-8000-000000000001";
     await assert.rejects(
       () => db.tx((tx) => passwordAuth.issueToken(tx, nobody)),
-      /no User 00000000-0000-4000-8000-000000000001 exists/,
+      /No user 00000000-0000-4000-8000-000000000001 exists/,
     );
     await assert.rejects(
       () => db.tx((tx) => passwordAuth.setPassword(tx, nobody, password)),
-      /no User 00000000-0000-4000-8000-000000000001 exists/,
+      /No user 00000000-0000-4000-8000-000000000001 exists/,
     );
   });
 

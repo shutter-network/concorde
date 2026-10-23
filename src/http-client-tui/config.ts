@@ -17,19 +17,18 @@ export type Invocation =
 
 export const usage = `Usage: http-client-tui <user-id>
 
-A line-oriented client for the HTTP Channel of a Concorde Gateway. It logs in as the
-User whose id is given, prints that User's Message log, and asks for more once a second.
-A line you type is submitted as a Message, and the agent's answer arrives on the log.
+Send messages through a Concorde HTTP channel. The client logs in, displays your
+message log, and polls for new messages once a second. Type a line to send it.
 
 Arguments:
-  <user-id>  The User to be. Whoever admitted that User was told the id.
+  <user-id>  User id supplied by the operator.
 
 Environment:
-  ${gatewayUrlVariable}  Where the Public server listens. Defaults to ${defaultGatewayUrl}.
-  ${passwordVariable}     The password of that User. There is no default and no prompt.
+  ${gatewayUrlVariable}  Public server URL (default: ${defaultGatewayUrl}).
+  ${passwordVariable}     Required password. The client does not prompt for it.
 
-It reads and writes one User's own Message log and nothing else. Decisions, Schedules and
-every other surface of a Gateway are reached with another tool.`;
+Use --help or -h to show this help. Use another HTTP client for decisions,
+schedules, and other gateway APIs.`;
 
 function refused(reason: string): Invocation {
   return { kind: "refused", reason };
@@ -42,26 +41,26 @@ export function readInvocation(
   if (argv.includes("--help") || argv.includes("-h")) return { kind: "help" };
 
   const [user, ...extra] = argv;
-  if (user === undefined) return refused("no User id was written, and it is the one argument.");
+  if (user === undefined) return refused("Missing user id. Usage: http-client-tui <user-id>");
   if (user.startsWith("-")) {
-    return refused(`${user} is not an option of this client, which takes none but --help.`);
+    return refused(`Unknown option: ${user}. Use --help for usage.`);
   }
   if (extra.length > 0) {
-    return refused(
-      `one User id is the whole argument list, and ${argv.length} arguments were written: one client is one person.`,
-    );
+    return refused(`Expected one user id; received ${argv.length} arguments.`);
   }
 
   const password = env[passwordVariable];
   if (password === undefined || password === "") {
-    return refused(`${passwordVariable} is unset, and there is no prompt to fall back on.`);
+    return refused(
+      `Set ${passwordVariable} to the user's password. Interactive entry is not supported.`,
+    );
   }
 
   const written = env[gatewayUrlVariable];
   const baseUrl = written === undefined || written === "" ? defaultGatewayUrl : written;
   const parsed = URL.parse(baseUrl);
   if (parsed === null || (parsed.protocol !== "http:" && parsed.protocol !== "https:")) {
-    return refused(`${gatewayUrlVariable} is ${baseUrl}, which is not an http or https URL.`);
+    return refused(`${gatewayUrlVariable} must be an HTTP or HTTPS URL; received ${baseUrl}.`);
   }
 
   return { kind: "run", config: { baseUrl, user, password } };

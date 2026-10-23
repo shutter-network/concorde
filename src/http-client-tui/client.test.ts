@@ -145,7 +145,7 @@ describe("a refused connection", () => {
     const client = createClient({ baseUrl: nothingListensHere });
     await assert.rejects(client.logIn({ user: "whoever", password }), (error: unknown) => {
       assert.ok(error instanceof UnreachableError, `expected no answer, and got ${String(error)}`);
-      assert.match(error.message, /no answer from http:\/\/127\.0\.0\.1:1\//);
+      assert.match(error.message, /Cannot connect to http:\/\/127\.0\.0\.1:1\//);
       return true;
     });
   });

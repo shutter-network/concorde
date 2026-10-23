@@ -41,18 +41,18 @@ describe("reading an invocation", () => {
   it("treats an empty variable as unset, which is what an unfilled .env line writes", () => {
     const env = { [gatewayUrlVariable]: "", [passwordVariable]: password };
     assert.equal(configFrom([user], env).baseUrl, defaultGatewayUrl);
-    assert.match(refusalFrom([user], { [passwordVariable]: "" }), /CONCORDE_PASSWORD is unset/);
+    assert.match(refusalFrom([user], { [passwordVariable]: "" }), /Set CONCORDE_PASSWORD/);
   });
 
   it("refuses a run with no password rather than asking for one", () => {
-    assert.match(refusalFrom([user], {}), /CONCORDE_PASSWORD is unset/);
+    assert.match(refusalFrom([user], {}), /Set CONCORDE_PASSWORD/);
   });
 
   it("refuses a URL that is not http", () => {
     const env = { [gatewayUrlVariable]: "ws://gateway:8080", [passwordVariable]: password };
-    assert.match(refusalFrom([user], env), /not an http or https URL/);
+    assert.match(refusalFrom([user], env), /must be an HTTP or HTTPS URL/);
     const nonsense = { [gatewayUrlVariable]: "gateway:8080", [passwordVariable]: password };
-    assert.match(refusalFrom([user], nonsense), /not an http or https URL/);
+    assert.match(refusalFrom([user], nonsense), /must be an HTTP or HTTPS URL/);
   });
 
   it("keeps a path on the base URL, since a Gateway can be served under a prefix", () => {
@@ -64,12 +64,12 @@ describe("reading an invocation", () => {
   });
 
   it("refuses no argument and refuses two, one client being one person", () => {
-    assert.match(refusalFrom([], filled), /no User id was written/);
-    assert.match(refusalFrom([user, user], filled), /one User id is the whole argument list/);
+    assert.match(refusalFrom([], filled), /Missing user id/);
+    assert.match(refusalFrom([user, user], filled), /Expected one user id/);
   });
 
   it("refuses an option it does not have rather than reading it as a User id", () => {
-    assert.match(refusalFrom(["--follow"], filled), /not an option of this client/);
+    assert.match(refusalFrom(["--follow"], filled), /Unknown option/);
   });
 
   it("answers the usage before it looks at the environment", () => {

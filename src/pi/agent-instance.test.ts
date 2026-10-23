@@ -369,7 +369,7 @@ describe("a real pi behind a real listener", { skip }, () => {
       );
       assert.equal(rejected?.state, "failed");
       assert.equal(rejected?.session, rejectedName);
-      assert.match(rejected?.error ?? "", /is not a name pi will accept/);
+      assert.match(rejected?.error ?? "", /Invalid session name/);
       assert.deepEqual(
         await rig.sessions(),
         [`run_${freshRun.id}.jsonl`, "user_42.jsonl", "user_7.jsonl"].sort(),

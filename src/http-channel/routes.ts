@@ -53,15 +53,15 @@ export function publicMessageRoutes(
       {
         schema: {
           tags: ["Messages"],
-          summary: "Submit a Message",
-          description: `An **inbound** Message from the User the presented Token names. There is **no field for the submitting User and nowhere for one to arrive**. The id comes from the Token and from nothing a client can write, which is what makes the attribution trustworthy. A \`userId\` written into the body is stripped before the handler and reaches nothing. The Message and the Signal that wakes the agent for it are one transaction. A Message that was stored always has one. What the agent makes of it is **not this response**. An answer arrives on the log as an outbound Message whenever it arrives, which is what \`after=<seq>\` is for. ${bearerRequired} ${unknownParameter}`,
+          summary: "Submit a message",
+          description: `Stores an inbound message for the authenticated user and emits its signal in one transaction. The body cannot select another user or a direction; extra fields are stripped. The response contains the stored message, not the agent's answer. Poll the message log for outbound replies. ${bearerRequired} ${unknownParameter}`,
           body: submitSchema,
           response: {
             201: {
               ...messageRecordSchema,
-              description: `${theStoredMessage} That number is the cursor to poll from for the answer.`,
+              description: `${theStoredMessage} Use its seq as the after cursor when polling for a reply.`,
             },
-            400: refused("`text` is missing or empty, or a query parameter was written."),
+            400: refused("A nonempty `text` is required. Query parameters are not accepted."),
             401: refused(notAuthenticated),
             503: refused(lostTheRace),
           },
@@ -85,13 +85,13 @@ export function publicMessageRoutes(
       {
         schema: {
           tags: ["Messages"],
-          summary: "Read your own Message log",
-          description: `The presented User's own Messages, both directions, in the single numbered sequence that is their log. There is **no user parameter and nothing to omit**. The log read is the one the Token names. No User can read another's by any spelling of the request. \`?user=\` is refused as the unknown parameter it is. ${cursorCases} ${fullPageMeansMore} ${capped} ${notSearchable} ${bearerRequired} ${unknownParameter}`,
+          summary: "Read your message log",
+          description: `Reads both message directions for the authenticated user. There is no user parameter; other users' logs are inaccessible through this route. ${cursorCases} ${fullPageMeansMore} ${capped} ${notSearchable} ${bearerRequired} ${unknownParameter}`,
           querystring: ownHistorySchema,
           response: {
             200: { ...messageListSchema, description: theWindow },
             400: refused(
-              "A cursor or `limit` is not an integer or is out of range, both cursors were passed, or a parameter this route does not take was written, `user` among them, since this route has none.",
+              "Invalid cursor or limit, both cursors supplied, or an unknown query parameter. There is no user parameter.",
             ),
             401: refused(notAuthenticated),
           },

@@ -10,7 +10,7 @@ export const limitSchema = {
   default: defaultLimit,
 } as const;
 
-export const cappedLimit = `\`limit\` defaults to ${limitSchema.default} and is capped at ${limitSchema.maximum}. A larger value is **refused with a 400** rather than quietly reduced.`;
+export const cappedLimit = `The limit defaults to ${limitSchema.default}; allowed values are 1–${limitSchema.maximum}. Out-of-range values return 400.`;
 
 export type CursorWindow = {
   readonly after?: number;
@@ -23,23 +23,23 @@ const cursorSchema = { type: "integer", minimum: 0, maximum: 2147483647 } as con
 export const afterCursor = {
   ...cursorSchema,
   description:
-    "Walk **forwards** from this `seq`, exclusive: the poll. `after=0` reads the log from its beginning, oldest first, which no other spelling expresses.",
+    "Read forward from this sequence number, excluding it. Use `after=0` to start at the beginning.",
 } as const;
 
 export const beforeCursor = {
   ...cursorSchema,
   description:
-    "The newest page strictly **below** this `seq`: scrolling back. Answers ascending like every other case, so the page before the one in hand arrives the same way up.",
+    "Read the latest page below this sequence number, excluding it. Results remain in ascending order.",
 } as const;
 
 export const cursorCases =
-  "**Three cursor cases, one order.** No cursor answers the newest page, which is what a client opening a conversation wants. `before=N` answers the newest page strictly below `N`, which is scrolling back. `after=N` walks forwards from `N`, which is polling, and `after=0` is how a log is read from its beginning, since nothing is numbered 0 and no cursor at all means the newest page instead. All three answer **ascending by `seq`**, so a client concatenates pages without reversing anything. Passing `after` and `before` together is a **400**, because it describes two windows rather than one.";
+  "Without a cursor, returns the latest page. `before=N` returns the latest page below N; `after=N` returns the next page above N. Use `after=0` to read from the beginning. Results are always ascending by seq. Supplying both cursors returns 400.";
 
 export function bothCursors(reply: FastifyReply, whichLog: string): FastifyReply {
   return reply.code(400).send({
     statusCode: 400,
     error: "Bad Request",
-    message: `after and before describe two different windows of ${whichLog}: pass after to walk forwards, before to walk backwards, or neither for the newest page.`,
+    message: `Use after or before for ${whichLog}, not both. Omit both for the latest page.`,
   });
 }
 
@@ -69,7 +69,7 @@ export function unknownQueryRefusal(explanation?: string) {
       if (unexpected.length === 0) return undefined;
       const takes = allowed.length === 0 ? "no parameters" : allowed.join(", ");
       const named = unexpected.map((parameter) => JSON.stringify(parameter)).join(", ");
-      const refusal = `${named} is not a parameter of this route, which takes ${takes}.`;
+      const refusal = `Unknown query parameter(s): ${named}. Accepted: ${takes}.`;
       return reply.code(400).send({
         statusCode: 400,
         error: "Bad Request",
@@ -81,7 +81,7 @@ export function unknownQueryRefusal(explanation?: string) {
 export function notFound(reply: FastifyReply, what: string, id: string): FastifyReply {
   return reply
     .code(404)
-    .send({ statusCode: 404, error: "Not Found", message: `no ${what} ${id} exists` });
+    .send({ statusCode: 404, error: "Not Found", message: `No ${what} ${id} exists` });
 }
 
 export const errorSchema = {
@@ -98,13 +98,12 @@ export function refused(why: string) {
   return { ...errorSchema, description: why };
 }
 
-export const unknownParameter =
-  "An unknown query parameter is a **400**, not a filter that did nothing and a request answered with everything.";
+export const unknownParameter = "Unknown query parameters return 400.";
 
 export const bearerRequired =
-  "**Requires a bearer Token**, presented as `Authorization: Bearer <token>` and obtained from `POST /auth/tokens`. The User acted on is the one the Gateway authenticated, and no parameter anywhere names another.";
+  "Requires authentication through a scheme installed in this deployment. If password auth is installed, obtain a token from `POST /auth/tokens` and send `Authorization: Bearer <token>`.";
 
 export const authenticationFailed =
-  "Authentication failed, which is the whole of what is said: a wrong password, an id nobody holds, a User with no password, and a Token that is missing, malformed, unknown or expired are one status and one message, so nothing here answers who exists.";
+  "Authentication failed. Missing, invalid, or expired credentials return the same response without revealing whether a user exists.";
 
-export const notAuthenticated = `${authenticationFailed} This part authenticates nobody: the refusal is \`publicServer.requireUser\`, taken as one option on the route, so it is the same 401 every protected route on this server answers, whichever scheme the deployment accepts.`;
+export const notAuthenticated = `${authenticationFailed}`;

@@ -42,7 +42,7 @@ export type MessengerHandle = {
 export class ChannelAlreadyRegisteredError extends Error {
   constructor(registered: string, offered: string) {
     super(
-      `the ${registered} Channel is already registered with this Messenger, and ${offered} cannot join it: one Channel per Messenger, so build a second Messenger or run one medium`,
+      `Cannot register channel ${offered}: ${registered} is already registered. A messenger accepts one channel.`,
     );
     this.name = "ChannelAlreadyRegisteredError";
   }
@@ -51,7 +51,7 @@ export class ChannelAlreadyRegisteredError extends Error {
 export class NoChannelError extends Error {
   constructor(userId: string) {
     super(
-      `no Channel is registered with this Messenger, so there is no way to reach User ${userId}; nothing was recorded`,
+      `No channel registered for user ${userId}. Register a channel before sending; nothing was recorded.`,
     );
     this.name = "NoChannelError";
   }

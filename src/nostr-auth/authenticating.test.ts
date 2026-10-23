@@ -236,7 +236,7 @@ describe("the checks the library does not make", () => {
 
     warned.length = 0;
     assert.equal((await ask(wrongKind)).statusCode, 401);
-    assert.match(String(warned[0]?.fields.detail), /kind 1/);
+    assert.match(String(warned[0]?.fields.detail), /kind: 1/);
   });
 
   it("refuses an event whose signature does not verify", async () => {
@@ -249,7 +249,7 @@ describe("the checks the library does not make", () => {
 
     warned.length = 0;
     assert.equal((await ask(`Nostr ${forged}`)).statusCode, 401);
-    assert.match(String(warned[0]?.fields.detail), /signature did not verify/);
+    assert.match(String(warned[0]?.fields.detail), /signature is invalid/);
   });
 
   it("refuses a credential that was presented before", async () => {
@@ -263,7 +263,7 @@ describe("the checks the library does not make", () => {
     warned.length = 0;
     const second = await ask(header);
     assert.equal(second.statusCode, 401, second.body);
-    assert.match(String(warned[0]?.fields.detail), /presented before/);
+    assert.match(String(warned[0]?.fields.detail), /already used/);
   });
 });
 
@@ -330,13 +330,13 @@ describe("what a refusal says", () => {
     assert.deepEqual(warned[0]?.fields, {
       scheme: "Nostr",
       code: "invalid_request",
-      detail: "the Authorization header named Nostr and carried no event after it",
+      detail: "Missing event after Nostr in the Authorization header",
     });
 
     warned.length = 0;
     const notAnEvent = await ask(`Nostr ${Buffer.from("[]", "utf8").toString("base64")}`);
     assert.equal(notAnEvent.headers["www-authenticate"], 'Nostr error="invalid_request", Bearer');
-    assert.equal(warned[0]?.fields.detail, "the credential is not a base64 event");
+    assert.equal(warned[0]?.fields.detail, "Credential is not a base64-encoded event");
 
     warned.length = 0;
     const stale = await ask(

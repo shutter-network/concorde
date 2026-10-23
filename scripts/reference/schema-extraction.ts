@@ -106,17 +106,12 @@ export function extractSchemas(): SchemaExtraction {
       const declaredSchemas = Object.keys(schemas);
       if (Object.keys(tables).length === 0) {
         throw new Error(
-          `src/${subpath}/schema/index.ts exports no table that drizzle-kit can see. A table reached ` +
-            `only through the tables wrapper is dropped here exactly as it is dropped from a ` +
-            `migration, so flat-export it.`,
+          `No tables exported from src/${subpath}/schema/index.ts. Export each table directly; drizzle-kit does not inspect table wrapper objects.`,
         );
       }
       if (declaredSchemas.length !== 1) {
         throw new Error(
-          `src/${subpath}/schema/index.ts declares ${declaredSchemas.length} PostgreSQL schemas ` +
-            `(${declaredSchemas.join(", ") || "none"}). Every page states one schema name, and ` +
-            `one schema per component is what keeps two components off one table ` +
-            `(src/schemas.test.ts).`,
+          `Expected one PostgreSQL schema in src/${subpath}/schema/index.ts; found ${declaredSchemas.length} (${declaredSchemas.join(", ") || "none"}).`,
         );
       }
       return {
@@ -134,9 +129,7 @@ function keptFieldsOf(snapshot: unknown): ReferenceSnapshot {
   const missing = keptFields.filter((field) => held[field] === undefined);
   if (missing.length > 0) {
     throw new Error(
-      `drizzle-kit's snapshot no longer carries ${missing.join(", ")}. The pages are written ` +
-        `from those fields, so a rename here empties them rather than failing. Update ` +
-        `keptFields and the types beside it in scripts/reference/schema-extraction.ts.`,
+      `Missing drizzle-kit snapshot fields: ${missing.join(", ")}. Update keptFields and its types in scripts/reference/schema-extraction.ts.`,
     );
   }
   return {

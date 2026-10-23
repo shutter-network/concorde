@@ -51,7 +51,7 @@ export function templateHandler<TPayload = unknown>(
       try {
         text = render(data);
       } catch (error) {
-        throw new Error(`the prompt template for ${signal.kind} did not render: ${reason(error)}`, {
+        throw new Error(`Cannot render prompt for ${signal.kind}: ${reason(error)}`, {
           cause: error,
         });
       }

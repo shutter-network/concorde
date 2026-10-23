@@ -27,7 +27,7 @@ export async function openRpcChannel(host: string, port: number): Promise<RpcCha
   if (failedToConnect !== undefined) {
     socket.destroy();
     throw new Error(
-      `could not reach the Agent Instance at ${host}:${port}: ${failedToConnect.message}. That is the address an Operator gave createPiRuntime, and the Agent Instance is theirs to run`,
+      `Cannot connect to agent instance at ${host}:${port}: ${failedToConnect.message}. Check the address and RPC listener.`,
       { cause: failedToConnect },
     );
   }
@@ -62,13 +62,13 @@ export async function openRpcChannel(host: string, port: number): Promise<RpcCha
         const step = await records.next();
         if (step.done === true) {
           throw new Error(
-            `the Agent Instance at ${host}:${port} ended the connection without answering the ${command} command${dropped === undefined ? "" : `: ${dropped}`}`,
+            `Agent instance ${host}:${port} closed the connection before answering ${command}${dropped === undefined ? "" : `: ${dropped}`}`,
           );
         }
         const framed = step.value;
         if (framed.kind !== "record") {
           throw new Error(
-            `the Agent Instance at ${host}:${port} wrote something that is not a record while the ${command} command was outstanding, so nothing it says can be trusted: ${JSON.stringify(framed.line.slice(0, 200))}`,
+            `Agent instance ${host}:${port} sent an invalid RPC record while awaiting ${command}: ${JSON.stringify(framed.line.slice(0, 200))}`,
           );
         }
         if (framed.record.type !== "response") continue;
@@ -76,13 +76,13 @@ export async function openRpcChannel(host: string, port: number): Promise<RpcCha
         const record = framed.record;
         if (record.id !== id) {
           throw new Error(
-            `the Agent Instance at ${host}:${port} answered request ${JSON.stringify(record.id)} while ${JSON.stringify(id)} was the only one outstanding, so its answers cannot be matched to the commands they are for`,
+            `Agent instance ${host}:${port} answered request ${JSON.stringify(record.id)}; expected ${JSON.stringify(id)}`,
           );
         }
         const answered = readResponse(record);
         if (answered.command !== command) {
           throw new Error(
-            `the Agent Instance at ${host}:${port} answered request ${id} as the ${JSON.stringify(answered.command)} command when it was the ${JSON.stringify(command)} command`,
+            `Agent instance ${host}:${port} answered request ${id} for ${JSON.stringify(answered.command)}; expected ${JSON.stringify(command)}`,
           );
         }
         return answered;

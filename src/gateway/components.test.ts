@@ -108,7 +108,7 @@ describe("a record of Components", () => {
       (error: unknown) => {
         assert.ok(error instanceof AggregateError);
         assert.deepEqual(error.errors, [failed, alsoFailed]);
-        assert.match(error.message, /^queue failed to start/);
+        assert.match(error.message, /^Component queue failed to start/);
         assert.doesNotMatch(error.message, /signal worker/);
         return true;
       },

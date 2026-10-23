@@ -44,13 +44,12 @@ export type RunRecord = {
   readonly endedAt: string | null;
 };
 
-const unscoped =
-  "Reads are not scoped by Session or by User, so there is no such parameter to pass, and the Session your own Run is in changes nothing about what you get back.";
+const unscoped = "Reads are not restricted by user or session. Neither is an accepted filter.";
 
-const capped = `${cappedLimit} There is no cursor and no offset, so the records past the cap are reachable only by narrowing.`;
+const capped = `${cappedLimit} There is no cursor or offset.`;
 
-const noParameters = `This route takes no query parameters at all. ${unknownParameter}`;
-const malformedId = "The id in the path is not a uuid, or a query parameter was written.";
+const noParameters = `${unknownParameter}`;
+const malformedId = "The id must be a UUID. Query parameters are not accepted.";
 
 const rejectUnknownQuery = unknownQueryRefusal(unscoped);
 
@@ -60,19 +59,17 @@ const signalRecordSchema = {
     id: { type: "string" },
     kind: { type: "string" },
     payload: {
-      description:
-        "Arbitrary JSON, exactly as the Producer wrote it. The Signal Worker never interprets a payload, so what a given `kind` carries is the Operator's convention and their Signal Handler is where it is stated.",
+      description: "Producer-defined JSON passed unchanged to the signal handler.",
     },
     emittedAt: {
       type: "string",
-      description:
-        "When the Signal was written, ISO 8601, since JSON has no date. It is also the queue's order: the oldest pending Signal is claimed first.",
+      description: "Emission time in ISO 8601. Pending signals are processed oldest first.",
     },
     state: {
       type: "string",
       enum: signalStates,
       description:
-        "How far the Signal got. One-way: nothing returns to `pending`, and a failed Signal is never re-run, so `error` is the whole of what happened to it.",
+        "Processing state. Failed signals are not automatically retried; error records the reason.",
     },
     error: { type: "string", nullable: true },
   },
@@ -85,25 +82,23 @@ const runRecordSchema = {
     id: { type: "string" },
     signalId: {
       type: "string",
-      description:
-        "The Signal whose Signal Handler wrote this Prompt. Several Runs can carry the same one, a Handler being free to answer with several Prompts.",
+      description: "The signal that produced this run. A signal handler can produce several runs.",
     },
     session: {
       type: "string",
       description:
-        "The Session this Run happened in, as a plain name that refers to nothing. A Handler that asked for a fresh Session gets `run_<this Run's id>`. It is `null` only on Runs recorded before the Worker named every Session.",
+        "Session name. Fresh sessions use `run_<run id>`. Null is retained for older records created before automatic session naming.",
       nullable: true,
     },
     prompt: { type: "string" },
     context: {
       description:
-        "What this Run's Signal Handler wrote beside the Prompt, exactly as written, or `null` if it wrote none. Operator-defined JSON that the framework stores and hands to the Agent server while the Run is in flight, and reads none of: a refusal you met from a hook on this server is explained by this field, and by the Operator's hook, rather than by anything the framework decided.",
+        "Application-defined Prompt.context, or null. Stored on the run and exposed on agent-server requests during execution. Built-in routes do not interpret it.",
     },
     state: {
       type: "string",
       enum: runStates,
-      description:
-        "How the Run ended, or that it has not. One-way, and there is no `timed_out`, because the framework imposes no timeouts of any kind.",
+      description: "Execution state. The framework imposes no timeout.",
     },
     error: { type: "string", nullable: true },
     startedAt: { type: "string", nullable: true },
@@ -141,8 +136,8 @@ export function agentReadRoutes(handle: WorkerHandle): FastifyPluginAsync {
       {
         schema: {
           tags: ["Signals"],
-          summary: "Read prior Signals, newest first",
-          description: `Every Signal this Gateway has, in arrival order reversed, whichever Producer emitted it. ${unscoped} ${capped} ${unknownParameter}`,
+          summary: "List signals, newest first",
+          description: `Lists signals from all producers, newest first. ${unscoped} ${capped} ${unknownParameter}`,
           querystring: {
             type: "object",
             properties: { limit: limitSchema, kind: { type: "string" } },
@@ -151,11 +146,9 @@ export function agentReadRoutes(handle: WorkerHandle): FastifyPluginAsync {
           response: {
             200: {
               ...signalListSchema,
-              description: "The Signals that matched, newest first.",
+              description: "Matching signals, newest first.",
             },
-            400: refused(
-              "The `limit` is out of range or not an integer, or a parameter this route does not take was written.",
-            ),
+            400: refused("Invalid limit or an unknown query parameter."),
           },
         },
         preValidation: rejectUnknownQuery("limit", "kind"),
@@ -178,20 +171,20 @@ export function agentReadRoutes(handle: WorkerHandle): FastifyPluginAsync {
       {
         schema: {
           tags: ["Signals"],
-          summary: "Read one Signal by id",
-          description: `One Signal, whatever produced it and whatever Session the reader is in. ${unscoped} ${noParameters}`,
+          summary: "Read a signal by id",
+          description: `Returns the signal with this id. ${unscoped} ${noParameters}`,
           params: idParams,
           response: {
             200: { ...signalRecordSchema, description: "The Signal." },
             400: refused(malformedId),
-            404: refused("No Signal has that id."),
+            404: refused("No signal has this id."),
           },
         },
         preValidation: rejectUnknownQuery(),
       },
       async (request, reply) => {
         const [row] = await handle.select().from(signals).where(eq(signals.id, request.params.id));
-        if (row === undefined) return notFound(reply, "Signal", request.params.id);
+        if (row === undefined) return notFound(reply, "signal", request.params.id);
         return asSignalRecord(row);
       },
     );
@@ -201,8 +194,8 @@ export function agentReadRoutes(handle: WorkerHandle): FastifyPluginAsync {
       {
         schema: {
           tags: ["Runs"],
-          summary: "Read prior Runs, newest first",
-          description: `Every Run this Gateway has recorded, newest first, in every Session. ${unscoped} \`signalId\` narrows to the Runs one Signal produced. ${capped} ${unknownParameter}`,
+          summary: "List runs, newest first",
+          description: `Lists recorded runs. Use signalId to select runs produced by one signal. ${unscoped} ${capped} ${unknownParameter}`,
           querystring: {
             type: "object",
             properties: { limit: limitSchema, signalId: idSchema },
@@ -212,11 +205,9 @@ export function agentReadRoutes(handle: WorkerHandle): FastifyPluginAsync {
             200: {
               ...runListSchema,
               description:
-                "The Runs that matched, newest first by `startedAt`, which puts a Run that has not started yet at the front, since it has no start time to order by.",
+                "Matching runs, descending by startedAt. Runs that have not started appear first.",
             },
-            400: refused(
-              "The `limit` is out of range or not an integer, `signalId` is not a uuid, or a parameter this route does not take was written.",
-            ),
+            400: refused("Invalid limit or signalId UUID, or an unknown query parameter."),
           },
         },
         preValidation: rejectUnknownQuery("limit", "signalId"),
@@ -241,20 +232,20 @@ export function agentReadRoutes(handle: WorkerHandle): FastifyPluginAsync {
       {
         schema: {
           tags: ["Runs"],
-          summary: "Read one Run by id",
-          description: `One Run, in whatever Session it executed. ${unscoped} ${noParameters}`,
+          summary: "Read a run by id",
+          description: `Returns the run with this id. ${unscoped} ${noParameters}`,
           params: idParams,
           response: {
             200: { ...runRecordSchema, description: "The Run." },
             400: refused(malformedId),
-            404: refused("No Run has that id."),
+            404: refused("No run has this id."),
           },
         },
         preValidation: rejectUnknownQuery(),
       },
       async (request, reply) => {
         const [row] = await handle.select().from(runs).where(eq(runs.id, request.params.id));
-        if (row === undefined) return notFound(reply, "Run", request.params.id);
+        if (row === undefined) return notFound(reply, "run", request.params.id);
         return asRunRecord(row);
       },
     );

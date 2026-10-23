@@ -36,11 +36,11 @@ function readLine(line: string): Framed | undefined {
     return { kind: "unreadable", line: text, why: "it is not JSON" };
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return { kind: "unreadable", line: text, why: "it is JSON but not an object" };
+    return { kind: "unreadable", line: text, why: "JSON value is not an object" };
   }
   const fields = parsed as Record<string, unknown>;
   if (typeof fields.type !== "string") {
-    return { kind: "unreadable", line: text, why: "it has no type field" };
+    return { kind: "unreadable", line: text, why: "Missing string field: type" };
   }
   return { kind: "record", record: fields as PiRecord };
 }

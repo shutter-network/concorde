@@ -109,7 +109,7 @@ describe("a User reading the log", () => {
     });
 
     assert.equal(scoped.statusCode, 400, scoped.body);
-    assert.match(scoped.json<{ message: string }>().message, /"user" is not a parameter/);
+    assert.match(scoped.json<{ message: string }>().message, /Unknown query parameter.*"user"/);
   });
 });
 
@@ -142,7 +142,7 @@ describe("a User citing a Decision by number", () => {
     assert.deepEqual(missing.json(), {
       statusCode: 404,
       error: "Not Found",
-      message: `no Decision ${beyond} exists`,
+      message: `No decision ${beyond} exists`,
     });
 
     const word = await publicServer.fastify.inject({ url: `${prefix}/seven` });

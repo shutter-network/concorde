@@ -8,7 +8,7 @@ const pollLimit = 200;
 
 export class UnreachableError extends Error {
   constructor(url: string, cause: unknown) {
-    super(`no answer from ${url}`, { cause });
+    super(`Cannot connect to ${url}`, { cause });
     this.name = "UnreachableError";
   }
 }
@@ -16,7 +16,7 @@ export class UnreachableError extends Error {
 export class RefusedError extends Error {
   readonly status: number;
   constructor(method: string, url: string, status: number, said: string) {
-    super(`${method} ${url} answered ${status}: ${said}`);
+    super(`${method} ${url} returned ${status}: ${said}`);
     this.name = "RefusedError";
     this.status = status;
   }
@@ -24,7 +24,7 @@ export class RefusedError extends Error {
 
 export class MalformedResponseError extends Error {
   constructor(what: string, said: string) {
-    super(`${what} was not answered as expected: ${said}`);
+    super(`Invalid response from ${what}: ${said}`);
     this.name = "MalformedResponseError";
   }
 }
@@ -89,7 +89,7 @@ export function createClient(options: ClientOptions): Client {
     try {
       return JSON.parse(said);
     } catch {
-      throw new MalformedResponseError(`${method} ${url}`, "the body is not JSON");
+      throw new MalformedResponseError(`${method} ${url}`, "Response body is not JSON");
     }
   }
 
@@ -150,14 +150,15 @@ function refusalIn(said: string): string {
 
 function fieldsOf(value: unknown, what: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null) {
-    throw new MalformedResponseError(what, "the body is not an object");
+    throw new MalformedResponseError(what, "Response body is not an object");
   }
   return value as Record<string, unknown>;
 }
 
 function stringAt(fields: Record<string, unknown>, name: string, what: string): string {
   const value = fields[name];
-  if (typeof value !== "string") throw new MalformedResponseError(what, `no ${name} in it`);
+  if (typeof value !== "string")
+    throw new MalformedResponseError(what, `Missing string field: ${name}`);
   return value;
 }
 
@@ -167,7 +168,7 @@ function asMessageRecord(value: unknown, what: string): MessageRecord {
   if (typeof seq !== "number") throw new MalformedResponseError(what, "no seq in it");
   const direction = fields.direction;
   if (direction !== "inbound" && direction !== "outbound") {
-    throw new MalformedResponseError(what, `${String(direction)} is not a direction`);
+    throw new MalformedResponseError(what, `Invalid message direction: ${String(direction)}`);
   }
   return {
     id: stringAt(fields, "id", what),
@@ -182,7 +183,7 @@ function asMessageRecord(value: unknown, what: string): MessageRecord {
 function asMessageList(value: unknown): readonly MessageRecord[] {
   const what = "GET /messages";
   const messages = fieldsOf(value, what).messages;
-  if (!Array.isArray(messages)) throw new MalformedResponseError(what, "no messages array in it");
+  if (!Array.isArray(messages)) throw new MalformedResponseError(what, "Missing messages array");
   return messages.map((message) => asMessageRecord(message, what));
 }
 

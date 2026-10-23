@@ -13,7 +13,7 @@ const publicKeyPattern = /^[0-9a-f]{64}$/;
 export class MalformedPublicKeyError extends Error {
   constructor(publicKey: string) {
     super(
-      `${JSON.stringify(publicKey)} is not a Nostr public key: 64 lowercase hex characters are wanted, and an npub is not one: decode it yourself with nip19.decode`,
+      `Invalid Nostr public key ${JSON.stringify(publicKey)}. Expected 64 lowercase hex characters; decode npub values with nip19.decode.`,
     );
     this.name = "MalformedPublicKeyError";
   }
@@ -21,7 +21,7 @@ export class MalformedPublicKeyError extends Error {
 
 export class NoSuchUserError extends Error {
   constructor(userId: string) {
-    super(`no User ${userId} exists, so no Nostr public key can be recorded for them`);
+    super(`Cannot record a public key: user ${userId} does not exist`);
     this.name = "NoSuchUserError";
   }
 }
@@ -29,7 +29,7 @@ export class NoSuchUserError extends Error {
 export class PublicKeyConflictError extends Error {
   constructor(userId: string, publicKey: string) {
     super(
-      `${publicKey} cannot be recorded for User ${userId}: either that key already belongs to another User or that User already has a key, and neither is replaced here`,
+      `Cannot record ${publicKey} for user ${userId}: the key or user already has a mapping. Existing mappings are not replaced.`,
     );
     this.name = "PublicKeyConflictError";
   }

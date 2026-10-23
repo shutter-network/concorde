@@ -31,21 +31,22 @@ export function openEnvelope(
 ): Opened {
   // Unwrap manually: unwrapEvent discards the seal needed to verify the rumor author.
   const seal = decryptEvent(wrap.content, secretKey, wrap.pubkey);
-  if (seal === undefined) return { ok: false, reason: "the wrap did not decrypt to an event" };
+  if (seal === undefined)
+    return { ok: false, reason: "Gift wrap could not be decrypted to an event" };
 
-  if (seal.kind !== sealKind) return { ok: false, reason: `the seal is kind ${seal.kind}` };
-  if (seal.tags.length !== 0) return { ok: false, reason: "the seal carries tags" };
+  if (seal.kind !== sealKind) return { ok: false, reason: `Unexpected seal kind: ${seal.kind}` };
+  if (seal.tags.length !== 0) return { ok: false, reason: "Seal must not contain tags" };
 
   const rumor = decryptEvent(seal.content, secretKey, seal.pubkey);
-  if (rumor === undefined) return { ok: false, reason: "the seal did not decrypt to an event" };
+  if (rumor === undefined) return { ok: false, reason: "Seal could not be decrypted to an event" };
 
   if (rumor.pubkey !== seal.pubkey) {
-    return { ok: false, reason: "the rumor claims an author the seal did not sign for" };
+    return { ok: false, reason: "Rumor author does not match seal author" };
   }
   if (rumor.pubkey === agentPublicKey) {
-    return { ok: false, reason: "the rumor claims the agent's own key" };
+    return { ok: false, reason: "Rumor claims the agent's own public key" };
   }
-  if (rumor.kind !== chatKind) return { ok: false, reason: `the rumor is kind ${rumor.kind}` };
+  if (rumor.kind !== chatKind) return { ok: false, reason: `Unexpected rumor kind: ${rumor.kind}` };
 
   return { ok: true, rumor };
 }

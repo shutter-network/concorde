@@ -19,15 +19,15 @@ const scheduleFired: SignalHandler<ScheduleFiredRecord> = {
     const task = taskOf(data);
     const text =
       task === undefined
-        ? `The Schedule "${scheduleName}" fired and carried no task. Append one line to ` +
+        ? `Schedule "${scheduleName}" fired without a task. Append one line to ` +
           `/workspace/log.md that says so, and do nothing else.`
-        : `${task}\n\nThat came from the Schedule "${scheduleName}", which was arranged for ` +
+        : `${task}\n\nSchedule "${scheduleName}" was due at ` +
           `${scheduledFor} and fired at ${firedAt}.`;
     return [{ session: `schedule_${scheduleName}`, text }];
   },
   post(signal, outcome) {
     if (outcome.failed) {
-      console.error(`the Run for the Schedule ${signal.payload.scheduleName} failed`);
+      console.error(`Run for schedule ${signal.payload.scheduleName} failed`);
     }
   },
 };
@@ -58,7 +58,7 @@ await gateway.components.scheduler.schedule({
   name: "hello-once",
   spec: { kind: "once", at: new Date(Date.now() + 20_000).toISOString() },
   data: {
-    task: "Append one line to /workspace/log.md saying the boot Schedule woke you.",
+    task: "Append one line to /workspace/log.md saying the boot schedule fired.",
   },
 });
 

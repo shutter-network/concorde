@@ -144,7 +144,7 @@ describe("reading Users over the Agent server", () => {
     assert.deepEqual(absent.json(), {
       statusCode: 404,
       error: "Not Found",
-      message: "no User 2f1b4d54-1c3a-4f2e-9d7b-8e6a5c4b3a21 exists",
+      message: "No user 2f1b4d54-1c3a-4f2e-9d7b-8e6a5c4b3a21 exists",
     });
 
     assert.equal((await read("/not-an-id")).statusCode, 400);
@@ -172,7 +172,7 @@ describe("reading Users over the Agent server", () => {
     for (const query of ["role=admin", "attributes=admin", "limt=2"]) {
       const refused = await read(`?${query}`);
       assert.equal(refused.statusCode, 400, query);
-      assert.match(refused.json<{ message: string }>().message, /not a parameter of this route/);
+      assert.match(refused.json<{ message: string }>().message, /Unknown query parameter/);
     }
   });
 
@@ -265,7 +265,7 @@ describe("GET /users/me on the Public server", () => {
         url: `${prefix}/me?user=someone-else`,
       });
       assert.equal(refused.statusCode, 400, refused.body);
-      assert.match(refused.json<{ message: string }>().message, /not a parameter of this route/);
+      assert.match(refused.json<{ message: string }>().message, /Unknown query parameter/);
     } finally {
       scheme.answers({ kind: "absent" });
     }
