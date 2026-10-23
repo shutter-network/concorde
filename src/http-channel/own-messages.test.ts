@@ -1,29 +1,3 @@
-/**
- * A User reading their own Message log, as their own client can observe it.
- *
- * The subject is what a client sees, never how a Message is stored: every assertion here is
- * made over HTTP against two real Fastify instances and real PostgreSQL, and **nothing
- * inserts a row directly**. Every Token is bought with a real password at the Users
- * component's own login route, because a Token minted any other way would be testing a
- * shortcut this surface does not have.
- *
- * Both directions are here, each written the way it arrives: the agent's send on the Agent
- * server, and the User's own post on the Public one. That is what makes the read's
- * direction-blindness observable rather than merely stated — one log, numbered across both,
- * with no `direction` parameter to filter by and a refusal for anyone who asks for one.
- * The Signal Worker constructed below is never started, so the Signal a post
- * emits sits `pending` and nothing downstream of it happens: what a submission wakes is
- * `posted-messages.test.ts`'s subject, and this file's is the read.
- *
- * The paging tests are the ones that matter. A log longer than one page is walked backwards
- * to its start and then forwards to its end, and the two walks — which do not share a
- * single page boundary — must reconstruct the same log exactly once, with nothing dropped
- * and nothing repeated.
- *
- * A database of this file's own, because no two test files may share one, and a
- * deliberately cheap scrypt cost, because every Token here starts with a login.
- */
-
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
@@ -46,34 +20,22 @@ import { createHttpChannel } from "./http-channel.ts";
 
 let database: TestDatabase;
 let db: Db;
-/** Both servers, as an Operator constructs them: bare Fastify instances in a start order. */
 let agentServer: ServerComponent<FastifyInstance>;
 let publicServer: ServerComponent<FastifyInstance>;
-/** The two parts a Token here comes from: the identity, and the scheme that names it. */
 let users: Users;
 let passwordAuth: PasswordAuth;
 
-/** Where the two constructors put their plugins, and where the login route of Password Auth is. */
 const prefix = "/messages";
 const auth = "/auth";
 
-/** Where a server that is never started would have listened, had it been. */
 const nowhere = { port: 0, host: "127.0.0.1" } as const;
 
 const hour = 60 * 60 * 1000;
 
-/**
- * A cost nobody should deploy, so that a file full of logins runs in a moment.
- *
- * Legitimate because each digest carries the parameters it was written under: this is a
- * construction-time number and not a property of the schema.
- */
 const cheap: ScryptParameters = { logN: 12, blockSize: 8, parallelism: 1 };
 
-/** The one password in this file. Nothing here is about what a good password is. */
 const password = "correct horse battery staple";
 
-/** A User as their client holds them: the id the agent addresses, and a Token they logged in for. */
 type Client = {
   readonly id: string;
   readonly token: string;
@@ -86,28 +48,15 @@ before(async () => {
   agentServer = serverComponent(Fastify(), nowhere);
   publicServer = serverComponent(Fastify(), nowhere);
 
-  // Required of the construction and never started: a post emits a Signal, and with nobody
-  // draining the queue it stays `pending` and wakes nothing — which is exactly what a read
-  // test wants, since the row is what it reads and the Run is not its subject.
   const worker = createSignalWorker({ db, runtime: fakeRuntime(), handlers: {} });
-  // Users first, because the Messenger's foreign key names it and Password Auth reads through
-  // it; the foreign key's ordering is the push's to arrange. Password Auth is where
-  // a Token here comes from, and registering it with the Public server is what makes
-  // `publicServer.requireUser` able to authenticate the reads below.
   users = createUsers({ db, agentServer, publicServer });
   passwordAuth = createPasswordAuth({ db, users, publicServer, tokenTtl: hour, scrypt: cheap });
-  // Nothing is held: the read under test is a route, and the Channel's constructor registered
-  // it itself, behind that component's own hook. The Messenger is built inline because
-  // this file holds neither — the log it owns is reached only over HTTP here.
   createHttpChannel({
     db,
     messenger: createMessenger({ db, users, worker, agentServer }),
     publicServer,
   });
 
-  // The schema of Users alongside the Messenger's, because `messages.user_id` references
-  // `concorde_users.users.id` and one push has to see both. Password Auth's is
-  // there for the same reason: both of its columns reference that table too.
   await applySchema(db, signalsSchema, usersSchema, passwordAuthSchema, messengerSchema);
 });
 
@@ -117,12 +66,6 @@ after(async () => {
   await database.drop();
 });
 
-/**
- * A User with a password, admitted from trusted code, holding a Token they logged in for.
- *
- * Two writes in one transaction, which is the only way a User who can log in exists: no route
- * anywhere creates one.
- */
 async function admitted(): Promise<Client> {
   const created = await db.tx(async (tx) => {
     const user = await users.create(tx);
@@ -132,7 +75,6 @@ async function admitted(): Promise<Client> {
   return { id: created.id, token: await tokenFor(created.id) };
 }
 
-/** One real login, at the route of Password Auth, on whichever Public server carries it. */
 async function tokenFor(id: string, server = () => publicServer.fastify): Promise<string> {
   const issued = await server().inject({
     method: "POST",
@@ -143,7 +85,6 @@ async function tokenFor(id: string, server = () => publicServer.fastify): Promis
   return issued.json<{ token: string }>().token;
 }
 
-/** One Message to a User, sent the way the agent sends one. */
 async function sent(userId: string, text: string): Promise<MessageRecord> {
   const response = await agentServer.fastify.inject({
     method: "POST",
@@ -154,7 +95,6 @@ async function sent(userId: string, text: string): Promise<MessageRecord> {
   return response.json<MessageRecord>();
 }
 
-/** One Message from a User, posted the way their own client posts one. */
 async function posted(token: string, text: string): Promise<MessageRecord> {
   const response = await publicServer.fastify.inject({
     method: "POST",
@@ -166,13 +106,6 @@ async function posted(token: string, text: string): Promise<MessageRecord> {
   return response.json<MessageRecord>();
 }
 
-/**
- * One `GET /messages` on the Public server, with whatever a client presents and whatever
- * window it asks for.
- *
- * The credential comes first in all three of these, so that the reads below say what they
- * present before they say what they ask for.
- */
 function presenting(authorization: string | undefined, window = "") {
   return publicServer.fastify.inject({
     method: "GET",
@@ -181,27 +114,22 @@ function presenting(authorization: string | undefined, window = "") {
   });
 }
 
-/** One read by a User holding a Token, presented in the one scheme this framework mints. */
 function bearing(token: string, window = "") {
   return presenting(`Bearer ${token}`, window);
 }
 
-/** Reads a User's own log and asserts only that it was answered. */
 async function log(token: string, window = ""): Promise<MessageRecord[]> {
   const response = await bearing(token, window);
   assert.equal(response.statusCode, 200, `GET ${prefix} should have answered: ${response.body}`);
   return response.json<{ messages: MessageRecord[] }>().messages;
 }
 
-/** The `seq` of each Message in a page, which is what most assertions here are about. */
 function numbers(messages: readonly MessageRecord[]): number[] {
   return messages.map((message) => message.seq);
 }
 
-/** What the agent said, in the order it said it, to a User whose log the tests below page. */
 const said = ["one", "two", "three", "four", "five", "six", "seven"];
 
-/** A User whose log is longer than any page the tests below ask for. */
 async function withSeven(): Promise<Client> {
   const client = await admitted();
   for (const text of said) {
@@ -215,17 +143,10 @@ describe("a User reading their own Messages", () => {
     const client = await admitted();
     const first = await sent(client.id, "what happened to the deploy?");
 
-    // The record is the one the agent's send answered with, byte for byte: one shape on
-    // every surface, not a projection per reader.
     assert.deepEqual(await log(client.token), [first]);
     assert.equal(first.userId, client.id);
-    // Outbound, because the agent wrote it, and answered to the User all the same: a
-    // Message log is one log in both directions, and this read filters neither.
     assert.equal(first.direction, "outbound");
 
-    // And the other direction, written by the User themselves at the route beside this one.
-    // One log, numbered across both, in the order the two arrived: this is the read being
-    // direction-blind rather than only having no parameter to filter with.
     const answered = await posted(client.token, "it finished, thanks");
     assert.equal(answered.direction, "inbound");
     assert.deepEqual(await log(client.token), [first, answered]);
@@ -238,12 +159,8 @@ describe("a User reading their own Messages", () => {
       await sent(client.id, text);
     }
     assert.deepEqual(numbers(await log(client.token)), [1, 2, 3, 4]);
-    // The newest two, still ascending: the descending selection behind a `limit` is
-    // invisible from here, so a client concatenates pages without reversing anything.
     assert.deepEqual(numbers(await log(client.token, "?limit=2")), [3, 4]);
 
-    // A cursor above the column's `integer` range is refused rather than reaching the
-    // database, where it would come back a 500 carrying the text of the query.
     for (const window of [
       "?limit=0",
       "?limit=201",
@@ -264,12 +181,8 @@ describe("a User reading their own Messages", () => {
     assert.deepEqual(numbers(await log(client.token, "?before=1")), []);
     assert.deepEqual(numbers(await log(client.token, "?after=5")), [6, 7]);
     assert.deepEqual(numbers(await log(client.token, "?after=7")), []);
-    // `after=0` is the log from its beginning, which no other spelling asks for: no cursor
-    // at all is the newest page, and `after=1` would skip the first Message.
     assert.deepEqual(numbers(await log(client.token, "?after=0")), [1, 2, 3, 4, 5, 6, 7]);
 
-    // Two windows in one request, which is a client bug worth naming rather than one of the
-    // two silently winning.
     const both = await bearing(client.token, "?after=1&before=7");
     assert.equal(both.statusCode, 400);
     assert.match(both.json<{ message: string }>().message, /two different windows/);
@@ -281,14 +194,9 @@ describe("a User reading their own Messages", () => {
     const backwards = await walkBackwards(client, 3);
     const forwards = await walkForwards(client, 3);
 
-    // The two walks share not one page boundary — backwards lands on the end of the log and
-    // pages down from it, forwards starts at the beginning — which is what makes the
-    // agreement below a claim about the cursor rather than about arithmetic.
     assert.deepEqual(backwards.map(numbers), [[1], [2, 3, 4], [5, 6, 7]]);
     assert.deepEqual(forwards.map(numbers), [[1, 2, 3], [4, 5, 6], [7]]);
 
-    // Concatenated with nothing reversed and nothing merged: each walk is the log exactly
-    // once, nothing dropped and nothing repeated.
     assert.deepEqual(
       backwards.flat().map((message) => message.text),
       said,
@@ -301,8 +209,6 @@ describe("a User reading their own Messages", () => {
     const other = await admitted();
     await sent(other.id, "meant for somebody else");
 
-    // There is no parameter anywhere naming a User, so one cannot be read by any spelling
-    // of the request: the id comes from the Token and from nowhere a client can write.
     for (const window of [`?user=${other.id}`, `?userId=${other.id}`, "?direction=inbound"]) {
       const refused = await bearing(client.token, window);
       assert.equal(refused.statusCode, 400, window);
@@ -322,8 +228,6 @@ describe("a User reading their own Messages", () => {
   it("refuses an unknown query parameter with this part's own sentence", async () => {
     const client = await withSeven();
 
-    // A `?text=hello` answered with the newest fifty Messages reads as though a filter had
-    // been applied, so it is refused rather than stripped.
     for (const window of ["?text=hello", "?limt=2", "?before=4&order=desc"]) {
       const refused = await bearing(client.token, window);
       assert.equal(refused.statusCode, 400, window);
@@ -337,9 +241,6 @@ describe("an unauthenticated read", () => {
     const client = await admitted();
     await sent(client.id, "not for a stranger");
 
-    // A Token from a Password Auth whose Tokens last a millisecond, over the same Db: the row
-    // is there and only its `expires_at` is in the past, so an expired Token is reachable
-    // without a test waiting for anything.
     const briefly = serverComponent(Fastify(), nowhere);
     createPasswordAuth({ db, users, publicServer: briefly, tokenTtl: 1, scrypt: cheap });
     let expired: string;
@@ -350,16 +251,11 @@ describe("an unauthenticated read", () => {
     }
 
     const refusals = [
-      // No header at all.
       await presenting(undefined),
-      // A header in another scheme, and the Token with no scheme at all.
       await presenting(`Basic ${Buffer.from(`${client.id}:${password}`).toString("base64")}`),
       await presenting(client.token),
-      // A well-formed Token that was never issued, and one issued to this very User that
-      // has expired.
       await presenting(`Bearer concorde_${"A".repeat(43)}`),
       await presenting(`Bearer ${expired}`),
-      // And with a window on it, so the refusal is not a route that only answers bare.
       await presenting(`Bearer ${expired}`, "?after=0&limit=2"),
     ];
 
@@ -372,37 +268,21 @@ describe("an unauthenticated read", () => {
       });
     }
 
-    // Byte for byte, not merely equivalent: the Channel authenticates nobody, so this is
-    // the one refusal the Public server composes, reaching a route in another part unchanged.
     const [first, ...rest] = refusals;
     assert.ok(first !== undefined);
     for (const refused of rest) {
       assert.equal(refused.body, first.body);
     }
 
-    // And the Token that works still works, so every refusal above is about the credential
-    // presented rather than about the route being broken.
     assert.equal((await bearing(client.token)).statusCode, 200);
   });
 
   it("answers a malformed request before it looks at a Token, as GET /users/me does", async () => {
-    // The documented consequence of the query refusal being a `preValidation` hook and the
-    // `requireUser` being a `preHandler`: a stranger asking for something this route does not
-    // have is told so, and never gets as far as the 401. Pinned rather than guarded, because
-    // a refusal names a parameter of the route and never a User.
     assert.equal((await presenting(undefined, "?text=hello")).statusCode, 400);
     assert.equal((await presenting(undefined, "?limit=201")).statusCode, 400);
   });
 });
 
-/**
- * Every page a client gets scrolling up: the newest first, then each page strictly below
- * the oldest number the last one held, until an empty page ends the walk.
- *
- * Returned oldest page first, so the walk reads in the order the log does. The empty page
- * is what ends it, which is why the envelope needs no `hasMore`: a client that asked for
- * `limit` and got fewer already knows, and one that got exactly `limit` asks again.
- */
 async function walkBackwards(client: Client, size: number): Promise<MessageRecord[][]> {
   const pages: MessageRecord[][] = [];
   let window = `?limit=${size}`;
@@ -415,7 +295,6 @@ async function walkBackwards(client: Client, size: number): Promise<MessageRecor
   }
 }
 
-/** Every page a client gets polling forward from the beginning of the log. */
 async function walkForwards(client: Client, size: number): Promise<MessageRecord[][]> {
   const pages: MessageRecord[][] = [];
   let cursor = 0;

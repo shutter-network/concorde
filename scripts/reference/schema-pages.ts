@@ -1,33 +1,8 @@
-/**
- * One page per component that owns tables, written from the extracted snapshots.
- *
- * The reader is the Operator who owns generation and application of the DDL. They list the
- * `/schema` subpaths of the components they run in their own `drizzle.config.ts`, and this is where
- * they read what that will create: the PostgreSQL schema, every table, every column with its SQL
- * type, its nullability and its default, the keys, the indexes and the constraints.
- *
- * **The foreign keys that leave a schema get a sentence of their own at the top of the page.**
- * A list carrying the Messenger's, the Nostr Channel's, Password Auth's or Nostr Auth's subpath
- * without `@shutter-network/concorde/users/schema` generates a constraint onto a table nobody
- * creates, and that is the one mistake this page exists to make visible before it is made.
- *
- * **Nothing here is authored and no page is ever edited.** `site/reference` is emptied on every
- * generation, so a page that looked wrong and was fixed by hand would be gone on the next run.
- * A change to a page is a change to a `src/<component>/schema/index.ts`.
- *
- * **A snapshot holding something this file does not describe is a failure, not an omission.**
- * `assertNothingIsDropped` refuses enums, sequences, views, row policies and row level security,
- * because a page that quietly left one out would be complete, plausible and wrong about what an
- * Operator's database is going to hold. Adding the section is the way past it.
- */
-
 import { type PageSet, pageLink, type ReferencePage } from "./pages.ts";
 import type { ComponentTables, SchemaExtraction, TableSnapshot } from "./schema-extraction.ts";
 
-/** The directory these pages live in under `site/reference`, and the first part of their URLs. */
 const directory = "tables";
 
-/** Every page, and the sidebar section that reaches them. */
 export function schemaPages(extraction: SchemaExtraction): PageSet {
   const owners = schemaOwners(extraction);
   const pages: ReferencePage[] = extraction.components.map((component) => ({
@@ -48,10 +23,6 @@ export function schemaPages(extraction: SchemaExtraction): PageSet {
   };
 }
 
-/**
- * Which specifier creates which PostgreSQL schema, so a foreign key leaving one component can
- * name the specifier an Operator has to list beside it.
- */
 function schemaOwners(extraction: SchemaExtraction): ReadonlyMap<string, string> {
   return new Map(extraction.components.map((component) => [component.schema, component.specifier]));
 }
@@ -61,13 +32,6 @@ function page(component: ComponentTables, owners: ReadonlyMap<string, string>): 
   assertNothingIsDropped(component, tables);
 
   return [
-    // A title of its own, because the heading below is the specifier and the component's
-    // TypeScript API page sits one line away from it in the sidebar. The heading is the specifier
-    // an Operator lists; the browser tab says which of the two pages this is.
-    //
-    // Quoted, and `JSON.stringify` rather than a pair of `"` characters: the package is scoped, so
-    // every specifier begins with `@`, which YAML reserves. Bare, the frontmatter does not parse
-    // and the site build fails on the file rather than on the line.
     "---",
     `title: ${JSON.stringify(`${component.specifier} tables`)}`,
     "---",
@@ -85,12 +49,6 @@ function page(component: ComponentTables, owners: ReadonlyMap<string, string>): 
   ].join("\n");
 }
 
-/**
- * The sentence about the foreign keys that leave this component's schema, or nothing.
- *
- * One sentence per schema they point into, naming the columns, so an Operator reads which
- * subpath has to be listed beside this one and why.
- */
 function crossSchemaWarning(
   component: ComponentTables,
   tables: readonly TableSnapshot[],
@@ -190,8 +148,6 @@ function tableSection(table: TableSnapshot): readonly string[] {
       "",
       ...rows(
         ["Columns", "References", "On delete", "On update"],
-        // Qualified with the target schema always, and not only when it differs, so that
-        // reading one row never depends on remembering which schema the page is about.
         keys.map((key) => [
           columns(key.columnsFrom),
           `\`${key.schemaTo ?? "public"}.${key.tableTo}\` (${columns(key.columnsTo)})`,
@@ -205,10 +161,6 @@ function tableSection(table: TableSnapshot): readonly string[] {
   return lines;
 }
 
-/**
- * The columns, in the order the component declares them, which is the order a reader comparing
- * this against the schema module reads them in.
- */
 function columnTable(table: TableSnapshot): readonly string[] {
   return rows(
     ["Column", "Type", "Nullable", "Default"],
@@ -221,7 +173,6 @@ function columnTable(table: TableSnapshot): readonly string[] {
   );
 }
 
-/** What a column gets when nothing supplies a value, as an empty cell when that is nothing. */
 function columnDefault(column: TableSnapshot["columns"][string]): string {
   if (column === undefined) return "";
   if (column.identity !== undefined) {
@@ -233,12 +184,6 @@ function columnDefault(column: TableSnapshot["columns"][string]): string {
   return column.default === undefined ? "" : `\`${String(column.default)}\``;
 }
 
-/**
- * Refuses a snapshot holding something no section above writes.
- *
- * A page is read as the whole of what a component creates, so an undescribed feature is worse
- * than a failed generation: it is a complete-looking page an Operator plans a database from.
- */
 function assertNothingIsDropped(
   component: ComponentTables,
   tables: readonly TableSnapshot[],
@@ -268,12 +213,10 @@ function assertNothingIsDropped(
   );
 }
 
-/** Sorted by name, so a page's bytes do not depend on the order drizzle happened to answer in. */
 function sorted<T extends { name: string }>(held: Record<string, T>): readonly T[] {
   return Object.values(held).sort((left, right) => left.name.localeCompare(right.name));
 }
 
-/** A markdown table: the header, its rule, and one line per row. */
 function rows(header: readonly string[], body: readonly (readonly string[])[]): readonly string[] {
   return [
     row(header),
@@ -286,22 +229,14 @@ function row(cells: readonly string[]): string {
   return `| ${cells.join(" | ")} |`;
 }
 
-/** A pipe ends a cell, and a check constraint's condition is free to contain one. */
 function escapeCell(cell: string): string {
   return cell.replaceAll("|", "\\|");
 }
 
-/**
- * Column names in a cell, comma separated and in the order they were declared.
- *
- * Not the `and` list below. The order of the columns in an index, in a composite key and on
- * either side of a foreign key is part of what is created, and `a and b` reads as a set.
- */
 function columns(names: readonly string[]): string {
   return names.map((name) => `\`${name}\``).join(", ");
 }
 
-/** Names in a sentence, where the reader takes them as a set and `and` is what English wants. */
 function list(items: readonly string[]): string {
   if (items.length <= 1) return items.join("");
   return `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;

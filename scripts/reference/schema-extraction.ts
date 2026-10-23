@@ -1,38 +1,3 @@
-/**
- * What every component creates in an Operator's database, as one JSON document.
- *
- * The structure comes out of `generateDrizzleJson`, which is `drizzle-kit`'s own snapshot generator
- * and the same code path that generates the Operator's migration. It reads a module exactly as an
- * Operator's own run does, keeping the values that are tables and ignoring the rest, so the
- * `<component>Tables` wrapper beside them costs nothing and a page cannot disagree with the DDL
- * that gets applied. It connects to nothing: no database, no Docker, no network.
- *
- * **One call per schema module, not one call for all of them.** A page is about one component,
- * and a per-module call is what makes the answer per component. A cross-schema foreign key still
- * comes out whole, because the snapshot records `schemaTo` from the referenced column rather than
- * from the set of modules it was given.
- *
- * **Four fields of each snapshot are dropped**, because they say when it was taken rather than
- * what it holds: `id` and `prevId` are a fresh random pair on every call, and `version` and
- * `dialect` describe the format. Left in, `id` alone would make two extractions of an unchanged
- * tree differ from each other. What is kept is `schemas`, `tables`, `enums`, `sequences` and
- * `views`. The compiler cannot hold `drizzle-kit` to those five names, for the reason
- * `ReferenceSnapshot` gives below, so `keptFieldsOf` reads them off the raw object and refuses
- * one that has gone.
- *
- * **The modules are listed below and the list is held against the source tree**, which is the
- * one design decision here the spec left open. The spec declined a guard, on the reading that
- * the only candidate was a comparison against the export map: a component may legitimately own no
- * tables, so that comparison needs a hand-written list of the exempt ones and moves the drift one
- * file over rather than removing it. `src/<component>/schema/` needs no exemption, because
- * owning that directory *is* owning tables. It is also not new machinery: `src/schemas.test.ts`
- * already scans for exactly these directories to hold exactly this list, and the eight lines below
- * are that scan again. The cost the spec agreed to record was that a component absent from the list is silently
- * absent from the reference; that cost was priced against a committed reference where at least the
- * absence showed up once, as a deleted page in a review. The reference is not committed any more,
- * so nothing would have shown at all.
- */
-
 import { readdirSync } from "node:fs";
 import { relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,20 +11,6 @@ import * as scheduler from "../../src/scheduler/schema/index.ts";
 import * as signals from "../../src/signals/schema/index.ts";
 import * as users from "../../src/users/schema/index.ts";
 
-/**
- * The snapshot, written out here rather than taken from `drizzle-kit`.
- *
- * **Its own types do not survive the trip.** `generateDrizzleJson` is declared as returning
- * `TypeOf<typeof pgSchema>`, a zod inference, and the zod that resolves in this tree is not the
- * major version `drizzle-kit` was compiled against, so the whole return type collapses to `any`.
- * Deriving these with `Pick` therefore buys nothing: it would type-check against `any` and let the
- * renderer read a field that is not there. Written out, the renderer is checked against a shape,
- * and `keptFields` below is what holds that shape against the object `drizzle-kit` actually
- * answers with at the one point where `any` enters.
- *
- * Only what a page describes is written out. The renderer refuses a snapshot carrying anything
- * else, so a field left out here cannot become a page that quietly omits it.
- */
 type ColumnSnapshot = {
   readonly name: string;
   readonly type: string;
@@ -70,7 +21,6 @@ type ColumnSnapshot = {
   readonly identity?: { readonly type: "always" | "byDefault" };
 };
 
-/** One table in a snapshot: its columns, its keys, its indexes and its constraints. */
 export type TableSnapshot = {
   readonly name: string;
   readonly schema: string;
@@ -113,7 +63,6 @@ export type TableSnapshot = {
   readonly isRLSEnabled: boolean;
 };
 
-/** The part of a snapshot that describes the tables rather than the taking of it. */
 export type ReferenceSnapshot = {
   readonly schemas: Record<string, string>;
   readonly tables: Record<string, TableSnapshot>;
@@ -122,41 +71,19 @@ export type ReferenceSnapshot = {
   readonly views: Record<string, unknown>;
 };
 
-/**
- * The five fields kept out of each snapshot, and the only place `any` becomes a shape.
- *
- * Dropped are `id` and `prevId`, a fresh random pair on every call, and `version` and `dialect`,
- * which describe the format. `id` alone would make two extractions of an unchanged tree differ.
- */
 const keptFields = ["schemas", "tables", "enums", "sequences", "views"] as const;
 
-/** One component's tables, keyed by the specifier an Operator points `drizzle-kit` at. */
 export type ComponentTables = {
-  /** The component's directory under `src`, which is what the page is named after. */
   readonly subpath: string;
-  /**
-   * The full import specifier, which is what the page is titled with: the component's own subpath
-   * with `/schema` after it.
-   */
   readonly specifier: string;
-  /** The single PostgreSQL schema this component writes into, such as `concorde_users`. */
   readonly schema: string;
   readonly snapshot: ReferenceSnapshot;
 };
 
-/** What `npm run extract:schema` writes to stdout. */
 export type SchemaExtraction = {
   readonly components: readonly ComponentTables[];
 };
 
-/**
- * Every component that owns tables, keyed by the directory it lives in.
- *
- * Listed rather than discovered, because a static import is what makes the extraction
- * type-checked: `npm run typecheck` reads these eight paths, so a schema module that moved or was
- * renamed fails at a desk rather than producing a confidently short document. `assertListIsWhole`
- * below is what keeps the list equal to the source tree.
- */
 const schemaModules: Record<string, Record<string, unknown>> = {
   decisions,
   messenger,
@@ -170,12 +97,6 @@ const schemaModules: Record<string, Record<string, unknown>> = {
 
 const packageName = "@shutter-network/concorde";
 
-/**
- * The tables of every component that owns any, in the order the list above is written.
- *
- * @throws if the list has drifted from the source tree, if a listed module exports no table at
- * all, or if it declares anything other than exactly one PostgreSQL schema.
- */
 export function extractSchemas(): SchemaExtraction {
   assertListIsWhole();
   return {
@@ -183,11 +104,6 @@ export function extractSchemas(): SchemaExtraction {
       const snapshot = keptFieldsOf(generateDrizzleJson(module));
       const { schemas, tables } = snapshot;
       const declaredSchemas = Object.keys(schemas);
-      // Both of these are the wrapper trap in the shape this feature would meet it:
-      // a table that retreated into the `<component>Tables` object is dropped by
-      // `generateDrizzleJson` in silence, and the page for that component would render as
-      // an honest, complete and empty page. A component with no tables has no page at all,
-      // so the absence would look exactly like the intended thing.
       if (Object.keys(tables).length === 0) {
         throw new Error(
           `src/${subpath}/schema/index.ts exports no table that drizzle-kit can see. A table reached ` +
@@ -213,14 +129,6 @@ export function extractSchemas(): SchemaExtraction {
   };
 }
 
-/**
- * The five kept fields of one snapshot, and the assertion that they are still called that.
- *
- * This is where `any` becomes `ReferenceSnapshot`, so it is the only place a `drizzle-kit`
- * rename could pass unnoticed: the compiler cannot object to reading any field off `any`. A
- * renamed `tables` would empty every page, and a renamed `enums` would silence the renderer's
- * refusal to describe one. Both are read here by name, so both are named here.
- */
 function keptFieldsOf(snapshot: unknown): ReferenceSnapshot {
   const held = snapshot as Record<string, unknown>;
   const missing = keptFields.filter((field) => held[field] === undefined);
@@ -240,12 +148,6 @@ function keptFieldsOf(snapshot: unknown): ReferenceSnapshot {
   };
 }
 
-/**
- * Holds the list above against `src`, both ways.
- *
- * The same scan `src/schemas.test.ts` runs, for the same reason and against the same list: a
- * component added later whose schema nobody lists is a component nothing covers.
- */
 function assertListIsWhole(): void {
   const source = fileURLToPath(new URL("../../src/", import.meta.url));
   const inSource = readdirSync(source, { recursive: true, withFileTypes: true })

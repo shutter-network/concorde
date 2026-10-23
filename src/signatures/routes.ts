@@ -1,24 +1,3 @@
-/**
- * Two plugins, because they go on two Fastify instances, and both at no prefix. The path is part of
- * a contract whose other half is the artifact: a client hands `…/jwks.json` to its own JOSE library
- * and expects RFC 7517's container back. Neither path nor prefix is configurable, and neither
- * plugin is exported.
- *
- * The routes themselves are not listed here. `scripts/reference/route-pages.ts` renders them into
- * the reference out of the declarations below, so a table beside them would be a second list to
- * keep true and nothing would compare the two.
- *
- * `GET /jwks.json` is the stated exception to the single 401 of Users on the Public server,
- * and the exception is the point: the whole audience for this identity is a third party with no
- * Token to present. Signing has no public route at all, because only the shared agent may make an
- * artifact. Checking one is open to any Token holder, since asking reveals nothing they could not
- * work out from the key set themselves.
- *
- * Three of the description strings below carry more weight than the rest, and each is hoisted to a
- * named constant so that it is edited as prose rather than found inside a template literal: what a
- * signature does not prove, what a `typ` is and is not, and what the lazy check is worth.
- */
-
 import type { JsonWebKey } from "node:crypto";
 import type { FastifyPluginAsync, preHandlerAsyncHookHandler } from "fastify";
 import {
@@ -30,15 +9,10 @@ import {
 } from "../route-conventions.ts";
 import type { SignedClaims } from "./signatures.ts";
 
-/** RFC 7517's container. Why a Set for one key is at the construction site in `signatures.ts`. */
 export type KeySet = {
   readonly keys: readonly JsonWebKey[];
 };
 
-/**
- * What `POST /sign` needs of the Component, which is one call and nothing that holds a key. A
- * route group that could reach the key would be one somebody could later have hand it out.
- */
 export type StatementSigning = {
   sign(typ: string, claims: SignedClaims): Promise<string>;
 };
@@ -47,11 +21,6 @@ export type ArtifactCheck = {
   verify(jws: string): Promise<Verdict>;
 };
 
-/**
- * A union rather than one shape with two optional members. The verification reads the header and
- * the payload out of the artifact, so they exist exactly when the verdict is `true` and there is no
- * state in which one is known and the verdict is not.
- */
 export type Verdict =
   | { readonly verified: false }
   | {
@@ -60,32 +29,14 @@ export type Verdict =
       readonly payload: unknown;
     };
 
-// Its own sentence, because the obvious guess here is `?kid=`, which a client's key-set helper can
-// have, and what that caller needs to hear is that there is nothing to select by.
 const rejectKeySetQuery = unknownQueryRefusal(
   "There is nothing to select here: the shared agent has one keypair, with no identifier and no rotation, so the whole set is the whole answer.",
 );
 
-// Shared by the two body routes and naming neither, the two being on different servers. What
-// somebody who wrote `?statement=…` needs to hear is that the request is a body.
 const rejectBodyRouteQuery = unknownQueryRefusal(
   "Everything this route takes is in its body, and there is nothing here to select, filter or page.",
 );
 
-/**
- * A positive list of public members, and the second of the two things standing between a wrong
- * argument and `d` being served from an unauthenticated route. The first is `createPublicKey` in
- * the constructor, and neither is sufficient alone: a response schema is a serializer, so
- * `fast-json-stringify` drops every member not declared here, which for once is doing a job rather
- * than being survived.
- *
- * The list covers what a public JWK of any asymmetric type carries rather than only what today's
- * key needs: `y` for the second EC coordinate, `n` and `e` for RSA. A shorter list would silently
- * truncate somebody's key set, and truncation here reads as a corrupt key.
- *
- * Only `kty` is required, being the one member every key type has. There is no `kid`: the keypair
- * is the identity, and a name beside it would answer the same question twice.
- */
 const jwkSchema = {
   type: "object",
   properties: {
@@ -109,28 +60,10 @@ const keySetSchema = {
   required: ["keys"],
 } as const;
 
-// Generic on purpose: the framework knows the agent signs things and nothing about what kinds of
-// things they are, so the default says the one true thing.
 const statementTyp = "concorde-statement+jws";
 
-/**
- * `minLength: 1` so that an empty commitment is a 400 rather than a signed nothing, and no
- * `maxLength`, Fastify's `bodyLimit` being the bound and the Operator's to raise.
- *
- * Duplicated beside a Decision's Statement rather than hoisted into `route-conventions.ts`, which
- * holds what the components agree about the shape of a *request*. "A Statement is a non-empty
- * string" is a fact about the domain, and each component may say it for itself.
- */
 const statementSchema = { type: "string", minLength: 1 } as const;
 
-/**
- * 128 characters: longer than any media type anybody writes, short enough to keep a megabyte out of
- * a protected header. That is the whole of the validation and it is not a policy, so any label of
- * that shape is signed, `concorde-decision+jws` included.
- *
- * `default` is applied by Fastify's ajv under `useDefaults`, so the handler reads a `typ` on every
- * request. The same mechanism `limit` uses on every list in the framework.
- */
 const typSchema = {
   type: "string",
   minLength: 1,
@@ -139,8 +72,6 @@ const typSchema = {
   description: `What kind of thing this artifact is. It goes into the **protected header**, so the signature covers it. Swapping it invalidates the artifact, which keeps a receipt from being presented as an approval.\n\n**Any label, \`concorde-decision+jws\` included.** Domain separation between your *own* categories, such as receipts, votes and approvals, is something only you can express. Give each of them a label of its own, or they collapse into one domain and become replayable as each other. Defaults to \`${statementTyp}\`.`,
 } as const;
 
-// No field for the payload: what is signed is `{ statement }` and the header, so a caller wanting
-// more inside the artifact writes it into the Statement.
 const signSchema = {
   type: "object",
   properties: { statement: statementSchema, typ: typSchema },
@@ -160,8 +91,6 @@ const signedStatementSchema = {
   required: ["jws"],
 } as const;
 
-// `jws` and not `artifact` or `signature`: the string a caller has in hand came out of a `jws`
-// field, on a Decision or on a signing, and a third name for one value is a mistake waiting.
 const verifySchema = {
   type: "object",
   properties: { jws: { type: "string", minLength: 1 } },
@@ -169,15 +98,6 @@ const verifySchema = {
   additionalProperties: false,
 } as const;
 
-/**
- * `header` and `payload` are declared as empty schemas: no `type` on either, which passes any JSON
- * through byte intact and renders in the document as "any". Constraining them would be this route
- * having an opinion about what the agent signs.
- *
- * Both are absent from `required` because both are absent from a `false` verdict. Reporting the
- * header of an artifact that is not ours would answer with the unverified assertions of a string
- * somebody posted.
- */
 const verdictSchema = {
   type: "object",
   properties: {
@@ -198,24 +118,12 @@ const verdictSchema = {
   required: ["verified"],
 } as const;
 
-// Both halves are load-bearing. The first is the mechanics: this is the URL a JOSE library
-// consumes. The second says plainly what a signature proves, because a verifier who mistakes a
-// cryptographic artifact for evidence about the agent's conduct has been misled by us.
 const whatTheKeyIsFor =
   "The shared agent's public key, as a JWK Set (RFC 7517). It is what makes a Signed Statement checkable **without trusting this Gateway**. Fetch it once, keep it, and verify artifacts offline with any JOSE library in any language. That is the real verification path, and the only one worth anything to somebody who does not trust the Operator.\n\nOne keypair, always, so the set holds one key. There is no rotation, no key identifier and nothing to select between. What a valid signature proves is narrow. **The Operator committed to this Statement on the shared agent's behalf.** It says nothing whatever about how the agent behaved.";
 
-// There is no version of this route that proves more: the answer comes from the Gateway, so
-// believing it means trusting the Gateway, and the party this identity exists for is the one who
-// does not. Stated in the document because of who most needs to read it, which is the caller who
-// would otherwise hand a third party a screenshot of a `true`.
 const whatTheCheckIsWorth =
   "A convenience, and **it proves less than it looks like it proves**. It answers one question: is this artifact this shared agent's? You have to believe the answer, because a dishonest Gateway says `true` to anything. So it is worth nothing to the party this identity exists for. That party does not trust the Operator. It is genuinely useful to a User, who trusts the Operator already. They want a quick confirmation without embedding a JOSE library.\n\n**Real verification is offline.** Fetch `GET /jwks.json` once, keep the key, and check the artifact yourself in whatever language you are already writing. That asks this Gateway nothing. The path is open to anybody holding the string, needs no Token, and keeps working after this deployment is gone.";
 
-/**
- * `POST /sign` and not a key the agent holds. The agent is a container over HTTP, and the key is
- * deliberately on this side of that boundary: a compromise of the container mints nothing once the
- * Gateway is stopped, where a key handed to the agent signs forever.
- */
 export function agentSignatureRoutes(signing: StatementSigning): FastifyPluginAsync {
   return async (fastify) => {
     fastify.post<{ Body: { statement: string; typ: string } }>(
@@ -239,12 +147,6 @@ export function agentSignatureRoutes(signing: StatementSigning): FastifyPluginAs
         },
         preValidation: rejectBodyRouteQuery(),
       },
-      // 200 and not 201, because nothing was created: there is no resource behind this and nowhere
-      // it could be fetched from again.
-      //
-      // The claims are built here rather than the body being passed along, and the difference is the
-      // whole payload. `typ` is a header parameter, so a body forwarded whole would sign it into the
-      // payload too, and every artifact would carry its own label in two places.
       async (request) => ({
         jws: await signing.sign(request.body.typ, { statement: request.body.statement }),
       }),
@@ -252,18 +154,6 @@ export function agentSignatureRoutes(signing: StatementSigning): FastifyPluginAs
   };
 }
 
-/**
- * `presentedUser` is the server's `requireUser`, taken as one option and not wrapped, extended or
- * re-implemented, so an unauthenticated check is the single 401 of Users.
- *
- * The Token is required and the User it names is then unused: it gates the surface rather than
- * scoping the answer, the Gateway not being a free signature oracle for whoever finds the port. The
- * key set beside it takes none, which is the pair worth seeing together.
- *
- * The hook runs at `preHandler`, after validation, so a missing body and an unknown query parameter
- * are answered before a Token is looked at. That leaks nothing: such a refusal names a field of the
- * route and never a User, and says nothing about the artifact, which nobody has looked at.
- */
 export function publicSignatureRoutes(
   keySet: KeySet,
   check: ArtifactCheck,
@@ -291,8 +181,6 @@ export function publicSignatureRoutes(
         preHandler: presentedUser,
         preValidation: rejectBodyRouteQuery(),
       },
-      // The User the hook just verified is deliberately not read: an artifact belongs to nobody, so
-      // there is nothing here to scope.
       async (request) => check.verify(request.body.jws),
     );
 
@@ -314,8 +202,6 @@ export function publicSignatureRoutes(
         },
         preValidation: rejectKeySetQuery(),
       },
-      // The same object every time, held since construction. The key does not change while the
-      // process is running, and deriving it per request would produce the identical bytes.
       async () => keySet,
     );
   };

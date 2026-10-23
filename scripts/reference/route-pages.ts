@@ -1,28 +1,3 @@
-/**
- * One page per component that serves routes, written from the extracted declarations.
- *
- * The reader is the Developer who has deployed nothing. Every route arrives with the summary and
- * the description its plugin declares, word for word, because those sentences **are** the API
- * documentation and a paraphrase here would be a second wording to keep true. What a running
- * Gateway serves at `GET /openapi.json` and what this page says come out of the same declaration.
- *
- * **The two servers are separate sections.** The difference between them is the difference between
- * what the agent can call and what a User's client can, and the Agent server has no authentication
- * of any kind. A component with a plugin on each gets both sections on one page, because a page is
- * about a component.
- *
- * **Paths are relative and no page names a prefix.** The extraction registers none, so what is
- * printed is what the plugin declares, under whatever the constructor mounts it at. Naming the
- * prefix here would state the mount points in a second place.
- *
- * **A shape is a nested list rather than a flattened one.** A response is an envelope holding an
- * array of records, and a record holds an object with two spellings, so the reader needs the tree.
- * A markdown table cannot nest, which is why the table pages beside these use one and these do not.
- *
- * **Nothing here is authored and no page is ever edited.** `site/reference` is emptied on every
- * generation. A change to a page is a change to a route's `schema` block in its `routes.ts`.
- */
-
 import { type PageSet, pageLink, type ReferencePage } from "./pages.ts";
 import type {
   ComponentRoutes,
@@ -36,10 +11,8 @@ import type {
   ServerRoutes,
 } from "./route-extraction.ts";
 
-/** The directory these pages live in under `site/reference`, and the first part of their URLs. */
 const directory = "routes";
 
-/** Every page, and the sidebar section that reaches them. */
 export function routePages(extraction: RouteExtraction): PageSet {
   const pages: ReferencePage[] = extraction.components.map((component) => ({
     file: `${component.subpath}.md`,
@@ -59,7 +32,6 @@ export function routePages(extraction: RouteExtraction): PageSet {
   };
 }
 
-/** What each server is, said once per page rather than once per route. */
 const whatTheServerIs: Record<ServerName, string> = {
   agent: `**The Agent server has no authentication of any kind.** Everything below is reachable by the agent, and therefore by an injected prompt. Nothing on it names a credential.`,
   public: `**The Public server is what a User's client calls.** Which credential each route wants, and which wants none, is in that route's own description below.`,
@@ -67,12 +39,6 @@ const whatTheServerIs: Record<ServerName, string> = {
 
 function page(component: ComponentRoutes): string {
   return [
-    // A title of its own, because the heading below is the specifier and both the component's
-    // TypeScript API page and its table page carry the same one.
-    //
-    // Quoted, and `JSON.stringify` rather than a pair of `"` characters: the package is scoped, so
-    // every specifier begins with `@`, which YAML reserves. Bare, the frontmatter does not parse
-    // and the site build fails on the file rather than on the line.
     "---",
     `title: ${JSON.stringify(`${component.specifier} routes`)}`,
     "---",
@@ -92,7 +58,6 @@ function page(component: ComponentRoutes): string {
   ].join("\n");
 }
 
-/** How many routes on which server, as the sentence under the heading. */
 function howMany(servers: readonly ServerRoutes[]): string {
   return list(
     servers.map(
@@ -123,13 +88,10 @@ function routeSection(route: RouteDescription): readonly string[] {
   lines.push(...bodySection(route.requestBody));
   lines.push(...responseSection(route.responses));
 
-  // The blank line every section above ends with, taken back off, so that one blank line
-  // separates two routes wherever the last section happened to be.
   while (lines.at(-1) === "") lines.pop();
   return lines;
 }
 
-/** The path parameters or the query parameters, and nothing at all where a route takes none. */
 function parameterSection(
   where: string,
   parameters: readonly ParameterDescription[],
@@ -165,13 +127,6 @@ function bodySection(body: RequestBodyDescription | undefined): readonly string[
   ];
 }
 
-/**
- * One block per status, ascending, each with the sentence saying what reaches it and the shape it
- * answers with.
- *
- * A status with no schema at all is a body-less answer, which is every 204 here, and it says so
- * rather than showing an empty list.
- */
 function responseSection(responses: readonly ResponseDescription[]): readonly string[] {
   if (responses.length === 0) return [];
   return [
@@ -188,12 +143,6 @@ function responseSection(responses: readonly ResponseDescription[]): readonly st
   ];
 }
 
-/**
- * One schema as an indented list, or the one line that says there is nothing to list.
- *
- * An object prints its properties. Anything else prints as a single unnamed line, which is what a
- * body that is a bare array or a bare string would be. Nothing in the framework declares one today.
- */
 function shape(schema: SchemaNode | undefined): readonly string[] {
   if (schema === undefined) return [];
   const properties = Object.entries(schema.properties ?? {});
@@ -203,26 +152,12 @@ function shape(schema: SchemaNode | undefined): readonly string[] {
   return oneBlankAfter(members(schema, ""));
 }
 
-/**
- * A list of fields, closed with exactly one blank line however the last of them ended.
- *
- * A field carrying prose ends with a blank of its own, and two in a row would end the list on the
- * way to HTML and leave whatever followed outside it.
- */
 function oneBlankAfter(lines: readonly string[]): readonly string[] {
   const trimmed = [...lines];
   while (trimmed.at(-1) === "") trimmed.pop();
   return [...trimmed, ""];
 }
 
-/**
- * The children of one schema, indented under whatever holds them.
- *
- * Three cases, and they compose: a `oneOf` prints one branch per option, an object prints its
- * properties, and an array prints the members of its items directly rather than through a line
- * saying "each item is an object". The array's own line already said `array of object`, so that
- * line would be the same sentence twice.
- */
 function members(schema: SchemaNode, indent: string): readonly string[] {
   if (schema.oneOf !== undefined) {
     return schema.oneOf.flatMap((branch, index) => [
@@ -239,12 +174,6 @@ function members(schema: SchemaNode, indent: string): readonly string[] {
   );
 }
 
-/**
- * One named field: its type, whether it is required, its constraints, its prose, and its children.
- *
- * The prose is indented two spaces past the bullet so that a description carrying a blank line
- * stays inside the list item rather than ending it. One of them does, on `typ` at `POST /sign`.
- */
 function field(
   name: string,
   schema: SchemaNode,
@@ -261,18 +190,10 @@ function field(
   ];
 }
 
-/** A description under a bullet, indented so a blank line inside it does not end the item. */
 function prose(description: string, indent: string): readonly string[] {
   return ["", ...description.split("\n").map((line) => (line === "" ? "" : indent + line)), ""];
 }
 
-/**
- * What a value is, in as few words as read as one.
- *
- * A schema with no `type` at all is an empty schema: it passes any JSON value through byte intact,
- * which is what `attributes` on a User and `data` on a Schedule are, and calling it `any JSON` is
- * the whole of what there is to say.
- */
 function summary(schema: SchemaNode): string {
   const nullable = schema.nullable === true ? " or null" : "";
   if (schema.oneOf !== undefined) return `one of ${schema.oneOf.length} shapes${nullable}`;
@@ -284,7 +205,6 @@ function summary(schema: SchemaNode): string {
   return `${code(type)}${nullable}`;
 }
 
-/** Everything a schema says about a value beyond its type, each as one short phrase. */
 function constraints(schema: SchemaNode): readonly string[] {
   const said: string[] = [];
 
@@ -299,19 +219,10 @@ function constraints(schema: SchemaNode): readonly string[] {
   said.push(...range(schema.minLength, schema.maxLength, "character"));
   if (schema.pattern !== undefined) said.push(`matching ${code(schema.pattern)}`);
   if (schema.default !== undefined) said.push(`default ${literal(schema.default)}`);
-  // Said only where it is `false`, which is the case that refuses something. `true` is the
-  // default of the specification and states nothing.
   if (schema.additionalProperties === false) said.push("no other properties");
   return said;
 }
 
-/**
- * A bound, both bounds or neither, as the phrase English wants for each.
- *
- * `noun` is what is being counted, where a bound counts something rather than being the value: a
- * length is `1 to 128 characters` and a number is `1 to 200`. It agrees with the number it follows,
- * so a `minLength` of one reads `at least 1 character`.
- */
 function range(low?: number, high?: number, noun?: string): readonly string[] {
   const counted = (of: number) => (noun === undefined ? "" : ` ${noun}${of === 1 ? "" : "s"}`);
   if (low !== undefined && high !== undefined) return [`${low} to ${high}${counted(high)}`];
@@ -320,7 +231,6 @@ function range(low?: number, high?: number, noun?: string): readonly string[] {
   return [];
 }
 
-/** A JSON value as it would be written in a request or read out of a response. */
 function literal(value: unknown): string {
   return code(JSON.stringify(value) ?? "undefined");
 }
@@ -329,7 +239,6 @@ function code(value: string): string {
   return `\`${value}\``;
 }
 
-/** Phrases in a sentence, where `and` is what English wants before the last of them. */
 function list(items: readonly string[]): string {
   if (items.length <= 1) return items.join("");
   return `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;

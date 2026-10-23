@@ -1,26 +1,3 @@
-/**
- * The agent's surface on the Decision log, as the agent can observe it.
- *
- * The subject is what a caller sees, never how a Decision is stored: every assertion here is
- * made over HTTP against two real Fastify instances and real PostgreSQL, **nothing inserts a
- * row directly**, and no assertion names a column. Numbering is observed as a field on a
- * record.
- *
- * Two things are proved here that are proved nowhere else. The first is that the artifact and
- * the record **agree**: the payload's `seq`, `createdAt` and `statement` are the record's, read
- * by splitting the emitted string, so a write path that signed one thing and stored another
- * fails here rather than in somebody's verifier. The second is that publishing **wakes
- * nothing** — a Signal Worker is constructed and its own routes are asked, afterwards, for an
- * empty queue.
- *
- * The Signal Worker below is never started, which is why the empty queue means what it says:
- * nothing could have consumed a Signal that had been emitted, so the queue being empty is the
- * Signal never existing.
- *
- * A database of this file's own, because no two test files may share one, and a keypair
- * generated here, which is where a keypair may be generated: the framework generates none.
- */
-
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { after, before, describe, it } from "node:test";
@@ -42,13 +19,10 @@ let db: Db;
 let agentServer: ServerComponent<FastifyInstance>;
 let publicServer: ServerComponent<FastifyInstance>;
 
-/** Where the constructor put both route groups. */
 const prefix = "/decisions";
 
-/** Where a server that is never started would have listened, had it been. */
 const nowhere = { port: 0, host: "127.0.0.1" } as const;
 
-/** A logger with nothing to say: one line per signing is not this file's subject. */
 const silent = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
 
 before(async () => {
@@ -58,22 +32,14 @@ before(async () => {
   agentServer = serverComponent(Fastify(), nowhere);
   publicServer = serverComponent(Fastify(), nowhere);
 
-  // Constructed and never started, so nothing drains and nothing dispatches. Its Agent server
-  // routes are what this file asks about the queue, which is a higher seam than a table.
   createSignalWorker({ db, runtime: fakeRuntime(), handlers: {}, agentServer });
-  // No Users and no Auth anywhere here: neither part references a User, and the Public read
-  // is not this file's subject. What that costs is that a request to the Public read would
-  // throw `NoAuthRegisteredError`, which `public-decisions.test.ts` is where it is answered.
   const { privateKey } = generateKeyPairSync("ed25519");
-  // Its own routes are registered on both servers and are not this file's subject; what
-  // Decisions wants of it is the in-process `sign`.
   const signatures = createSignatures({
     signingKey: privateKey,
     agentServer,
     publicServer,
     logger: silent,
   });
-  // Nothing is held: everything under test is a route the constructor registered itself.
   createDecisions({ db, signatures, agentServer, publicServer });
 
   await applySchema(db, signalsSchema, decisionsSchema);
@@ -89,14 +55,9 @@ describe("publishing a Decision", () => {
   it("answers the record it stored, artifact included, with no read-back to do", async () => {
     const published = await publish("the first thing we committed to");
 
-    // The whole body against a literal the type checker holds to the record type: add a field
-    // to `DecisionRecord` and this file stops compiling, leave it out of the response schema
-    // and this comparison fails, because a response schema is a serializer.
     assert.deepEqual(published, {
       seq: published.seq,
       statement: "the first thing we committed to",
-      // Checked rather than copied, since a dropped field is `undefined` on both sides of a
-      // `deepEqual` and would pass.
       jws: published.jws,
       createdAt: published.createdAt,
     } satisfies DecisionRecord);
@@ -109,17 +70,10 @@ describe("publishing a Decision", () => {
     const first = await publish("one");
     const second = await publish("two");
 
-    // Consecutive rather than absolute, because this file publishes in several tests and the
-    // sequence is one log's. What is asserted is that the number moves by one per publish and
-    // belongs to nobody: there is no parameter anywhere naming a User.
     assert.equal(second.seq, first.seq + 1);
   });
 
   it("signs the number and the timestamp it stored, and not some other pair", async () => {
-    // The claim the write path's whole ordering exists for: the number is drawn first and the
-    // timestamp second precisely so that both can go inside the signature, and the values
-    // signed have to be the values kept. Read by **splitting the emitted string**, which is
-    // the only reading that could disagree with the record.
     const published = await publish("the statement whose payload is read back");
 
     assert.deepEqual(payloadOf(published.jws), {
@@ -130,17 +84,11 @@ describe("publishing a Decision", () => {
   });
 
   it("refuses a statement that says nothing", async () => {
-    // `minLength: 1`, so a signed empty commitment is unreachable, and a missing field is the
-    // same 400 rather than a Decision about `undefined`.
     assert.equal((await publishing({ statement: "" })).statusCode, 400);
     assert.equal((await publishing({})).statusCode, 400);
   });
 
   it("ignores an artifact a caller wrote into the body, and signs its own", async () => {
-    // There is no field for the signature and nowhere for one to arrive: a `jws` in the body
-    // is stripped before the handler by `additionalProperties: false` and reaches nothing, so
-    // "no path writes a Decision with a caller's bytes in it" is a fact about the surface
-    // rather than a check that could be got wrong.
     const published = await publish("mine, whatever else I sent with it", {
       jws: "not.a.signature",
     });
@@ -154,10 +102,6 @@ describe("publishing a Decision", () => {
   });
 
   it("wakes nothing at all, which is why the agent cannot queue work for itself", async () => {
-    // A Decision is published *during* a Run and the worker is serial, so emitting a Signal
-    // would have the agent's own action queue work behind the Run still in flight, and the
-    // Handler it woke could publish again. Nothing here is started, so an emitted Signal would
-    // still be sitting in the queue for this read to find.
     await publish("this one notifies nobody");
 
     const queue = await agentJson<{ signals: SignalRecord[] }>("/signals");
@@ -167,8 +111,6 @@ describe("publishing a Decision", () => {
 
 describe("the agent reading the log", () => {
   it("answers the whole log ascending, which is what a fresh Session reads", async () => {
-    // A Session is a lossy cache, so an agent with no memory of what it decided reads it here.
-    // `after=0` is how a reader with nothing in hand asks from the beginning.
     const before = await read("?after=0&limit=200");
     const published = await publish("and something after everything else");
     const whole = await read("?after=0&limit=200");
@@ -185,12 +127,8 @@ describe("the agent reading the log", () => {
     const second = await publish("page two of the walk");
     const third = await publish("page three of the walk");
 
-    // No cursor is the newest page, which is the case a client cannot guess and the
-    // description is what tells it.
     assert.deepEqual(await seqs("?limit=2"), [second.seq, third.seq]);
-    // `before` is the newest page strictly below, answering ascending like the rest.
     assert.deepEqual(await seqs(`?before=${third.seq}&limit=2`), [first.seq, second.seq]);
-    // And `after` walks forwards from a number the caller already holds.
     assert.deepEqual(await seqs(`?after=${first.seq}&limit=2`), [second.seq, third.seq]);
   });
 
@@ -199,8 +137,6 @@ describe("the agent reading the log", () => {
     assert.equal(both.statusCode, 400, both.body);
     assert.match(both.json<{ message: string }>().message, /two different windows/);
 
-    // `?user=` above all, since a reader arriving from the Message log will try it: this log
-    // has no owner, so there is nothing to scope and nothing to omit.
     const scoped = await agentServer.fastify.inject({ url: `${prefix}?user=someone` });
     assert.equal(scoped.statusCode, 400, scoped.body);
     assert.match(scoped.json<{ message: string }>().message, /"user" is not a parameter/);
@@ -211,20 +147,13 @@ describe("the agent citing a Decision by number", () => {
   it("answers exactly the one cited, and it is what the cursored read answers", async () => {
     const published = await publish("the one that gets quoted back by its number");
 
-    // The record whole, so a field this route's response schema forgot to declare differs from
-    // the record the publish answered with.
     const cited = await agentJson<DecisionRecord>(`${prefix}/${published.seq}`);
     assert.deepEqual(cited, published);
 
-    // And the same record the long way round, which is the spelling this route exists to
-    // replace: `?after=<n-1>&limit=1`. They agree because they are one read.
     assert.deepEqual(await read(`?after=${published.seq - 1}&limit=1`), [cited]);
   });
 
   it("cites the first Decision in the log, where the cursor underneath it is 0", async () => {
-    // The off-by-one worth a test of its own: a citation of Decision 1 asks the read for
-    // everything after 0, and 0 is a cursor meaning "from the beginning" rather than no cursor
-    // at all. A read that took it for an absence would answer the *newest* Decision here.
     const [first] = await read("?after=0&limit=1");
     assert.ok(first !== undefined, "this file has published something by now");
 
@@ -232,8 +161,6 @@ describe("the agent citing a Decision by number", () => {
   });
 
   it("answers a number nobody has with a 404 saying which number", async () => {
-    // Not an empty envelope and not a 200 with nothing in it: a citation that resolves to
-    // nothing is a fact about the citation. It is also not evidence of a withheld Decision.
     const beyond = (await publish("the newest thing in the log")).seq + 1000;
     const missing = await agentServer.fastify.inject({ url: `${prefix}/${beyond}` });
 
@@ -246,15 +173,6 @@ describe("the agent citing a Decision by number", () => {
   });
 
   it("answers a number that is not one with a 400, which the caller earned", async () => {
-    // A caller who typed a word gets the 400 rather than the 500 an uncastable value would be
-    // if it reached PostgreSQL, which is why the path is validated before the read runs. `0` and
-    // `-1` are refused for a different reason and by the same schema: nothing is numbered
-    // either, and 0 is a cursor rather than a Decision.
-    //
-    // The last two are the same 500 from the other end and the reason the schema has a
-    // `maximum`: a number too large for the column the log is numbered in is a number no
-    // Decision can have, and unbounded it reaches PostgreSQL and comes back carrying the text of
-    // the query.
     for (const cited of ["seven", "1.5", "0", "-1", "%20", "2147483648", "9999999999"]) {
       const refused = await agentServer.fastify.inject({ url: `${prefix}/${cited}` });
       assert.equal(refused.statusCode, 400, `${cited}: ${refused.body}`);
@@ -262,8 +180,6 @@ describe("the agent citing a Decision by number", () => {
   });
 
   it("refuses a window on a route that answers one record", async () => {
-    // A `?limit=1` answered with a 200 reads as though it had been honoured, so it is refused
-    // rather than stripped, exactly as on the routes that do take a window.
     const published = await publish("the one somebody asked for a page of");
     const windowed = await agentServer.fastify.inject({
       url: `${prefix}/${published.seq}?limit=1`,
@@ -274,7 +190,6 @@ describe("the agent citing a Decision by number", () => {
   });
 });
 
-/** One `POST /decisions`, the way the agent publishes one. */
 async function publish(
   statement: string,
   alsoSent: Record<string, unknown> = {},
@@ -284,35 +199,24 @@ async function publish(
   return answered.json<DecisionRecord>();
 }
 
-/** The same request, unasserted, for the bodies that are supposed to be refused. */
 function publishing(payload: Record<string, unknown>) {
   return agentServer.fastify.inject({ method: "POST", url: prefix, payload });
 }
 
-/** One `GET /decisions` on the Agent server, with whatever window is asked for. */
 async function read(window: string): Promise<DecisionRecord[]> {
   return (await agentJson<{ decisions: DecisionRecord[] }>(`${prefix}${window}`)).decisions;
 }
 
-/** That window as its numbers, which is how the cursor cases are read. */
 async function seqs(window: string): Promise<number[]> {
   return (await read(window)).map((decision) => decision.seq);
 }
 
-/** One read of the Agent server, which takes no credential of any kind. */
 async function agentJson<T>(url: string): Promise<T> {
   const answered = await agentServer.fastify.inject({ url });
   assert.equal(answered.statusCode, 200, `${url} should have answered: ${answered.body}`);
   return answered.json<T>();
 }
 
-/**
- * The claims inside an artifact, decoded from the string that was emitted.
- *
- * By splitting rather than by rebuilding from a header and a payload of this file's own, which
- * is the whole point: a rebuilt payload would agree with a write path that had signed
- * something else entirely.
- */
 function payloadOf(jws: string): unknown {
   const [, payload] = jws.split(".");
   return JSON.parse(Buffer.from(String(payload), "base64url").toString("utf8"));

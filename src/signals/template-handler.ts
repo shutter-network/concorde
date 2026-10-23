@@ -1,142 +1,33 @@
-/**
- * This is an ordinary `SignalHandler` built by an ordinary function, with no registration and no
- * base to extend, so an Operator who outgrows it stops calling it and returns a Handler of their
- * own from the same place. Nothing has to be unwired for that to work, and nothing here may grow a
- * hook that would make it untrue.
- *
- * `noEscape` must stay. Remove it and every Prompt carries `&#x27;` where an apostrophe belongs,
- * with nothing in any log to say so, because a Prompt is text for a model rather than markup for a
- * browser.
- *
- * `template` takes source and never a path, and widening it back to accept one is the thing to
- * refuse. A path costs a caller one `readFileSync` and buys the framework a whole class of
- * failure: a template read per Signal is a template that first fails a Signal, and a failed Signal
- * is permanently dead, so the person who sent the message hears nothing.
- *
- * `Handlebars.compile` defers the parse *and* the code generation to the first render, so compiling
- * alone would leave a malformed template failing that first Signal after all. The discarded
- * `precompile` below is what moves both to construction: it is the entry point that runs them
- * eagerly, and its own output, a template spec that would need an `eval` to become a function, is
- * not what is wanted. So the template is parsed and compiled twice, once per Handler per process,
- * and that is the price. Parsing alone would be half of it: an unclosed block is a parse error, but
- * a partial called with two arguments is a code generation error and reaches the same Signal.
- *
- * What construction still cannot catch is a helper complaining about its own arguments. A bare
- * `#if` block with none throws from the built-in helper, which runs only with a context, so it
- * stays a render failure and there is no place to move it to.
- *
- * The Operator's own callbacks are awaited outside the try/catch below on purpose, and `post` is
- * handed to the Worker unwrapped for the same reason. An error thrown by one of them is theirs to
- * recognise, and wrapping it in a sentence about a template would put our words on their bug.
- */
-
 import Handlebars from "handlebars";
 import type { PostOutcome, Prompt, Signal, SignalHandler } from "./handlers.ts";
 
 export type TemplateHandlerOptions<TPayload = unknown> = {
-  /**
-   * The Handlebars source, compiled once when the Handler is built.
-   *
-   * Source, and not a path or a `file:` URL. A deployment that keeps its wording in a file reads
-   * the file itself: `template: readFileSync(new URL("./prompt.hbs", import.meta.url), "utf8")`.
-   * Nothing reads it again after that, so an edit reaches no Prompt until the process starts again.
-   * In exchange a template Handlebars cannot compile throws from {@link templateHandler}, before
-   * the Gateway listens, instead of failing a Signal that nothing retries.
-   *
-   * It is compiled with `noEscape`, so nothing substituted is HTML-escaped, and with `strict`,
-   * which fails the Signal on a variable `data` did not supply. `strict` also disables inverse
-   * sections: a caret block such as `^absent` throws, and the `unless` helper is what to write in
-   * its place. The `if`, `each` and `else` helpers behave as usual.
-   */
+  /** Template source, not a file path. Read template files before constructing the handler. */
   readonly template: string;
 
-  /**
-   * Which Session this Signal's Prompt continues, or `null` to ask for a fresh one.
-   *
-   * The topology is yours: one Session per User, one per Run, or one for the whole agent. A
-   * returned Promise is awaited.
-   */
   readonly session: (signal: Signal<TPayload>) => string | null | Promise<string | null>;
 
-  /**
-   * The values the template substitutes. A name the template references and this does not supply
-   * fails the Signal rather than rendering as nothing.
-   *
-   * A returned Promise is awaited, so this can be `async`, and it is where a Handler reads what the
-   * Prompt needs: the Message log, the Workspace, or tables of your own.
-   */
   readonly data: (signal: Signal<TPayload>) => unknown;
 
-  /**
-   * What the Prompt carries beside its text, for the Agent server rather than for the agent: the
-   * answer is written onto the Prompt as `context`, stored on the Run row, and readable as
-   * `request.concordeRun` from every request the Agent server takes while that Run is in flight.
-   * Nothing renders it and no framework route reads it; an Operator's own hook does.
-   *
-   * A returned Promise is awaited, so this can be `async` like `data`. Absent means the Prompt
-   * carries none, which the Run records as `null`. Something the agent itself has to know goes
-   * into the template, as everything else does.
-   */
   readonly context?: (signal: Signal<TPayload>) => unknown;
 
-  /**
-   * Handlebars helpers, registered on an environment belonging to this Handler alone. Another
-   * Handler built by another call cannot see them, and neither can the shared `Handlebars`
-   * instance. What a helper returns is substituted unescaped, like everything else.
-   */
   readonly helpers?: Readonly<Record<string, Handlebars.HelperDelegate>>;
 
-  /**
-   * Handlebars partials, as template source rather than as templates already compiled.
-   *
-   * They are compiled here with the same options as the template itself, so `noEscape` and `strict`
-   * hold inside them too.
-   */
   readonly partials?: Readonly<Record<string, string>>;
 
-  /**
-   * The post phase, run once after every Run arising from the Signal has finished, whether they
-   * succeeded, failed or were never created. It produces no Prompts.
-   *
-   * It is the whole of the framework's failure handling, because nothing retries a Signal: a
-   * Signal that came to nothing came to nothing for good, and telling somebody so is written here
-   * or nowhere. `outcome.failed` is true if any Run failed and true as well if the render failed
-   * before there were any.
-   *
-   * It is carried to the Signal Worker as written and never called from here, and what it throws
-   * is not wrapped: the Worker records it as `the post phase failed: ...`, beside whatever else
-   * went wrong. What it closes over is yours, exactly as the Handler contract has it.
-   */
   readonly post?: (signal: Signal<TPayload>, outcome: PostOutcome) => void | Promise<void>;
 };
 
-// Both are load-bearing and both are argued in the file header. What they do to a template is
-// documented on `TemplateHandlerOptions.template`, because a template author has to know.
 const compileOptions: CompileOptions = { noEscape: true, strict: true };
 
 /**
- * Builds a Signal Handler that renders one Prompt per Signal from a Handlebars template.
- *
- * One Prompt, always. It never fans a Signal out across several Sessions and never declines one,
- * although the Handler contract allows both. A post phase it does carry: `post` is an option here
- * and reaches the Worker as the Handler's own, so the Signal's payload is narrowed in it the way
- * it is in `session` and `data`. A context it carries the same way: `context` is a function of the
- * Signal beside those two, and its answer goes onto the Prompt unrendered.
- *
- * A template that compiles and then does not render fails the Signal, with a message naming the
- * Signal's kind. Handlebars names the variable, the line and the column, and never says which
- * Handler was rendering, which is the one thing an Operator running several of them needs.
- *
- * @throws if `template` does not compile. The message is Handlebars' own and names the line and
- * the column. A helper's complaint about its own arguments is not among these, because a helper
- * runs only with a context.
+ * Renders one prompt per signal using strict Handlebars with HTML escaping disabled.
+ * Syntax errors in the main template fail construction; missing template values fail the signal.
+ * Helpers and partials are local to this handler.
  */
 export function templateHandler<TPayload = unknown>(
   options: TemplateHandlerOptions<TPayload>,
 ): SignalHandler<TPayload> {
-  // One environment per Handler, so a helper or a partial cannot reach another Handler's
-  // templates or the shared `Handlebars` instance. Built once, because it holds only what was
-  // passed to this factory and none of it changes.
   const environment = Handlebars.create();
   for (const [name, helper] of Object.entries(options.helpers ?? {})) {
     environment.registerHelper(name, helper);
@@ -145,21 +36,14 @@ export function templateHandler<TPayload = unknown>(
     environment.registerPartial(name, partial);
   }
 
-  // Compiled here and not left to `compile`, which does both its jobs on the first render. The
-  // result is thrown away; what is wanted is the throw. See the file header.
+  // Handlebars.compile parses lazily; precompile makes syntax errors fail construction.
   environment.precompile(options.template, compileOptions);
   const render = environment.compile(options.template, compileOptions);
 
   return {
     async handle(signal: Signal<TPayload>): Promise<readonly Prompt[]> {
-      // Outside the wrapping below on purpose; see the file header.
       const session = await options.session(signal);
       const data = await options.data(signal);
-      // Awaited here with the other two, so a context function that throws fails the Signal in
-      // the Operator's own words rather than after a render it would have made pointless. Left
-      // off the Prompt entirely when there is no function: `context: undefined` is a key an
-      // Operator's deepEqual sees and a Prompt with no context is the shape of every Prompt
-      // before this option existed.
       const context =
         options.context === undefined ? {} : { context: await options.context(signal) };
 
@@ -167,9 +51,6 @@ export function templateHandler<TPayload = unknown>(
       try {
         text = render(data);
       } catch (error) {
-        // `strict` refusing a variable `data` did not supply, or a partial this environment does
-        // not hold. Either way the library's message says nothing about which Handler was
-        // rendering, which is what the kind adds.
         throw new Error(`the prompt template for ${signal.kind} did not render: ${reason(error)}`, {
           cause: error,
         });
@@ -178,16 +59,10 @@ export function templateHandler<TPayload = unknown>(
       return [{ session, text, ...context }];
     },
 
-    // Spread rather than `post: options.post`, which `exactOptionalPropertyTypes` refuses: a
-    // possibly-undefined value on an optional property is TS2375. The Worker would skip either
-    // spelling, since it asks `handler.post !== undefined`; this is the type's rule about absence
-    // and not the Worker's.
     ...(options.post === undefined ? {} : { post: options.post }),
   };
 }
 
-// The message alone, because this ends up in the Signal's `error` column rather than on a console
-// where a stack would be read.
 function reason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

@@ -1,24 +1,3 @@
-/**
- * Recording which Nostr public key belongs to which User: the whole of admission over this
- * medium, and the whole of what an injected prompt must not be able to do.
- *
- * Two claims are being made here and they pull in opposite directions, which is why they are
- * tested together. **An Operator can record a key from their own code**, in their own
- * transaction, and it proves nothing — the framework verifies nothing about it and cannot. And
- * **nothing else can record one**: there is no route on either server, so a prompt that talked the
- * agent into calling every capability it has still cannot claim a User's key and take over their
- * conversation.
- *
- * The refusals are the other subject. A key already recorded cannot be claimed by a second User,
- * and one User cannot hold two keys, because either would make "whose Message is this" ambiguous
- * in a component whose only authentication is a public key. Each is a constraint in the database
- * rather than a check in front of it, and each is asked for here.
- *
- * The rows are read directly, which is deliberate: "nothing was stored" has no other seam, and
- * the spec names a row that exists or does not as an observable. That a recorded key actually
- * admits a message is `receiving.test.ts`'s subject and is not repeated here.
- */
-
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
@@ -41,17 +20,10 @@ import { createNostrChannel, type NostrChannel } from "./nostr-channel.ts";
 import * as nostrChannelSchema from "./schema/index.ts";
 import { nostrChannelTables, pubkeys } from "./schema/index.ts";
 
-/** Where a server that is never started would have listened, had it been. */
 const nowhere = { port: 0, host: "127.0.0.1" } as const;
 
 const silent: Logger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
 
-/**
- * A Relay address nothing answers on.
- *
- * Nothing in this file starts the Channel, and construction connects to nothing, so the address
- * is never dialled. A file about admission should not need a socket.
- */
 const unreachable = "ws://127.0.0.1:1";
 
 let database: TestDatabase;
@@ -86,12 +58,10 @@ before(async () => {
 
 after(() => database.drop());
 
-/** A User admitted the way trusted code admits one, holding no Nostr key yet. */
 async function admit(): Promise<string> {
   return (await db.tx((tx) => users.create(tx))).id;
 }
 
-/** The key recorded for one User, or `undefined`. The only place a row is read directly. */
 async function keyOf(userId: string): Promise<string | undefined> {
   const rows = await db
     .handle(nostrChannelTables)
@@ -101,7 +71,6 @@ async function keyOf(userId: string): Promise<string | undefined> {
   return rows[0]?.pubkey;
 }
 
-/** A public key in the form the wire uses, which is the only form this accepts. */
 function aPublicKey(): string {
   return getPublicKey(generateSecretKey());
 }
@@ -111,8 +80,6 @@ describe("an Operator recording a User's Nostr key", () => {
     const userId = await admit();
     const publicKey = aPublicKey();
 
-    // The transaction is the caller's, which is what makes recording a key and writing the
-    // Operator's own note about why it was admitted one act. A rollback loses both.
     await assert.rejects(
       () =>
         db.tx(async (tx) => {
@@ -136,8 +103,6 @@ describe("an Operator recording a User's Nostr key", () => {
         () => channel.recordPublicKey(tx, missing, aPublicKey()),
         NoSuchUserError,
       );
-      // The refusal ran in a savepoint, so this transaction is still usable and its later work
-      // commits. Without that, a refusal would take the Operator's whole transaction with it.
       await channel.recordPublicKey(tx, survivor, aPublicKey());
     });
     assert.notEqual(await keyOf(survivor), undefined);
@@ -154,8 +119,6 @@ describe("an Operator recording a User's Nostr key", () => {
       PublicKeyConflictError,
     );
 
-    // The first User keeps it, and the second holds nothing: one key is one person's inbox, and
-    // a second claimant would be reading their conversation.
     assert.equal(await keyOf(first), shared);
     assert.equal(await keyOf(second), undefined);
   });
@@ -169,8 +132,6 @@ describe("an Operator recording a User's Nostr key", () => {
       () => db.tx((tx) => channel.recordPublicKey(tx, userId, aPublicKey())),
       PublicKeyConflictError,
     );
-    // Nothing was replaced either. There is no rotation here, in the same sense that there is
-    // none for either of the agent's own identities.
     assert.equal(await keyOf(userId), original);
   });
 
@@ -178,10 +139,6 @@ describe("an Operator recording a User's Nostr key", () => {
     const userId = await admit();
     const secretKey = generateSecretKey();
 
-    // An `npub` is the form every tool prints and the one an Operator will reach for first. It
-    // is refused at the call site because a stored one would be compared byte for byte against
-    // the author of every decrypted message, match none of them, and leave a User who simply
-    // never hears from the agent with nothing anywhere saying why.
     for (const wrong of [
       "npub1sn0wdenkukak0d9dfczzeacvhkrgz92ak56egt7vdgzn8pv2wfqqhrjdv9",
       getPublicKey(secretKey).toUpperCase(),
@@ -199,11 +156,6 @@ describe("an Operator recording a User's Nostr key", () => {
 
 describe("what the Nostr Channel exposes, and what it deliberately does not", () => {
   it("carries no method but the one that records a key, and no route plugin", async () => {
-    // The whole public surface of the object an Operator holds. `recordPublicKey` is the only
-    // trusted-code method; everything else this component does, it does for the Relay or for the
-    // Messenger. `drain` is the exception that proves it: a testing seam onto the half of a send
-    // that happens after the commit, which a running deployment reaches by notification and never
-    // by hand. A route plugin among these would be a door onto admission.
     assert.deepEqual(Object.keys(channel).sort(), [
       "drain",
       "name",
@@ -221,9 +173,6 @@ describe("what the Nostr Channel exposes, and what it deliberately does not", ()
     const agentServer = Fastify();
     const registered = routesOf(publicServer, agentServer);
 
-    // A whole deployment, built the way an Operator builds one: the Messenger with the agent's
-    // own routes, and this Channel beside it. The Channel is handed neither server, and there is
-    // no option on it for one — which is the mechanism, and this is the observation of it.
     const log = createMessenger({ db, users, worker, agentServer: { fastify: agentServer } });
     createNostrChannel({
       db,
@@ -236,11 +185,7 @@ describe("what the Nostr Channel exposes, and what it deliberately does not", ()
     await publicServer.ready();
     await agentServer.ready();
 
-    // Nothing at all on the Public server: a User reaches this Channel through a Relay, so a
-    // deployment running it has nothing of the Messenger's on the server Users can reach.
     assert.deepEqual(registered.public, []);
-    // And on the Agent server, only the Messenger's own group. Every one of them is about the
-    // log; none is about a key.
     assert.equal(registered.agent.length > 0, true);
     for (const route of registered.agent) {
       assert.equal(route.startsWith("/messages"), true, `${route} is not the Messenger's`);
@@ -248,7 +193,6 @@ describe("what the Nostr Channel exposes, and what it deliberately does not", ()
   });
 });
 
-/** Collects every route each server ends up with, from before anything is registered on either. */
 function routesOf(
   publicServer: FastifyInstance,
   agentServer: FastifyInstance,

@@ -1,9 +1,3 @@
-/**
- * What the client decides before it opens a socket, which is the one part of it a reader gets
- * wrong from a shell. Every case here is an argument list and an environment in, and one of the
- * three invocations out.
- */
-
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
@@ -17,17 +11,14 @@ import {
 const user = "0f4a1c2e-6b7d-4e8f-9a0b-1c2d3e4f5a6b";
 const password = "correct horse battery staple";
 
-/** An environment with both variables set, which the cases below vary one field of. */
 const filled = { [gatewayUrlVariable]: "http://gateway:8080", [passwordVariable]: password };
 
-/** The configuration, or a failure naming what came back instead. */
 function configFrom(argv: readonly string[], env: Record<string, string>): ClientConfig {
   const invocation = readInvocation(argv, env);
   if (invocation.kind !== "run") assert.fail(`expected a run, and got ${invocation.kind}`);
   return invocation.config;
 }
 
-/** The reason, or a failure naming what came back instead. */
 function refusalFrom(argv: readonly string[], env: Record<string, string>): string {
   const invocation = readInvocation(argv, env);
   if (invocation.kind !== "refused") assert.fail(`expected a refusal, and got ${invocation.kind}`);

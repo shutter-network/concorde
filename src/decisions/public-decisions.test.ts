@@ -1,24 +1,3 @@
-/**
- * A User reading the Decision log, and then checking one **without trusting the Gateway** —
- * which is the whole reason the feature exists and the only beat in it that a document cannot
- * make.
- *
- * The subject is what a person's own client sees: every assertion here is made over HTTP
- * against two real Fastify instances and real PostgreSQL, **nothing inserts a row directly**,
- * and every Token is bought with a real password at the Users component's own login route,
- * because a Token minted any other way would be testing a shortcut this surface does not have.
- *
- * The last suite is the demoable one and it is written as the third party would: it holds the
- * key set fetched over HTTP with no Token, the artifact fetched over HTTP with one, and
- * **nothing else** — no `KeyObject` this file constructed, no header or payload of its own
- * rebuilt from the record, and no `jose`. The oracle is `node:crypto`, because `jose` is what
- * signs, and the signing input is reconstructed by splitting the emitted string, which is what
- * catches signing bytes that are not the bytes that were stored.
- *
- * A database of this file's own, because no two test files may share one, and a deliberately
- * cheap scrypt cost, because every Token here starts with a login.
- */
-
 import assert from "node:assert/strict";
 import { createPublicKey, generateKeyPairSync, type JsonWebKey, verify } from "node:crypto";
 import { after, before, describe, it } from "node:test";
@@ -41,30 +20,19 @@ let db: Db;
 let agentServer: ServerComponent<FastifyInstance>;
 let publicServer: ServerComponent<FastifyInstance>;
 
-/** Where the constructor put both route groups, and the login route of Password Auth. */
 const prefix = "/decisions";
 const auth = "/auth";
 
-/** Where a server that is never started would have listened, had it been. */
 const nowhere = { port: 0, host: "127.0.0.1" } as const;
 
 const hour = 60 * 60 * 1000;
 
-/**
- * A cost nobody should deploy, so that a file full of logins runs in a moment.
- *
- * Legitimate because each digest carries the parameters it was written under: this is a
- * construction-time number and not a property of the schema.
- */
 const cheap: ScryptParameters = { logN: 12, blockSize: 8, parallelism: 1 };
 
-/** The one password in this file. Nothing here is about what a good password is. */
 const password = "correct horse battery staple";
 
-/** A logger with nothing to say: one line per signing is `signatures.test.ts`'s subject. */
 const silent = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
 
-/** The Token this file reads with, bought at the real login route in `before`. */
 let token: string;
 
 before(async () => {
@@ -74,13 +42,7 @@ before(async () => {
   agentServer = serverComponent(Fastify(), nowhere);
   publicServer = serverComponent(Fastify(), nowhere);
 
-  // No Signal Worker anywhere in this file, and that is worth noticing rather than reading as
-  // an omission: neither part here is a Producer and neither holds one, so unlike every
-  // messaging suite there is nothing to construct and nothing that could wake.
   const users = createUsers({ db, agentServer, publicServer });
-  // The scheme this file logs in with. It registers itself with the Public server, which is
-  // what makes `publicServer.requireUser` able to authenticate anybody at all: Decisions holds
-  // no credential and this component is where the Token comes from.
   const passwordAuth = createPasswordAuth({
     db,
     users,
@@ -88,9 +50,6 @@ before(async () => {
     tokenTtl: hour,
     scrypt: cheap,
   });
-  // The keypair is generated here, which is where a keypair may be generated: the framework
-  // generates none, because a fresh key per restart leaves every artifact ever published
-  // unverifiable with nothing saying so.
   const { privateKey } = generateKeyPairSync("ed25519");
   const signatures = createSignatures({
     signingKey: privateKey,
@@ -102,8 +61,6 @@ before(async () => {
 
   await applySchema(db, usersSchema, passwordAuthSchema, decisionsSchema);
 
-  // Admitted from trusted code, in one transaction, which is the only way a User with a
-  // password exists: there is no route that creates one.
   const created = await db.tx(async (tx) => {
     const user = await users.create(tx);
     await passwordAuth.setPassword(tx, user.id, password);
@@ -128,10 +85,6 @@ describe("a User reading the log", () => {
   it("gets the same records the agent published, byte for byte", async () => {
     const published = await publish("the thing everybody gets to see");
 
-    // The same record, from two surfaces, with nothing scoping either: the agent's read and a
-    // User's are one query, and the two route groups differ only in whether an auth hook ran.
-    // Compared whole, so a field declared in one response schema and forgotten in
-    // the other differs here.
     const read = await ownLog(`?after=${published.seq - 1}`);
     assert.deepEqual(read, [published]);
 
@@ -142,9 +95,6 @@ describe("a User reading the log", () => {
   });
 
   it("is refused without a Token, in the single 401 the Public server answers", async () => {
-    // This part authenticates nobody: the hook belongs to the Public server, taken as one
-    // option on the route, so a missing header, a header in another scheme, an unknown Token
-    // and an expired one are one status and one message.
     for (const headers of [{}, { authorization: "Basic nope" }, { authorization: "Bearer nope" }]) {
       const refused = await publicServer.fastify.inject({ url: prefix, headers });
       assert.equal(refused.statusCode, 401, refused.body);
@@ -165,9 +115,6 @@ describe("a User reading the log", () => {
 
 describe("a User citing a Decision by number", () => {
   it("fetches the one that was cited at them, and the agent's copy of it is identical", async () => {
-    // What a citation is for: somebody quotes "Decision 7" and the number is the whole of what
-    // the reader needs. Compared whole against both surfaces, because the log is global and the
-    // two reads are one query with nothing to scope.
     const published = await publish("the term somebody will quote by number");
 
     const cited = await citing(published.seq);
@@ -181,9 +128,6 @@ describe("a User citing a Decision by number", () => {
   it("is refused without a Token, in the same 401 the log read answers", async () => {
     const published = await publish("not for whoever found the port");
 
-    // The Gateway is not a public bulletin board: a Decision is public because a *User* takes
-    // one away and hands it on, not because a stranger can fetch one. The refusal is
-    // the server's, so it is byte for byte the one the log read answers with.
     const refused = await publicServer.fastify.inject({ url: `${prefix}/${published.seq}` });
     assert.equal(refused.statusCode, 401, refused.body);
     const log = await publicServer.fastify.inject({ url: prefix });
@@ -201,10 +145,6 @@ describe("a User citing a Decision by number", () => {
       message: `no Decision ${beyond} exists`,
     });
 
-    // A word rather than a number, which is a 400 and not a 500, and which is answered before
-    // the Token is looked at: validation runs at `preValidation` and `requireUser` at
-    // `preHandler`, the order every other Public route already answers in. That leaks nothing,
-    // a refusal about a path naming no User.
     const word = await publicServer.fastify.inject({ url: `${prefix}/seven` });
     assert.equal(word.statusCode, 400, word.body);
   });
@@ -212,10 +152,6 @@ describe("a User citing a Decision by number", () => {
 
 describe("a third party holding nothing but the public key", () => {
   it("checks a Decision without asking this Gateway whether it is real", async () => {
-    // The demoable end of the whole feature. Everything below comes off a wire: the artifact
-    // over the Public server with a Token, the key over the same server with none. Nothing
-    // here holds the `KeyObject` the Gateway was constructed with, and nothing here calls
-    // `jose`.
     const published = await publish("we will honour the terms as written");
     const [read] = await ownLog(`?after=${published.seq - 1}`);
     assert.ok(read !== undefined);
@@ -223,20 +159,12 @@ describe("a third party holding nothing but the public key", () => {
     const [header, payload, signature] = read.jws.split(".");
     assert.ok(header !== undefined && payload !== undefined && signature !== undefined, read.jws);
 
-    // Base64url and not base64, which is what makes the artifact URL-safe and is what lets a
-    // Party paste one into a bug report, an email or a URL without it arriving mangled.
     for (const segment of [header, payload, signature]) {
       assert.match(segment, /^[A-Za-z0-9_-]+$/, read.jws);
     }
-    // Exactly 64 bytes for Ed25519 (RFC 8037), which is the shape every other library on
-    // earth insists on and a self-consistent verifier of our own would never have noticed.
     assert.equal(Buffer.from(signature, "base64url").length, 64);
 
-    // The header says which algorithm and what kind of thing this is, and both are inside the
-    // signature, so neither can be swapped by whoever hands the artifact on.
     assert.deepEqual(decoded(header), { alg: "EdDSA", typ: "concorde-decision+jws" });
-    // And the payload says the same as the record: a verifier who was given only the artifact
-    // reconstructs the log entry from it, which is why a row is not needed for one to be real.
     assert.deepEqual(decoded(payload), {
       seq: read.seq,
       createdAt: read.createdAt,
@@ -251,9 +179,6 @@ describe("a third party holding nothing but the public key", () => {
     const [header, payload, signature] = published.jws.split(".");
     assert.ok(header !== undefined && payload !== undefined && signature !== undefined);
 
-    // A statement that says something else under a signature over something else. This is the
-    // case the artifact exists to make impossible, and it is what a Party is protected by when
-    // they show a Decision to somebody who does not trust the Operator.
     const edited = encoded({
       seq: published.seq,
       createdAt: published.createdAt,
@@ -261,8 +186,6 @@ describe("a third party holding nothing but the public key", () => {
     });
     assert.equal(await checks(`${header}.${edited}.${signature}`), false);
 
-    // A different number under the same words, which is the other edit worth trying: `seq`
-    // orders two contradictory Decisions, so it is inside the signature too.
     const renumbered = encoded({
       seq: published.seq + 1000,
       createdAt: published.createdAt,
@@ -270,14 +193,11 @@ describe("a third party holding nothing but the public key", () => {
     });
     assert.equal(await checks(`${header}.${renumbered}.${signature}`), false);
 
-    // And the type alone, which is what proves the header is signed: a receipt presented as a
-    // Decision changes nothing else.
     const relabelled = encoded({ alg: "EdDSA", typ: "concorde-receipt+jws" });
     assert.equal(await checks(`${relabelled}.${payload}.${signature}`), false);
   });
 });
 
-/** One `POST /decisions`, the way the agent publishes one. */
 async function publish(statement: string): Promise<DecisionRecord> {
   const answered = await agentServer.fastify.inject({
     method: "POST",
@@ -288,7 +208,6 @@ async function publish(statement: string): Promise<DecisionRecord> {
   return answered.json<DecisionRecord>();
 }
 
-/** One `GET /decisions` on the Public server, with the Token this file bought. */
 async function ownLog(window: string): Promise<DecisionRecord[]> {
   const answered = await publicServer.fastify.inject({
     url: `${prefix}${window}`,
@@ -298,7 +217,6 @@ async function ownLog(window: string): Promise<DecisionRecord[]> {
   return answered.json<{ decisions: DecisionRecord[] }>().decisions;
 }
 
-/** One `GET /decisions/:seq` on the Public server, unasserted: three statuses are its subject. */
 function citing(seq: number) {
   return publicServer.fastify.inject({
     url: `${prefix}/${seq}`,
@@ -306,17 +224,7 @@ function citing(seq: number) {
   });
 }
 
-/**
- * One verification, done the way a third party does it and with nothing else in hand.
- *
- * The signing input is **reconstructed by splitting the string that was served** rather than
- * rebuilt from a header and a payload of this file's own: a rebuilt input would agree with a
- * signer that had covered different bytes, and the artifact would still be unverifiable by
- * everybody else. `node:crypto` and not `jose`, because `jose` is what signed it.
- */
 async function checks(jws: string): Promise<boolean> {
-  // With no Token, which is the point of this route: a verifier who never authenticates and
-  // never will still gets the key.
   const answered = await publicServer.fastify.inject({ url: "/jwks.json" });
   assert.equal(answered.statusCode, 200, answered.body);
   const [key] = answered.json<{ keys: JsonWebKey[] }>().keys;
@@ -332,12 +240,10 @@ async function checks(jws: string): Promise<boolean> {
   );
 }
 
-/** One segment as the JSON it holds. */
 function decoded(segment: string): unknown {
   return JSON.parse(Buffer.from(segment, "base64url").toString("utf8"));
 }
 
-/** The same, backwards, for the segments this file substitutes to see them refused. */
 function encoded(claims: unknown): string {
   return Buffer.from(JSON.stringify(claims), "utf8").toString("base64url");
 }

@@ -1,19 +1,9 @@
-/**
- * The waiting, with the wait taken out: `sleep` records what it was asked for and answers at once,
- * so a test states a backoff curve instead of living through it.
- *
- * What is worth pinning is which errors keep the loop going. A client that retried a 401 would ask
- * a Gateway the same wrong password until somebody stopped it.
- */
-
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { backoffFor, firstDelayMs, maxDelayMs, retrying } from "./retry.ts";
 
-/** The only error this suite retries, standing in for "no answer arrived". */
 class Refused extends Error {}
 
-/** Fails `failures` times and then answers, counting the calls. */
 function failing(failures: number, answer = "answered") {
   let calls = 0;
   return {
@@ -28,7 +18,6 @@ function failing(failures: number, answer = "answered") {
   };
 }
 
-/** A sleep that records and returns, so the delays are the assertion. */
 function recording() {
   const slept: number[] = [];
   return { slept, sleep: async (ms: number) => void slept.push(ms) };

@@ -1,17 +1,3 @@
-/**
- * The drain loop and Signal Handler dispatch: the heart of the Signal Worker.
- *
- * PostgreSQL is real and the only fake is the Runtime, which is the seam
- * a container would otherwise sit behind. The Handlers are written inline,
- * because that is exactly what an Operator writes — a plain object closing over
- * whatever the test needs, with no harness from us.
- *
- * Every assertion here is on something an Operator or the agent could see: what a
- * Signal's state and error end up as, what Runs exist behind it, what the adapter
- * was handed, and in what order. None reads an intermediate row to confirm an
- * internal step, with one deliberate exception noted where it happens.
- */
-
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { asc, eq, sql } from "drizzle-orm";
@@ -55,29 +41,13 @@ function recordingLogger(entries: LogEntry[]): Logger {
   return { debug: at("debug"), info: at("info"), warn: at("warn"), error: at("error") };
 }
 
-/**
- * A sweep fast enough that no test about dispatch waits on a notification arriving,
- * and one far enough away that a test about notifications cannot be rescued by it.
- *
- * The second number is the load-bearing one: it is longer than `waitUntil`'s own
- * patience, so a Signal that only the sweep could have found fails the test.
- */
 const sweepingMs = 5;
 const sleepingSweepMs = 60_000;
 
-/** What the Signal Worker logs once its notification connection is up. */
 const listeningMessage = "listening for Signal notifications";
 
 type WorkerBody = (worker: SignalWorker, entries: readonly LogEntry[]) => Promise<void>;
 
-/**
- * A Signal Worker of its own per test, so each brings its own Handler map — which is
- * what constructing with the map means in practice. Signals from earlier tests are all
- * in a terminal state, so nothing carries over.
- *
- * Every Worker records what it logged, because what woke it is only visible there: a
- * Signal reaching `done` says nothing about which of the two mechanisms found it.
- */
 async function withWorker(
   handlers: SignalHandlers,
   runtime: Runtime,
@@ -100,11 +70,6 @@ async function withWorker(
   }
 }
 
-/**
- * A Signal Worker whose sweep is out of reach, and which is already listening before
- * the body runs — so a notification is the only thing that can wake it, and one sent
- * in the gap before the registration was in place cannot be mistaken for one lost.
- */
 function withNotifiedWorker(
   handlers: SignalHandlers,
   runtime: Runtime,
@@ -123,19 +88,16 @@ function withNotifiedWorker(
   );
 }
 
-/** How many times the worker was woken for a given reason. */
 function wakeups(entries: readonly LogEntry[], reason: string): number {
   return entries.filter(
     (entry) => entry.message === "worker woken" && entry.fields.reason === reason,
   ).length;
 }
 
-/** A notification for the Signal Worker's channel that no Signal is behind. */
 function notifyNothing(): Promise<unknown> {
   return db.handle({}).execute(sql`select pg_notify(${signalChannel}, '')`);
 }
 
-/** Emitting as a Producer does: inside a transaction the caller owns. */
 function emit(worker: SignalWorker, kind: string, payload: unknown = {}): Promise<string> {
   return db.tx((tx) => worker.emit(tx, { kind, payload }));
 }
@@ -145,7 +107,6 @@ async function signalRow(id: string): Promise<typeof signals.$inferSelect | unde
   return row;
 }
 
-/** Waits for the worker to finish with a Signal and returns what it recorded. */
 async function settled(id: string): Promise<typeof signals.$inferSelect> {
   await waitUntil(`Signal ${id} reaches a terminal state`, async () => {
     const state = (await signalRow(id))?.state;
@@ -156,7 +117,6 @@ async function settled(id: string): Promise<typeof signals.$inferSelect> {
   return row;
 }
 
-/** A Signal's Runs, in the order the worker started them. */
 function runsOf(signalId: string): Promise<(typeof runs.$inferSelect)[]> {
   return db
     .handle({ runs })
@@ -168,8 +128,6 @@ function runsOf(signalId: string): Promise<(typeof runs.$inferSelect)[]> {
 
 describe("worker.emit", () => {
   it("records a Signal as pending", async () => {
-    // No worker started, so what is asserted is what `emit` wrote and nothing else —
-    // and a Handler map with nothing in it, because nothing here dispatches.
     const worker = createSignalWorker({
       db,
       runtime: fakeRuntime(),
@@ -184,8 +142,6 @@ describe("worker.emit", () => {
     assert.deepEqual(row?.payload, { hello: "world" });
     assert.equal(row?.error, null);
 
-    // Nothing would ever claim it, and a later test's Signal Worker would fail it as an
-    // unhandled kind.
     await db.handle({ signals }).delete(signals).where(eq(signals.id, id));
   });
 
@@ -214,19 +170,12 @@ describe("worker.emit", () => {
         );
         assert.ok(rolledBackId, "emit should have returned an id before the rollback");
 
-        // A Signal emitted afterwards that does commit is what makes "never
-        // processed" a fact rather than a race this test happened to win: the worker
-        // demonstrably looked at the queue after the rollback.
         const markerId = await emit(worker, "marker");
         assert.equal((await settled(markerId)).state, "done");
 
         assert.deepEqual(seen, ["marker"]);
         assert.equal(await signalRow(rolledBackId), undefined);
 
-        // And the wakeup went with it. The notification is sent inside the caller's
-        // transaction, so the abandoned one was never delivered — exactly one
-        // notification arrived, the marker's. Nudging the worker after commit
-        // instead would have woken it for a Signal that does not exist.
         assert.equal(wakeups(entries, "notification"), 1);
       },
     );
@@ -251,12 +200,6 @@ describe("worker.start", () => {
   });
 });
 
-/**
- * The type checker is the assertion: the Handler map is a construction option, so a
- * Signal Worker with none is unconstructable rather than merely unstartable.
- * Never called — if `handlers` ever became optional, `@ts-expect-error`
- * would fail the typecheck.
- */
 export function constructingWithoutHandlersDoesNotCompile(runtime: Runtime): SignalWorker {
   // @ts-expect-error the kind-to-Handler map is a required option
   return createSignalWorker({ db, runtime });
@@ -299,8 +242,6 @@ describe("the worker", () => {
       const id = await emit(worker, "decline");
       const row = await settled(id);
 
-      // Declining is not a special case, and the arrival record survives it —
-      // which is what makes a Handler's refusal auditable.
       assert.equal(row.state, "done");
       assert.equal(row.error, null);
       assert.deepEqual(await runsOf(id), []);
@@ -333,9 +274,6 @@ describe("the worker", () => {
           [
             ["user_1", "one", "done", null],
             ["user_2", "two", "done", null],
-            // Not `null`, which is what this column said for a fresh Session until the
-            // Worker started naming them: the one Prompt whose Session nobody chose
-            // still records the one it used.
             [`run_${fresh.id}`, "three, in a fresh Session", "done", null],
           ],
         );
@@ -351,14 +289,6 @@ describe("the worker", () => {
 
   it("processes Signals in arrival order, one Run at a time", async () => {
     const runtime = fakeRuntime();
-    // Two Prompts per Signal, so "one at a time" covers both directions it could
-    // be broken in: Runs of one Signal overlapping each other, and Runs of two
-    // Signals overlapping. Different Sessions make no difference — the worker is
-    // serial globally, and a shared Workspace is safe for no other reason.
-    //
-    // The Handler also declares the payload it expects. The Signal Worker carries
-    // payloads as `unknown`, because their shape is the Producer's contract rather
-    // than the framework's, and a Handler narrowing it still goes in the map.
     const ordered: SignalHandler<{ n: number }> = {
       handle: (signal) => [
         { session: `user_${signal.payload.n}`, text: `${signal.payload.n}a` },
@@ -437,8 +367,6 @@ describe("the worker", () => {
         assert.equal(row.state, "failed");
         assert.match(row.error ?? "", /the model refused/);
 
-        // The Prompt after the failing one still ran: the Handler asked for both,
-        // and nothing here is retried or abandoned.
         assert.deepEqual(
           (await runsOf(id)).map((run) => [run.prompt, run.state, run.error]),
           [
@@ -466,9 +394,6 @@ describe("the worker", () => {
         const id = await emit(worker, "posted.badly");
         const row = await settled(id);
 
-        // The Runs succeeded and the Signal still failed, because processing it
-        // did not finish cleanly and a log line is not somewhere an Operator
-        // looks for a Signal's outcome.
         assert.equal(row.state, "failed");
         assert.match(row.error ?? "", /post phase failed: the cleanup could not cope/);
         assert.deepEqual(
@@ -506,7 +431,6 @@ describe("the worker", () => {
         assert.deepEqual(await runsOf(boomId), []);
         assert.equal(told, true);
 
-        // The worker carried on, which is the half of this that matters.
         assert.equal((await settled(fineId)).state, "done");
         assert.deepEqual(runtime.texts(), ["still working"]);
       },
@@ -527,10 +451,6 @@ describe("the worker", () => {
   });
 
   it("hands the Runtime any Session name, and fails only the Run it rejects", async () => {
-    // What makes a name acceptable is the Agent Implementation's to say and nothing
-    // here holds a copy of it, so every Prompt reaches the Runtime with
-    // the name its Handler wrote — including the two spellings a check of ours would
-    // have refused.
     const runtime = fakeRuntime((prompt) =>
       prompt.session === "user:2"
         ? { ok: false, error: "Session id must be alphanumeric" }
@@ -556,9 +476,6 @@ describe("the worker", () => {
           runtime.recorded.map((prompt) => prompt.session),
           ["user_1", "user:2", "../escape"],
         );
-        // The rejected name is on its own Run's row beside the Runtime's own words,
-        // and the Prompts around it ran — which is the ordinary shape of a failed
-        // Run rather than an exception the framework made for names.
         assert.deepEqual(
           (await runsOf(id)).map((run) => [run.session, run.state, run.error]),
           [
@@ -572,9 +489,6 @@ describe("the worker", () => {
   });
 
   it("has each Run recorded and running by the time the Runtime is called, and the Agent server carrying it", async () => {
-    // The Agent server, as bare as an Operator's own and never listening: `inject` boots it,
-    // and the one route on it is this test's, answering with what the Worker wrote onto the
-    // request. The Worker is handed the instance, so the hook is the constructor's doing.
     const fastify = Fastify();
     fastify.get("/whose", async (request) => request.concordeRun ?? null);
 
@@ -586,16 +500,6 @@ describe("the worker", () => {
       carried: unknown;
     };
     const observed: Observed[] = [];
-    // Reading the Run mid-flight is the one intermediate read in this file, and it is
-    // here because the Prompt is only worth handing over if the Run behind it already
-    // exists: this is what the agent sees over the Agent server while its own Run is
-    // going. The Runtime used to be handed the Run's id to make this checkable; it takes
-    // one argument now, so the lookup is by Session, and `found` is asserted
-    // rather than assumed: a Session name is unique here only because these two are, and
-    // taking the first of two matches would make this test pass by luck.
-    //
-    // The request on the Agent server is made from the same place and for the same reason:
-    // what it carries is only a fact while the Runtime is being awaited.
     const runtime = fakeRuntime(async (prompt) => {
       const found = await db
         .handle({ runs })
@@ -632,8 +536,6 @@ describe("the worker", () => {
     try {
       const id = await emit(worker, "paired");
       await settled(id);
-      // And on nothing once the Runs are over: a request between Runs, or after the last
-      // one, is nobody's, and a context left behind would be a finished Run's permissions.
       assert.equal((await fastify.inject("/whose")).json(), null);
 
       const [first, second] = await runsOf(id);
@@ -643,12 +545,7 @@ describe("the worker", () => {
           found: 1,
           prompt: "first",
           state: "running",
-          // On the row in the same insert as the Prompt, and `null` where the Handler wrote
-          // none: the Worker cannot tell an omission from a meaningful nothing and does not
-          // try.
           context: { for: "one" },
-          // And on every request the Agent server took while the Run was in flight: the Run,
-          // the Signal it came from, the Session it is in and what the Handler said about it.
           carried: { id: first.id, signalId: id, session: "paired_1", context: { for: "one" } },
         },
         {
@@ -659,8 +556,6 @@ describe("the worker", () => {
           carried: { id: second.id, signalId: id, session: "paired_2", context: null },
         },
       ]);
-      // The Runtime seam is untouched: the context went to the row and the request, and the
-      // Prompt the Runtime was handed is the Session and the text and nothing beside them.
       assert.deepEqual(runtime.recorded, [
         { session: "paired_1", text: "first" },
         { session: "paired_2", text: "second" },
@@ -672,10 +567,6 @@ describe("the worker", () => {
   });
 
   it("names a fresh Session after the Run it belongs to, and hands the Runtime that name", async () => {
-    // The whole of what a Handler writing `session: null` now gets. The name is the
-    // framework's one convention rather than each Runtime's, and it is resolved here,
-    // where the Run row is: a Runtime that generated its own could name a Session the
-    // Run's row could not record, which is what `runs.session` said `null` for.
     const runtime = fakeRuntime();
     await withWorker(
       {
@@ -693,20 +584,14 @@ describe("the worker", () => {
         assert.equal((await settled(id)).state, "done");
 
         const rows = await runsOf(id);
-        // Every Run records the Session it used, and the two fresh ones are told apart
-        // by the Runs they belong to rather than by chance.
         assert.deepEqual(
           rows.map((row) => row.session),
           [`run_${rows[0]?.id}`, `run_${rows[1]?.id}`, "chosen"],
         );
-        // And the Runtime was handed exactly what the row says, so an Operator reading
-        // the row is reading what the agent was actually given.
         assert.deepEqual(
           runtime.recorded.map((prompt) => prompt.session),
           rows.map((row) => row.session),
         );
-        // And the Session is the only thing resolving touched: all three Prompts ran, in
-        // the order the Handler returned them, carrying the text it wrote.
         assert.deepEqual(runtime.texts(), [
           "a fresh Session",
           "another, and not the same one",
@@ -747,8 +632,6 @@ describe("wakeup", () => {
       const id = await emit(worker, "woken");
       assert.equal((await settled(id)).state, "done");
 
-      // The sweep is a minute away and the test's own patience is ten seconds, so a
-      // Signal that arrived here at all arrived on a notification.
       assert.equal(wakeups(entries, "sweep"), 0);
       assert.ok(wakeups(entries, "notification") >= 1, "the notification should have woken it");
     });
@@ -772,9 +655,6 @@ describe("wakeup", () => {
 
       assert.deepEqual(runtime.texts(), ["1", "2", "3", "4", "5"]);
       assert.equal(runtime.overlapped, false);
-      // One wakeup for five Signals, from both halves of the design: PostgreSQL
-      // collapses identical notifications sent in one transaction, and the worker
-      // drains rather than taking one Signal per wakeup.
       assert.equal(wakeups(entries, "notification"), 1);
       assert.equal(wakeups(entries, "sweep"), 0);
     });
@@ -783,14 +663,8 @@ describe("wakeup", () => {
   it("finds a Signal that arrived with no notification, on the sweep", async () => {
     const runtime = fakeRuntime();
     await withWorker(one, runtime, async (_core, entries) => {
-      // Two sweeps in, so the drain that `start` kicked off is long finished and the
-      // row below can only be found by a sweep after it.
       await waitUntil("the worker has swept twice", async () => wakeups(entries, "sweep") >= 2);
 
-      // A row in the queue with nothing sent on the channel: the shape of a
-      // notification lost while the listening connection was down, which is the only
-      // thing the sweep exists for. Without it this Signal would sit here forever
-      // and nothing would say so.
       const [inserted] = await db
         .handle({ signals })
         .insert(signals)
@@ -811,7 +685,6 @@ describe("wakeup", () => {
         return wakeups(entries, "notification") >= 3;
       });
 
-      // The worker looked three times, found nothing, and is still working.
       const id = await emit(worker, "woken");
       assert.equal((await settled(id)).state, "done");
       assert.deepEqual(
@@ -825,8 +698,6 @@ describe("wakeup", () => {
     const runtime = fakeRuntime();
     await withNotifiedWorker(one, runtime, async (worker, entries) => {
       const id = await emit(worker, "woken");
-      // Duplicates while the Run is still in flight, which is when a second drain
-      // would break the serial guarantee rather than merely waste a query.
       for (const _ of [1, 2, 3]) await notifyNothing();
       assert.equal((await settled(id)).state, "done");
 
@@ -847,7 +718,6 @@ describe("wakeup", () => {
       const before = await emit(worker, "woken");
       assert.equal((await settled(before)).state, "done");
 
-      // Cut from the server's side, as a restart or an operator would.
       await cutListeningBackends(db);
       await waitUntil("the Signal Worker is listening again", async () => {
         return entries.filter((entry) => entry.message === listeningMessage).length >= 2;
@@ -856,8 +726,6 @@ describe("wakeup", () => {
       const after = await emit(worker, "woken");
       assert.equal((await settled(after)).state, "done");
 
-      // Reported rather than swallowed, and the reconnection is itself a wakeup:
-      // anything sent while the connection was down was never delivered.
       assert.ok(
         entries.some((entry) => entry.level === "warn" && /notification/.test(entry.message)),
         "the lost connection should be reported",
@@ -868,13 +736,6 @@ describe("wakeup", () => {
   });
 
   it("catches a Signal emitted before its registration was in place", async () => {
-    // The gap `start` leaves: it returns before the `LISTEN` is registered, and a
-    // notification sent in between is lost exactly as one sent while the connection
-    // was down is. A Producer emitting immediately is not a contrived case — it is a
-    // Gateway's first Signal, when someone is watching.
-    //
-    // The gap is a few milliseconds wide, so it is held open here instead of raced
-    // for: a Db that delays only the registration, and the real one behind it.
     const held = 300;
     const slowToRegister: Db = {
       ...db,
@@ -906,18 +767,9 @@ describe("wakeup", () => {
     await worker.start();
     try {
       const id = await emit(worker, "woken");
-      // Nothing heard the notification and the sweep is a minute away, so two things
-      // can have found this Signal: the registration completing, or the drain
-      // `wakeup("start")` launched, which is still in flight when `start` returns. That
-      // drain's first look at the queue and this `emit` are four milliseconds apart and
-      // ordered by nothing, so which of them wins is not a fact to assert on: asserting
-      // that the registration drained it is what made this test fail in CI and pass
-      // here. Held instead are the two things that hold either way, and between them
-      // they still fail if `connected` stops waking the worker.
       assert.equal((await settled(id)).state, "done");
       assert.equal(wakeups(entries, "notification"), 0, "nothing was listening when it was sent");
       assert.equal(wakeups(entries, "sweep"), 0);
-      // Past the hold, so the registration is in place whatever settled the Signal.
       await waitUntil("the Signal Worker's registration is in place", async () =>
         entries.some((entry) => entry.message === listeningMessage),
       );
@@ -933,8 +785,6 @@ describe("wakeup", () => {
 
 describe("restart recovery", () => {
   it("fails a Signal left processing, resolves its Runs, and never re-runs it", async () => {
-    // What a worker that died mid-Signal leaves behind: the Signal it had claimed,
-    // one Run it had started, and one it had recorded but not begun.
     const [stranded] = await db
       .handle({ signals })
       .insert(signals)
@@ -970,16 +820,11 @@ describe("restart recovery", () => {
       async (worker, entries) => {
         const row = await settled(stranded.id);
         assert.equal(row.state, "failed");
-        // Why, in the row rather than only in a log line: this is where an Operator
-        // asks what happened to it.
         assert.match(row.error ?? "", /restart/);
 
-        // Not re-run, which is the whole point: its Runs may already have
-        // sent Messages, written the Workspace, or called something outside.
         assert.equal(handled, 0);
         assert.deepEqual(runtime.recorded, []);
 
-        // And nothing is left claiming to be in flight.
         const rows = await runsOf(stranded.id);
         assert.deepEqual(
           rows.map((run) => [run.prompt, run.state]).sort(),
@@ -997,8 +842,6 @@ describe("restart recovery", () => {
           "the recovery should be reported",
         );
 
-        // The worker went on to do its actual job, rather than recovery being
-        // something that happens instead of working.
         const next = await emit(worker, "stranded");
         assert.equal((await settled(next)).state, "done");
         assert.equal(handled, 1);
@@ -1058,8 +901,6 @@ describe("logging", () => {
         (entry) => entry.level === "error" && entry.fields.signalId === id,
       );
       assert.ok(failure, "a Handler failure should be logged at error");
-      // The Error itself, not its message: a `pino` logger serialises it with the
-      // stack, and one the Operator wrote can do as it likes with it.
       assert.equal(failure.fields.err, thrown);
     } finally {
       await worker.stop();
@@ -1067,8 +908,6 @@ describe("logging", () => {
   });
 
   it("works with the default logger when the Operator supplies none", async () => {
-    // The only test with no `logger`, and the only one whose evidence is partly in
-    // the test output: `pino`'s JSON lines on stdout are the default working.
     const worker = createSignalWorker({
       db,
       runtime: fakeRuntime(),

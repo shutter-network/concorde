@@ -46,8 +46,6 @@ Answer them by sending them a Message. Your final reply here reaches nobody.`,
       session: (signal) => `user_${signal.payload.userId}`,
       data: (signal) => signal.payload,
 
-      // The whole of this deployment's failure handling. A Signal is never retried, so without
-      // this a failed Run is silence: the person who asked waits for an answer that cannot come.
       async post(signal, outcome) {
         if (!outcome.failed) return;
         await db.tx((tx) =>

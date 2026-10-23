@@ -1,19 +1,3 @@
-/**
- * The Prompt template Handler.
- *
- * Most of this needs no database: a Handler is a function of a Signal and whatever
- * its factory was given, so the rendering criteria are unit tests over
- * string literals. The last two are not. "Fails that Signal with a
- * reason" is a claim about the Signal log, and "does not stop the worker" is a claim
- * about what happens to the *next* Signal, so those run through a real Signal Worker against
- * real PostgreSQL.
- *
- * The escaping assertions are byte-for-byte on purpose. `noEscape: true` looks like
- * a mistake to anyone who knows Handlebars from web work, and the damage from
- * "fixing" it — prompts with `&#x27;` where an apostrophe should be — is invisible
- * in every log and every Run outcome.
- */
-
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
@@ -29,17 +13,10 @@ import * as signalsSchema from "./schema/index.ts";
 import { signals } from "./schema/index.ts";
 import { templateHandler } from "./template-handler.ts";
 
-/**
- * Every character Handlebars escapes by default, in text a User could plausibly
- * write. If any of them comes back transformed, the Prompt reaching the agent is
- * not what the Operator's data function said.
- */
 const everythingHandlebarsWouldEscape = `it's <b>&</b> \`tick\` "quoted" =equals`;
 
-/** The kind every Signal below carries, and the one a failure message is expected to name. */
 const signalKind = "test.signal";
 
-/** The Signal a Handler is handed. Only the payload differs between these tests. */
 function aSignal<TPayload>(payload: TPayload): Signal<TPayload> {
   return {
     id: "6f1a3c7e-0000-4000-8000-000000000001",
@@ -49,11 +26,6 @@ function aSignal<TPayload>(payload: TPayload): Signal<TPayload> {
   };
 }
 
-/**
- * The single Prompt this Handler always produces. Asserting the count here rather
- * than in every test is what makes "one Signal, one Prompt" a property of the
- * Handler instead of an assumption each test repeats.
- */
 async function onlyPrompt<TPayload>(
   handler: SignalHandler<TPayload>,
   payload: TPayload,
@@ -65,29 +37,14 @@ async function onlyPrompt<TPayload>(
   return prompt;
 }
 
-/**
- * A Handler over `source`, routed to a fresh Session and given `data`.
- *
- * The Session name and the payload are each the subject of a test of their own and
- * noise in every other, so they are filled in here.
- */
 function handlerOver(source: string, data: unknown = {}): SignalHandler<null> {
   return templateHandler<null>({ template: source, session: () => null, data: () => data });
 }
 
-/** What `source` renders to, given `data`. */
 async function renders(source: string, data: unknown): Promise<string> {
   return (await onlyPrompt(handlerOver(source, data), null)).text;
 }
 
-/**
- * Asserts the Handler rejects, with a message that names the Signal's kind and says
- * what went wrong.
- *
- * Naming the kind is the load-bearing half: Handlebars reports the variable and its
- * line and column but never which template it was rendering, and a deployment with
- * several Handlers has no way to tell which one failed from that alone.
- */
 async function rejectsNaming(handler: SignalHandler<null>, reason: RegExp): Promise<void> {
   await assert.rejects(
     () => Promise.resolve(handler.handle(aSignal(null))),
@@ -141,9 +98,6 @@ describe("the template Handler", () => {
   });
 
   it("writes what the context function answers onto the Prompt, awaited if it has to be", async () => {
-    // The third function beside `session` and `data`, and the only one whose answer is not
-    // rendered: it reaches the Prompt as written, for the Agent server to carry while the Run
-    // is in flight, and nothing here reads it.
     const synchronous = templateHandler<{ readonly userId: string }>({
       template: "for {{who}}",
       session: () => null,
@@ -175,8 +129,6 @@ describe("a substituted value", () => {
     const text = await renders("{{value}}", { value: everythingHandlebarsWouldEscape });
 
     assert.equal(text, everythingHandlebarsWouldEscape);
-    // Spelled out as well as compared, so a failure says which escape crept back in
-    // rather than only that two long strings differ.
     for (const character of ["'", "&", "<", ">", "`", '"', "="]) {
       assert.ok(text.includes(character), `${character} should reach the Prompt unchanged`);
     }
@@ -215,32 +167,18 @@ describe("a substituted value", () => {
   });
 });
 
-/**
- * A template that does not compile fails one call, and a template that does not render
- * fails another. The split is the whole point of compiling at construction: the first
- * kind never reaches a Signal, and a Signal it did reach would stay failed forever,
- * nothing being retried.
- *
- * Both cases here are the reason `templateHandler` calls `precompile` and discards it.
- * Handlebars' own `compile` defers the parse *and* the code generation to the first
- * render, so with either one left to it the case below reaches `handle` instead.
- */
 describe("a template that does not compile", () => {
   it("throws from the call that builds the Handler when it does not parse", () => {
     assert.throws(
       () => handlerOver("{{#if always}}never closed", { always: true }),
       (error: unknown) => {
         assert.ok(error instanceof Error);
-        // Handlebars' own words, kept rather than wrapped: they name the line and the
-        // column, and there is no Signal here to name instead.
         assert.match(error.message, /Parse error on line 1/);
         return true;
       },
     );
   });
 
-  // Parses and then fails the code generator, which is the half a parse check alone
-  // would miss and leave failing a Signal.
   it("throws from the same call when it parses and the code generator refuses it", () => {
     assert.throws(
       () => handlerOver("{{> quoted one two}}"),
@@ -270,8 +208,6 @@ describe("a template that cannot produce a Prompt", () => {
       partials: { quoted: "<<{{value}}>>" },
     });
 
-    // `strict` reaches inside partials, which is the other half of what compiling
-    // them here rather than accepting pre-compiled ones buys.
     await rejectsNaming(handler, /"value" not defined/);
   });
 
@@ -289,16 +225,6 @@ describe("a template that cannot produce a Prompt", () => {
   });
 });
 
-/**
- * The side effect of `strict` that an Operator will meet while writing a template,
- * and the one place it costs them something.
- *
- * Handlebars documents that strict mode disables inverse operations, so
- * `{{^absent}}` throws where every other way of asking "was this supplied?" renders.
- * Pinned in both directions: without the first assertion the failure is discovered
- * by a Signal that fails permanently, and without the rest a later reader
- * could conclude `strict` makes presence tests impossible and drop it.
- */
 describe("strict mode's reach", () => {
   it("throws on an inverse section over a value that was not supplied", async () => {
     const handler = handlerOver("{{^absent}}nothing here{{/absent}}");
@@ -342,9 +268,6 @@ describe("a Handler's Handlebars environment", () => {
     );
   });
 
-  // Its own test rather than part of the one above, because that one rejects on the
-  // helper and never reaches the partial: helpers and partials are two registries and
-  // the first assertion says nothing about the second.
   it("does not register a partial another Handler can resolve", async () => {
     const template = "{{> signature}}";
     templateHandler<null>({
@@ -383,15 +306,6 @@ describe("a Handler's Handlebars environment", () => {
   });
 });
 
-/**
- * The post phase, as far as it can be seen without a worker: the Handler carries the
- * Operator's function and nothing more.
- *
- * The absence assertion holds the Handler to the type's spelling of "no post phase": the
- * property is missing rather than set to undefined, which is what `exactOptionalPropertyTypes`
- * demands of it. The worker asks `handler.post !== undefined` and treats both spellings the
- * same, so nothing at runtime would notice the difference.
- */
 describe("the template Handler's post phase", () => {
   it("is absent from a Handler built without one", () => {
     const handler = handlerOver("a Prompt that renders");
@@ -419,13 +333,6 @@ describe("the template Handler's post phase", () => {
   });
 });
 
-/**
- * The two criteria that are about the Signal log rather than the Handler.
- *
- * PostgreSQL is real and the Runtime is the only fake. "Does not stop the
- * worker" is a claim about what happens to the *next* Signal, so the worker here is
- * started once and never restarted.
- */
 describe("the template Handler under the worker", () => {
   let database: TestDatabase;
   let db: Db;
@@ -438,7 +345,6 @@ describe("the template Handler under the worker", () => {
 
   after(() => database.drop());
 
-  /** Fast enough that nothing here waits on a sweep it does not care about. */
   const sweepIntervalMs = 5;
 
   async function stateOf(signalId: string): Promise<{ state: string; error: string | null }> {
@@ -492,13 +398,6 @@ describe("the template Handler under the worker", () => {
     });
   });
 
-  /**
-   * Both ways a template can still fail once it has parsed, through the worker rather
-   * than as a throw: the criteria are about what the Signal log ends up saying, and two
-   * Handlers fail here so a reason naming the wrong kind is caught. A third way, a
-   * template that does not parse, cannot be reached from here any more, because no
-   * Handler over one can be built.
-   */
   it("fails only its own Signal, with a reason naming its own kind, and keeps working", async () => {
     const of = (template: string): SignalHandler =>
       templateHandler({ template, session: () => null, data: () => ({}) });
@@ -513,7 +412,6 @@ describe("the template Handler under the worker", () => {
         "prompt.unsupplied": await emit(worker, "prompt.unsupplied"),
         "prompt.no-partial": await emit(worker, "prompt.no-partial"),
       };
-      // Emitted last, so reaching `done` means the worker survived both.
       const after = await emit(worker, "prompt.good");
 
       for (const [failedKind, signalId] of Object.entries(broken)) {
@@ -526,7 +424,6 @@ describe("the template Handler under the worker", () => {
       }
 
       assert.deepEqual(await settled(after), { state: "done", error: null });
-      // No Run was ever started for a Signal whose Prompt could not be produced.
       assert.deepEqual(
         runtime.recorded.map((prompt) => prompt.text),
         ["a Prompt that renders"],
@@ -534,11 +431,6 @@ describe("the template Handler under the worker", () => {
     });
   });
 
-  /**
-   * What the post phase is told, for the two outcomes a template Handler can reach: a Run
-   * that ran, and a template that did not render and so produced no Run at all. The second
-   * is the whole reason an Operator writes one here, since a Signal is never retried.
-   */
   it("runs the post phase after the Run, and again when no Run was ever created", async () => {
     const outcomes: Record<string, PostOutcome> = {};
     const post =
@@ -572,16 +464,10 @@ describe("the template Handler under the worker", () => {
         "prompt.good": { failed: false },
         "prompt.unsupplied": { failed: true },
       });
-      // The Run had finished before its post phase was told about it.
       assert.deepEqual(runtime.texts(), ["a Prompt that renders"]);
     });
   });
 
-  /**
-   * A post phase that throws reaches the Signal log in the Operator's own words. Nothing
-   * here wraps it, so the reason must not read as a template that failed to render: the
-   * template rendered, and a reader chasing the wrong file is the damage.
-   */
   it("records what a failing post phase said, and says nothing about the template", async () => {
     const handler = templateHandler({
       template: "a Prompt that renders",
@@ -598,7 +484,6 @@ describe("the template Handler under the worker", () => {
 
       assert.equal(outcome.state, "failed");
       assert.equal(outcome.error, "the post phase failed: the notification could not be delivered");
-      // The Prompt itself was rendered and run: only the phase after it failed.
       assert.deepEqual(runtime.texts(), ["a Prompt that renders"]);
     });
   });
