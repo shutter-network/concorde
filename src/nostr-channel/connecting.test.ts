@@ -127,9 +127,11 @@ describe("the Nostr Channel's one connection", () => {
       });
 
       const requests = relay.received.filter((message) => message.verb === "REQ");
-      assert.equal(requests.length >= 2, true);
-      assert.notEqual(requests.at(-1)?.connection, requests[0]?.connection);
-      assert.deepEqual(requests.at(-1)?.filters, requests[0]?.filters);
+      const resubscribed = requests.find(
+        (message) => message.connection !== requests[0]?.connection,
+      );
+      assert.notEqual(resubscribed, undefined);
+      assert.deepEqual(resubscribed?.filters, requests[0]?.filters);
     });
   });
 
