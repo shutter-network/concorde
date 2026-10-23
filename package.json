@@ -106,7 +106,7 @@
     }
   },
   "bin": {
-    "concorde-chat-tui": "./dist/chat-tui/main.js"
+    "concorde-chat-tui": "dist/chat-tui/main.js"
   },
   "files": [
     "dist"

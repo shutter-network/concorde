@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -303,6 +303,27 @@ try {
     [...mayConstructAServer].sort(),
     "Only gateway construction may import Fastify runtime values; use type-only imports elsewhere",
   );
+
+  step("checking npm publish leaves the manifest as it is");
+  // `npm pack` ships a manifest `npm publish` would rewrite: a `./` before a bin path has
+  // publish delete that bin with a warning and exit 0. The version is moved off the real one
+  // so the dry run never meets a version the registry already holds.
+  const unpacked = path.join(workDir, "unpacked");
+  mkdirSync(unpacked);
+  run("tar", ["-xzf", tarball, "-C", unpacked], workDir);
+  const publishable = path.join(unpacked, "package");
+  const manifestPath = path.join(publishable, "package.json");
+  const shipped = JSON.parse(readFileSync(manifestPath, "utf8")) as { version: string };
+  shipped.version = `${shipped.version}-package-check`;
+  writeFileSync(manifestPath, JSON.stringify(shipped, null, 2));
+  const dryRun = spawnSync(
+    "npm",
+    ["publish", "--dry-run", "--ignore-scripts", "--tag", "package-check"],
+    { cwd: publishable, encoding: "utf8" },
+  );
+  assert.equal(dryRun.status, 0, `npm publish --dry-run failed:\n${dryRun.stderr}`);
+  const corrections = dryRun.stderr.split("\n").filter((line) => /^npm warn publish/.test(line));
+  assert.deepEqual(corrections, [], "npm publish must not correct the manifest");
 
   step("installing the tarball into a scratch project");
   const consumer = path.join(workDir, "consumer");
