@@ -3,6 +3,11 @@
 A Concorde application connects users to an AI agent through a gateway. The operator assembles
 the gateway from components, runs the agent instance, and configures the network between them.
 
+A shared agent serves several parties without giving any one party direct control. The gateway
+mediates user access, exposes capabilities to the agent, and holds durable application records.
+The agent instance performs the reasoning and tool use. This separation lets the operator keep
+credentials, signing keys, and database access outside the agent instance.
+
 This page explains the boundaries you work with when building an application. For a running
 example, start with the [guide](./guide).
 
@@ -11,6 +16,11 @@ example, start with the [guide](./guide).
 The gateway holds the database connection, HTTP servers, signal worker, and the components your
 application selects. The agent instance runs separately. The gateway reaches it through a
 runtime; the agent calls back into the gateway through the agent server.
+
+The two HTTP servers separate user access from agent capabilities. A user credential grants
+access to protected public routes; the agent server exposes the operations the agent can perform.
+The runtime connects the worker's runs to a particular agent implementation, so components do
+not need to know that implementation's execution protocol.
 
 ![gateway infrastructure and optional messaging and authentication components, with the agent instance, user client, and relay outside the gateway.](/architecture.svg)
 
@@ -22,14 +32,17 @@ and decisions can also be added, although they are not drawn.
 
 | Component | Responsibility |
 | --- | --- |
-| Db | PostgreSQL connections, transactions, and notifications |
-| Agent server | HTTP capabilities available to the agent |
-| Public server | HTTP endpoints available outside the gateway |
-| Signal worker | Persistent signal queue and serial execution |
+| Db | Shared PostgreSQL access so component state changes can commit together |
+| Agent server | HTTP capabilities the agent uses to read application data and act |
+| Public server | HTTP endpoints for user clients, including authentication and message exchange |
+| Signal worker | Durable queue that turns signals into agent runs, one signal at a time |
 
 Your `extend` callback constructs additional components using this infrastructure. Dependencies
 are explicit constructor arguments. The gateway does not discover dependencies or construct
 optional components for you.
+
+Explicit construction makes the capabilities installed in a deployment and their dependencies
+visible in the application's entry point.
 
 A component implements `start()` and `stop()`. Some components only register routes or provide
 methods and have no resources to acquire; their lifecycle methods do nothing. Return every
@@ -56,10 +69,18 @@ The agent's final model response is not automatically sent to the user. A run ca
 successfully without sending a message. Explain the gateway's messaging capability in your
 agent instructions.
 
+A run may inspect data, update a schedule, or communicate with several users. Sending through
+the messaging API makes each recipient and message explicit and records the exchange in the
+message log.
+
 ### Signals, prompts, and runs
 
 A producer emits a signal with a `kind` and a JSON payload. Your handler map associates each
 kind with a signal handler. An unrecognised kind fails the signal.
+
+A signal records something that happened; the handler decides whether it warrants agent work
+and what information the agent should receive. Messages and scheduled occurrences can therefore
+share an execution path while application policy stays in operator-written code.
 
 A handler can decline work by returning an empty array, produce one prompt, or fan out into
 several prompts. Prompts execute in array order. One failed run does not prevent the remaining
@@ -71,6 +92,10 @@ phase fails the signal; it does not stop processing subsequent signals.
 
 Execution is serial across one signal worker, including the handler phases. Run exactly one
 worker against a database. Multiple gateways sharing its queue do not preserve that guarantee.
+
+Serial execution prevents runs from overlapping their use of shared conversational state and
+gateway data. The tradeoff is that a slow run delays every subsequent signal, including signals
+from other users.
 
 ### Failure and restart behavior
 
@@ -105,6 +130,9 @@ Users stores user ids and application-defined attributes. It does not store cred
 An auth owns a credential scheme and resolves a request to a user. Password auth accepts
 bearer tokens; Nostr auth verifies signed NIP-98 requests.
 
+Separating identity from credentials lets a user keep the same id, attributes, and message log
+when authentication schemes change or several schemes are accepted.
+
 Each auth registers with the public server during construction. A protected route uses
 `publicServer.requireUser`. Auths are tried in registration order: an absent credential allows
 the next scheme to try, an accepted credential sets `request.concordeUser`, and a refusal ends
@@ -116,9 +144,12 @@ through built-in routes. Keep those operations outside capabilities available to
 
 ## Messenger and channels
 
-The messenger owns one message log per user. Inbound and outbound messages share a sequence,
-and records are immutable through the library API. Cursors let clients read older messages or
-poll for new ones. A channel implements delivery over a particular medium.
+The messenger supports communication between users and the agent. It owns one message log per
+user, while a channel delivers messages over a particular medium. Keeping the log in the
+messenger gives the application the same message records and inbound signals with either channel.
+
+Inbound and outbound messages share a sequence, and records are immutable through the library
+API. Cursors let clients read older messages or poll for new ones.
 
 A messenger accepts one channel:
 
@@ -137,13 +168,16 @@ the gateway's message log remains the durable record.
 
 ## Scheduling and signing
 
-The scheduler persists named schedules and emits `scheduleFiredKind` signals. Your handler
-chooses what each occurrence does. A schedule can fire once or recur using a cron expression
+The scheduler wakes the agent for work at a future time without requiring an incoming message.
+It persists named schedules and emits `scheduleFiredKind` signals. Your handler chooses what
+each occurrence does. A schedule can fire once or recur using a cron expression
 and time zone. Scheduling an existing name replaces it. Missed occurrences during downtime
 are skipped rather than replayed.
 
-Signatures creates compact JWS artifacts without storing them. Decisions adds an immutable,
-numbered record of signed statements. Every authenticated user can read decisions.
+Signatures lets the agent produce statements that others can verify under the deployment's
+signing identity. It creates compact JWS artifacts without storing them. Decisions adds an
+immutable, numbered record of signed statements so users can consult the agent's commitments.
+Every authenticated user can read decisions.
 A signature authenticates a statement under the signing identity; it does not prove that the
 agent followed its instructions or behaved fairly.
 

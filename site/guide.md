@@ -99,6 +99,11 @@ Users holds identities. Password auth registers the credential scheme on the pub
 The messenger records messages and emits signals. The HTTP channel registers authenticated
 submission and polling routes, and connects itself to the messenger.
 
+These components separate who a user is, how they authenticate, what they exchange with the
+agent, and how messages are delivered. You can change the authentication scheme or channel
+while retaining user identities and the messenger's message log. Explicit construction shows
+which capabilities your deployment installs and which dependencies they receive.
+
 Return components in dependency order. The gateway manages their startup and shutdown and
 makes them available on `gateway.components`.
 
