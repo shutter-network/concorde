@@ -632,6 +632,9 @@ describe("the worker", () => {
     try {
       const id = await emit(worker, "paired");
       await settled(id);
+      // And on nothing once the Runs are over: a request between Runs, or after the last
+      // one, is nobody's, and a context left behind would be a finished Run's permissions.
+      assert.equal((await fastify.inject("/whose")).json(), null);
 
       const [first, second] = await runsOf(id);
       assert.ok(first !== undefined && second !== undefined, "both Runs should exist");
