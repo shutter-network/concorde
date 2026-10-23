@@ -1,22 +1,3 @@
-/**
- * One plugin, registered by the Worker on the Agent server at no prefix, and exported on
- * `worker.agentRoutes` as well so that a deployment can place it itself.
- *
- * The routes themselves are not listed here. `scripts/reference/route-pages.ts` renders them into
- * the reference out of the declarations below, so a table beside them would be a second list to
- * keep true and nothing would compare the two.
- *
- * Unscoped by decision and not by omission: the agent reads every Signal and every Run whatever
- * Session it is in, because Session routing organises context and was never a confidentiality
- * mechanism. Do not add a `session` or a `user` parameter here. There is
- * nothing on a Signal to scope by in any case, the Worker holding no identity.
- *
- * All `GET`. Nothing here writes, a Signal being immutable but for the state the Worker gives it,
- * and a Run being the Worker's record of its own work. This is the agent's read and only the
- * agent's: a Signal Handler answers "has this arrived before?" for itself, and
- * what it has for that is a handle over `signalsTables` rather than a method on the Worker.
- */
-
 import { desc, eq } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
 import type { Handle } from "../db/index.ts";
@@ -40,19 +21,8 @@ import {
   type signalsTables,
 } from "./schema/index.ts";
 
-/** A handle typed to the Signal Worker's own tables, and to no other component's. */
 export type WorkerHandle = Handle<typeof signalsTables>;
 
-/**
- * A Signal as the agent reads it, and the JSON two of these routes answer with.
- *
- * The `payload` arrives as the Producer wrote it, and `emittedAt` as an ISO 8601 string, JSON
- * having no date.
- *
- * `state` and `error` are here, where {@link Signal} has neither: what there is to know about a
- * prior arrival is mostly how it ended, and since a failed Signal is failed for good, the reason
- * has to be readable by whoever finds it.
- */
 export type SignalRecord = {
   readonly id: string;
   readonly kind: string;
@@ -62,21 +32,6 @@ export type SignalRecord = {
   readonly error: string | null;
 };
 
-/**
- * A Run as the agent reads it: one Prompt, in one Session, and how it went.
- *
- * `signalId` is the Signal whose Handler wrote the Prompt, and `prompt` is the text the agent was
- * given rather than the template it came from. `session` is a plain name and a reference to
- * nothing. Every Run the Worker records now carries one, and it stays nullable because rows written
- * before that still hold `null`.
- *
- * `context` is what the Handler wrote beside the Prompt, as written, or `null` when it wrote
- * none. The framework reads none of it; it is here so that a refusal the agent met from an
- * Operator's hook can be explained by reading its own Run.
- *
- * The timings are ISO 8601 strings, or `null` for a Run that has not reached that point, so a
- * `running` Run has a `startedAt` and no `endedAt`.
- */
 export type RunRecord = {
   readonly id: string;
   readonly signalId: string;
@@ -89,45 +44,21 @@ export type RunRecord = {
   readonly endedAt: string | null;
 };
 
-/**
- * The sentence this whole surface turns on, and the one a reader is likeliest to assume the
- * opposite of.
- *
- * Written once and said in two places: it ends the refusal below and it is in all four route
- * descriptions. Somebody who believed a read here was scoped finds out at the first request rather
- * than never.
- */
 const unscoped =
   "Reads are not scoped by Session or by User, so there is no such parameter to pass, and the Session your own Run is in changes nothing about what you get back.";
 
-/** What a list route here says about its `limit`: the shared sentences, and the one it adds. */
 const capped = `${cappedLimit} There is no cursor and no offset, so the records past the cap are reachable only by narrowing.`;
 
-/** What the two single-record routes say. Each is one route with a different table behind it. */
 const noParameters = `This route takes no query parameters at all. ${unknownParameter}`;
 const malformedId = "The id in the path is not a uuid, or a query parameter was written.";
 
-/** The refusal these routes answer an unknown query parameter with. */
 const rejectUnknownQuery = unknownQueryRefusal(unscoped);
 
-/**
- * `SignalRecord` on the wire, and the serializer every answer carrying one passes through.
- *
- * Fastify compiles a response schema with `fast-json-stringify`, which drops every field the schema
- * does not declare and says nothing about it. So a field added to the type above and forgotten here
- * is missing from the Agent server's answers, and the round trip in `gateway.test.ts` is what
- * catches that.
- *
- * A description goes only on a field whose name is not the whole story.
- */
 const signalRecordSchema = {
   type: "object",
   properties: {
     id: { type: "string" },
     kind: { type: "string" },
-    // No `type` at all, which is an empty schema. It passes any JSON value through byte intact
-    // and renders in the document as "any". Constraining it would be the Signal Worker having an
-    // opinion about a payload it never interprets.
     payload: {
       description:
         "Arbitrary JSON, exactly as the Producer wrote it. The Signal Worker never interprets a payload, so what a given `kind` carries is the Operator's convention and their Signal Handler is where it is stated.",
@@ -139,7 +70,6 @@ const signalRecordSchema = {
     },
     state: {
       type: "string",
-      // From the same array the type is, so a state added to one is added to both.
       enum: signalStates,
       description:
         "How far the Signal got. One-way: nothing returns to `pending`, and a failed Signal is never re-run, so `error` is the whole of what happened to it.",
@@ -149,7 +79,6 @@ const signalRecordSchema = {
   required: ["id", "kind", "payload", "emittedAt", "state", "error"],
 } as const;
 
-/** `RunRecord` on the wire, with the same force and the same hazard as the shape above. */
 const runRecordSchema = {
   type: "object",
   properties: {
@@ -166,9 +95,6 @@ const runRecordSchema = {
       nullable: true,
     },
     prompt: { type: "string" },
-    // No `type`, as on `payload`: an empty schema passes whatever the Handler wrote through byte
-    // intact, `null` included, and constraining it would be the Signal Worker having an opinion
-    // about a value it never reads. Declaring it at all is the whole of putting it on the wire.
     context: {
       description:
         "What this Run's Signal Handler wrote beside the Prompt, exactly as written, or `null` if it wrote none. Operator-defined JSON that the framework stores and hands to the Agent server while the Run is in flight, and reads none of: a refusal you met from a hook on this server is explained by this field, and by the Operator's hook, rather than by anything the framework decided.",
@@ -196,10 +122,6 @@ const runRecordSchema = {
   ],
 } as const;
 
-/**
- * A list answers in an envelope rather than as a bare array, as every component's does, and that is
- * where a cursor would go the day either of these is paged.
- */
 const signalListSchema = {
   type: "object",
   properties: { signals: { type: "array", items: signalRecordSchema } },
@@ -212,12 +134,6 @@ const runListSchema = {
   required: ["runs"],
 } as const;
 
-/**
- * Builds the four read routes over a handle to the Worker's own two tables.
- *
- * The handle and not the Db, so this plugin can read those tables and reach nothing else, and so
- * that it cannot open a transaction of its own.
- */
 export function agentReadRoutes(handle: WorkerHandle): FastifyPluginAsync {
   return async (fastify) => {
     fastify.get<{ Querystring: { limit: number; kind?: string } }>(
@@ -251,9 +167,6 @@ export function agentReadRoutes(handle: WorkerHandle): FastifyPluginAsync {
           .where(
             request.query.kind === undefined ? undefined : eq(signals.kind, request.query.kind),
           )
-          // Newest first, because "what has arrived" is the question this answers. `id` breaks
-          // the tie. A limit cannot then drop one of two Signals emitted in one transaction and
-          // include the other.
           .orderBy(desc(signals.emittedAt), desc(signals.id))
           .limit(request.query.limit);
         return { signals: rows.map(asSignalRecord) };
@@ -262,8 +175,6 @@ export function agentReadRoutes(handle: WorkerHandle): FastifyPluginAsync {
 
     fastify.get<{ Params: { id: string } }>(
       "/signals/:id",
-      // No query parameters at all on a single record, and one is refused rather than ignored.
-      // A `?session=` that answers 200 reads as though it had been honoured.
       {
         schema: {
           tags: ["Signals"],
@@ -319,10 +230,6 @@ export function agentReadRoutes(handle: WorkerHandle): FastifyPluginAsync {
               ? undefined
               : eq(runs.signalId, request.query.signalId),
           )
-          // A Run has no column for when it was recorded, only for when it started. So that is
-          // what orders them. A descending sort puts nulls first in PostgreSQL, the right end
-          // for a Run that has not run yet. Runs recorded together and not yet started share no
-          // ordering key. They fall back to `id` rather than their Handler's order.
           .orderBy(desc(runs.startedAt), desc(runs.id))
           .limit(request.query.limit);
         return { runs: rows.map(asRunRecord) };
@@ -331,8 +238,6 @@ export function agentReadRoutes(handle: WorkerHandle): FastifyPluginAsync {
 
     fastify.get<{ Params: { id: string } }>(
       "/runs/:id",
-      // No query parameters at all on a single record, and one is refused rather than ignored.
-      // A `?session=` that answers 200 reads as though it had been honoured.
       {
         schema: {
           tags: ["Runs"],

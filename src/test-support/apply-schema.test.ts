@@ -1,20 +1,3 @@
-/**
- * The schema applier, exercised the way every other test will use it.
- *
- * The subject is a database that ends up with the tables a part declares, so the
- * assertions are writes and reads back through Drizzle rather than inspections of
- * `information_schema`: a table that accepts a row and returns it is the whole of
- * what a test needs from `applySchema`, and it also proves the column defaults came
- * across, which a catalogue count would not.
- *
- * The parts here are the two that stand alone. The Messenger's schema
- * references the tables of Users, so pushing that one is the whole-set question and
- * belongs to the test that asks it, not to this one.
- *
- * A database per test rather than per file, because `applySchema` is for a fresh
- * database and two pushes into one would be a different question.
- */
-
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import * as decisions from "../decisions/schema/index.ts";
@@ -57,7 +40,6 @@ describe("applySchema", () => {
   });
 });
 
-/** A throwaway database, dropped whether the body passed or threw. */
 async function onFreshDatabase(
   name: string,
   body: (database: TestDatabase) => Promise<void>,

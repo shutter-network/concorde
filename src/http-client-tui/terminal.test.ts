@@ -1,9 +1,3 @@
-/**
- * The one part of the terminal with a decision in it. The escape sequences and the readline
- * plumbing beside it are driven by a person and observed by a person, and a test that asserted the
- * bytes would pin the implementation rather than the behaviour.
- */
-
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { MessageRecord } from "../messenger/messages.ts";

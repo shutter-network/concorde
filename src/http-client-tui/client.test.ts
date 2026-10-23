@@ -1,21 +1,3 @@
-/**
- * The client against the routes it is a client of: a real Users component, a real Messenger and a
- * real HTTP Channel on a Fastify instance **listening on a real socket**, driven with the real
- * `fetch` the shipped binary uses. Nothing is injected in place of the network here, because the
- * question this file answers is whether the two agree about a wire format, and a stub would answer
- * whatever it was written to answer.
- *
- * The one part not driven this way is the retry, which needs a Gateway that answers nothing. It has
- * a test of its own beside `retry.ts`, and what is checked here is only that a refused connection
- * arrives as the error the retry is written against.
- *
- * The agent's half of a conversation is written through the Messenger's programmatic API rather
- * than over the Agent server. It is the same insert, and this file's subject is the Public routes.
- *
- * A User of its own per test, because a cursor is per User: two tests sharing one would each read
- * what the other said.
- */
-
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import Fastify, { type FastifyInstance } from "fastify";
@@ -44,23 +26,16 @@ let passwordAuth: PasswordAuth;
 let messenger: Messenger;
 let publicServer: FastifyInstance;
 
-/** Where the Public server ended up listening, which is what the client is pointed at. */
 let baseUrl: string;
 
 const hour = 60 * 60 * 1000;
 
-/** A cost nobody should deploy, so that a file full of logins runs in a moment. */
 const cheap: ScryptParameters = { logN: 12, blockSize: 8, parallelism: 1 };
 
 const password = "correct horse battery staple";
 
-/** Nothing here starts a worker, and the lines one writes are not this file's subject. */
 const silent: Logger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
 
-/**
- * A port nothing can be listening on: binding it needs privileges no test run has, so a connection
- * to it is refused rather than answered by whatever else the developer is running.
- */
 const nothingListensHere = "http://127.0.0.1:1";
 
 before(async () => {
@@ -71,12 +46,8 @@ before(async () => {
   const agentServer = { fastify: Fastify() };
   const server = serverComponent(Fastify(), { port: 0, host: "127.0.0.1" });
   publicServer = server.fastify;
-  // Unstarted: a submitted Message writes a Signal row that nothing has to pick up, the Run being
-  // no part of what a client sees.
   const worker = createSignalWorker({ db, runtime: fakeRuntime(), handlers: {}, logger: silent });
   users = createUsers({ db, agentServer, publicServer: server });
-  // The scheme this client logs in with: `POST /auth/tokens` is Password Auth's route now, and
-  // registering it with the server is what makes the Channel's two routes authenticate anybody.
   passwordAuth = createPasswordAuth({
     db,
     users,
@@ -95,7 +66,6 @@ after(async () => {
   await database.drop();
 });
 
-/** A User who can log in: admitted and given the one password in this file, in one transaction. */
 function admitted(): Promise<string> {
   return db.tx(async (tx) => {
     const created = await users.create(tx);
@@ -104,7 +74,6 @@ function admitted(): Promise<string> {
   });
 }
 
-/** A User with a password, and a client logged in as them. */
 async function loggedIn(): Promise<{ readonly id: string; readonly client: Client }> {
   const id = await admitted();
   const client = createClient({ baseUrl });
@@ -112,7 +81,6 @@ async function loggedIn(): Promise<{ readonly id: string; readonly client: Clien
   return { id, client };
 }
 
-/** The agent's half, written the way a Signal Handler writes it. */
 function agentSays(userId: string, text: string) {
   return db.tx((tx) => messenger.send(tx, userId, text));
 }
@@ -197,7 +165,6 @@ describe("opening a log", () => {
         [2, "outbound", "two"],
       ],
     );
-    // The cursor is past what was printed, so the same Messages do not arrive again.
     assert.deepEqual(await client.poll(), []);
   });
 

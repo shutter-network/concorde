@@ -1,56 +1,3 @@
-/**
- * Verifies the packaging claims that only a real tarball can settle:
- *
- *  - `dist` mirrors `src`, so nothing ships whose source is gone.
- *  - the tarball installs into a fresh project.
- *  - **all twenty-two** entries resolve there, both to the type checker and to Node at
- *    runtime, and twenty-two is the whole map. Fourteen are the subpath a Developer imports a part
- *    from: `/gateway`, `/logging`, `/db`, `/signals`, `/pi`, `/users`,
- *    `/password-auth`, `/nostr-auth`, `/messenger`, `/http-channel`, `/nostr-channel`,
- *    `/signatures`, `/decisions` and `/scheduler`. The other **eight are `/schema`**, one per
- *    component that owns tables, because `drizzle-kit`'s config takes file paths and an export
- *    entry is the only supported way to hand an Operator one. A component's tables are on exactly
- *    one of the two, and the runtime step below is what proves the component subpath carries none
- *    of them. `/messenger` carries the log and `/http-channel` reaches a person over HTTP, which is
- *    the split; `/nostr-channel` is the other Channel and the one Channel that owns tables.
- *  - **two of the fourteen are Auths**, so the whole of what a deployment accepts is which of them
- *    it constructs. `main.ts` below constructs Password Auth and Nostr Auth and writes an Auth of
- *    the consumer's own beside them, and all three register themselves with the Public server.
- *    The second of them registers **no route**, so its whole surface here is one construction,
- *    one method and the two tables on its specifier.
- *  - **there is no `.` in that map, and the last step below reads Node saying so.** The assembly
- *    is on `/gateway`, the logging seam on `/logging` and the Db on `/db`, and a bare
- *    `@shutter-network/concorde` fails with
- *    `ERR_PACKAGE_PATH_NOT_EXPORTED`. What that buys is that nothing lands on the root by
- *    accident: a re-export written there resolves to nowhere, so adding a root export is a
- *    deliberate edit to `exports` and not a slip.
- *  - a component's tables arrive on its `/schema` specifier as **top-level named exports**.
- *    That shape is the whole contract: `drizzle-kit`'s exporter takes `Object.values` of a module
- *    and keeps what passes `is(x, PgTable)`, never descending into a plain object, so a table
- *    reachable only through a wrapper is dropped in silence and generates an **empty** migration.
- *    The runtime step below reproduces that collection **per module**, which is what `drizzle-kit`
- *    does with a list of file paths, and resolves each specifier to the file path an Operator's
- *    `drizzle.config.ts` hands it.
- *  - **the `bin` runs there**, which no import above can reach: `http-client-tui` is a command and
- *    not a specifier, so what an installed package owes is an executable file on the consumer's
- *    `PATH` and the last step below runs it rather than looking for it.
- *  - **the eight `/schema` modules yield eight distinct schema objects and thirteen tables, and
- *    the eight component subpaths yield none of either.** That is the assertion the split exists
- *    for, and it is the one nothing else in the repository makes: a schema module re-exported from
- *    both places would put every table behind two specifiers, and a `/schema` module that stopped
- *    re-exporting one would leave the table queryable and absent from the DDL.
- *
- * It says nothing about SQL, because there is none: the framework applies no DDL and this
- * repository holds no `.sql` at all. An Operator generates their own from the tables the component
- * subpaths below export, so the bytes that reach a production database are theirs and no check
- * here can vouch for them.
- *
- * Run with `npm run check:package`. Deliberately not part of `npm run check`: it
- * installs from the registry, so it is far slower than the inner loop should be,
- * and it would make the inner loop need the network. It needs no database: it applies
- * no DDL itself, so nothing here connects.
- */
-
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
@@ -68,56 +15,6 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
-/**
- * The consumer's imports, spelled once: the type checker and Node see the same twenty-two.
- *
- * **Twenty-two lines, one per entry point, and a component's tables are on a line of their
- * own.** That is the whole of the split: `drizzle-kit`'s config takes file paths, so the tables
- * need an export entry of their own, and having one they are on it and on nothing else. No line
- * names the bare package, because there is no `.` export left: the three infrastructure specifiers
- * at the top carry what the root used to, and the last step in this script is what proves the root
- * itself resolves to nothing.
- *
- * **No `/schema` line aliases anything, and the absence is the assertion.** Every name off every
- * `/schema` specifier lands in this one module scope under the name the package gives it, which is
- * what a deployment's own `schema.ts` barrel does with `export *`. Two components declaring one
- * name is therefore a `Duplicate identifier` from `tsc` and an `Identifier has already been
- * declared` from Node, naming both import lines — the only place anything in this repository
- * checks that. The two names every schema module declares carry a component prefix so
- * that they cannot collide; the thirteen table names carry none, and this file is what holds them
- * apart. **An alias added to a line below removes the check for that name.** Reach for a rename in
- * the package instead.
- *
- * The three infrastructure lines own no tables. `/gateway` carries the two assembly constructors
- * and the server adapter, `/logging` the default Logger, and `/db` the one call that opens a pool.
- * The fourth of them is gone with container-per-Run: the Gateway starts no agent, so there is no
- * subpath carrying what `docker run` takes and no module here that knows what a container is.
- *
- * The HTTP Channel's line carries a constructor and nothing beside it, and it has no `/schema` line
- * at all, because it owns no tables: the log is the Messenger's, whichever medium a Message
- * travelled by. `/signatures` and `/pi` are the other two with no `/schema` beside them. The Nostr
- * Channel has one carrying three tables, because the three things only it can know — which public
- * key is which User, which envelopes it has read, and which replies the Relay has not taken yet —
- * are nobody else's. Its component line is also the one carrying error classes: five refusals an
- * Operator branches on with `instanceof`, two from a send and three from recording a key, and
- * `main.ts` below catches every one. The Scheduler's `ScheduleSpecError` is the only other class
- * the package exports, and it is caught there too, so every exported error class is now reached
- * through an `instanceof` rather than only imported. Every table is named individually rather than
- * pulled in as a namespace, because naming them is what proves the module flat-exports them: a
- * table that had retreated into `<component>Tables` would fail to import here, where an `import *
- * as` would resolve and say nothing. The wrappers themselves are named too, which is what proves
- * each resolves on its own specifier.
- *
- * **The state unions and the arrays behind them are on both subpaths**, and they are the only
- * names in the package that are. They live in the schema module because the columns' check
- * are compiled from the arrays, and a `SignalRecord`, a `RunRecord`, a `MessageRecord` and a
- * `ScheduleRecord` are declared with the unions and go out on the wire, so a reader of a record
- * reaches them off the component. No table is on both, which is the property that matters.
- *
- * `createSignalWorker` and `templateHandler` both come off `/signals`: the Worker owns tables, so
- * it is a component with a subpath of its own, and the template Handler is written in that
- * component's vocabulary and belongs beside it.
- */
 const consumerImports = [
   'import { openDb } from "@shutter-network/concorde/db";',
   'import { createBareGateway, createGateway, NoAuthRegisteredError, serverComponent } from "@shutter-network/concorde/gateway";',
@@ -151,8 +48,6 @@ function run(command: string, args: string[], cwd: string): string {
       stdio: ["ignore", "pipe", "inherit"],
     });
   } catch (error) {
-    // `tsc` and `npm` report diagnostics on stdout, which is captured here so
-    // it can be asserted on. Surface it, or a failure arrives unexplained.
     const captured = (error as { stdout?: unknown }).stdout;
     if (typeof captured === "string" && captured.length > 0) {
       process.stderr.write(captured);
@@ -161,11 +56,6 @@ function run(command: string, args: string[], cwd: string): string {
   }
 }
 
-/**
- * Like `run`, but for a command expected to **fail**: it answers with what the command wrote to
- * stderr, and with the empty string if the command succeeded. The caller reads that text rather
- * than only the exit status, so a refusal can be asserted by the code Node names for it.
- */
 function refusalFrom(command: string, args: string[], cwd: string): string {
   try {
     execFileSync(command, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -193,7 +83,6 @@ try {
   assert.equal(typeof filename, "string", "npm pack should report a tarball filename");
   const tarball = path.join(workDir, path.basename(filename as string));
 
-  // Inspect what was actually packed, rather than trusting `files`.
   step("inspecting the tarball");
   const entries = new Set(
     run("tar", ["-tzf", tarball], workDir)
@@ -204,76 +93,40 @@ try {
   );
 
   for (const file of [
-    // The assembly subpath, and the one interface the framework defines: every Gateway is
-    // assembled from it. Named rather than left to the mirror check below, which only
-    // reads the other way: it catches a shipped module whose source is gone, not a public module
-    // that failed to ship.
     "dist/gateway/index.js",
     "dist/gateway/index.d.ts",
     "dist/gateway/components.js",
     "dist/gateway/components.d.ts",
-    // The authentication seam beside it: the `Auth` a deployment writes, the outcome it answers,
-    // and the walk a server composes them into. It ships because `index.js` re-exports
-    // it and because `components.js` calls into it, so a consumer resolving `/gateway` needs it.
     "dist/gateway/auth.js",
     "dist/gateway/auth.d.ts",
-    // The infrastructure constructor, beside it under the same specifier: it is the canonical
-    // path an Operator's entry point takes, and it is the one shipped module that imports a
-    // value from `fastify`.
     "dist/gateway/gateway.js",
     "dist/gateway/gateway.d.ts",
-    // The logging seam and the default behind it, on a specifier of their own: a Logger is
-    // passed to nearly every part, so it is neither one part's nor an Operator's to re-declare.
     "dist/logging/index.js",
     "dist/logging/index.d.ts",
     "dist/logging/logging.js",
     "dist/logging/logging.d.ts",
     "dist/pi/index.js",
     "dist/pi/index.d.ts",
-    // The `pi` Agent Implementation's own modules, which are now four and none of which
-    // spawns anything. `dist/pi/` mirroring `src/pi/` is what makes the subpath resolve to
-    // the same relative imports in the repository and in the package, and the fixtures
-    // beside them must not come along.
     "dist/pi/runtime.js",
     "dist/pi/runtime.d.ts",
-    // The RPC channel, which is the whole of the client: `node:net`, one connection per
-    // Run, and no runtime dependency behind it.
     "dist/pi/rpc.js",
     "dist/pi/rpc.d.ts",
-    // The one module that turns bytes into records, and the one place the LF-only framing
-    // rule lives.
     "dist/pi/framing.js",
     "dist/pi/framing.d.ts",
     "dist/pi/output.js",
-    // `dist` mirrors `src`, so `src/db/db.ts` becomes `dist/db/db.js`. Nothing is
-    // resolved from `import.meta.url` any more — that trick existed only to reach a
-    // shipped migration folder, and there is none.
     "dist/db/index.js",
     "dist/db/index.d.ts",
     "dist/db/db.js",
     "dist/db/db.d.ts",
-    // The Signal Worker, under its own subpath: it is a component and a component is a
-    // specifier, with a second one under it for its tables.
     "dist/signals/index.js",
     "dist/signals/index.d.ts",
     "dist/signals/worker.js",
-    // The template Handler, beside the Worker whose vocabulary it is written in, and the only
-    // module that reaches for `handlebars` — so a missing `dependencies` entry surfaces when the
-    // scratch project imports it below rather than at an Operator's first Signal.
     "dist/signals/template-handler.js",
     "dist/signals/template-handler.d.ts",
-    // Every component that owns tables declares them in one module, which is both what the
-    // component's own modules import and what `./<component>/schema` in the export map names.
-    // It has to resolve for Node and for an Operator's type checker.
     "dist/signals/schema/index.js",
     "dist/signals/schema/index.d.ts",
-    // The Signal Worker's Agent server routes: a Fastify plugin, and the only shipped
-    // module that names Fastify at all. Fastify is public API rather than an internal,
-    // so the consumer brings the instance and registers this on it.
     "dist/signals/routes.js",
     "dist/signals/routes.d.ts",
-    // Users, under its own subpath, with the declarations beside it and the `/schema` door
-    // below it: the tables are what an Operator points a config at now.
     "dist/users/index.js",
     "dist/users/index.d.ts",
     "dist/users/routes.js",
@@ -282,11 +135,6 @@ try {
     "dist/users/schema/index.d.ts",
     "dist/users/users.js",
     "dist/users/users.d.ts",
-    // Password Auth, under its own subpath, with a `schema.js` beside it: the third module in the
-    // framework whose schema imports the Users component's, because both of its columns
-    // reference `concorde_users.users.id`. `secrets.js` is the only
-    // scrypt and Token hashing in the package now, the Users component's copy having gone with
-    // the credential, and it ships because `password-auth.js` imports it.
     "dist/password-auth/index.js",
     "dist/password-auth/index.d.ts",
     "dist/password-auth/password-auth.js",
@@ -296,12 +144,6 @@ try {
     "dist/password-auth/schema/index.js",
     "dist/password-auth/schema/index.d.ts",
     "dist/password-auth/secrets.js",
-    // Nostr Auth, under its own subpath, with a `schema.js` beside it: the fourth module in the
-    // framework whose schema imports the Users component's, because `grants.user_id` references
-    // `concorde_users.users.id`. `nip98.js` is the security core, and the reason it is a
-    // module of its own is the reason `nostr-channel/envelope.js` is: the library's own validator
-    // checks the freshness window in one direction only, so an event dated in the future passes it
-    // forever, and every check above `verifyEvent` is written here instead.
     "dist/nostr-auth/index.js",
     "dist/nostr-auth/index.d.ts",
     "dist/nostr-auth/nostr-auth.js",
@@ -312,12 +154,6 @@ try {
     "dist/nostr-auth/grants.d.ts",
     "dist/nostr-auth/schema/index.js",
     "dist/nostr-auth/schema/index.d.ts",
-    // The Messenger, under its own subpath. Its `schema.js` is where the foreign key
-    // onto `concorde_users.users.id` is declared now, so an Operator's generation writes the
-    // constraint that used to be hand-edited into a shipped folder.
-    //  Its `routes.js` carries the agent's route group *and* the serializer the
-    // HTTP Channel's own routes render a `MessageRecord` through, which is why that module
-    // ships even for a deployment whose Channel is not HTTP.
     "dist/messenger/index.js",
     "dist/messenger/index.d.ts",
     "dist/messenger/messenger.js",
@@ -328,20 +164,12 @@ try {
     "dist/messenger/routes.d.ts",
     "dist/messenger/schema/index.js",
     "dist/messenger/schema/index.d.ts",
-    // The HTTP Channel, under its own subpath and with **no schema module and no `/schema`
-    // entry**: it owns no tables, so there is nothing for an Operator to list. The second
-    // component of which that is true, after Signatures.
     "dist/http-channel/index.js",
     "dist/http-channel/index.d.ts",
     "dist/http-channel/http-channel.js",
     "dist/http-channel/http-channel.d.ts",
     "dist/http-channel/routes.js",
     "dist/http-channel/routes.d.ts",
-    // The Nostr Channel, under its own subpath, with a `schema.js` beside it — the second module
-    // in the framework whose schema imports the Users component's, because `pubkeys.user_id`
-    // references `concorde_users.users.id` too. `envelope.js` is the security
-    // core: the NIP-59 unwrap written by hand, because the library's convenience function
-    // discards the layer that carries the only authentication in the envelope.
     "dist/nostr-channel/index.js",
     "dist/nostr-channel/index.d.ts",
     "dist/nostr-channel/nostr-channel.js",
@@ -350,26 +178,16 @@ try {
     "dist/nostr-channel/envelope.d.ts",
     "dist/nostr-channel/identities.js",
     "dist/nostr-channel/identities.d.ts",
-    // The outbound queue's own statements, which are the half of a send that survives a commit:
-    // a publish cannot be rolled back and a transaction can, so the wrap is built and stored
-    // inside the caller's transaction and the network act happens after it.
     "dist/nostr-channel/outbound.js",
     "dist/nostr-channel/outbound.d.ts",
     "dist/nostr-channel/schema/index.js",
     "dist/nostr-channel/schema/index.d.ts",
-    // Signatures, under its own subpath and with **no schema module and no `/schema` entry**:
-    // it is the one part of the framework that stores nothing, so there is nothing for an
-    // Operator to list. It is also the only module that
-    // imports `jose`, which the runtime step below is what proves is declared rather than
-    // merely present in our own tree.
     "dist/signatures/index.js",
     "dist/signatures/index.d.ts",
     "dist/signatures/signatures.js",
     "dist/signatures/signatures.d.ts",
     "dist/signatures/routes.js",
     "dist/signatures/routes.d.ts",
-    // Decisions, under its own subpath, with its table exported from the `/schema` subpath
-    // below it.
     "dist/decisions/index.js",
     "dist/decisions/index.d.ts",
     "dist/decisions/decisions.js",
@@ -378,9 +196,6 @@ try {
     "dist/decisions/routes.d.ts",
     "dist/decisions/schema/index.js",
     "dist/decisions/schema/index.d.ts",
-    // The Scheduler, under its own subpath. It is the second Producer and the one part that
-    // reaches for `cron-parser` and `luxon`, which the runtime step below is what proves are
-    // declared rather than merely present in our own tree.
     "dist/scheduler/index.js",
     "dist/scheduler/index.d.ts",
     "dist/scheduler/scheduler.js",
@@ -391,26 +206,11 @@ try {
     "dist/scheduler/routes.d.ts",
     "dist/scheduler/schema/index.js",
     "dist/scheduler/schema/index.d.ts",
-    // The `bin`, which is the one shipped module that is neither a subpath nor reached from one.
-    // `package.json` names this exact path, so a rename that missed the manifest ships a broken
-    // command; the last step below is what runs it.
     "dist/http-client-tui/main.js",
   ]) {
     assert.ok(entries.has(file), `the tarball should ship ${file}`);
   }
 
-  // The modules whose subject was writing or carrying the agent's configuration. Named
-  // rather than left to the mirror check below, because "it is gone" is the claim: the
-  // framework writes no files and carries no `pi`-shaped configuration, and a module that
-  // still shipped would be one an Operator could still import and call.
-  //
-  // Along with the process module's old home: it moved out of the adapter, and a copy
-  // left behind under `dist/pi/` would be a second spawner an Operator could import.
-  // And the whole of the old package root, which is the other claim: there is no `.` export any
-  // more, so `dist/index.js` would be a file nothing can reach, and the modules that sat beside it
-  // moved into directories of their own rather than being copied there. The mirror check below
-  // catches `dist/index.js` on its own, there being no `src/index.ts` behind it. It catches none
-  // of the others, whose sources still exist one directory down, so they are named here.
   for (const gone of [
     "dist/pi/run-files.js",
     "dist/pi/run-files.d.ts",
@@ -435,9 +235,6 @@ try {
     "dist/container/agent-container.js",
     "dist/container/mount-table.js",
     "dist/container/process.js",
-    // And the whole of the subpath that carried container-per-Run. The Gateway starts no
-    // agent, so nothing ships that knows how: an Operator runs the Agent Instance, and an
-    // Operator who wants a container per Run writes a Runtime, which is one method.
     "dist/agent-container/index.js",
     "dist/agent-container/index.d.ts",
     "dist/agent-container/agent-container.js",
@@ -447,25 +244,16 @@ try {
     assert.ok(!entries.has(gone), `the tarball should no longer ship ${gone}`);
   }
 
-  // The fixtures under `src/test-support` are excluded from the build, so they
-  // must not reach an Operator even though they sit inside `src`.
   assert.ok(
     ![...entries].some((entry) => entry.startsWith("dist/test-support/")),
     "test fixtures should not ship",
   );
 
-  // Neither do the captured Agent Implementation streams beside the `pi` adapter, which
-  // are a test's input and not part of anything an Operator installs.
   assert.ok(
     ![...entries].some((entry) => entry.endsWith(".jsonl")),
     "the captured output fixtures should not ship",
   );
 
-  // Nothing ships that no longer exists. `tsc` writes into `outDir` and never
-  // prunes it, so a deleted or renamed module leaves its old output behind and
-  // every later tarball carries it — which is how a placeholder outlives the
-  // ticket that removed it. `npm run build` empties `dist` first; this is what
-  // proves it did.
   step("checking dist mirrors src, with nothing left over");
   for (const entry of entries) {
     if (!entry.startsWith("dist/")) continue;
@@ -476,11 +264,6 @@ try {
     );
   }
 
-  // `pg` is the Db's alone, so no shipped declaration may name it.
-  // The Biome override catches an import in our sources; this catches the subtler
-  // case, where a `pg` type reaches the public API through an inferred return
-  // type and `tsc` writes the import into a `.d.ts` we never read. It would only
-  // surface for a consumer without `@types/pg`, which is all of them.
   step("checking no shipped declaration reaches for pg");
   for (const declaration of readdirSync(path.join(repoRoot, "dist"), {
     recursive: true,
@@ -494,21 +277,6 @@ try {
     );
   }
 
-  // `fastify` is a peer dependency, and **one** shipped module runs an import of it. That
-  // module is `dist/gateway/gateway.js`, which constructs the two servers the infrastructure
-  // constructor builds and cannot do it any other way; everywhere else the framework names
-  // Fastify's types and never its runtime, which is what keeps `serverComponent`
-  // structural and the peer dependency honest. So the check is not dropped but
-  // narrowed to an exact list: a `FastifyListenOptions` written without `import type` still
-  // emits one of these, and nothing else would notice, because the consumer below installs
-  // Fastify and it would resolve.
-  //
-  // Comment lines are skipped, because `tsc` emits doc comments and an `@example` that shows an
-  // Operator building their own server has to say `import Fastify from "fastify"` to be copyable.
-  // That is documentation and not an import, so a scan of the raw text fails on
-  // `dist/gateway/components.js` and `dist/users/users.js` and says nothing true. Skipped per line rather
-  // than by stripping `/** */` blocks, so a string literal holding those four characters cannot
-  // swallow the code after it and turn a real import invisible.
   step("checking only the infrastructure constructor imports a value from fastify");
   const manifest: unknown = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
   assert.ok(
@@ -536,7 +304,6 @@ try {
     "only the infrastructure constructor may import a value from fastify; everywhere else the framework names its types and nothing else",
   );
 
-  // A fresh project, as an Operator would start one.
   step("installing the tarball into a scratch project");
   const consumer = path.join(workDir, "consumer");
   mkdirSync(consumer);
@@ -544,19 +311,6 @@ try {
     path.join(consumer, "package.json"),
     `${JSON.stringify({ name: "consumer", private: true, version: "0.0.0", type: "module" }, null, 2)}\n`,
   );
-  // `@types/node` alongside the tarball, because the public declarations name Node
-  // globals — `URL` in `TemplateHandlerOptions.template`, `Buffer` and `KeyObject`
-  // around the signing path — which are not TypeScript's. Every consumer of a
-  // Node-only ESM package has it; asserting that here keeps the requirement from
-  // being discovered by an Operator.
-  //
-  // `fastify` too, installed here rather than arriving through us: the package
-  // declares it as a *peer* dependency, so the instance the framework types
-  // against is the one the consumer chose. Fastify is public API, and
-  // this is the arrangement an Operator will have: their own `fastify`, ours a
-  // `^5` range they satisfy rather than a copy we bring. What it proves is that
-  // the two agree; two *major* versions in one tree is a breaking change
-  // already accepted, and is not what this checks.
   run("npm", ["install", "--no-audit", "--no-fund", tarball, "@types/node", "fastify"], consumer);
 
   step("type-checking the scratch project against the installed package");
@@ -571,20 +325,9 @@ try {
           moduleResolution: "nodenext",
           types: ["node"],
           strict: true,
-          // `skipLibCheck: false` would be the stronger check and cannot be
-          // used: drizzle-orm 0.45.2's own declarations do not survive it, and
-          // hundreds of errors arrive from its MySQL and SingleStore builders,
-          // none of which we import. What proves our declarations instead is
-          // `main.ts` below, which exercises the whole public surface with
-          // annotations, so a type that resolved to `any` or went missing fails.
           skipLibCheck: true,
           noEmit: true,
         },
-        // One file. The barrel an Operator used to write is gone with the `/schema` subpaths:
-        // a `drizzle.config.ts` names those specifiers as **paths** now, resolved
-        // with `import.meta.resolve`, and there is no module of the consumer's own in between
-        // for a type checker to read. What replaced it is the annotated table and schema lists
-        // in `main.ts` and, at runtime below, the resolution of all eight specifiers to files.
         include: ["main.ts"],
       },
       null,
@@ -595,13 +338,6 @@ try {
     path.join(consumer, "main.ts"),
     [
       ...consumerImports,
-      // Every type the package exports. `main.ts` is what replaced
-      // `skipLibCheck: false` here, so an export it does not mention is an export
-      // nothing checks: a declaration that resolved to `any`, or went missing
-      // altogether, would type-check in this project without it.
-      // The Db's own types: the handle, the transaction it hands a callback, the `LISTEN`
-      // registration and the listener it calls back. `pg` is nowhere among them, which is what
-      // keeps the pool out of the public API.
       "import type {",
       "  ChannelListener,",
       "  Db,",
@@ -609,13 +345,6 @@ try {
       "  Listening,",
       "  Transaction,",
       '} from "@shutter-network/concorde/db";',
-      // The assembly vocabulary, on its own specifier: the Component two methods, what a Gateway
-      // is, the structural server it listens through, and the options both constructors take.
-      // `Auth` and `AuthOutcome` are here rather than on a subpath of their
-      // own because the aggregate that walks them is on a server, and a server is this subpath's.
-      // `ServerComponent` is what `serverComponent` answers with now that it carries
-      // that aggregate, and the consumer below writes an Auth against the one member and
-      // registers it.
       "import type {",
       "  Auth,",
       "  AuthOutcome,",
@@ -628,18 +357,10 @@ try {
       "  ServerComponent,",
       "  ServerComponentOptions,",
       '} from "@shutter-network/concorde/gateway";',
-      // The logging seam, on its own specifier: nearly every part takes one, so it belongs to no
-      // single part and an Operator satisfies it structurally.
       "import type {",
       "  LogFields,",
       "  Logger,",
       '} from "@shutter-network/concorde/logging";',
-      // The Signal Worker's own types, from its own subpath: the Worker and its options, the
-      // two record shapes the Agent server answers with and their states, the Prompt the
-      // Handler returns and the Run prompt the Runtime is given, the Runtime seam itself, the
-      // Signal a Producer emits, and the template Handler's options. Every one of
-      // them was at the root until that decision, and no block above names any of them, so a
-      // symbol that failed to move fails here rather than passing on two specifiers.
       "import type {",
       "  CurrentRun,",
       "  EmittedSignal,",
@@ -659,44 +380,24 @@ try {
       "  SignalWorkerOptions,",
       "  TemplateHandlerOptions,",
       '} from "@shutter-network/concorde/signals";',
-      // The `pi` subpath exports **one type and one function**, and nothing else is reachable
-      // through it. There is no Agent Container, no Mount Table and no command line to name,
-      // because the Gateway starts nothing: what an Operator declares is where the Agent
-      // Instance is and where it keeps Sessions.
       "import type {",
       "  PiInstance,",
       '} from "@shutter-network/concorde/pi";',
-      // The Users component's own types, from its own subpath, for the same reason:
-      // a deployment with no identity in it imports nothing from there. There is no
-      // `IssuedToken` and no `ScryptParameters` among them any more: a credential is an Auth's,
-      // and both names moved to the specifier below with it.
       "import type {",
       "  UserRecord,",
       "  Users,",
       "  UsersOptions,",
       '} from "@shutter-network/concorde/users";',
-      // Password Auth's own types, from the eighth specifier, and no alias among them: the two
-      // names it took off Users resolve to one binding each now.
       "import type {",
       "  IssuedToken,",
       "  PasswordAuth,",
       "  PasswordAuthOptions,",
       "  ScryptParameters,",
       '} from "@shutter-network/concorde/password-auth";',
-      // And the second Auth's, from its own specifier. Two names and no credential type among
-      // them, because this scheme issues nothing: what a deployment names is the constructor's
-      // options and what it answers with.
       "import type {",
       "  NostrAuth,",
       "  NostrAuthOptions,",
       '} from "@shutter-network/concorde/nostr-auth";',
-      // The Messenger's own types, from its own subpath, for the same reason: a
-      // deployment with no messaging in it imports nothing from there, and one that does is
-      // stating that it accepts this part's fixed shapes. No route plugin
-      // type is among them, because none is exported. `Channel` and `MessengerHandle` are
-      // here because they are the seam a second medium plugs into: the Channel a deployment
-      // writes itself is annotated against the first, and what `register` answers with —
-      // the only way an inbound Message can be written — is the second.
       "import type {",
       "  Channel,",
       "  MessageDirection,",
@@ -705,40 +406,24 @@ try {
       "  MessengerHandle,",
       "  MessengerOptions,",
       '} from "@shutter-network/concorde/messenger";',
-      // And the HTTP Channel's, from the ninth specifier. Two names and no table among them:
-      // this component owns nothing to migrate, so its subpath carries a constructor and the
-      // types naming it.
       "import type {",
       "  HttpChannel,",
       "  HttpChannelOptions,",
       '} from "@shutter-network/concorde/http-channel";',
-      // And the Nostr Channel's, from the tenth specifier. Two names, like the HTTP Channel's,
-      // even though this one owns tables: what a deployment names is the constructor's options
-      // and what it answers with.
       "import type {",
       "  NostrChannel,",
       "  NostrChannelOptions,",
       '} from "@shutter-network/concorde/nostr-channel";',
-      // Signatures' own types, from its own subpath. `SignedClaims` is among them because the
-      // caller builds the payload and therefore decides the bytes that get signed: the claims
-      // are serialized in the order they were written, and nothing re-serializes them.
       "import type {",
       "  Signatures,",
       "  SignaturesOptions,",
       "  SignedClaims,",
       '} from "@shutter-network/concorde/signatures";',
-      // And Decisions', whose `DecisionRecord` is the one shape every surface of that part
-      // answers with. No route plugin type is among either set, because neither part exports
-      // one.
       "import type {",
       "  DecisionRecord,",
       "  Decisions,",
       "  DecisionsOptions,",
       '} from "@shutter-network/concorde/decisions";',
-      // The Scheduler's own types, from its own subpath, for the same reason: a deployment with no
-      // time-based behaviour imports nothing from there, and one that does is opting the second
-      // Producer in and wiring it like the Messenger. No route plugin type is among
-      // them, because the part registers its routes itself and exports none.
       "import type {",
       "  ScheduleFiredRecord,",
       "  ScheduleInput,",
@@ -751,22 +436,9 @@ try {
       '} from "@shutter-network/concorde/scheduler";',
       'import { createPrivateKey, generateKeyPairSync, type KeyObject } from "node:crypto";',
       'import { pgSchema, text } from "drizzle-orm/pg-core";',
-      // The two types the tables and schemas are annotated against below. They come from
-      // `drizzle-orm`, which is a *peer* dependency this project never asked npm for — so
-      // resolving them at all is the same proof the peer arrangement gets everywhere else.
       'import type { PgSchema, PgTable } from "drizzle-orm/pg-core";',
-      // Fastify is public API and the consumer's own dependency: the
-      // framework constructs no server, so the instance comes from this call.
-      // Importing the types here is also what proves they resolve from the installed
-      // package: `skipLibCheck` would swallow an unresolved import inside our own
-      // declarations and quietly leave the Signal Worker's route plugin `any`.
       'import Fastify from "fastify";',
       'import type { FastifyInstance, FastifyPluginAsync, onRequestHookHandler } from "fastify";',
-      // The two plugins the default assembly registers on both servers. They are the
-      // framework's own `dependencies` rather than the consumer's, and this project asked
-      // npm for the tarball, `@types/node` and `fastify` and nothing else, so an import
-      // resolving here at all is what proves the two entries are declared rather than
-      // merely present in our own tree.
       'import fastifySwagger from "@fastify/swagger";',
       'import fastifySwaggerUi from "@fastify/swagger-ui";',
       "",
@@ -1607,151 +1279,41 @@ try {
       "-e",
       [
         ...consumerImports,
-        // Fastify, the consumer's own: the Messenger requires the Agent server and the HTTP
-        // Channel the Public one, so constructing both needs two instances and there is no
-        // default of ours behind either.
         'import Fastify from "fastify";',
-        // The two description plugins, imported directly and called below. They arrive in
-        // this project only because the framework declares them, so the import is half the
-        // proof and the registration is the other half.
         'import fastifySwagger from "@fastify/swagger";',
         'import fastifySwaggerUi from "@fastify/swagger-ui";',
-        // `cron-parser` and its `luxon` dependency, imported directly and called below. Like the two
-        // swagger plugins above, they arrive in this project only because the framework declares
-        // them — this project asked npm for the tarball, `@types/node` and `fastify` and nothing
-        // else — so the import is half the proof that the Scheduler's dependency is declared rather
-        // than merely present in our own tree, and the call is the other half. `luxon`
-        // proves less on its own, being reachable transitively through `cron-parser`; it is
-        // exercised because the framework reaches for it directly to validate a zone name.
         'import { CronExpressionParser } from "cron-parser";',
         'import { IANAZone } from "luxon";',
-        // The two things the exporter filters on, from the peer this project never
-        // installed directly.
         'import { is } from "drizzle-orm";',
         'import { getTableConfig, PgSchema, PgTable } from "drizzle-orm/pg-core";',
-        // The three built-ins the signing path needs: one to make a keypair, and two to check
-        // the artifact the way a third party does — with `node:crypto` and not with `jose`,
-        // since `jose` is what signed it.
         'import { createPublicKey, generateKeyPairSync, verify } from "node:crypto";',
-        // `templateHandler` is here because importing it loads `handlebars`: an
-        // installed package resolves it only if it is declared as a dependency, and
-        // our own `node_modules` would hide a missing entry in every other check.
-        //
-        // The `/pi` subpath, actually run rather than only resolved: `createPiRuntime`
-        // reaches down to `./rpc.ts`, `./framing.ts` and `./output.ts`, so this is what
-        // proves a relative `.ts` import inside the subpath survives being compiled and
-        // installed — the thing the deleted placeholder used to stand for.
-        //
-        // Three values and no image anywhere: the Gateway starts nothing now, so what an
-        // Operator declares is where the Agent Instance is and where it keeps Sessions. The
-        // logger is silenced inline because stdout is this step's assertion channel.
         "const hush = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };",
         "const pi = createPiRuntime({ host: '127.0.0.1', port: 1, sessionsDir: '/sessions', logger: hush });",
-        // A `sessionsDir` that is relative is refused at construction, which is the one thing
-        // this subpath can refuse on an Operator's behalf — so this proves that check runs
-        // from the installed package and not only out of this repository.
         "let refusedDir = 'a relative sessionsDir was accepted';",
         "try { createPiRuntime({ host: 'agent', port: 4000, sessionsDir: 'sessions', logger: hush }); } catch (error) { refusedDir = String(error.message).split(',')[0]; }",
-        // And two Runs, which is what makes this an import *and* a call. The first reaches an
-        // address nothing is listening on, so it exercises the `node:net` client out of the
-        // installed package and proves an unreachable Agent Instance is a failed Run carrying
-        // the address rather than a throw. The second never leaves the process: a Session name
-        // outside `pi`'s grammar fails that Run alone, and the grammar is carried here now
-        // because a Session is addressed by path and `pi` will open any path it is handed.
         "const unreachable = await pi.run({ session: 'user_42', text: 'what happened?' });",
         "const badName = await pi.run({ session: '../escape', text: 'what happened?' });",
-        // Users, constructed as an Operator constructs it. `openDb`
-        // connects lazily, so this reaches the database not at all: what it proves is
-        // that the subpath resolves at runtime and that construction is free of side
-        // effects, like every other part's.
         "const scratch = openDb('postgres://nobody@example.invalid/none');",
         "const directory = createUsers({ db: scratch });",
-        // And Password Auth off the eighth subpath, constructed the way an Operator constructs
-        // it: the Db, the Users component whose record every outcome carries, and the Public
-        // server it puts four routes on and registers itself with. Nothing connects and nothing
-        // listens. What this proves is that the specifier resolves at runtime, that an Auth
-        // wires itself with no line in an entry point, and that the object it answers with is a
-        // scheme, the one member a server walks, and three trusted-code methods.
         "const passwordComponent = serverComponent(Fastify(), { port: 0 });",
         "const passwordAuth = createPasswordAuth({ db: scratch, users: directory, publicServer: passwordComponent, tokenTtl: 60000 });",
-        // And the second Auth on the same server, constructed the way an Operator constructs it:
-        // the Db, Users, the server it registers itself with, and the external base URL the `u`
-        // tag of every request is compared against. What this proves is that the specifier
-        // resolves at runtime, that an Auth with **no route at all** still wires itself, and that
-        // the object it answers with is a scheme, the one member a server walks and the one
-        // trusted-code method that grants a key.
         "const nostrAuth = createNostrAuth({ db: scratch, users: directory, publicServer: passwordComponent, externalBaseUrl: 'https://agent.example.invalid' });",
-        // And the Messenger, constructed after it and the way an Operator constructs
-        // it: all four arguments required, the Agent server among them, and the two nominal
-        // types satisfied by the objects the two calls above returned. Nothing connects and
-        // nothing listens — what this proves is that the subpath resolves at runtime, that
-        // construction is free of side effects beyond the one registration it makes, and
-        // that the object it answers with carries the **three** trusted-code methods and no
-        // route plugin, because every other capability it has is a route it registered
-        // itself. Beside them, on this part and on Users both, the
-        // `start` and `stop` that do nothing: what an installed package has to carry for the
-        // two of them to be in a Gateway's record at all.
         "const messengerWorker = createSignalWorker({ db: scratch, runtime: { run: async () => ({ ok: true }) }, handlers: {} });",
         "const messenger = createMessenger({ db: scratch, users: directory, worker: messengerWorker, agentServer: { fastify: Fastify() } });",
-        // And the HTTP Channel from the ninth subpath, registering itself with that Messenger:
-        // what this proves is that the specifier resolves at runtime, that a Channel wires itself
-        // with no line in an entry point, and that the object it answers with is a name and the
-        // three methods a Channel is — with no trusted-code method at all, because everything it
-        // does it does for a request or for the Messenger. That registration is also
-        // why a second Channel here would throw.
         "const httpChannel = createHttpChannel({ db: scratch, messenger, publicServer: serverComponent(Fastify(), { port: 0 }) });",
-        // Signatures and Decisions, constructed the way an Operator constructs them and in the
-        // order they must be: Signatures takes the hook of Users and Decisions holds
-        // Signatures. Signatures takes **no Db**, being the one part with nothing to store, and
-        // the key is a `KeyObject` this project generated itself, because the framework parses
-        // no PEM and generates nothing.
         "const signaturesServer = Fastify();",
-        // A logger that says nothing, because stdout is this step's assertion channel and a
-        // signing line written to it would be part of what is compared. What that line carries
-        // is `src/signatures/signatures.test.ts`'s subject.
         "const quiet = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };",
-        // And the Nostr Channel from the tenth subpath, on a **second Messenger**, because one
-        // Channel per Messenger is refused at registration and a project naming both specifiers
-        // therefore needs two logs. It is handed no server at all — what a User reaches
-        // over this medium is a Relay — and 32 raw bytes for an identity, which is the whole of
-        // what the framework accepts: no `nsec` decoder is shipped and nothing is generated.
-        // Nothing connects here, because the connection is `start`'s; what this proves
-        // is that the specifier resolves at runtime, that the public key is derived from those
-        // bytes inside the installed package, and that the object it answers with carries the one
-        // trusted-code method and no route plugin.
         "const nostrMessenger = createMessenger({ db: scratch, users: directory, worker: messengerWorker, agentServer: { fastify: Fastify() } });",
         "const nostrChannel = createNostrChannel({ db: scratch, messenger: nostrMessenger, users: directory, secretKey: new Uint8Array(32).fill(1), relayUrl: 'wss://relay.example.invalid', logger: quiet });",
         "const signaturesComponent = serverComponent(signaturesServer, { port: 0 });",
         "const signatures = createSignatures({ signingKey: generateKeyPairSync('ed25519').privateKey, publicServer: signaturesComponent, agentServer: { fastify: Fastify() }, logger: quiet });",
         "const decisionsComponent = createDecisions({ db: scratch, signatures, publicServer: signaturesComponent, agentServer: { fastify: Fastify() } });",
-        // The Scheduler, constructed the way an Operator constructs it: the Db, the Signal Worker it
-        // emits into, and an Agent server for its routes. Nothing connects and nothing listens — what
-        // this proves is that the `/scheduler` subpath resolves at runtime from the installed package,
-        // that construction is free of side effects beyond registering its routes,
-        // and that the object it answers with carries its management surface plus the Component
-        // lifecycle. `cron-parser` and `luxon` are the part's own dependencies, and the
-        // proof they resolve and are declared is `cronNext`/`zoneKnown` below, which call them
-        // directly rather than through a Schedule driven here.
         "const scheduler = createScheduler({ db: scratch, worker: messengerWorker, agentServer: { fastify: Fastify() } });",
-        // And the artifact actually produced, in process, from the installed package. This is
-        // the whole proof that `jose` is a **declared** dependency rather than one merely
-        // present in our own tree: this project asked npm for the tarball, `@types/node` and
-        // `fastify` and nothing else, so a missing `dependencies` entry fails right here.
-        // Verified with `node:crypto` against the key set the route serves, which
-        // is also what proves that route answers from an installed package.
         "const jws = await signatures.sign('concorde-decision+jws', { seq: 7, createdAt: new Date().toISOString(), statement: 'we will ship on Friday' });",
         "await signaturesServer.ready();",
         "const keySet = (await signaturesServer.inject({ method: 'GET', url: '/jwks.json' })).json();",
         "const [jwsHeader, jwsPayload, jwsSignature] = jws.split('.');",
         "const checked = verify(null, Buffer.from(jwsHeader + '.' + jwsPayload, 'utf8'), createPublicKey({ key: keySet.keys[0], format: 'jwk' }), Buffer.from(jwsSignature, 'base64url'));",
-        // And the whole stack from one `createGateway` call, which is the path an Operator's
-        // entry point takes: the infrastructure the framework builds, and the four parts built by
-        // hand in `extend` from it. This is the one place anything proves the **value**
-        // import of `fastify` survives installation: `dist/gateway/gateway.js` constructs the two servers
-        // itself, and a peer dependency that failed to resolve would throw right here rather than
-        // at an Operator's first deploy. Nothing connects and nothing listens — `openDb` is lazy
-        // and `Fastify()` binds nothing — so what comes back is the record, in the order the
-        // framework keyed it, with the Worker last and the consumer's own Components ahead of it.
         "const assembled = createGateway({",
         "  databaseUrl: 'postgres://nobody@example.invalid/none',",
         "  runtime: { run: async () => ({ ok: true }) },",
@@ -1768,44 +1330,16 @@ try {
         "  },",
         "  handlers: (all) => ({ 'message.received': { handle: () => [{ session: 'user_1', text: typeof all.messenger.send }] } }),",
         "});",
-        // The Agent server's own description, generated inside the installed package and
-        // fetched the way an Agent Implementation fetches it. `ready` boots the plugins and
-        // binds nothing, so this reaches no database and no socket; what it proves is that
-        // the two plugins resolve from a consumer's tree, that the assembly registered them
-        // ahead of all five parts, and that the ten paths the framework's own routes make
-        // are in the document rather than an empty `paths`.
         "await assembled.components.agentServer.fastify.ready();",
         "const description = (await assembled.components.agentServer.fastify.inject({ method: 'GET', url: '/openapi.json' })).json();",
-        // And both plugins called directly, which is the by-hand path and the rule for a new
-        // runtime dependency: imported *and* called. `/docs/json` is the UI package's own
-        // route, so reading the document back through it exercises the second one rather
-        // than only the first.
         "const byHand = Fastify();",
         "byHand.register(fastifySwagger, { openapi: { openapi: '3.0.3', info: { title: 'by hand', version: '0.0.0' } } });",
         "byHand.register(fastifySwaggerUi, { routePrefix: '/docs' });",
         "byHand.register(async (f) => { f.get('/healthz', async () => ({ ok: true })); });",
         "await byHand.ready();",
         "const byHandDocument = (await byHand.inject({ method: 'GET', url: '/docs/json' })).json();",
-        // The Scheduler's calendar arithmetic, run from the installed package's own dependency: the
-        // next 09:00 UTC strictly after noon on 2030-06-01 is the following day, and the zone checks
-        // hold — which is what proves `cron-parser` and `luxon` are declared and resolve here.
         "const cronNext = CronExpressionParser.parse('0 9 * * *', { currentDate: new Date('2030-06-01T12:00:00.000Z'), tz: 'UTC' }).next().toDate().toISOString();",
         "const zoneKnown = IANAZone.isValidZone('Europe/Berlin') && !IANAZone.isValidZone('Mars/Phobos');",
-        // `drizzle-kit`'s `prepareFromPgImports`, reproduced: it requires **each listed file on
-        // its own** and concatenates what comes back, and what it keeps out of one is
-        // `Object.values` filtered by `is(x, PgTable)` and `is(x, PgSchema)`, with **no recursion
-        // into a plain object**. There is no merge in that pipeline, but there is one upstream of
-        // it: a deployment's own `schema.ts` `export *`s these modules into a single namespace, and
-        // that is what the schema objects and the wrappers carry a component prefix for.
-        // The un-aliased imports at the top of this file are where the collision is caught, since a
-        // name declared twice never reaches this loop. `drizzle-kit` itself is not
-        // installed here and should not be — it is a development tool, and this is a consumer's
-        // runtime tree — so what runs is the collection rule rather than the tool, against the
-        // very modules an Operator's `drizzle.config.ts` names.
-        //
-        // The component subpath is read in the same loop and asked the opposite question. A
-        // schema module re-exported from both places is the mistake this catches, and it is a quiet
-        // one: everything keeps working, every table is simply reachable two ways.
         "const owners = ['signals', 'users', 'password-auth', 'nostr-auth', 'messenger', 'nostr-channel', 'decisions', 'scheduler'];",
         "const wrapperNames = { signals: 'signalsTables', users: 'usersTables', 'password-auth': 'passwordAuthTables', 'nostr-auth': 'nostrAuthTables', messenger: 'messengerTables', 'nostr-channel': 'nostrChannelTables', decisions: 'decisionsTables', scheduler: 'schedulerTables' };",
         "const collectedTables = [];",
@@ -1819,12 +1353,6 @@ try {
         "    if (is(value, PgTable)) collectedTables.push(getTableConfig(value).schema + '.' + getTableConfig(value).name);",
         "    if (is(value, PgSchema)) collectedSchemas.push(value);",
         "  }",
-        // And the failure the flat shape exists to avoid, demonstrated rather than argued: the
-        // `<component>Tables` wrapper `db.handle` takes rides along in every one of these modules
-        // and the exporter sees none of them. A schema module that exported only its wrapper would
-        // collect zero tables and generate an empty migration in silence. Presence is asked
-        // separately, because a wrapper that stopped being exported is invisible to a rule whose
-        // whole point is that it ignores wrappers.
         "  const wrapper = onSchema[wrapperNames[owner]];",
         "  if (wrapper !== undefined && Object.values(wrapper).every((value) => is(value, PgTable))) wrappersPresent.push(owner);",
         "  if (is(wrapper, PgTable) || is(wrapper, PgSchema)) wrappersSeen.push(owner);",
@@ -1833,19 +1361,9 @@ try {
         "    if (is(value, PgTable) || is(value, PgSchema)) stillOnTheComponent.push(owner);",
         "  }",
         "}",
-        // Eight distinct schema objects, one per module, under eight distinct names. The names
-        // matter again: a deployment `export *`s these modules into one `schema.ts`, and eight
-        // exports called `schema` left one survivor and seven schemas with no `CREATE` behind them.
         "const distinctSchemas = new Set(collectedSchemas).size + ' of ' + collectedSchemas.length + ' distinct';",
         "const schemaNames = collectedSchemas.map((value) => value.schemaName).sort();",
-        // And the property the export entries exist for at all: each specifier resolves to a
-        // **file path** inside the installed package, which is what an Operator's
-        // `drizzle.config.ts` hands `drizzle-kit` as its `schema`. Nothing else here
-        // asks that question, every other check being an import.
         "const resolvesToFiles = owners.every((owner) => { const url = import.meta.resolve('@shutter-network/concorde/' + owner + '/schema'); return url.startsWith('file:') && url.endsWith('/dist/' + owner + '/schema/index.js'); });",
-        // Nothing writes a file anywhere and nothing starts a process: the framework has
-        // no container runtime to reach for any more, and the one thing it opens is a
-        // socket to an address that refuses it.
         "const built = [typeof openDb, typeof templateHandler, refusedDir, unreachable.ok ? 'it reached something' : unreachable.error.split(':').slice(0, 2).join(':'), badName.ok ? 'it took the name' : badName.error.split(':')[0], String(Object.keys(pi).sort()), usersSchema.schemaName, String(Object.keys(directory).sort()), 'password auth ' + passwordAuth.scheme + ' ' + String(Object.keys(passwordAuth).sort()) + ' in ' + passwordAuthSchema.schemaName, 'nostr auth ' + nostrAuth.scheme + ' ' + String(Object.keys(nostrAuth).sort()) + ' in ' + nostrAuthSchema.schemaName, messengerSchema.schemaName, String(Object.keys(messenger).sort()), 'channel ' + httpChannel.name + ' ' + String(Object.keys(httpChannel).sort()), 'channel ' + nostrChannel.name + ' ' + String(Object.keys(nostrChannel).sort()) + ' as ' + nostrChannel.publicKey + ' in ' + nostrChannelSchema.schemaName, messageReceivedKind, decisionsSchema.schemaName, String(Object.keys(signatures).sort()), String(Object.keys(decisionsComponent).sort()), jws.split('.').length + ' segments, ' + Buffer.from(jwsSignature, 'base64url').length + ' signature bytes, verified ' + checked + ', private member ' + Object.hasOwn(keySet.keys[0], 'd'), String(Object.keys(assembled.components)), description.info.title + ' describes ' + Object.keys(description.paths).length + ' paths', 'by hand ' + Object.keys(byHandDocument.paths).join(','), 'cron ' + cronNext + ' zone ' + zoneKnown, 'scheduler ' + String(Object.keys(scheduler).sort()) + ' fires ' + scheduleFiredKind + ' in ' + schedulerSchema.schemaName, 'tables ' + collectedTables.sort().join(' ') + ' in ' + schemaNames.join(' ') + ', wrappers seen ' + wrappersSeen.length + ', wrappers present ' + wrappersPresent.length, 'schemas ' + distinctSchemas + ', on a component subpath ' + stillOnTheComponent.length + ', resolving to files ' + resolvesToFiles];",
         "process.stdout.write(built.join(':'));",
       ].join("\n"),
@@ -1858,17 +1376,6 @@ try {
     "all twenty-two entries should resolve at runtime and none of them is the bare package, the Signal Worker's constructor and the template Handler both arriving off `/signals`, the template Handler should load handlebars, the pi Runtime should refuse a relative sessionsDir where the Operator wrote it rather than at the first Run, answer an Agent Instance that is not listening with a failed Run carrying the address — over `node:net`, out of the installed package, with no dependency behind it — and refuse a Session name outside `pi`'s grammar without reaching the network at all, carrying the one method a Runtime is and no second one, and Users should construct into its own schema with its read plugin and its four operations — the two writes the agent's surface has no route for included, and no credential of any kind among them — and Password Auth should construct off the eighth subpath into a schema of its own from the Users component and a Public server, register its four routes and itself as an Auth with that server in its own constructor, and answer with the scheme a challenge names, the one member the server walks and its three trusted-code methods and no route plugin, and Nostr Auth should construct off its own subpath into a schema of its own, register itself with that same server and **no route anywhere**, and answer with the scheme a challenge names, the one member the server walks and the one trusted-code method that grants a public key, and the Messenger should construct into a schema of its own from all four of its required arguments and answer with an object carrying exactly its three trusted-code methods, because every other capability it has is a route it registered itself, and the HTTP Channel should construct off the ninth subpath, register itself with that Messenger and answer with a name fixed by its type and the three methods a Channel is and no trusted-code method at all, and the Nostr Channel should construct off the tenth from 32 raw bytes and a Relay address with no server anywhere, register itself with a second Messenger because one Channel per Messenger is refused at registration, derive the agent's public key from those bytes inside the installed package, and answer with the one trusted-code method that records a public key, the drain that is the half of a send a transaction cannot hold, and no route plugin beside them, and all of them should carry the `start` and `stop` that do nothing and put them in the Gateway's record, and Signatures should construct with no Db anywhere, sign in process, and serve a key set with no private member in it that `node:crypto` checks the artifact against, and Decisions should construct into a schema of its own from the Signatures it holds and answer with an object carrying exactly its own two trusted-code methods, a publish that takes the caller's transaction and a read that takes none, and one `createGateway` call should assemble the infrastructure and the five parts built in `extend` from an installed package — which is also the only proof that the value import of fastify the two servers need survives installation — in the order the framework keyed them, with the Worker last and the consumer's own Components ahead of it, and that assembly's Agent server should answer a description of its own ten paths, generated by two plugins that reached this project only because the framework declares them and that a consumer can also register by hand, and `cron-parser` and its `luxon` dependency should resolve here — reached only because the framework declares them for the Scheduler — and compute the next occurrence and validate a zone, and the Scheduler itself should construct from the installed `/scheduler` subpath and carry its management surface and its Component lifecycle, filing its table under a schema of its own, and each of the eight `/schema` subpaths, which is what an Operator lists in their own barrel and where the tables are, should hand `drizzle-kit`'s own per-module collection rule its own tables and its own schema, thirteen tables and eight schemas between them — the HTTP Channel absent because that Channel owns no log and no tables, and the Nostr Channel present because the three things only it can know are its own —, and none of the `<component>Tables` wrappers, because a table reachable only through a wrapper object is dropped in silence and generates an empty migration, while all eight wrappers should nevertheless resolve on their own specifiers, and those eight schema objects should be eight distinct values, and the eight **component** subpaths should carry no table and no schema object at all, because a component's tables are on exactly one specifier, and every one of the eight should resolve to a file inside the installed package, that path being the only thing `drizzle-kit`'s config takes and the whole reason the entries exist",
   );
 
-  // And the claim nothing above can see, because everything above imports a subpath: **the bare
-  // specifier resolves to nothing.** `exports` has twenty-two entries and no `.`, so Node refuses
-  // `import "@shutter-network/concorde"` before it reads a byte of any module, and names the
-  // refusal `ERR_PACKAGE_PATH_NOT_EXPORTED`. The code is read rather than the exit status, because
-  // a module that threw on load would also exit non-zero and would prove the opposite of this.
-  //
-  // What it buys: nothing lands on the root by accident. A re-export written into a new `index.ts`
-  // is unreachable, a second door onto a component cannot open there, and the only way anything
-  // gets a root again is an edit to `exports` in `package.json` that a reviewer sees. That is a
-  // stronger claim than the one this step used to make, which was about one constructor
-  // and left every other root name unchecked.
   step("checking the bare specifier resolves to nothing");
   const rootRefusal = refusalFrom(
     process.execPath,
@@ -1881,25 +1388,6 @@ try {
     "the package has no `.` export and Node should say so; a root that resolves is a door onto the framework that nobody declared",
   );
 
-  // The reserved `/messenger` specifier is gone from the manifest and there is no check where one
-  // used to be: `"./messenger": null` retired when the log became the Messenger's, and
-  // an undeclared specifier does not resolve for the same reason a misspelt one does not. Asserting
-  // that would be asserting Node's own behaviour.
-
-  // And the `bin`, which nothing above reaches: it is on no specifier, so every import in this
-  // script is blind to it. What an installed package owes a consumer here is a **command**, and
-  // three separate things have to have gone right for one to exist — the manifest names a path
-  // that shipped, `npm` linked it into `node_modules/.bin` and made it executable, and the shebang
-  // survived compilation. A file test would see none of them, so the command is run.
-  //
-  // Run twice, because the two paths prove different halves. `--help` proves the module graph
-  // loads: it is the whole of it, every module being imported statically, so a relative import
-  // that failed to resolve from the installed tree fails here. No arguments at all proves the
-  // refusal path answers on stderr with the exit code a shell script can branch on.
-  //
-  // Nothing here asserts that the export map still has twenty-two entries and no twenty-third
-  // for this command. A `bin` is not importable, so the export map is untouched, and `check:docs` already
-  // fails a subpath that no generator documents.
   step("checking the bin runs from the installed package");
   const command = path.join(consumer, "node_modules", ".bin", "http-client-tui");
   const help = run(command, ["--help"], consumer);

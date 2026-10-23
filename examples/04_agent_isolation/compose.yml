@@ -52,9 +52,6 @@ services:
       AGENT_SERVER_URL: http://gateway:7411
       PI_OFFLINE: "1"
       PI_CODING_AGENT_DIR: /home/agent/.pi/agent
-      # The SDK will not start a request without one, and `models.json` sends the request to
-      # LiteLLM, which replaces this header on the way out. So this string is the whole of what
-      # the agent holds, and it is worth nothing.
       ANTHROPIC_API_KEY: not-a-real-key
     volumes:
       - ./state/workspace:/workspace
@@ -62,8 +59,6 @@ services:
       - ./state/sessions:/sessions
       - ./AGENTS.md:/workspace/AGENTS.md:ro
       - ./settings.json:/home/agent/.pi/agent/settings.json:ro
-      # Points pi's built-in anthropic provider at LiteLLM. It carries an address and no
-      # credential, and it is read-only because nothing in the agent has cause to rewrite it.
       - ./models.json:/home/agent/.pi/agent/models.json:ro
     networks: [agent]
     restart: unless-stopped
@@ -73,8 +68,6 @@ services:
     pids_limit: 512
     mem_limit: 2g
 
-  # The only service that holds the model credential, and the only one with a route off the
-  # stack. Pinned rather than `latest`, as LiteLLM's own deployment guide asks.
   litellm:
     image: ghcr.io/berriai/litellm:v1.103.1
     command:
@@ -137,8 +130,6 @@ services:
 networks:
   db:
     name: concorde_agent_isolation_db
-  # The agent's only network, and it reaches nothing outside this stack. The Gateway and the
-  # proxy join it; the agent cannot leave it.
   agent:
     name: concorde_agent_isolation_agent
     internal: true

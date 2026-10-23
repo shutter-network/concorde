@@ -1,64 +1,40 @@
 # Concorde
 
-A framework for AI agents that act for more than one party at the same time, and are controlled
-by none of them individually.
+Concorde is a TypeScript library for building shared agents: AI agents that serve several
+parties without giving any one party direct control. A trusted operator runs the agent and a
+gateway that mediates its interactions with users.
 
-## What a shared agent is
+Your application chooses the components, defines how incoming signals become prompts, and
+controls which capabilities the agent can call over HTTP. Concorde provides persistent
+messaging, serial execution, authentication, scheduling, and signed decisions.
 
-A **shared agent** is an AI agent that acts for several parties at once. No single party owns it,
-and no party can reach it privately. Every message into the agent and out of it goes through a
-**Gateway** that you run.
+## Get started
 
-Two people who share a household budget are a good example. Both talk to the same agent. Both
-need to trust that the agent does not take instructions from one of them in secret. The Gateway
-is what makes that structure real. It holds the Message log and the agent's signing key. It is
-the only path between a person and the agent.
+[Build a shared agent](./guide) runs an HTTP deployment and shows how to adapt it.
+You need Docker with Compose and a model provider credential.
 
-An **Operator** is whoever runs and configures a shared agent. Every party trusts the Operator.
-The Operator writes the entry point, holds the keys, owns the database, and runs the stack. Most
-of this site is written for that reader.
+[Architecture](./architecture) explains the components, execution model, and deployment
+responsibilities. Use the [API reference](./reference/) when writing your application.
 
-![The parts of a shared agent. A dashed boundary encloses the Gateway, holding the Db, the Signal
-Worker, the Agent server and the Public server, together with the Messenger and its two Channels
-and Users with its two Auths. Outside it are the Agent Instance, a person's client, and a Nostr
-Relay.](/architecture.svg)
+## Choose your components
 
-Everything inside the dashed boundary is the Gateway. The agent is drawn outside it because the
-Operator runs it and the Gateway only connects to it. The
-[Architecture](./architecture#the-shape) page reads the picture part by part.
-
-## Where to start
-
-| Page | What it answers |
+| Need | Components |
 | --- | --- |
-| [Build a shared agent](./guide) | How do I get a working deployment from nothing? |
-| [Architecture](./architecture) | What are the parts, and why are they separate? |
-| [API reference](./reference/) | What is the exact signature of this function? |
+| Identify users and accept credentials | users, password auth, Nostr auth |
+| Exchange messages | messenger with an HTTP channel or Nostr channel |
+| Run the agent at a scheduled time | scheduler |
+| Sign and retain commitments | signatures, decisions |
 
-Read the guide first. It builds one small deployment step by step, and it links to the
-architecture page wherever a step needs the reasoning behind it.
+`createGateway` supplies the db, signal worker, agent server, and public server.
+You construct the other components in your application. Import each from its package subpath,
+such as `@shutter-network/concorde/messenger`.
 
-## What the framework gives you
+## Understand the trust model
 
-- A **Gateway** that mediates all traffic between people and the agent.
-- A **serial Signal Worker**, so the agent does one thing at a time.
-- **Messaging** over HTTP or Nostr, with one Message log per person.
-- **Authentication** as a component, with passwords or Nostr keys.
-- **Signed Decisions**, so the agent can commit to something that a third party can check.
-- **Scheduling**, so time can wake the agent.
+Users access the gateway rather than the agent instance. The operator controls both and is
+trusted by all parties. The agent server and the agent instance's RPC listener require private
+network access: neither authenticates callers.
 
-You choose which of these your deployment builds. The framework builds only the infrastructure
-that every deployment needs, and you construct the rest by hand.
-
-## What you must provide yourself
-
-The framework does not do these things, and each omission is deliberate:
-
-- **Confidentiality between parties.** The agent reads every Message and decides what to send to
-  whom.
-- **Resistance to prompt injection.** This risk is accepted, not solved.
-- **Confinement of the Agent Implementation.** You run it, so you confine it.
-- **Rate limiting.** The login route is unthrottled.
-
-The [Architecture](./architecture#what-you-must-provide-yourself) page states the full list. Read
-it before you deploy.
+Concorde does not prevent prompt injection or enforce confidentiality between users.
+Read [deployment responsibilities](./architecture#deployment-responsibilities) before exposing
+an application beyond your development environment.

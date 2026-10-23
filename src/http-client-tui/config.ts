@@ -1,39 +1,15 @@
-/**
- * Everything the client learns before it makes a request, read out of one argument and two
- * environment variables.
- *
- * The User id is the argument and not a variable, because it is the one thing that changes per
- * invocation: one container is one person, and two terminals against one Gateway are two people.
- * The password is a variable and not a second argument, because an argument is in the process list
- * of every other process on the host.
- *
- * A refusal is a value rather than a thrown error, so the caller decides the exit code and the
- * stream. Nothing here reads `process`: both sources arrive as parameters, which is what lets a
- * test state an environment instead of mutating the one it runs in.
- */
-
-/** Where the Public server listens. */
 export const gatewayUrlVariable = "CONCORDE_GATEWAY_URL";
 
-/** The password of the User named by the argument. */
 export const passwordVariable = "CONCORDE_PASSWORD";
 
-/**
- * Where a Gateway started from the framework's own examples listens.
- *
- * A default for the URL and none for the password: a wrong URL answers nothing and is obvious,
- * and a default password would be a credential this client invented.
- */
 export const defaultGatewayUrl = "http://localhost:8080";
 
-/** What a run needs: where to talk, who to be, and what proves it. */
 export type ClientConfig = {
   readonly baseUrl: string;
   readonly user: string;
   readonly password: string;
 };
 
-/** What the command line asked for: a session, the usage text, or a refusal that names the fault. */
 export type Invocation =
   | { readonly kind: "run"; readonly config: ClientConfig }
   | { readonly kind: "help" }
@@ -59,13 +35,6 @@ function refused(reason: string): Invocation {
   return { kind: "refused", reason };
 }
 
-/**
- * Reads one User id and two variables, or says why it cannot.
- *
- * `argv` is the arguments after the program name, and `env` is a copy of the environment. An
- * empty variable counts as unset, because that is what an unfilled line in a `.env` file
- * produces and a run against an empty password would fail at the login with a worse message.
- */
 export function readInvocation(
   argv: readonly string[],
   env: Readonly<Partial<Record<string, string>>>,

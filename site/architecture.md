@@ -1,486 +1,200 @@
 # Architecture
 
-This page explains what the parts are and why they are separate. The [guide](./guide) builds a
-deployment step by step. The [API reference](./reference/) gives exact signatures.
+A Concorde application connects users to an AI agent through a gateway. The operator assembles
+the gateway from components, runs the agent instance, and configures the network between them.
 
-## The shape
+This page explains the boundaries you work with when building an application. For a running
+example, start with the [guide](./guide).
 
-A shared agent is one deployable application, assembled from parts:
+## Gateway and agent instance
 
-![The parts of a shared agent. A dashed boundary encloses the Gateway. Inside it are the
-infrastructure the framework builds, the Db, the Signal Worker and the two servers, and the
-components a deployment builds by hand: the Messenger with a Nostr Channel and an HTTP Channel
-above it, and Users with Nostr Auth and Password Auth below it. Outside it are the Agent
-Instance, a person's client, and a Nostr Relay.](/architecture.svg)
+The gateway holds the database connection, HTTP servers, signal worker, and the components your
+application selects. The agent instance runs separately. The gateway reaches it through a
+runtime; the agent calls back into the gateway through the agent server.
 
-The dashed boundary is the Gateway, and it is the only path between a person and the agent. What
-is drawn inside it in blue is the infrastructure `createGateway` builds for every deployment. What
-is drawn in green is components, which a deployment builds by hand and picks for itself: these
-four are the messaging and identity half, and **Signatures, Decisions and the Scheduler are not
-drawn**, so read the green boxes as examples of a component rather than as the whole set. What is
-drawn outside is what the Gateway does not own: the **Agent Instance**, which the Operator runs
-and the Gateway merely connects to, the person's own client, and a Relay. The agent is drawn
-outside the boundary because it *is* outside it, and that is the one thing about the picture worth
-arguing over: the Gateway holds a TCP address for the agent and nothing else about it, so the box
-is the Operator's in the same way the Relay and the client are somebody's.
+![gateway infrastructure and optional messaging and authentication components, with the agent instance, user client, and relay outside the gateway.](/architecture.svg)
 
-The wiring the picture is most exact about is Users and the Messenger, and it is worth reading
-twice. Each Channel hands what it received to the one Messenger, and each Auth answers with a
-User from the one Users. Neither pair is a chain of two Messengers or two Users. That is the
-shape [an Auth](#auth) and [a Channel](#the-messenger-and-channels) exist to make.
+The diagram shows messaging and authentication options. A messenger accepts one channel in the
+current implementation; the two channels shown are alternatives. The scheduler, signatures,
+and decisions can also be added, although they are not drawn.
 
-This is the path that one message takes through the same parts:
+`createGateway` constructs four infrastructure components:
 
-```text
-   a person                                time
-      |                                     |
-      v                                     |
-   Channel          one medium              |
-      |                                     |
-      v                                     v
-   Messenger  --> Message log            Scheduler
-      |                                     |
-      |  emits a Signal                     |  emits a Signal
-      +------------------+------------------+
-                         |
-                         v
-                  Signal Worker            one Run at a time, globally
-                         |
-                         v
-                  Signal Handler           your code
-                         |
-                         |  zero or more Prompts
-                         v
-                      Runtime
-                         |
-                         |  one connection, opened for this Run
-                         v
-                  Agent Instance           the Operator's, not the Gateway's
-                         |
-                         |  calls back over HTTP
-                         v
-                   Agent server            no authentication
-```
-
-Those parts sit in three rings, from the inside out:
-
-1. **The Agent Implementation** runs the model. It is `pi` by default, driven by a Runtime. It is
-   not started by anything here: the Operator runs it, and the innermost ring is therefore the one
-   ring the Gateway does not own.
-2. **The Signal Worker** owns the Signal queue, the dispatch to Handlers, and the Runs. It holds
-   no identity and knows nothing about messaging.
-3. **Producers** are trusted parts that emit Signals into the Worker. The Messenger and the
-   Scheduler are the two that ship.
-
-Only the Gateway connects a person to the agent. There is no other path.
-
-## The loop
-
-One message produces one pass through this loop:
-
-1. A person sends a Message to a **Channel**.
-2. The Channel hands it to the **Messenger**, which stores it and emits a **Signal**. Both
-   happen in one transaction.
-3. The **Signal Worker** takes the oldest pending Signal.
-4. It dispatches on the Signal's `kind` to exactly one **Signal Handler**.
-5. The Handler returns zero or more **Prompts**, each naming a **Session**.
-6. For each Prompt the **Runtime** performs a **Run** against the Agent Instance.
-7. During the Run the agent calls the Agent server. It reads Messages, sends Messages, and reads
-   Users.
-8. An outbound Message is written to the log and handed to the Channel.
-9. The Handler's optional **post phase** runs, and is told whether any Run failed.
-
-The person reads the answer by polling their own Message log, or receives it in their own client,
-depending on the Channel.
-
-## The Gateway
-
-A **Gateway** is a record of Components, keyed by names you choose. It starts them in key order
-and stops them in the reverse of that order. A failed start unwinds what already started.
-
-A **Component** is a `start` and a `stop`, and nothing else. It has no name, declares no
-dependency, and resolves nothing. The parts already hold each other, because you passed them to
-each other.
-
-This is not a plugin system and not a registry. A part handed a server registers its routes in
-its own constructor.
-
-### createGateway
-
-`createGateway` builds the irreducible infrastructure that every deployment needs:
-
-| Key | What it is |
+| Component | Responsibility |
 | --- | --- |
-| `db` | The PostgreSQL client. It owns the pool and the `LISTEN` connections. |
-| `agentServer` | The server the Agent Implementation reaches. |
-| `publicServer` | The server people reach. |
-| `worker` | The serial Signal Worker. |
+| Db | PostgreSQL connections, transactions, and notifications |
+| Agent server | HTTP capabilities available to the agent |
+| Public server | HTTP endpoints available outside the gateway |
+| Signal worker | Persistent signal queue and serial execution |
 
-Your `extend` function receives those four and returns components of your own. Your `handlers`
-function runs after `extend`, so a Handler can reach a component you built. The reverse is not
-possible.
+Your `extend` callback constructs additional components using this infrastructure. Dependencies
+are explicit constructor arguments. The gateway does not discover dependencies or construct
+optional components for you.
 
-The four infrastructure keys are a type error in what `extend` returns. Otherwise a spread
-overwrites one in silence.
+A component implements `start()` and `stop()`. Some components only register routes or provide
+methods and have no resources to acquire; their lifecycle methods do nothing. Return every
+component you want managed from `extend`. You can access them later through `gateway.components`.
 
-`createBareGateway` takes a record of Components and is the escape one layer down. A deployment
-whose infrastructure shape itself differs uses it.
+Use `createBareGateway` if you need to supply the infrastructure yourself, including Fastify
+instances with custom construction options.
 
-### Start order
+## From a message to a run
 
-The Signal Worker is keyed last, so it stops first. Its `stop` is the only one that **waits on
-work in flight**: it waits for the Run. That drain therefore runs while every server still
-listens and the pool is still open.
+Consider a user submitting a message through the HTTP channel:
 
-Other stops release resources rather than wait. The Db closes its pool and its `LISTEN`
-connections, each server closes itself, and the Nostr Channel closes its Relay connection.
+1. The public server authenticates the request and identifies the user.
+2. The channel passes the text to the messenger.
+3. In one transaction, the messenger writes the inbound message and emits a signal of kind
+   `messageReceivedKind`. The signal payload is the message record.
+4. After commit, the signal worker selects the signal and calls its signal handler.
+5. The handler returns zero or more prompts. Each prompt becomes a run.
+6. The runtime executes each run against the agent instance.
+7. To answer the user, the agent calls the agent server's messaging API. The messenger records
+   the outbound message and passes it to the channel.
 
-Your own components are keyed ahead of the Worker. They start before it and stop after the drain.
-That is correct for anything the drain uses, such as the Messenger a post phase calls.
+The agent's final model response is not automatically sent to the user. A run can finish
+successfully without sending a message. Explain the gateway's messaging capability in your
+agent instructions.
 
-## The two servers
+### Signals, prompts, and runs
 
-The difference between the two servers is the trust boundary.
+A producer emits a signal with a `kind` and a JSON payload. Your handler map associates each
+kind with a signal handler. An unrecognised kind fails the signal.
 
-| | Public server | Agent server |
+A handler can decline work by returning an empty array, produce one prompt, or fan out into
+several prompts. Prompts execute in array order. One failed run does not prevent the remaining
+runs for that signal from executing.
+
+The optional `post` phase runs after the runs, including when `handle` failed. It receives a
+failure flag and can perform application-specific cleanup or reporting. A failure in either
+phase fails the signal; it does not stop processing subsequent signals.
+
+Execution is serial across one signal worker, including the handler phases. Run exactly one
+worker against a database. Multiple gateways sharing its queue do not preserve that guarantee.
+
+### Failure and restart behavior
+
+Signals and runs are recorded in PostgreSQL. Pending signals survive a restart. Signals left
+in `processing`, and their unfinished runs, are marked failed when the next worker starts.
+They are not replayed: the agent may already have sent messages or changed external state.
+
+The worker does not retry failed handlers or runs. Application code can emit another signal
+when appropriate, but it must account for effects of the previous attempt.
+
+The framework imposes no timeout on a handler or runtime. A call that never resolves blocks the
+queue and graceful shutdown. Provide appropriate limits in your own code or deployment.
+
+## Sessions and run context
+
+A session retains the agent's conversational state between runs. Your handler chooses the
+session name on each prompt. You might use one session per user, one shared session, or a fresh
+session for each run. `session: null` requests a fresh session named after the run.
+
+Sessions do not restrict access. The agent can read gateway data across users and sessions
+through the agent server. Session files may also be compacted by the agent implementation;
+use the message log as the durable record of messages.
+
+`Prompt.context` serves a separate purpose. It is application-defined JSON stored on the run
+and attached to agent server requests as `request.concordeRun.context` while the runtime is
+active. Your hooks can use it to enforce a policy for that run. Built-in routes do not interpret
+it, and it is not sent to the model. Put information intended for the agent in the prompt text.
+
+## Identity and authentication
+
+Users stores user ids and application-defined attributes. It does not store credentials.
+An auth owns a credential scheme and resolves a request to a user. Password auth accepts
+bearer tokens; Nostr auth verifies signed NIP-98 requests.
+
+Each auth registers with the public server during construction. A protected route uses
+`publicServer.requireUser`. Auths are tried in registration order: an absent credential allows
+the next scheme to try, an accepted credential sets `request.concordeUser`, and a refusal ends
+the request with 401. Using this hook without any registered auth is a configuration error.
+
+Creating users, replacing attributes, setting passwords, and granting Nostr keys are
+programmatic API operations for trusted application code. They are not exposed to the agent
+through built-in routes. Keep those operations outside capabilities available to the agent.
+
+## Messenger and channels
+
+The messenger owns one message log per user. Inbound and outbound messages share a sequence,
+and records are immutable through the library API. Cursors let clients read older messages or
+poll for new ones. A channel implements delivery over a particular medium.
+
+A messenger accepts one channel:
+
+| Channel | Inbound path | Outbound path |
 | --- | --- | --- |
-| Who reaches it | People | The Agent Implementation |
-| Authentication | Every registered Auth | **None** |
-| Sees Signals | No | Yes |
-| Reads any person's Message log | No | Yes |
-| Can sign a Statement | No | Yes |
-| Can create a User | No | **No** |
-| Can set another person's password | No | No |
-
-Neither server creates a User, and neither sets a password for somebody else. Both are methods
-that only your own code can call.
-
-Reaching the Agent server port is access to every route on it. Keeping that port unreachable is
-the deployment's responsibility.
-
-**Two unauthenticated privileged addresses sit on the agent network, and they point opposite
-ways.** The Agent server is the inbound one: the agent reaches it and is asked for nothing. The
-Agent Instance's RPC is the outbound one: the Gateway reaches that and is asked for nothing there
-either, `pi`'s RPC carrying no authentication of any kind and a command set that includes `bash`.
-Neither is a new trust. The network is the boundary for both, it is the same boundary the Agent
-server has always rested on, and what changed is that the same network now carries traffic in both
-directions.
-
-A person reaches Users, their Auth's own routes, a Channel, Decisions, and two of the three
-Signature routes. Over HTTP with Password Auth, those Auth routes are a login, a logout, and a
-change of their **own** password. People never see a Signal, and they never reach `POST /sign`.
-
-Both servers describe themselves. Each registers OpenAPI generation **before** `extend` runs,
-because route discovery is a hook that fires as each component registers. The document at
-`/openapi.json` is therefore the truth about what a Gateway serves.
-
-## The Runtime and the Agent Implementation
-
-The **Runtime** is the narrowest interface in the framework:
-
-```ts
-type Runtime = {
-  run(prompt: RunPrompt): Promise<RunOutcome>;
-};
-```
-
-One method, one argument, one outcome. A second Agent Implementation is one function.
-
-The Runtime is held by the Signal Worker and is never started. It is not a Component.
-
-It is called one Run at a time, never concurrently. No implementation needs locking.
-
-### The Agent Instance
-
-`createPiRuntime` starts nothing, and what it takes says so:
-
-```ts
-const runtime = createPiRuntime({
-  host: "agent",
-  port: 4000,
-  sessionsDir: "/sessions",
-});
-```
-
-Three values and no fourth. There is no image, no model, no provider, no credential, no flag and
-no path on this host, because the Gateway does not run the agent. An Operator runs an **Agent
-Instance**, which is `pi --mode rpc` behind a listener in a container of their own, and everything
-`pi` reads on disk and everything it is started with belongs to that container. The Gateway
-therefore holds no container runtime socket, names no host path, and carries no part of the
-agent's environment.
-
-The separation that buys is stronger than the one it replaced, and it is worth being clear about
-why. Driving `pi` in process through its TypeScript SDK was always refused, because `pi`'s shell
-tool hands its child the whole of `process.env`: an in-process agent would hold the Gateway's
-`DATABASE_URL` and could write every table directly, going round the Agent server. Running one
-container per Run answered that from inside the framework. Handing it to the Operator answers it
-from outside, and the agent's process now never shared an address space, a filesystem or an
-environment with the Gateway to begin with.
-
-What the framework gave up is container-per-Run, and the isolation that bought did not disappear:
-it moved into the Operator's compose file, where a container has always been better expressed. An
-Operator who wants a fresh container for every Run writes a Runtime, which is one method.
-
-**One Run is one connection**, opened when a Prompt exists and closed when the agent has settled.
-Over it go four commands, strictly in sequence and never pipelined: `switch_session` to the file
-this Session lives in, `get_state` to confirm the instance went where it was asked, `prompt`, and
-then the stream is read until the agent settles. The second command looks redundant and is not:
-`switch_session` is create-or-resume and answers the same success either way, so reading the
-instance's own state back is the only thing that tells "opened the Session I named" apart from
-"did something else and reported no error". A Prompt delivered into whichever Session the previous
-connection happened to leave open is the failure that step exists to make impossible.
-
-`sessionsDir` is a path in the **Agent Instance's** filesystem and never in the Gateway's.
-`<sessionsDir>/<session>.jsonl` is the file one Session lives in. The Gateway never opens it,
-creates nothing in it, and does not need to be able to reach it: the two ends agree because the
-Operator wrote the same string in the compose file and in the entry point. Nothing can check that
-agreement, since neither end can see the other's filesystem, so a `sessionsDir` that is missing or
-relative is refused when the Runtime is built, which is the one part of it that can be checked
-where the Operator wrote it.
-
-A Session name is checked against `pi`'s own grammar before the path is joined, so a Signal
-Handler's string can neither climb out of `sessionsDir` nor reach the agent unchecked. A bad name
-fails that one Run and names the Session, because a Signal that produced several Prompts must not
-lose the rest of them to one.
-
-**An Agent Instance that is not listening is a failed Run, never a boot failure.** Nothing is
-connected or probed when the Gateway starts. That is the same rule a Relay gets: a remote thing
-the Operator runs is an outage, and a Gateway that refused to start over it would take every other
-party's access down with the agent's.
-
-## Signals, Runs, and Handlers
-
-A **Signal** is an arrival record, emitted by a trusted Producer. It carries a `kind`, an
-arbitrary JSON `payload`, and a timestamp. There is **no user id column**: the Signal Worker
-authenticates nobody, so attribution is not a fact it holds. The Messenger's payload carries the
-User id, which is trustworthy because that component wrote it.
-
-A **Run** is one Prompt executed in one Session. Its `session` is a plain name, not a foreign
-key. Sessions live inside the Agent Implementation.
-
-A **Signal Handler** is arbitrary code and is the primary extension point:
-
-```ts
-type SignalHandler<TPayload = unknown> = {
-  handle(signal: Signal<TPayload>): readonly Prompt[] | Promise<readonly Prompt[]>;
-  post?(signal: Signal<TPayload>, outcome: PostOutcome): void | Promise<void>;
-};
-```
-
-`handle` receives the Signal and nothing else. There is no context object and no second argument.
-
-Returning zero Prompts means the Signal is done and no Run happens. The arrival record stays, so
-a refusal is auditable. Returning many Prompts fans out, and one failure does not stop the rest.
-
-The **post phase** runs once, after every Run from that Signal has finished. It cannot produce
-Prompts. It is the whole of the framework's failure handling, and it is how "that failed" reaches
-the person who asked.
-
-`templateHandler` is the common case. It renders a Handlebars template into one Prompt. The
-template is source text, never a path, and it compiles when the Gateway is built. A template that
-does not compile therefore fails construction rather than a Signal. It takes a post phase as an
-option and hands it over as written.
-
-### At-most-once
-
-A Signal that fails is never retried. A Signal left in `processing` by a stopped Worker is failed
-at the next start. Nothing cancels, retries, reprioritizes, or removes a Signal.
-
-This is why the post phase exists, and why a template compiles early.
-
-## Core components
-
-Every part a deployment assembles is a Component. A deployment builds only the ones it wants, and
-each one below is a single `create*` call inside `extend`.
-
-### Users
-
-Users owns who exists, and their attributes. It owns no credential.
-
-Creating a User and setting attributes are **methods, never routes**. An agent that can create a
-User and give it a credential has made itself an account.
-
-Nothing removes a User. Revoking their Tokens is the whole of it.
-
-Users is not a Producer. A Signal for each login puts a Run behind every authentication, and the
-Worker is serial.
-
-### Auth
-
-An **Auth** owns one scheme's secret, and turns a request carrying it into a User. [The diagram
-above](#the-shape) draws two of them below one Users, which is the same shape the Channels make
-above the Messenger:
-
-```ts
-type Auth = Component & {
-  readonly scheme: string;
-  authenticate(request: FastifyRequest): Promise<AuthOutcome>;
-};
-```
-
-An Auth answers with a User record rather than an id, because the server that walks the Auths can
-resolve nothing itself.
-
-The Public server aggregates them. It reads the registered Auths on each request, in registration
-order. The first `authenticated` outcome assigns the User and continues. The first `refused`
-outcome ends the request. Every 401 carries one challenge per registered **Auth**, so two Auths
-that carry one scheme name it twice.
-
-Two Auths ship:
-
-- **Password Auth** owns scrypt hashes and Tokens. A password is traded for a bearer Token. The
-  login derives against a fixed dummy digest when the User is unknown, so a miss costs what a hit
-  costs.
-- **Nostr Auth** verifies a NIP-98 event on every request and issues nothing. It records each
-  admitted event, so a credential is spent once. Its freshness window applies in **both**
-  directions, so an event stamped in the future is refused rather than valid forever.
-
-Both own tables. An Auth is the component most likely to be assumed stateless, and what an Auth
-owns is a secret. A secret is a row.
-
-### The Messenger and Channels
-
-Messaging is two parts, and [the diagram above](#the-shape) draws both: two Channels above one
-Messenger, each handing what it received down to it.
-
-**The Messenger owns the Message log and reaches nobody.** One table, one `text` per Message, and
-one sequence per User across both directions. One cursored read therefore serves both polling and
-rendering.
-
-**A Channel is what reaches a person over one medium:**
-
-```ts
-type Channel = Component & {
-  readonly name: string;
-  send<TSchema extends Record<string, unknown>>(
-    tx: Handle<TSchema>,
-    message: MessageRecord,
-  ): Promise<void>;
-};
-```
-
-`send` receives an outbound Message inside the transaction that is writing it. The promise is
-only that the Message is the Channel's now. Arrival is not something every medium can promise.
-
-**A Channel must not perform the network act inside `send`.** A publish cannot be rolled back and
-a transaction can. An implementation does everything knowable synchronously, throws for anything
-wrong, and lets whatever must travel travel after the commit.
-
-There is no public `receive`. Registration hands back a private handle, so no other code can put
-words in a person's log.
-
-One Channel per Messenger is refused at registration. A deployment runs one medium.
-
-Two Channels ship:
-
-- **The HTTP Channel** has no tables and no work at either end. Its `send` is a no-op, because
-  HTTP delivery is the person asking. It serves a submission route and a cursored poll.
-- **The Nostr Channel** exchanges NIP-17 private direct messages over one Relay. It owns three
-  tables: which key is which User, which envelopes it has read, and which replies the Relay has
-  not taken. It registers no route on either server.
-
-The Nostr Channel is the counter-example that says a Channel is not a tableless kind of thing.
-
-### Signatures and Decisions
-
-**Signatures** holds the agent's signing identity and stores nothing at all. What it makes is a
-**Signed Statement**: a compact JWS, verifiable by ordinary JOSE tooling in any language.
-
-The deployment loads the key. The framework parses no PEM and generates no keypair. A deployment
-brings its own identity or does not start.
-
-**Decisions** is the log of commitments worth keeping. It is global, addressed to nobody, and
-read by any authenticated person. It is the framework's only shared read: everyone sees the same
-rows.
-
-What a signature proves is narrow. It proves that the Operator committed to this Statement on the
-agent's behalf. It proves nothing whatever about the agent's conduct.
-
-Its audience is a party who never touches the Gateway and holds only a public key.
-
-### The Scheduler
-
-The Scheduler emits one fixed kind when a Schedule matures. It is a timer in front of the
-ordinary dispatch, and it adds no Handler concept.
-
-It supports recurrence, one-shots, cancellation, and time zones. A missed fire is never replayed:
-every next fire is derived strictly forward from now.
-
-Its agent-facing routes are optional. An agent that can wake itself can fill the one serial
-Signal lane and never empty it.
-
-### Two identities, held apart
-
-A shared agent has two identities and no more.
-
-| | Signing identity | Nostr identity |
-| --- | --- | --- |
-| Key | Ed25519, or P-256, P-384, P-521 | secp256k1 |
-| Lives on | Signatures | The Nostr Channel |
-| Answers to | A third party who never touches the Gateway | The people talking to the agent |
-| Copying it | Forges the agent's commitments | Impersonates the agent to them |
-
-Neither can be the other. Nostr requires secp256k1, and Signatures refuses that curve. Nothing in
-the framework answers
-"who is this agent" across both, and nothing tries.
+| HTTP channel | Authenticated HTTP submission | Client polls the message log |
+| Nostr channel | Encrypted direct messages from recorded public keys | Persisted envelope published to the configured relay |
+
+The Nostr channel accepts messages only from keys previously recorded for existing users.
+Its key mapping is separate from Nostr auth grants: permission to exchange messages does not
+grant permission to authenticate HTTP requests, or vice versa.
+
+The Nostr channel keeps outbound envelopes until relay acceptance or an explicit refusal.
+Relay acceptance does not prove the recipient read the message. The relay is a delivery medium;
+the gateway's message log remains the durable record.
+
+## Scheduling and signing
+
+The scheduler persists named schedules and emits `scheduleFiredKind` signals. Your handler
+chooses what each occurrence does. A schedule can fire once or recur using a cron expression
+and time zone. Scheduling an existing name replaces it. Missed occurrences during downtime
+are skipped rather than replayed.
+
+Signatures creates compact JWS artifacts without storing them. Decisions adds an immutable,
+numbered record of signed statements. Every authenticated user can read decisions.
+A signature authenticates a statement under the signing identity; it does not prove that the
+agent followed its instructions or behaved fairly.
+
+Keep the private signing key in the gateway. The Nostr channel uses a separate Nostr identity
+for addressing and encrypted messaging. The two identities have different purposes and key types.
 
 ## Data ownership
 
-Each part owns one PostgreSQL schema, named for its subject rather than for the part. No table
-references another part's, with six exceptions that all point one way.
+Components publish Drizzle table definitions through `/schema` package subpaths. Each stores
+its data in its own PostgreSQL schema. Your application selects the definitions it uses and
+manages database changes; constructing or starting a gateway does not create tables.
 
-Those six are foreign keys onto `concorde_users.users.id`. The Messenger declares one, the Nostr
-Channel declares two, Password Auth declares two, and Nostr Auth declares one. The Users
-component references nobody back.
+Include `users/schema` whenever you include messenger, password auth, Nostr auth, or Nostr
+channel tables, because their foreign keys reference users. HTTP channel and signatures have
+no tables.
 
-Half of them belong to an Auth. That is what "the seam is who owns the secret" costs in the
-schema.
+Use a shared `db.tx` when an application operation spans components. In particular, write a
+signal in the same transaction as the state change that caused it. PostgreSQL delivers the
+worker notification after commit, so rolled-back work cannot trigger a run.
 
-**The framework applies no DDL.** It ships schema definitions on a `/schema` subpath below each
-component, and the Operator applies them with their own `drizzle-kit`. There is no migration
-tracking table and no registration order.
+## Start order
 
-Two components own no tables: Signatures, because a Signed Statement is never kept, and the HTTP
-Channel, because the log is the Messenger's and HTTP delivery needs no queue.
+Constructing a gateway registers routes and builds the handler map. Calling `start()` connects
+the db, starts the agent server and public server, starts extension components in returned key
+order, then starts the signal worker. Return dependencies before the components that need them.
 
-## What you must provide yourself
+Shutdown reverses this order. The signal worker waits for its active signal to finish before
+other components stop. Pending signals stay in the database. Give the process enough shutdown
+time for the longest run you expect.
 
-Each of these is a deliberate decision, not an omission. Read the whole list before you deploy.
+If startup fails, the gateway stops components whose startup completed. Shutdown attempts all
+stops even if one fails, and reports collected failures.
 
-- **Confidentiality between parties.** The agent reads everything and decides what to send to
-  whom.
-- **Resistance to prompt injection.** This risk is accepted. Guidance to Handler authors is the
-  only mitigation.
-- **Confinement of the Agent Implementation.** The deployment runs the Agent Instance, so the
-  deployment confines it. The framework names no image, no mount and no flag.
-- **An unreachable Agent server, and an unreachable agent.** There is no authentication on the
-  Agent server, and none on the Agent Instance's RPC port either. The bind address your entry
-  point states and the network you put the agent on are the whole of the protection, in both
-  directions.
-- **Rate limiting.** The login route is unthrottled and no lockout exists. Rate limiting belongs
-  at your edge, where it survives a second Gateway process.
-- **Account recovery.** There is no email, no reset flow, and no security questions. A forgotten
-  password is trusted code setting a new one.
-- **Removal of a person.** Nothing removes or deactivates a User.
-- **Key rotation, for either identity.** No record carries a key identifier.
-- **Non-repudiation of the conversation.** No party can prove what the agent was told or replied.
-  Signed Statements are not an exception to this.
-- **A process that outlives its Run.** The Run in flight, which a Prompt's context is read
-  against on the Agent server, is a fact about the agent loop and not about who sent a request.
-  A Run ends when the model has nothing more to say, and nothing counts processes, so a detached
-  child one Run leaves behind makes its requests during the next Run, under the next Run's
-  context. A fresh container per Run, or a sandbox that kills the process group when the Run
-  settles, is yours to arrange. There is no per-Run credential, because that would make the
-  Agent server authenticated, and a child that captured one during its own Run would still hold it.
-- **Isolation of any kind.** A deployment that needs real isolation runs two shared agents.
+## Deployment responsibilities
 
-## Known limits
+The operator controls the application, agent instructions, credentials, database, and network.
+All parties must trust that operator. The gateway gives users a mediated path to the agent;
+it does not constrain someone who controls the deployment.
 
-- **One Run at a time, globally.** Throughput is roughly one Run per Run duration for the whole
-  agent. A short question queues behind a long task.
-- **Nothing is bounded by time.** There is no Run timeout and no Handler timeout. A wedged call
-  halts every party until the Operator restarts the process.
-- **At-most-once processing.** A failed Signal is dropped after partial effect.
-- **A withheld Decision is undetectable.** A gap in the sequence means a rolled-back transaction,
-  and the Operator owns the database.
-- **Swapping the Agent Implementation means rewriting the agent's configuration.**
+The agent server and the agent instance's RPC listener are privileged, unauthenticated
+endpoints. Restrict both to a private network. The agent must not be able to reach the database,
+gateway secrets, or infrastructure controls unless your application explicitly needs that access.
+
+Configure the agent instance's tools, workspace permissions, outbound access, and model
+credentials according to the work it performs. The runtime connects to the instance; it does
+not configure or confine it. The guide links to an [isolation example](./guide#prepare-for-deployment)
+that keeps the model credential outside the agent container.
+
+Concorde does not enforce confidentiality between users or prevent prompt injection. The agent
+can disclose information it can read. Add application policy through handler logic and Agent
+server hooks where you need restrictions, and avoid giving the agent unnecessary data or powers.
+
+Provide TLS, rate limiting, backups, secret management, and operational monitoring as part of
+your deployment. Built-in login routes have no rate limiting.

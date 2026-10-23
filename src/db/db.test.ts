@@ -15,21 +15,11 @@ let db: Db;
 before(async () => {
   database = await createTestDatabase("db");
   db = database.db;
-  // One table is the whole of what the pool, the handle, the transactions and the
-  // listeners need to be observable, and it is pushed the way an Operator applies
-  // theirs: the Db applies nothing itself.
   await applySchema(db, { alpha, widgets });
 });
 
 after(() => database.drop());
 
-/**
- * Shaped like a write one part of the Gateway performs on behalf of another: it
- * takes the transaction rather than finding one, and widens the schema parameter
- * instead of naming a part's schema, so a handle and a transaction from anywhere
- * both satisfy it. The call sites below are what prove it compiles
- * against both; `npm run typecheck` is the assertion.
- */
 async function record<TSchema extends Record<string, unknown>>(
   tx: Handle<TSchema>,
   label: string,
@@ -44,9 +34,6 @@ async function labels(): Promise<string[]> {
 
 describe("db.start", () => {
   it("opens the pool, so a database nothing answers on fails at start", async () => {
-    // Port 1 on loopback, where nothing listens: the connection is refused rather
-    // than left hanging, which is the point — a URL that is wrong is this call's
-    // failure and not the first query's, hours later.
     const unreachable = openDb("postgres://concorde:concorde@127.0.0.1:1/none");
     try {
       await assert.rejects(() => unreachable.start(), /ECONNREFUSED/);
@@ -61,8 +48,6 @@ describe("db.handle", () => {
     const alpha = db.handle({ widgets });
     await alpha.insert(widgets).values({ label: "handle-typed" });
 
-    // The relational form is only available on a handle carrying the schema, so
-    // reading back through it is what distinguishes this from a bare handle.
     const found = await alpha.query.widgets.findMany({
       where: (w, { eq }) => eq(w.label, "handle-typed"),
     });
@@ -98,16 +83,13 @@ describe("db.tx", () => {
   });
 
   it("makes a function taking a handle or a transaction join the caller's transaction", async () => {
-    // The same function, called with a plain handle, writes immediately.
     await record(db.handle({ widgets }), "via-handle");
     assert.ok((await labels()).includes("via-handle"));
 
-    // Called with the transaction, its write is undone with everything else.
     await assert.rejects(
       () =>
         db.tx(async (tx) => {
           await record(tx, "via-transaction");
-          // Visible inside the transaction before it is abandoned.
           const inside = await tx.select({ label: widgets.label }).from(widgets);
           assert.ok(inside.some((row) => row.label === "via-transaction"));
           throw new Error("abandon");
@@ -119,15 +101,7 @@ describe("db.tx", () => {
   });
 });
 
-/**
- * Everything a caller of `db.listen` can see: what arrives, what does not, and
- * that the connection carrying it is the Db's own rather than a pooled one.
- *
- * `pg_notify` rather than `NOTIFY` throughout, here and in the Signal Worker: `NOTIFY` is a
- * utility statement, so its channel and payload cannot be bind parameters.
- */
 describe("db.listen", () => {
-  /** Records everything a listener is told, so a test can assert on absence too. */
   function recording(): {
     readonly payloads: string[];
     readonly losses: unknown[];
@@ -159,10 +133,6 @@ describe("db.listen", () => {
     return on.execute(sql`select pg_notify(${channel}, ${payload})`);
   }
 
-  /**
-   * A notification is not queued for a connection that is not there yet, so a test
-   * that sends one before the registration is in place is testing nothing.
-   */
   async function connected(reported: () => number, atLeast = 1): Promise<void> {
     await waitUntil(`the listening connection is up (${atLeast})`, async () => {
       return reported() >= atLeast;
@@ -201,8 +171,6 @@ describe("db.listen", () => {
         /deliberate/,
       );
 
-      // The marker is what makes the absence above a fact rather than a race this
-      // test won: it went through the same channel afterwards and did arrive.
       await db.tx((tx) => notify("transactional", "committed", tx));
       await waitUntil("the committed notification arrives", async () => {
         return recorded.payloads.length > 0;
@@ -217,15 +185,11 @@ describe("db.listen", () => {
   it("keeps its connection outside the pool, so a saturated pool cannot deafen it", async () => {
     const recorded = recording();
     const listening = db.listen("saturated", recorded.listener);
-    // A second Db on the same database, because sending the notification through
-    // the saturated pool would only queue behind the sleeps.
     const sender = openDb(database.url);
     try {
       await connected(recorded.connections);
       assert.equal(await listeningBackends(db), 1, "the listener should have a backend of its own");
 
-      // More concurrent queries than the pool holds, so every pooled connection is
-      // busy and two callers are queued for one.
       const saturating = Array.from({ length: 12 }, () =>
         db.handle({}).execute(sql`select pg_sleep(0.3)`),
       );
@@ -252,7 +216,6 @@ describe("db.listen", () => {
       await connected(recorded.connections, 2);
       assert.ok(recorded.losses.length > 0, "the loss should have been reported");
 
-      // What matters is not that it reconnected but that it is listening again.
       await notify("cut", "after the cut");
       await waitUntil("a notification arrives on the new connection", async () => {
         return recorded.payloads.length > 0;
@@ -268,8 +231,6 @@ describe("db.listen", () => {
     const listening = db.listen("closed", recorded.listener);
     await connected(recorded.connections);
     await listening.close();
-    // Twice, because a caller stopping a Signal Worker that is already stopped should not be
-    // the caller's problem to avoid.
     await listening.close();
 
     assert.equal(await listeningBackends(db), 0, "the connection should be gone");
@@ -280,16 +241,12 @@ describe("db.listen", () => {
   });
 
   it("closes what listening opened when the Db stops", async () => {
-    // Its own Db: stopping this file's would take the rest of the tests with it.
     const other = openDb(database.url);
     const recorded = recording();
     other.listen("orphan", recorded.listener);
     await connected(recorded.connections);
     assert.equal(await listeningBackends(db), 1);
 
-    // A listening connection nobody closed keeps the process alive and the database
-    // undroppable, so the Db closing what it opened is the difference between a
-    // clean exit and a hang.
     await other.stop();
     assert.equal(await listeningBackends(db), 0);
   });
