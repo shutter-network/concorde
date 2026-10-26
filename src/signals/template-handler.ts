@@ -24,6 +24,7 @@ const compileOptions: CompileOptions = { noEscape: true, strict: true };
  * Renders one prompt per signal using strict Handlebars with HTML escaping disabled.
  * Syntax errors in the main template fail construction; missing template values fail the signal.
  * Helpers and partials are local to this handler.
+ * Wrap text from outside the gateway in `quote`.
  */
 export function templateHandler<TPayload = unknown>(
   options: TemplateHandlerOptions<TPayload>,

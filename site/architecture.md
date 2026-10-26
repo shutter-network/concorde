@@ -229,6 +229,9 @@ that keeps the model credential outside the agent container.
 Concorde does not enforce confidentiality between users or prevent prompt injection. The agent
 can disclose information it can read. Add application policy through handler logic and Agent
 server hooks where you need restrictions, and avoid giving the agent unnecessary data or powers.
+`quote` fences text from outside the gateway so the agent can tell it apart from your
+instructions (see [the guide](./guide#define-how-the-agent-responds)). It makes injection harder,
+not impossible.
 
 Provide TLS, rate limiting, backups, secret management, and operational monitoring as part of
 your deployment. Built-in login routes have no rate limiting.
