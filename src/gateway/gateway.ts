@@ -42,7 +42,7 @@ export type GatewayOptions<E extends GatewayExtension> = {
   readonly sweepIntervalMs?: number;
 };
 
-export const describedVersion = "0.1.0";
+export const describedVersion = "0.1.1-test.0";
 
 function describeSurface(fastify: FastifyInstance, title: string, description: string): void {
   fastify.register(fastifySwagger, {
