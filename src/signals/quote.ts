@@ -1,6 +1,6 @@
 import { randomInt } from "node:crypto";
 
-// No backtick, so the fence line cannot be made longer.
+// Exclude backticks so each generated fence starts with exactly four.
 const specials = "!#$%&*+=?@^~";
 const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
@@ -11,14 +11,14 @@ function pick(from: string, count: number): string {
 }
 
 /**
- * Returns a random fence line that does not appear in `text`: four backticks followed by six
- * special characters and six letters.
+ * Returns a random delimiter (fence line) that does not appear anywhere in `text`.
+ * The delimiter contains four backticks, six special characters, and six letters.
  */
 export function fence(text: string): string {
   return fenceWith(text, () => pick(specials, 6) + pick(letters, 6));
 }
 
-/** Test seam for {@link fence}; not exported from the package. */
+/** Allows tests to supply the random suffix for {@link fence}. Not exported from the package. */
 export function fenceWith(text: string, suffix: () => string): string {
   mustBeString("fence", text);
   for (;;) {
@@ -28,12 +28,13 @@ export function fenceWith(text: string, suffix: () => string): string {
 }
 
 /**
- * Wraps text from outside the gateway between two copies of a fence line from {@link fence}.
- * The prompt must state the fence line. As a template helper, `quote` reads it from the
- * template data's `fence` value. Fencing makes prompt injection harder, not impossible.
+ * Marks the start and end of text from outside the gateway with a delimiter from {@link fence}.
+ * The prompt must tell the agent which delimiter marks the text boundaries.
+ * When used as a template helper, `quote` reads the delimiter from `fence` in the template data.
+ * Delimiters reduce the risk of prompt injection but do not prevent it.
  */
 export function quote(text: string, fenceLine?: string): string {
-  // As a template helper, the last argument is Handlebars' options object, which holds the data.
+  // Handlebars passes an options object containing the template data as the helper's last argument.
   const line = typeof fenceLine === "string" ? fenceLine : fenceFromData(fenceLine);
   mustBeString("quote", text);
   if (typeof line !== "string" || text.includes(line)) {
@@ -48,7 +49,7 @@ function fenceFromData(options: unknown): unknown {
   return (options as { data?: { root?: { fence?: unknown } } } | undefined)?.data?.root?.fence;
 }
 
-// Templates are not type-checked, so a helper can be handed anything.
+// Templates are not type-checked, so validate helper arguments at runtime.
 function mustBeString(name: string, value: unknown): void {
   if (typeof value !== "string") {
     throw new TypeError(`${name} takes a string, and was handed ${typeof value}`);

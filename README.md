@@ -78,8 +78,9 @@ All parties must trust the operator. The agent server and agent RPC listener are
 unauthenticated endpoints; keep them on a private network. Configure agent permissions, TLS,
 rate limiting, secret management, and backups for your application.
 
-Concorde does not prevent prompt injection or enforce confidentiality between users. Fencing
-messages with `quote` makes injection harder, not impossible. A valid
+Concorde does not prevent prompt injection or enforce confidentiality between users. Use `quote`
+to mark the start and end of user messages in prompts. This reduces the risk of prompt injection
+but does not prevent it. A valid
 signature authenticates a statement under the signing identity, not the agent's behavior.
 Read the [architecture](https://shutter-network.github.io/concorde/architecture) before deploying.
 

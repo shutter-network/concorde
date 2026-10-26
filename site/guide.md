@@ -141,28 +141,32 @@ from `/messenger`, and `fence`, `quote` and `templateHandler` from `/signals`.
 escaping disabled. Missing template values fail that signal. A syntax error in the main template
 fails construction, before the gateway starts.
 
-`quote` puts the user's message between two copies of a fence line, so the agent can tell their
-words apart from your instructions. `fence` makes that line: four backticks followed by random
-characters, new for every message and never equal to a line already in it. The sender never sees
-the prompt, so they cannot guess the line and end the message early. The agent receives
-something like this:
+`quote` marks the start and end of the user's message with the same delimiter, called a fence
+line. This helps the agent distinguish the message from your instructions. `fence` generates
+the delimiter: four backticks followed by six random special characters and six random letters.
+The example generates a new delimiter for each message and checks that it does not appear
+anywhere in the message. The sender does not see the prompt, which makes it harder to guess the
+delimiter and make part of the message look like instructions from the gateway.
+
+The agent receives a prompt like this:
 
 `````
 … It starts and ends with a line that reads exactly ````=+$^@~FpPagC. …
 
 ````=+$^@~FpPagC
-whatever they wrote, unchanged
+The user's message appears here, unchanged.
 ````=+$^@~FpPagC
 `````
 
-The template must tell the agent the exact fence line, as its first sentence does; the line alone
-is not enough. Quote only text written outside the gateway. Do not quote `userId`, which the
-gateway writes, or a task the agent scheduled for itself, which is meant as an instruction.
+The template must tell the agent which exact delimiter marks the message boundaries, as the
+example does above. Adding the delimiter alone is not enough. Use `quote` only for text from
+outside the gateway. Do not use it for `userId`, which the gateway supplies, or for a task the
+agent scheduled for itself, which the agent should follow as an instruction.
 
-::: warning Fencing lowers the risk of prompt injection but does not remove it
-A model can still follow instructions inside a message, and smaller models often do not check
-that the closing line matches. If the agent must never do something, do not give it the access
-to do it.
+::: warning Delimiters do not prevent prompt injection
+A model can still follow instructions inside a user message. Smaller models often fail to check
+that the closing delimiter matches the opening delimiter. If the agent must never perform an
+action, do not give it the tools or permissions needed to perform that action.
 :::
 
 The session name above gives each user a continuing session. Use `session: () => null` for a
