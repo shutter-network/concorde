@@ -101,3 +101,29 @@ npm run check
 
 Tests use real PostgreSQL databases. `npm run check` runs type checking, the build, lint, and
 tests. See [CLAUDE.md](./CLAUDE.md) for development conventions and additional checks.
+
+## Release
+
+```sh
+npm version patch   # alternatively: minor, major, or prerelease --preid rc
+git push --follow-tags
+```
+
+Commit or stash any changes before running `npm version`; it requires a clean working tree.
+The command updates the version in `package.json`. Its `version` script copies that number to
+`describedVersion` in `src/gateway/gateway.ts`. Both changes are included in a release commit
+tagged `v<version>`.
+
+Pushing the tag starts the [publishing workflow](./.github/workflows/publish.yml). The workflow
+checks that the tag matches the version in `package.json` and that the tagged commit is on
+`main`. It then runs the full CI workflow on that commit. Once CI passes, it publishes the
+package to npm using trusted publishing with provenance. After publication, it creates a
+GitHub release and deploys the documentation site.
+
+For versions with a prerelease suffix, such as `0.2.0-rc.0`, the workflow uses the npm dist-tag
+`next` instead of `latest`, marks the GitHub release as a prerelease, and skips site deployment.
+
+A published version number cannot be reused, even after unpublishing. npm allows unpublishing
+within 72 hours if no other packages in the registry depend on the package; after that,
+[stricter conditions apply](https://docs.npmjs.com/policies/unpublish/). To retire a version after
+that window, deprecate it with `npm deprecate` and release a new version.

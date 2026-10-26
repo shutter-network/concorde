@@ -192,12 +192,6 @@ Four ways that fails quietly, all of them a deployment's to get right:
   export must appear in the annotated `main.ts` that check writes, and anything reaching for a new
   runtime dependency must be *imported and called* in its runtime step — that is what proves the
   dependency is declared rather than merely present in our own `node_modules`.
-- **Publishing is a hand act**: `npm version patch && npm publish && git push --follow-tags`.
-  `prepublishOnly` builds; the `version` lifecycle runs `scripts/stamp-version.ts`, which writes
-  `describedVersion` in `src/gateway/gateway.ts` and `git add`s it, so the release commit carries
-  both numbers or neither. `gateway.test.ts` holds that literal against the manifest and is a
-  backstop rather than a guard: `prepublishOnly` does not run tests, so it fails on `main` *after* a
-  bad publish, which is what it did twice.
 
 ## Agent skills
 

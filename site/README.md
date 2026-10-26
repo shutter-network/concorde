@@ -12,8 +12,10 @@ Run these commands from the repository root. Each installs the site's dependenci
 | `npm run check:docs` | Generate, check signature links, and build |
 | `npm run docs:deploy` | Run the checks and publish to `gh-pages` |
 
-Deployment publishes the working tree, including uncommitted edits. It is manual; pushing a
-commit does not publish the site. The deployment commit records `git describe --dirty`.
+`npm run docs:deploy` publishes the working tree, including uncommitted edits. CI also deploys
+the site for each release without a prerelease suffix, as described in the
+[release instructions](../README.md#release). Other deployments are manual; pushing a commit
+alone does not publish the site. The deployment commit records `git describe --dirty`.
 
 ## Where to edit
 
