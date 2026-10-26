@@ -5,6 +5,7 @@ export type {
   SignalHandler,
   SignalHandlers,
 } from "./handlers.ts";
+export { fence, quote } from "./quote.ts";
 export type { RunRecord, SignalRecord } from "./routes.ts";
 export type { RunOutcome, RunPrompt, Runtime } from "./runtime.ts";
 export type { RunState, SignalState } from "./schema/index.ts";

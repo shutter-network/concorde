@@ -70,7 +70,8 @@ with telemetry disabled in this example.
 
 The agent can still access the gateway capabilities you expose and send information in a
 message. Network restrictions do not enforce confidentiality between users or prevent prompt
-injection.
+injection. `main.ts` fences each message with `quote`, which makes injection harder but not
+impossible; see [the guide](../../site/guide.md#define-how-the-agent-responds).
 
 The proxy keeps the credential out of the agent's filesystem and environment, but the agent can
 still incur model usage through it. Apply provider limits appropriate to your deployment.
