@@ -41,7 +41,7 @@ export function quote(text: string, fenceLine: string): string {
 
 /**
  * Handlebars helper for {@link quote}. Reads `fence` from the root template data.
- * Register it as `helpers: { quote: quoteHelper }` and write `{{quote text}}`.
+ * Register it as `helpers: { quote: quoteHelper }` and call it as `quote` in the template.
  */
 export function quoteHelper(text: unknown, options: Handlebars.HelperOptions): string {
   // Templates are not type-checked, so check arguments at runtime.
