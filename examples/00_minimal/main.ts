@@ -7,7 +7,7 @@ import {
 } from "@shutter-network/concorde/messenger";
 import { createPasswordAuth } from "@shutter-network/concorde/password-auth";
 import { createPiRuntime } from "@shutter-network/concorde/pi";
-import { fence, quote, templateHandler } from "@shutter-network/concorde/signals";
+import { fence, quoteHelper, templateHandler } from "@shutter-network/concorde/signals";
 import { createUsers } from "@shutter-network/concorde/users";
 
 const password = process.env.USER_PASSWORD!;
@@ -49,7 +49,7 @@ This message is {{userId}}'s. Your answer goes to {{userId}} and to no one else.
 Send your reply through the gateway messaging API. Your final model response is not delivered.`,
       session: (signal) => `user_${signal.payload.userId}`,
       data: (signal) => ({ ...signal.payload, fence: fence(signal.payload.text) }),
-      helpers: { quote },
+      helpers: { quote: quoteHelper },
     }),
   }),
 });

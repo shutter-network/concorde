@@ -70,8 +70,8 @@ with telemetry disabled in this example.
 
 The agent can still access the gateway capabilities you expose and send information in a
 message. Network restrictions do not enforce confidentiality between users or prevent prompt
-injection. `main.ts` uses `quote` to mark the start and end of each user message in the prompt.
-This reduces the risk of prompt injection but does not prevent it. See
+injection. `main.ts` uses `quoteHelper` to mark user message boundaries in prompts and reduce
+prompt injection risk. See
 [the guide](../../site/guide.md#define-how-the-agent-responds).
 
 The proxy keeps the credential out of the agent's filesystem and environment, but the agent can
