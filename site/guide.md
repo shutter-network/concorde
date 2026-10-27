@@ -129,24 +129,24 @@ This message is {{userId}}'s. Your answer goes to {{userId}} and to no one else.
 Send your reply through the gateway messaging API. Your final model response is not delivered.`,
     session: (signal) => `user_${signal.payload.userId}`,
     data: (signal) => ({ ...signal.payload, fence: fence(signal.payload.text) }),
-    helpers: { quote },
+    helpers: { quote: quoteHelper },
   }),
 }),
 ```
 
 These names are imported in the example's `main.ts`: `messageReceivedKind` and `MessageRecord`
-from `/messenger`, and `fence`, `quote` and `templateHandler` from `/signals`.
+from `/messenger`, and `fence`, `quoteHelper` and `templateHandler` from `/signals`.
 
 `templateHandler` renders one prompt from each signal. It uses strict Handlebars with HTML
 escaping disabled. Missing template values fail that signal. A syntax error in the main template
 fails construction, before the gateway starts.
 
-`quote` marks the start and end of the user's message with the same delimiter, called a fence
-line. This helps the agent distinguish the message from your instructions. `fence` generates
-the delimiter: four backticks followed by six random special characters and six random letters.
-The example generates a new delimiter for each message and checks that it does not appear
-anywhere in the message. The sender does not see the prompt, which makes it harder to guess the
-delimiter and make part of the message look like instructions from the gateway.
+`quote` wraps the unchanged user message in two identical delimiter lines, called fence lines,
+to distinguish it from your instructions. In templates, register `quoteHelper` as `quote`; it
+reads `fence` from the root template data. The example calls `fence(text)` for each message to
+generate a delimiter absent from the text: four backticks, six random special characters, and
+six random letters. The sender does not see the prompt, making the delimiter harder to guess and
+the gateway's instructions harder to imitate.
 
 The agent receives a prompt like this:
 
@@ -158,15 +158,14 @@ The user's message appears here, unchanged.
 ````=+$^@~FpPagC
 `````
 
-The template must tell the agent which exact delimiter marks the message boundaries, as the
-example does above. Adding the delimiter alone is not enough. Use `quote` only for text from
-outside the gateway. Do not use it for `userId`, which the gateway supplies, or for a task the
-agent scheduled for itself, which the agent should follow as an instruction.
+The template must identify the exact delimiter, as above; adding it alone is not enough.
+Use `quote` only for external text. Do not quote the gateway-supplied `userId` or tasks the agent
+scheduled for itself: those tasks are instructions the agent should follow.
 
 ::: warning Delimiters do not prevent prompt injection
-A model can still follow instructions inside a user message. Smaller models often fail to check
-that the closing delimiter matches the opening delimiter. If the agent must never perform an
-action, do not give it the tools or permissions needed to perform that action.
+A model can still follow instructions in a user message. Smaller models often fail to check
+that delimiters match. If the agent must never perform an action, do not give it the required
+tools or permissions.
 :::
 
 The session name above gives each user a continuing session. Use `session: () => null` for a
