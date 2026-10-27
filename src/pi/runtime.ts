@@ -1,6 +1,6 @@
 import { posix } from "node:path";
 import { defaultLogger, type Logger } from "../logging/index.ts";
-import type { RunOutcome, RunPrompt, Runtime } from "../signals/runtime.ts";
+import type { RunObserver, RunOutcome, RunPrompt, Runtime } from "../signals/runtime.ts";
 import { readOutcome } from "./output.ts";
 import { openRpcChannel, type RpcChannel } from "./rpc.ts";
 
@@ -22,6 +22,12 @@ const sessionNames = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
  * session names must begin and end with an ASCII letter or digit; interior characters may also
  * include `.`, `_`, and `-`. Blank prompt text fails the run. Completion requires `agent_settled`
  * and a final assistant stop reason of `stop` or `length`. There is no execution timeout.
+ *
+ * Reports usage for each assistant `message_end` and each `compaction_end`, including retries.
+ * If the observer throws or usage exceeds the Prompt's `usageLimit`, the runtime sends `abort`
+ * to pi. Once pi settles, the Run fails and the Session file is kept. Token counts come from
+ * the provider. A response interrupted mid-stream reports less output than was generated.
+ * If the server reports no usage, the recorded count is zero.
  */
 export function createPiRuntime(instance: PiInstance): Runtime {
   const { host, port, sessionsDir } = instance;
@@ -39,7 +45,7 @@ export function createPiRuntime(instance: PiInstance): Runtime {
   }
 
   return {
-    async run(prompt: RunPrompt): Promise<RunOutcome> {
+    async run(prompt: RunPrompt, observer?: RunObserver): Promise<RunOutcome> {
       const failed = (why: string): RunOutcome => ({
         ok: false,
         error: `Session ${prompt.session}: ${why}`,
@@ -52,6 +58,14 @@ export function createPiRuntime(instance: PiInstance): Runtime {
       }
       if (prompt.text.trim() === "") {
         return failed("Prompt text must not be blank");
+      }
+      if (
+        prompt.usageLimit !== undefined &&
+        !(Number.isSafeInteger(prompt.usageLimit) && prompt.usageLimit > 0)
+      ) {
+        return failed(
+          `usageLimit must be a positive whole number of tokens; received ${String(prompt.usageLimit)}`,
+        );
       }
 
       const sessionFile = posix.join(sessionsDir, `${prompt.session}.jsonl`);
@@ -66,7 +80,7 @@ export function createPiRuntime(instance: PiInstance): Runtime {
       log.debug({ session: prompt.session, sessionFile, host, port }, "connected to the agent");
 
       try {
-        return await performRun(rpc, prompt, sessionFile, failed);
+        return await performRun(rpc, prompt, sessionFile, failed, observer);
       } catch (error) {
         return failed(messageOf(error));
       } finally {
@@ -82,6 +96,7 @@ async function performRun(
   prompt: RunPrompt,
   sessionFile: string,
   failed: (why: string) => RunOutcome,
+  observer: RunObserver | undefined,
 ): Promise<RunOutcome> {
   const switched = await rpc.send("switch_session", { sessionPath: sessionFile });
   if (!switched.success) {
@@ -110,7 +125,17 @@ async function performRun(
     return failed(`Prompt rejected: ${prompted.error ?? "no error details"}`);
   }
 
-  const outcome = await readOutcome(rpc.records, prompt.session);
+  let aborted = false;
+  const abort = (): void => {
+    if (aborted) return;
+    aborted = true;
+    rpc.notify("abort");
+  };
+  const outcome = await readOutcome(rpc.records, prompt.session, {
+    ...(observer === undefined ? {} : { observer }),
+    ...(prompt.usageLimit === undefined ? {} : { usageLimit: prompt.usageLimit }),
+    abort,
+  });
   const dropped = rpc.dropped();
   if (outcome.ok || dropped === undefined) return outcome;
   return { ok: false, error: `${outcome.error}. The connection failed: ${dropped}` };

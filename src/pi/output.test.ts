@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import { describe, it } from "node:test";
-import type { RunOutcome } from "../signals/runtime.ts";
+import type { RunOutcome, UsageReport } from "../signals/runtime.ts";
 import { type Framed, framedRecords } from "./framing.ts";
 import { readOutcome } from "./output.ts";
 
@@ -291,5 +291,279 @@ describe("output that cannot be read", () => {
       await failureOf(""),
       `Session ${session}: No records received after the prompt was accepted; completion is unknown`,
     );
+  });
+});
+
+type Watched = {
+  readonly outcome: RunOutcome;
+  readonly reports: readonly UsageReport[];
+  readonly aborts: number;
+};
+
+async function watched(
+  text: string,
+  recording: (report: UsageReport) => void | Promise<void> = () => {},
+  usageLimit?: number,
+): Promise<Watched> {
+  const reports: UsageReport[] = [];
+  let aborts = 0;
+  const outcome = await readOutcome(framedRecords(chunks(text, 4096)), session, {
+    observer: {
+      async usage(report) {
+        reports.push(report);
+        await recording(report);
+      },
+    },
+    abort: () => {
+      aborts += 1;
+    },
+    ...(usageLimit === undefined ? {} : { usageLimit }),
+  });
+  return { outcome, reports, aborts };
+}
+
+function assistantEnd(usage: Record<string, unknown>, stopReason = "toolUse"): unknown {
+  return {
+    type: "message_end",
+    message: { role: "assistant", provider: "mock", model: "mock-1", stopReason, usage },
+  };
+}
+
+const spent = {
+  input: 100,
+  output: 20,
+  cacheRead: 300,
+  cacheWrite: 5,
+  totalTokens: 425,
+  cost: { total: 0.25 },
+};
+
+describe("the usage a Run reports", () => {
+  it("reports each model call once, a failed attempt before a retry included", async () => {
+    const { outcome, reports } = await watched(await fixture("retry-then-settled"));
+
+    assert.deepEqual(outcome, { ok: true });
+    assert.deepEqual(
+      reports.map((report) => [report.provider, report.model, report.totalTokens]),
+      [
+        ["mock", "mock-1", 0],
+        ["mock", "mock-1", 18],
+      ],
+      "two attempts, each reported once although turn_end and agent_end repeat them",
+    );
+    assert.deepEqual(reports[1], {
+      provider: "mock",
+      model: "mock-1",
+      input: 11,
+      output: 7,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 18,
+      cost: 0,
+    });
+  });
+
+  it("carries every category, the cost, and a total it sums itself", async () => {
+    const { reports } = await watched(
+      asStream([assistantEnd({ ...spent, totalTokens: 1 }, "stop"), { type: "agent_settled" }]),
+    );
+
+    assert.deepEqual(reports, [
+      {
+        provider: "mock",
+        model: "mock-1",
+        input: 100,
+        output: 20,
+        cacheRead: 300,
+        cacheWrite: 5,
+        totalTokens: 425,
+        cost: 0.25,
+      },
+    ]);
+  });
+
+  it("reports a compaction, naming the model the Run last used", async () => {
+    const { reports } = await watched(
+      asStream([
+        assistantEnd(spent),
+        { type: "compaction_start", reason: "threshold" },
+        {
+          type: "compaction_end",
+          reason: "threshold",
+          result: { summary: "…", usage: { input: 900, output: 60, cacheRead: 0, cacheWrite: 0 } },
+          aborted: false,
+          willRetry: false,
+        },
+        assistantEnd(spent, "stop"),
+        { type: "agent_settled" },
+      ]),
+    );
+
+    assert.equal(reports.length, 3);
+    assert.deepEqual(reports[1], {
+      provider: "mock",
+      model: "mock-1",
+      input: 900,
+      output: 60,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 960,
+      cost: 0,
+    });
+  });
+
+  it("reports nothing for a user message, or a message with no usage", async () => {
+    const { reports } = await watched(
+      asStream([
+        { type: "message_end", message: { role: "user", usage: spent } },
+        { type: "message_end", message: { role: "assistant", stopReason: "stop" } },
+        { type: "agent_settled" },
+      ]),
+    );
+
+    assert.deepEqual(reports, []);
+  });
+
+  it("counts a negative or fractional figure as nothing", async () => {
+    const { reports } = await watched(
+      asStream([
+        assistantEnd({ input: -5, output: 2.5, cacheRead: "9", cacheWrite: 1 }, "stop"),
+        { type: "agent_settled" },
+      ]),
+    );
+
+    assert.equal(reports[0]?.totalTokens, 1);
+  });
+});
+
+describe("a usage record that cannot be written", () => {
+  it("aborts once, reports nothing more, reads to the settle and fails the Run", async () => {
+    const records = [
+      assistantEnd(spent),
+      assistantEnd(spent),
+      assistantEnd(spent, "aborted"),
+      { type: "agent_settled" },
+    ];
+    let pulledPastSettle = false;
+    const framed = framedRecords(chunks(asStream([...records, { type: "after" }]), 4096));
+    let seen = 0;
+    const reports: UsageReport[] = [];
+    let aborts = 0;
+
+    const outcome = await readOutcome(
+      {
+        async next() {
+          seen += 1;
+          if (seen > records.length) pulledPastSettle = true;
+          return framed.next();
+        },
+      },
+      session,
+      {
+        observer: {
+          usage(report) {
+            reports.push(report);
+            throw new Error("the usage table is gone");
+          },
+        },
+        abort: () => {
+          aborts += 1;
+        },
+      },
+    );
+
+    assert.equal(aborts, 1);
+    assert.equal(reports.length, 1);
+    assert.equal(pulledPastSettle, false);
+    assert.deepEqual(outcome, {
+      ok: false,
+      error: `Session ${session}: Usage recording failed: the usage table is gone`,
+    });
+  });
+
+  it("fails the Run even when the agent then settled with an answer", async () => {
+    const { outcome } = await watched(await fixture("settled-ok"), () => {
+      throw new Error("no database");
+    });
+
+    assert.match(failure(outcome), /Usage recording failed: no database/);
+  });
+});
+
+function failure(outcome: RunOutcome): string {
+  assert.equal(outcome.ok, false, `this Run should have failed; it was ${JSON.stringify(outcome)}`);
+  return outcome.ok ? "" : outcome.error;
+}
+
+describe("a Run with a usage limit", () => {
+  const threeCalls = asStream([
+    assistantEnd(spent),
+    assistantEnd(spent),
+    assistantEnd(spent, "aborted"),
+    { type: "agent_settled" },
+  ]);
+
+  it("aborts once the call that crossed the limit is recorded, and fails as limited", async () => {
+    const { outcome, reports, aborts } = await watched(threeCalls, () => {}, 800);
+
+    assert.equal(aborts, 1);
+    assert.deepEqual(outcome, {
+      ok: false,
+      error: `Session ${session}: Usage limit reached: 850 of 800 tokens`,
+      limited: true,
+    });
+    assert.equal(reports.length, 3, "a call that finished after the abort was still charged");
+  });
+
+  it("lets a Run that reaches the limit exactly, or stays under it, finish as before", async () => {
+    const stream = asStream([
+      assistantEnd(spent),
+      assistantEnd(spent, "stop"),
+      { type: "agent_settled" },
+    ]);
+    for (const usageLimit of [850, 1_000_000]) {
+      const { outcome, aborts } = await watched(stream, () => {}, usageLimit);
+      assert.deepEqual(outcome, { ok: true });
+      assert.equal(aborts, 0);
+    }
+  });
+
+  it("adds a failed attempt and its retry together", async () => {
+    const { outcome, aborts } = await watched(await fixture("retry-then-settled"), () => {}, 17);
+
+    assert.equal(aborts, 1);
+    assert.match(failure(outcome), /Usage limit reached: 18 of 17 tokens/);
+  });
+
+  it("counts compaction toward the limit", async () => {
+    const { outcome } = await watched(
+      asStream([
+        assistantEnd(spent),
+        {
+          type: "compaction_end",
+          result: { usage: { input: 500, output: 0, cacheRead: 0, cacheWrite: 0 } },
+        },
+        assistantEnd(spent, "stop"),
+        { type: "agent_settled" },
+      ]),
+      () => {},
+      900,
+    );
+
+    assert.match(failure(outcome), /925 of 900/);
+  });
+
+  it("names the recording failure rather than the limit when recording failed first", async () => {
+    const { outcome, aborts } = await watched(
+      threeCalls,
+      () => {
+        throw new Error("gone");
+      },
+      100,
+    );
+
+    assert.equal(aborts, 1);
+    assert.equal(outcome.ok === false && outcome.limited, undefined);
+    assert.match(failure(outcome), /Usage recording failed: gone/);
   });
 });

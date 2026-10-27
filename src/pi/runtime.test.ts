@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:net";
 import { after, describe, it } from "node:test";
-import type { RunOutcome, RunPrompt } from "../signals/runtime.ts";
+import type { RunObserver, RunOutcome, RunPrompt, UsageReport } from "../signals/runtime.ts";
 import {
   dropsTheConnection,
   type FakeInstance,
@@ -33,6 +33,7 @@ async function instanceOf(reply: Reply): Promise<FakeInstance> {
 async function runAgainst(
   reply: Reply,
   given: RunPrompt = prompt,
+  observer?: RunObserver,
 ): Promise<{ outcome: RunOutcome; instance: FakeInstance }> {
   const instance = await instanceOf(reply);
   const runtime = createPiRuntime({
@@ -41,7 +42,7 @@ async function runAgainst(
     sessionsDir,
     logger: silent,
   });
-  return { outcome: await runtime.run(given), instance };
+  return { outcome: await runtime.run(given, observer), instance };
 }
 
 function failure(outcome: RunOutcome): string {
@@ -307,6 +308,100 @@ describe("the sessionsDir an Operator declares", () => {
 
     assert.deepEqual(await runtime.run(prompt), { ok: true });
     assert.equal(instance.received[0]?.sessionPath, "/srv/agent/sessions/user_42.jsonl");
+  });
+});
+
+describe("the usage a Run reports", () => {
+  const spending = (stopReason: string): Written => ({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      provider: "mock",
+      model: "mock-1",
+      stopReason,
+      usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0 },
+    },
+  });
+
+  it("hands the observer each model call, and succeeds as before", async () => {
+    const reports: UsageReport[] = [];
+    const { outcome } = await runAgainst(
+      scriptedInstance([spending("toolUse"), spending("stop"), { type: "agent_settled" }]),
+      prompt,
+      { usage: (report) => void reports.push(report) },
+    );
+
+    assert.deepEqual(outcome, { ok: true });
+    assert.deepEqual(
+      reports.map((report) => report.totalTokens),
+      [15, 15],
+    );
+  });
+
+  it("sends abort when a report cannot be recorded, and fails once the agent settles", {
+    timeout: 5_000,
+  }, async () => {
+    const healthy = scriptedInstance([{ type: "agent_start" }, spending("toolUse")]);
+    const reply: Reply = (command) =>
+      command.type === "abort"
+        ? [
+            spending("aborted"),
+            { type: "agent_settled" },
+            { type: "response", id: command.id, command: "abort", success: true },
+          ]
+        : healthy(command);
+
+    const { outcome, instance } = await runAgainst(reply, prompt, {
+      usage: () => {
+        throw new Error("the Db is down");
+      },
+    });
+
+    assert.deepEqual(commandTypes(instance), ["switch_session", "get_state", "prompt", "abort"]);
+    assert.equal(instance.received[3]?.id, "4");
+    assert.equal(failure(outcome), "Session user_42: Usage recording failed: the Db is down");
+  });
+});
+
+describe("a usage limit", () => {
+  const spending: Written = {
+    type: "message_end",
+    message: {
+      role: "assistant",
+      stopReason: "toolUse",
+      usage: { input: 60, output: 0, cacheRead: 0, cacheWrite: 0 },
+    },
+  };
+
+  // The fake agent waits for abort; the test timeout catches a missing abort.
+  it("sends abort when usage passes the limit, and fails as limited once the agent settles", {
+    timeout: 5_000,
+  }, async () => {
+    const healthy = scriptedInstance([{ type: "agent_start" }, spending, spending]);
+    const reply: Reply = (command) =>
+      command.type === "abort"
+        ? [
+            { type: "agent_settled" },
+            { type: "response", id: command.id, command: "abort", success: true },
+          ]
+        : healthy(command);
+
+    const { outcome, instance } = await runAgainst(reply, { ...prompt, usageLimit: 100 });
+
+    assert.deepEqual(commandTypes(instance), ["switch_session", "get_state", "prompt", "abort"]);
+    assert.deepEqual(outcome, {
+      ok: false,
+      error: "Session user_42: Usage limit reached: 120 of 100 tokens",
+      limited: true,
+    });
+  });
+
+  it("refuses a limit that is not a positive whole number, before connecting", async () => {
+    for (const usageLimit of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const { outcome, instance } = await runAgainst(scriptedInstance(), { ...prompt, usageLimit });
+      assert.match(failure(outcome), /usageLimit must be a positive whole number/);
+      assert.equal(instance.connections(), 0);
+    }
   });
 });
 

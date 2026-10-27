@@ -1,4 +1,4 @@
-import type { RunOutcome } from "../signals/runtime.ts";
+import type { RunObserver, RunOutcome, UsageReport } from "../signals/runtime.ts";
 import type { Framed } from "./framing.ts";
 
 const answeredStopReasons = new Set(["stop", "length"]);
@@ -8,13 +8,48 @@ type Answer = {
   readonly errorMessage: string | undefined;
 };
 
+export type Watch = {
+  readonly observer?: RunObserver;
+  /** Ask the agent to stop, then keep reading until `agent_settled`. */
+  readonly abort: () => void;
+  /** Stop the Run and mark it as failed and limited if total tokens exceed this value. */
+  readonly usageLimit?: number;
+};
+
 export async function readOutcome(
   records: AsyncIterator<Framed>,
   session: string,
+  watch?: Watch,
 ): Promise<RunOutcome> {
   const failed = (why: string): RunOutcome => ({ ok: false, error: `Session ${session}: ${why}` });
   let read = 0;
   let answer: Answer | undefined;
+  let named: Pick<UsageReport, "provider" | "model"> = { provider: null, model: null };
+  let stopped: string | undefined;
+  let limited = false;
+  let recordingFailed = false;
+  let used = 0;
+
+  // Report usage even after requesting a stop, since the provider still charges for those calls.
+  async function report(usage: UsageReport | undefined): Promise<void> {
+    if (usage === undefined || watch === undefined) return;
+    used += usage.totalTokens;
+    if (watch.observer !== undefined && !recordingFailed) {
+      try {
+        await watch.observer.usage(usage);
+      } catch (error) {
+        recordingFailed = true;
+        stopped ??= `Usage recording failed: ${error instanceof Error ? error.message : String(error)}`;
+        watch.abort();
+        return;
+      }
+    }
+    if (stopped === undefined && watch.usageLimit !== undefined && used > watch.usageLimit) {
+      stopped = `Usage limit reached: ${used} of ${watch.usageLimit} tokens`;
+      limited = true;
+      watch.abort();
+    }
+  }
 
   for (;;) {
     const step = await records.next();
@@ -36,9 +71,20 @@ export async function readOutcome(
     read += 1;
     const record = framed.record;
     switch (record.type) {
-      case "message_end":
+      // Count each call once at message_end; turn_end and agent_end repeat the same message.
+      case "message_end": {
+        answer = answerIn(record.message) ?? answer;
+        const usage = usageIn(record.message, named);
+        if (usage !== undefined) named = { provider: usage.provider, model: usage.model };
+        await report(usage);
+        break;
+      }
       case "turn_end":
         answer = answerIn(record.message) ?? answer;
+        break;
+      // Compaction uses a separate model call that is not included in message events.
+      case "compaction_end":
+        await report(usageIn(fieldsOf(record.result), named, true));
         break;
       case "agent_end":
         if (Array.isArray(record.messages)) {
@@ -48,7 +94,10 @@ export async function readOutcome(
         break;
       // agent_end can precede retries or compaction; only agent_settled completes the run.
       case "agent_settled":
-        return settlement(failed, answer, read);
+        if (stopped === undefined) return settlement(failed, answer, read);
+        return limited
+          ? { ok: false, error: `Session ${session}: ${stopped}`, limited }
+          : failed(stopped);
       default:
         break;
     }
@@ -79,6 +128,45 @@ function answerIn(message: unknown): Answer | undefined {
     stopReason: fields.stopReason,
     errorMessage: typeof fields.errorMessage === "string" ? fields.errorMessage : undefined,
   };
+}
+
+function usageIn(
+  message: unknown,
+  named: Pick<UsageReport, "provider" | "model">,
+  anyRole = false,
+): UsageReport | undefined {
+  const fields = fieldsOf(message);
+  if (fields === undefined || (!anyRole && fields.role !== "assistant")) return undefined;
+  const usage = fieldsOf(fields.usage);
+  if (usage === undefined) return undefined;
+  const input = count(usage.input);
+  const output = count(usage.output);
+  const cacheRead = count(usage.cacheRead);
+  const cacheWrite = count(usage.cacheWrite);
+  return {
+    provider: typeof fields.provider === "string" ? fields.provider : named.provider,
+    model: typeof fields.model === "string" ? fields.model : named.model,
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    totalTokens: input + output + cacheRead + cacheWrite,
+    cost: amount(fieldsOf(usage.cost)?.total),
+  };
+}
+
+function fieldsOf(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function count(value: unknown): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
+
+function amount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 function excerpt(line: string): string {

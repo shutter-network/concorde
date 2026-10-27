@@ -129,7 +129,7 @@ Operator-defined JSON a Signal Handler writes on a Prompt beside the Session and
 _Avoid_: scope, claims, permissions, grant, ACL
 
 **Post phase**:
-The Signal Handler's second entry point, for cleanup. Runs once after all Runs arising from a Signal have finished, receives a flag saying whether one failed, and cannot produce Prompts.
+The Signal Handler's second entry point, used for cleanup. It runs once after all Runs from a Signal finish. It receives two flags: whether any Run failed and whether any Run exceeded its Usage limit. It cannot produce Prompts.
 _Avoid_: post handler, teardown, finalizer, callback
 
 **Session**:
@@ -139,6 +139,19 @@ _Avoid_: chat, conversation, thread, context (as a name for a Session; a Prompt'
 **Run**:
 One execution of the agent: a single Prompt, in one Session, producing whatever the agent emits.
 _Avoid_: turn, job, invocation, task
+
+**Usage**:
+The model resources a Run uses, and the always-on infrastructure Component that reads the recorded usage. The Runtime reports usage for each model call, including retries and calls that compact the Session's history. The Signal Worker immediately saves each report as a **Usage record** linked to its Run. Saved records survive restarts. If a record cannot be saved, the Run stops to prevent further unrecorded usage.
+
+The Agent Implementation copies the provider's token counts. Token totals do not directly measure cost because providers price each token category differently. The framework can read totals for a time period, but does not enforce a budget from those totals. The Operator defines the budget, its time period, and messages to Users in a Signal Handler. The name "Usage" avoids confusion with "Token", which means a credential issued to a User.
+_Avoid_: Token Tracker, billing, metering, quota
+
+**Usage record**:
+One saved row for one model call in a Run. It contains the provider, model, four token counts, their sum, and the cost calculated by the Agent Implementation. Records are written once and never updated.
+
+**Usage limit**:
+The maximum model token count for one Run, set by a Signal Handler on the Prompt. The Runtime adds each call's usage when the call finishes. If the total exceeds the limit, it stops the agent and marks the Run as failed and limited. The Session keeps its history up to that point. A Run can exceed the limit by one call because usage is only known after a call finishes. This per-Run limit is the only limit the framework enforces. To enforce a budget, a Signal Handler passes the remaining token allowance. The limit counts every token category at full weight, including cache reads. Each model call sends the agent's whole context again and the provider reports most of it as cache reads, so cache reads usually make up most of a Run's count, although providers charge much less for them.
+_Avoid_: budget, quota, max tokens
 
 **Workspace**:
 The files and data that Signal Handlers and the agent share, as opposed to the Db, which the agent cannot touch directly. Global to a shared agent, not per Session. **The framework has no name for where it is.** The Gateway and the **Agent Instance** come to share it by the Operator's own arrangement, a volume or a bind or a filesystem both containers happen to see, and no option, no path and no check anywhere in the API is about it: nothing here can tell whether the two ends found each other, or notice that they did not.

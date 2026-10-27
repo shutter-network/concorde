@@ -10,6 +10,8 @@ export type Answered = {
 
 export type RpcChannel = {
   send(command: string, fields?: Readonly<Record<string, unknown>>): Promise<Answered>;
+  /** Send a command without waiting for its response. Read the response from `records`. */
+  notify(command: string): void;
   readonly records: AsyncIterator<Framed>;
   dropped(): string | undefined;
   close(): void;
@@ -52,6 +54,11 @@ export async function openRpcChannel(host: string, port: number): Promise<RpcCha
     records,
     dropped: () => dropped,
     close: () => socket.destroy(),
+
+    notify(command) {
+      sent += 1;
+      socket.write(`${JSON.stringify({ id: String(sent), type: command })}\n`);
+    },
 
     async send(command, fields) {
       sent += 1;

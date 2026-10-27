@@ -47,12 +47,13 @@ const nobody = "2f1b4d54-1c3a-4f2e-9d7b-8e6a5c4b3a21";
 
 const { privateKey: signingKey } = generateKeyPairSync("ed25519");
 
-const theInfra = ["db", "agentServer", "publicServer", "worker"];
+const theInfra = ["db", "agentServer", "publicServer", "usage", "worker"];
 
 const theRecord = [
   "db",
   "agentServer",
   "publicServer",
+  "usage",
   "users",
   "passwordAuth",
   "signatures",
@@ -673,7 +674,7 @@ describe("a whole deployment from one call", () => {
 });
 
 describe("the infrastructure on its own", () => {
-  it("is the four infrastructure Components and nothing else when no extend is passed", () => {
+  it("is the five infrastructure Components and nothing else when no extend is passed", () => {
     const bare = createGateway({
       databaseUrl: "postgres://nobody@example.invalid/none",
       runtime,
@@ -702,7 +703,7 @@ describe("the infrastructure on its own", () => {
     );
   });
 
-  it("refuses an extend that returns one of the four infrastructure keys", () => {
+  it("refuses an extend that returns one of the five infrastructure keys", () => {
     const substituting = createGateway({
       databaseUrl: "postgres://nobody@example.invalid/none",
       runtime,
@@ -717,12 +718,13 @@ describe("the infrastructure on its own", () => {
       "db",
       "agentServer",
       "publicServer",
+      "usage",
       "notes",
       "worker",
     ]);
   });
 
-  it("refuses an extend that returns any of the other three infrastructure keys", () => {
+  it("refuses an extend that returns any of the other four infrastructure keys", () => {
     createGateway({
       databaseUrl: "postgres://nobody@example.invalid/none",
       runtime,
@@ -748,6 +750,15 @@ describe("the infrastructure on its own", () => {
       publicListen: { port: 0 },
       // @ts-expect-error publicServer is an infrastructure key and may not be replaced
       extend: (infra) => ({ publicServer: infra.publicServer }),
+      handlers: () => ({}),
+    });
+    createGateway({
+      databaseUrl: "postgres://nobody@example.invalid/none",
+      runtime,
+      agentListen: { port: 0 },
+      publicListen: { port: 0 },
+      // @ts-expect-error usage is an infrastructure key and may not be replaced
+      extend: (infra) => ({ usage: infra.usage }),
       handlers: () => ({}),
     });
   });

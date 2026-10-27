@@ -10,9 +10,9 @@ import { createTestDatabase, type TestDatabase } from "../test-support/database.
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
 import type { SignalHandler, SignalHandlers } from "./handlers.ts";
-import type { Runtime } from "./runtime.ts";
+import type { Runtime, UsageReport } from "./runtime.ts";
 import * as signalsSchema from "./schema/index.ts";
-import { runs, signals } from "./schema/index.ts";
+import { runs, signals, usage } from "./schema/index.ts";
 import { createSignalWorker, type SignalWorker, signalChannel } from "./worker.ts";
 
 let database: TestDatabase;
@@ -620,6 +620,232 @@ describe("the worker", () => {
         );
       },
     );
+  });
+});
+
+describe("usage", () => {
+  const call = (totalTokens: number): UsageReport => ({
+    provider: "mock",
+    model: "mock-1",
+    input: totalTokens,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens,
+    cost: 0.5,
+  });
+
+  function usageOf(runId: string): Promise<(typeof usage.$inferSelect)[]> {
+    return db
+      .handle({ usage })
+      .select()
+      .from(usage)
+      .where(eq(usage.runId, runId))
+      .orderBy(asc(usage.recordedAt));
+  }
+
+  it("records each model call a Run reports against that Run, as it reports it", async () => {
+    let recordedBeforeReturning = -1;
+    const runtime = fakeRuntime(async (prompt, observer) => {
+      const sizes = prompt.text === "first" ? [10, 20] : [5];
+      for (const size of sizes) await observer?.usage(call(size));
+      const [run] = await db.handle({ runs }).select().from(runs).where(eq(runs.state, "running"));
+      if (prompt.text === "first" && run !== undefined) {
+        recordedBeforeReturning = (await usageOf(run.id)).length;
+      }
+      return { ok: true };
+    });
+    await withWorker(
+      {
+        spending: {
+          handle: () => [
+            { session: null, text: "first" },
+            { session: null, text: "second" },
+          ],
+        },
+      },
+      runtime,
+      async (worker) => {
+        const id = await emit(worker, "spending");
+        assert.equal((await settled(id)).state, "done");
+
+        const [first, second] = await runsOf(id);
+        assert.ok(first && second);
+        assert.deepEqual(
+          (await usageOf(first.id)).map((row) => [
+            row.provider,
+            row.model,
+            row.totalTokens,
+            row.cost,
+          ]),
+          [
+            ["mock", "mock-1", 10, 0.5],
+            ["mock", "mock-1", 20, 0.5],
+          ],
+        );
+        assert.deepEqual(
+          (await usageOf(second.id)).map((row) => row.totalTokens),
+          [5],
+        );
+        assert.equal(recordedBeforeReturning, 2, "each record is written as reported");
+      },
+    );
+  });
+
+  it("stores the User a Prompt names on its Run and on every record of it", async () => {
+    const runtime = fakeRuntime(async (_prompt, observer) => {
+      await observer?.usage(call(3));
+      await observer?.usage(call(4));
+      return { ok: true };
+    });
+    await withWorker(
+      {
+        charged: {
+          handle: () => [
+            { session: "user_alice", text: "for alice", userId: "alice" },
+            { session: null, text: "for nobody" },
+          ],
+        },
+      },
+      runtime,
+      async (worker) => {
+        const id = await emit(worker, "charged");
+        assert.equal((await settled(id)).state, "done");
+
+        const [alices, nobodys] = await runsOf(id);
+        assert.ok(alices && nobodys);
+        assert.deepEqual([alices.userId, nobodys.userId], ["alice", null]);
+        assert.deepEqual(
+          (await usageOf(alices.id)).map((row) => row.userId),
+          ["alice", "alice"],
+        );
+        assert.deepEqual(
+          (await usageOf(nobodys.id)).map((row) => row.userId),
+          [null, null],
+        );
+        assert.equal(
+          Object.hasOwn(runtime.recorded[0] ?? {}, "userId"),
+          false,
+          "the Runtime is not told whom the Run is charged to",
+        );
+      },
+    );
+  });
+
+  it("hands the Runtime the Prompt's usage limit, and only when there is one", async () => {
+    const runtime = fakeRuntime();
+    await withWorker(
+      {
+        capped: {
+          handle: () => [
+            { session: "s", text: "capped", usageLimit: 500 },
+            { session: "s", text: "uncapped" },
+          ],
+        },
+      },
+      runtime,
+      async (worker) => {
+        await settled(await emit(worker, "capped"));
+        assert.deepEqual(runtime.recorded, [
+          { session: "s", text: "capped", usageLimit: 500 },
+          { session: "s", text: "uncapped" },
+        ]);
+      },
+    );
+  });
+
+  it("tells the post phase a Run was limited, and records why it failed", async () => {
+    const told: { failed: boolean; limited: boolean }[] = [];
+    const runtime = fakeRuntime((prompt) =>
+      prompt.text === "too much"
+        ? { ok: false, error: "Usage limit reached: 120 of 100 tokens", limited: true }
+        : prompt.text === "broken"
+          ? { ok: false, error: "the model is down" }
+          : { ok: true },
+    );
+    const posting = (texts: string[]): SignalHandler => ({
+      handle: () => texts.map((text) => ({ session: "s", text })),
+      post: (_signal, outcome) => {
+        told.push({ failed: outcome.failed, limited: outcome.limited });
+      },
+    });
+    await withWorker(
+      {
+        limited: posting(["fine", "too much"]),
+        failed: posting(["broken"]),
+        fine: posting(["fine"]),
+      },
+      runtime,
+      async (worker) => {
+        const limitedId = await emit(worker, "limited");
+        await settled(limitedId);
+        await settled(await emit(worker, "failed"));
+        await settled(await emit(worker, "fine"));
+
+        assert.deepEqual(told, [
+          { failed: true, limited: true },
+          { failed: true, limited: false },
+          { failed: false, limited: false },
+        ]);
+        const [, stopped] = await runsOf(limitedId);
+        assert.deepEqual(
+          [stopped?.state, stopped?.error],
+          ["failed", "Usage limit reached: 120 of 100 tokens"],
+        );
+      },
+    );
+  });
+
+  it("keeps the records of a Run that then failed", async () => {
+    const runtime = fakeRuntime(async (_prompt, observer) => {
+      await observer?.usage(call(7));
+      return { ok: false, error: "the model gave up" };
+    });
+    await withWorker(
+      { costly: { handle: () => [{ session: null, text: "spend then fail" }] } },
+      runtime,
+      async (worker) => {
+        const id = await emit(worker, "costly");
+        assert.equal((await settled(id)).state, "failed");
+        const [run] = await runsOf(id);
+        assert.ok(run);
+        assert.deepEqual(
+          (await usageOf(run.id)).map((row) => row.totalTokens),
+          [7],
+        );
+      },
+    );
+  });
+
+  it("throws into the Runtime when a record cannot be written, so the Run fails closed", async () => {
+    let thrown: unknown;
+    const runtime = fakeRuntime(async (_prompt, observer) => {
+      try {
+        await observer?.usage(call(9));
+      } catch (error) {
+        thrown = error;
+        return { ok: false, error: `Usage recording failed: ${(error as Error).message}` };
+      }
+      return { ok: true };
+    });
+    const tables = db.handle({});
+    await tables.execute(sql`alter table concorde_signals.usage rename to usage_gone`);
+    try {
+      await withWorker(
+        { unrecorded: { handle: () => [{ session: null, text: "spend" }] } },
+        runtime,
+        async (worker) => {
+          const id = await emit(worker, "unrecorded");
+          const row = await settled(id);
+
+          assert.ok(thrown instanceof Error);
+          assert.equal(row.state, "failed");
+          assert.match(row.error ?? "", /Usage recording failed/);
+        },
+      );
+    } finally {
+      await tables.execute(sql`alter table concorde_signals.usage_gone rename to usage`);
+    }
   });
 });
 

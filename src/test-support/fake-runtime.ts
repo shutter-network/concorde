@@ -1,6 +1,9 @@
-import type { RunOutcome, RunPrompt, Runtime } from "../signals/runtime.ts";
+import type { RunObserver, RunOutcome, RunPrompt, Runtime } from "../signals/runtime.ts";
 
-export type RuntimeScript = (prompt: RunPrompt) => RunOutcome | Promise<RunOutcome>;
+export type RuntimeScript = (
+  prompt: RunPrompt,
+  observer: RunObserver | undefined,
+) => RunOutcome | Promise<RunOutcome>;
 
 export type FakeRuntime = Runtime & {
   readonly recorded: readonly RunPrompt[];
@@ -23,14 +26,14 @@ export function fakeRuntime(script: RuntimeScript = () => ({ ok: true })): FakeR
     texts() {
       return recorded.map((prompt) => prompt.text);
     },
-    async run(prompt) {
+    async run(prompt, observer) {
       recorded.push(prompt);
       inFlight += 1;
       if (inFlight > 1) overlapped = true;
       try {
         await new Promise((resume) => setTimeout(resume, holdMs));
         if (inFlight > 1) overlapped = true;
-        return await script(prompt);
+        return await script(prompt, observer);
       } finally {
         inFlight -= 1;
       }

@@ -1,0 +1,4 @@
+{
+  "defaultModel": "claude-sonnet-5",
+  "defaultProvider": "anthropic"
+}

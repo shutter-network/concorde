@@ -36,7 +36,7 @@ Docker or the network:
 
 - **`npm run check:package`** packs the tarball, installs it into a throwaway project, and proves
   every `exports` subpath resolves there for Node *and* the type checker. It is also the only thing
-  anywhere that holds the thirteen table names apart, and the only proof that the root still
+  anywhere that holds the fourteen table names apart, and the only proof that the root still
   resolves to nothing.
 - **`npm run test:container`** is the single end-to-end test: a real container running real `pi`
   against the real Agent server, with a scripted model on localhost, so it needs no model
@@ -114,7 +114,7 @@ Four ways that fails quietly, all of them a deployment's to get right:
   schema module declares carries a component prefix, because **`export *` drops a name that resolves
   to more than one binding**: eight components exporting a bare `schema` yield a barrel exporting
   none, `schemaFilter` derives to one schema, and `push` prints `Changes applied` having created one
-  component's tables. Two names are in that class and no more; the thirteen table names and the four
+  component's tables. Two names are in that class and no more; the fourteen table names and the four
   enum arrays are not prefixed.
 - **The table names are guarded by `scripts/check-package.ts`, which imports all eight `/schema`
   specifiers un-aliased into one module scope.** A duplicate is a `TS2300` and a `SyntaxError`

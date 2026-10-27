@@ -4,8 +4,14 @@ import type { FastifyInstance, FastifyListenOptions } from "fastify";
 import Fastify from "fastify";
 import { type Db, openDb } from "../db/index.ts";
 import type { Logger } from "../logging/logging.ts";
-import type { Runtime, SignalHandler, SignalHandlers, SignalWorker } from "../signals/index.ts";
-import { createSignalWorker } from "../signals/index.ts";
+import type {
+  Runtime,
+  SignalHandler,
+  SignalHandlers,
+  SignalWorker,
+  Usage,
+} from "../signals/index.ts";
+import { createSignalWorker, createUsage } from "../signals/index.ts";
 import {
   type Component,
   createBareGateway,
@@ -18,6 +24,7 @@ export type InfraComponents = {
   db: Db;
   agentServer: ServerComponent<FastifyInstance>;
   publicServer: ServerComponent<FastifyInstance>;
+  usage: Usage;
   worker: SignalWorker;
 };
 
@@ -95,7 +102,9 @@ export function createGateway<E extends GatewayExtension = Record<string, never>
     ...(options.sweepIntervalMs === undefined ? {} : { sweepIntervalMs: options.sweepIntervalMs }),
   });
 
-  const infra: InfraComponents = { db, agentServer, publicServer, worker };
+  const usage = createUsage({ db });
+
+  const infra: InfraComponents = { db, agentServer, publicServer, usage, worker };
 
   const extension: E = options.extend === undefined ? ({} as E) : options.extend(infra);
 
@@ -103,6 +112,7 @@ export function createGateway<E extends GatewayExtension = Record<string, never>
     db,
     agentServer,
     publicServer,
+    usage,
     ...extension,
     worker,
   } as InfraComponents & E;

@@ -2,7 +2,9 @@ import { type SQL, sql } from "drizzle-orm";
 import {
   check,
   index,
+  integer,
   jsonb,
+  numeric,
   type PgColumn,
   pgSchema,
   text,
@@ -51,6 +53,8 @@ export const runs = signalsSchema.table(
     session: text("session"),
     prompt: text("prompt").notNull(),
     context: jsonb("context"),
+    /** Not a foreign key: Signals does not depend on Users. */
+    userId: text("user_id"),
     state: text("state").$type<RunState>().notNull().default("pending"),
     error: text("error"),
     startedAt: timestamp("started_at", { withTimezone: true }),
@@ -62,4 +66,32 @@ export const runs = signalsSchema.table(
   ],
 );
 
-export const signalsTables = { signals, runs };
+/** One row per model call, saved when usage is reported and never updated. */
+export const usage = signalsSchema.table(
+  "usage",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => runs.id),
+    /** Copy the Run's `userId` so User totals can be calculated without joining the runs table. */
+    userId: text("user_id"),
+    provider: text("provider"),
+    model: text("model"),
+    input: integer("input").notNull(),
+    output: integer("output").notNull(),
+    cacheRead: integer("cache_read").notNull(),
+    cacheWrite: integer("cache_write").notNull(),
+    totalTokens: integer("total_tokens").notNull(),
+    cost: numeric("cost", { mode: "number" }).notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true })
+      .notNull()
+      .default(sql`clock_timestamp()`),
+  },
+  (table) => [
+    index("usage_run_idx").on(table.runId),
+    index("usage_user_idx").on(table.userId, table.recordedAt),
+  ],
+);
+
+export const signalsTables = { signals, runs, usage };

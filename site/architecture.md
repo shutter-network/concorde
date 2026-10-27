@@ -28,13 +28,14 @@ The diagram shows messaging and authentication options. A messenger accepts one 
 current implementation; the two channels shown are alternatives. The scheduler, signatures,
 and decisions can also be added, although they are not drawn.
 
-`createGateway` constructs four infrastructure components:
+`createGateway` constructs five infrastructure components:
 
 | Component | Responsibility |
 | --- | --- |
 | Db | Shared PostgreSQL access so component state changes can commit together |
 | Agent server | HTTP capabilities the agent uses to read application data and act |
 | Public server | HTTP endpoints for user clients, including authentication and message exchange |
+| Usage | Totals of the model usage the signal worker records for each run |
 | Signal worker | Durable queue that turns signals into agent runs, one signal at a time |
 
 Your `extend` callback constructs additional components using this infrastructure. Dependencies
