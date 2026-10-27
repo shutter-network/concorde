@@ -290,8 +290,10 @@ describe("refusing a request", () => {
     for (const ownRefusal of refusals.slice(8)) {
       assert.equal(ownRefusal.headers["www-authenticate"], undefined);
     }
-    assert.deepEqual(refusals[9]?.headers, refusals[8]?.headers);
-    assert.deepEqual(refusals[10]?.headers, refusals[8]?.headers);
+    // Logins using scrypt may finish in different seconds, so compare headers without `date`.
+    const undated = ({ date: _, ...headers }: Record<string, unknown> = {}) => headers;
+    assert.deepEqual(undated(refusals[9]?.headers), undated(refusals[8]?.headers));
+    assert.deepEqual(undated(refusals[10]?.headers), undated(refusals[8]?.headers));
 
     assert.equal((await bearing(issued.token)).statusCode, 200);
   });
