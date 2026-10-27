@@ -18,7 +18,7 @@ export type UsageReport = {
   /** `null` when the provider is unknown, such as for some summarization calls. */
   readonly provider: string | null;
   readonly model: string | null;
-  /** Prompt tokens not served from the provider's cache. */
+  /** Prompt tokens that were not read from the provider's cache. */
   readonly input: number;
   readonly output: number;
   readonly cacheRead: number;
@@ -29,11 +29,12 @@ export type UsageReport = {
   readonly cost: number;
 };
 
-/** Supplied by the worker for one Run. */
+/** The worker provides this observer to receive usage reports for one Run. */
 export type RunObserver = {
   /**
-   * The runtime calls and awaits this method once per model call, in order. If it throws,
-   * the runtime must stop and fail the Run to prevent further unrecorded usage.
+   * The runtime calls this method once for each model call, in order, and waits for it to finish.
+   * If it throws an error, the runtime must stop the Run and mark it as failed. The Run must
+   * not keep using the model if its usage cannot be saved.
    */
   usage(report: UsageReport): void | Promise<void>;
 };

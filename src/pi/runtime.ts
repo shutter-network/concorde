@@ -23,11 +23,14 @@ const sessionNames = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
  * include `.`, `_`, and `-`. Blank prompt text fails the run. Completion requires `agent_settled`
  * and a final assistant stop reason of `stop` or `length`. There is no execution timeout.
  *
- * Reports usage for each assistant `message_end` and each `compaction_end`, including retries.
- * If the observer throws or usage exceeds the Prompt's `usageLimit`, the runtime sends `abort`
- * to pi. Once pi settles, the Run fails and the Session file is kept. Token counts come from
- * the provider. A response interrupted mid-stream reports less output than was generated.
- * If the server reports no usage, the recorded count is zero.
+ * Reports usage at each assistant `message_end`, including retries. Calls that summarize the
+ * Session's history report usage at `compaction_end`. If the observer throws an error or usage
+ * goes over the Prompt's `usageLimit`, the runtime sends `abort` to pi. It waits for
+ * `agent_settled`, then fails the Run and keeps the Session file.
+ *
+ * Token counts come from the provider. If a response is interrupted before it finishes, its
+ * reported output count is lower than the actual count. If the server reports no usage, the
+ * recorded count is zero.
  */
 export function createPiRuntime(instance: PiInstance): Runtime {
   const { host, port, sessionsDir } = instance;

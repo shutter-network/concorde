@@ -34,10 +34,9 @@ order to create and drop others: no two test files share a database. See
 Three further commands are each their own CI step, kept out of the inner loop because each needs
 Docker or the network:
 
-- **`npm run check:package`** packs the tarball, installs it into a throwaway project, and proves
-  every `exports` subpath resolves there for Node *and* the type checker. It is also the only thing
-  anywhere that holds the fourteen table names apart, and the only proof that the root still
-  resolves to nothing.
+- **`npm run check:package`** builds the package tarball and installs it into a temporary project.
+  It checks that Node and the type checker can load every `exports` subpath. It is also the only
+  check that verifies all fourteen table names are unique and the package root cannot be imported.
 - **`npm run test:container`** is the single end-to-end test: a real container running real `pi`
   against the real Agent server, with a scripted model on localhost, so it needs no model
   credentials. About ten seconds. `CONCORDE_CONTAINER_TESTS` opts in.
@@ -110,12 +109,12 @@ Four ways that fails quietly, all of them a deployment's to get right:
   types and yields no table and no schema object at all. The exception is eight names and no table
   among them — the four enum arrays and the unions derived from them, which a reader of a record has
   to be able to name. That overlap is permanent.
-- **The schema object is `<component>Schema` and the wrapper is `<component>Tables`.** A name every
-  schema module declares carries a component prefix, because **`export *` drops a name that resolves
-  to more than one binding**: eight components exporting a bare `schema` yield a barrel exporting
-  none, `schemaFilter` derives to one schema, and `push` prints `Changes applied` having created one
-  component's tables. Two names are in that class and no more; the fourteen table names and the four
-  enum arrays are not prefixed.
+- **Name the schema object `<component>Schema` and the table wrapper `<component>Tables`.**
+  The component prefix keeps these names unique when one module re-exports all schemas with
+  `export *`. If several components export the same name, such as `schema`, that name is left out
+  of the combined exports. Then `schemaFilter` selects only one schema, and `push` prints
+  `Changes applied` even though it created only that component's tables. Only the schema object
+  and table wrapper need these prefixes. The fourteen table names and four enum arrays do not.
 - **The table names are guarded by `scripts/check-package.ts`, which imports all eight `/schema`
   specifiers un-aliased into one module scope.** A duplicate is a `TS2300` and a `SyntaxError`
   naming both import lines. **An alias added to one of those lines removes the check for that

@@ -10,11 +10,11 @@ export type UsageOptions = {
 };
 
 export type UsageQuery = {
-  /** Filter by User. Use `null` for Runs with no User, or omit to include all Users and Runs. */
+  /** Select one User's records. Use `null` for Runs with no User. Omit to include all records. */
   readonly userId?: string | null;
   /** Include records at or after this time. Omit to start from the first record. */
   readonly since?: Date;
-  /** Exclusive. Omitted means up to now. */
+  /** Include records before this time. Omit to leave the end time unrestricted. */
   readonly until?: Date;
 };
 
@@ -30,13 +30,13 @@ export type UsageTotals = {
 };
 
 /**
- * Reads the Usage records saved by the Signal Worker, one per model call. Saved records
- * survive restarts. Token counts come from the provider and do not directly measure cost.
- * The accuracy of `cost` depends on the model price used by the agent implementation.
- * `createGateway` constructs this component for you.
+ * Reads the Usage records saved by the Signal Worker, one per model call. Records are kept
+ * after a restart. Token counts come from the provider. Token counts alone do not tell you
+ * the cost: `cost` depends on the model price used by the agent implementation.
+ * `createGateway` creates this component for you.
  */
 export type Usage = Component & {
-  /** Calculate totals in the database for records matching the User and time filters. */
+  /** Add up matching records in the database, using the User and time filters. */
   total(query?: UsageQuery): Promise<UsageTotals>;
 };
 

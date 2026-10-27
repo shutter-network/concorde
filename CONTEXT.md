@@ -129,7 +129,13 @@ Operator-defined JSON a Signal Handler writes on a Prompt beside the Session and
 _Avoid_: scope, claims, permissions, grant, ACL
 
 **Post phase**:
-The Signal Handler's second entry point, used for cleanup. It runs once after all Runs from a Signal finish. It receives two flags: whether any Run failed and whether any Run exceeded its Usage limit. It cannot produce Prompts.
+The Signal Handler's cleanup step. It runs once after all Runs for a Signal finish. It also runs if `handle` throws an error. This step cannot produce Prompts.
+
+It receives two values:
+
+- `failed`: true if `handle` or any Run failed.
+- `limited`: true if any Run exceeded its Usage limit.
+
 _Avoid_: post handler, teardown, finalizer, callback
 
 **Session**:
@@ -141,16 +147,37 @@ One execution of the agent: a single Prompt, in one Session, producing whatever 
 _Avoid_: turn, job, invocation, task
 
 **Usage**:
-The model resources a Run uses, and the always-on infrastructure Component that reads the recorded usage. The Runtime reports usage for each model call, including retries and calls that compact the Session's history. The Signal Worker immediately saves each report as a **Usage record** linked to its Run. Saved records survive restarts. If a record cannot be saved, the Run stops to prevent further unrecorded usage.
+The tokens a Run uses when it calls a model. Usage is also the name of the built-in Component that reads saved usage totals. This Component is always enabled.
 
-The Agent Implementation copies the provider's token counts. Token totals do not directly measure cost because providers price each token category differently. The framework can read totals for a time period, but does not enforce a budget from those totals. The Operator defines the budget, its time period, and messages to Users in a Signal Handler. The name "Usage" avoids confusion with "Token", which means a credential issued to a User.
+The Runtime reports usage after each model call. Retries count too, as do calls that shorten the Session's history by summarizing it. The Signal Worker saves each report as a **Usage record** for that Run as soon as it arrives. Saved records are kept after a restart. If saving fails, the Run stops so it does not keep using the model without recording usage.
+
+The Agent Implementation passes on the token counts reported by the model provider. Tokens do not have a single price: input, output, cache reads, and cache writes can each cost a different amount.
+
+The Usage Component can add up records for a chosen time period. It does not decide how much a User may use. The Operator writes that rule in a Signal Handler, including the budget, the time period it covers, and what to tell the User.
+
+We use the name "Usage" because "Token" already means the credential a User uses to authenticate.
 _Avoid_: Token Tracker, billing, metering, quota
 
 **Usage record**:
-One saved row for one model call in a Run. It contains the provider, model, four token counts, their sum, and the cost calculated by the Agent Implementation. Records are written once and never updated.
+A database row for one model call in a Run. It stores:
+
+- The provider and model used.
+- The input, output, cache read, and cache write token counts.
+- The total of those four counts.
+- The cost calculated by the Agent Implementation.
+
+Each record is saved once and never changed.
 
 **Usage limit**:
-The maximum model token count for one Run, set by a Signal Handler on the Prompt. The Runtime adds each call's usage when the call finishes. If the total exceeds the limit, it stops the agent and marks the Run as failed and limited. The Session keeps its history up to that point. A Run can exceed the limit by one call because usage is only known after a call finishes. This per-Run limit is the only limit the framework enforces. To enforce a budget, a Signal Handler passes the remaining token allowance. The limit counts every token category at full weight, including cache reads. Each model call sends the agent's whole context again and the provider reports most of it as cache reads, so cache reads usually make up most of a Run's count, although providers charge much less for them.
+The token limit for one Run. A Signal Handler sets it on the Prompt as `usageLimit`.
+
+The Runtime adds up tokens as each model call finishes. If the total exceeds the limit, it stops the agent. The Run fails with `limited: true`. The Session keeps the history saved so far.
+
+Usage is only known after a model call finishes. This means the Run can go over the limit by one call.
+
+Every token counts equally toward this limit, including tokens read from the provider's cache. Each model call sends the agent's full context again. The provider reports most of that repeated context as cache reads. Cache reads therefore usually make up most of the token count, even though they cost much less.
+
+The framework only enforces a limit for each Run. To enforce a User's budget across Runs, the Signal Handler sets `usageLimit` to the number of tokens the User has left.
 _Avoid_: budget, quota, max tokens
 
 **Workspace**:

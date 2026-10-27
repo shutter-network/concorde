@@ -3,7 +3,7 @@
 Alice and Bob talk to one agent over HTTP. Each user has a daily model token limit. When Alice
 reaches her limit, the gateway replies to her next message without calling the model. Bob can
 still get answers. This example defines the daily limit in `main.ts`. The framework records
-Usage and stops individual Runs when they exceed their Usage limit.
+Usage and stops each Run if it goes over its Usage limit.
 
 ## Requirements
 
@@ -20,8 +20,9 @@ cp .env.example .env
 ```
 
 Set `ANTHROPIC_API_KEY`, `ALICE_PASSWORD`, and `BOB_PASSWORD` in `.env`. `DAILY_TOKEN_LIMIT` is
-the number of model tokens each user may use per UTC day. The value in `.env.example` is small
-so you can reach the limit with a few messages. Check the model in `settings.json`.
+the number of model tokens each user may use between midnight UTC and the next midnight UTC.
+The value in `.env.example` is small so you can reach the limit with a few messages. Check the
+model in `settings.json`.
 
 ```sh
 docker compose up -d --build
@@ -50,8 +51,8 @@ before deciding whether to prompt the agent, so it does not use `templateHandler
 - `handle` calls `usage.total` to count the sender's tokens since 00:00 UTC today. If the total
   is at or above `DAILY_TOKEN_LIMIT`, it sends the limit message through the Messenger and
   returns no Prompt, so no Run starts. Otherwise, it returns one Prompt with the sender's
-  `userId` and sets `usageLimit` to their remaining daily token allowance. The Run's Usage is
-  added to that user's total.
+  `userId` and sets `usageLimit` to the number of tokens they have left for the day. The Run's
+  Usage is added to that user's total.
 - `post` receives the Run's outcome. If `limited` is true, the Run exceeded its Usage limit
   and the handler sends the limit message. For any other failure, it sends "I could not complete
   that request. Please try again in a minute."
@@ -79,28 +80,31 @@ does not change the saved passwords, even though the example prints the `.env` v
 - **The counts are tokens, not money.** `DAILY_TOKEN_LIMIT` is compared with the total of input,
   output, cache read, and cache write tokens. Providers price those categories differently, so
   equal token totals can cost different amounts.
-- **Most of the count is cache read tokens.** Every model call sends the agent's whole context
-  again: the system prompt, `AGENTS.md`, the tool definitions, and the conversation so far. The
-  provider serves most of that context from its cache and reports it as cache read tokens. A
-  reply is usually a few hundred output tokens, but one message can count 4,000 to 10,000 tokens
-  in total, and the count per message grows as the conversation gets longer. Providers usually
-  charge about a tenth of the normal input price for cache reads, but `DAILY_TOKEN_LIMIT` counts
-  them at full weight. Choose the limit with that in mind. To count the categories differently,
-  calculate your own number in the Signal Handler from the fields that `usage.total()` returns,
-  instead of using `totalTokens`.
+- **Cached tokens count toward the limit.** Every model call sends the agent's full context
+  again: the system prompt, `AGENTS.md`, the tool definitions, and the conversation so far.
+  The provider reuses most of this context from its cache and reports those tokens as cache reads.
+
+  A reply is usually a few hundred output tokens. But including the context, one message can use
+  4,000 to 10,000 tokens in total. This total grows as the conversation gets longer.
+
+  Cache reads usually cost about a tenth of the normal input price. Even so, each cached token
+  counts as one token toward `DAILY_TOKEN_LIMIT`. Account for these tokens when choosing a limit.
+  To give each token category a different weight, calculate the total in your Signal Handler
+  using the separate counts from `usage.total()`, rather than its `totalTokens` field.
 - **Each user has a separate limit.** Runs without a `userId` do not count toward any user's
   total. To set a hard spending cap for the whole deployment, enforce it at the model provider
-  or a model proxy that holds the credential, as in
+  or a model proxy that keeps the credential, as in
   [the isolation example](../04_agent_isolation/).
 
 ## Files and storage
 
 - `main.ts`: component setup, the daily limit handler, user creation, and shutdown.
-- `AGENTS.md`: mounted agent instructions; `settings.json`: model configuration.
+- `AGENTS.md`: instructions made available inside the agent container.
+- `settings.json`: model configuration.
 - `compose.yml` and the Dockerfiles: gateway, pi RPC listener, database, migration, and two
   clients.
-- `schema.ts`: tables for the four components. Usage records are part of the Signals schema,
-  so they need no separate schema setup.
+- `schema.ts`: tables for the four components. The Signals schema already includes the Usage
+  table, so there is no extra schema to add.
 - `state/workspace/` and `state/sessions/`: persistent agent files and session records.
 
 Keep the agent server and RPC listener private. The [guide](../../site/guide.md) explains the

@@ -18,18 +18,20 @@ export type Prompt = {
    */
   readonly context?: unknown;
   /**
-   * The User whose usage totals include this Run. Use data authenticated by the Gateway, such
-   * as a Message's `userId`. Never use text written by a model or sender. The agent does not
-   * receive this field. It is separate from the Session name and prompt text. If omitted,
-   * the Run's usage is not assigned to any User.
+   * Add this Run's usage to this User's total. Take the id from data authenticated by the
+   * Gateway, such as a Message's `userId`. Never take it from text written by a model or sender.
+   * The agent does not receive this field. It is separate from the Session name and prompt text.
+   * Omit this field to leave the Run's usage unassigned to any User.
    */
   readonly userId?: string;
   /**
-   * The maximum `totalTokens` for this Run, including compaction. If the total exceeds this
-   * limit, the runtime stops the agent and marks the Run as failed and limited. The Session
-   * keeps its history up to that point. Usage is reported after each model call finishes, so
-   * the Run can exceed the limit by at most one call. Must be a positive whole number. Omit
-   * this field for no limit. To enforce a budget, pass the remaining token allowance.
+   * The token limit for this Run, measured by `totalTokens`. This includes model calls that
+   * summarize the Session's history. If usage goes over the limit, the runtime stops the agent.
+   * The Run fails with `limited: true`, and the Session keeps its history so far.
+   *
+   * Usage is reported after each model call finishes, so the Run can go over the limit by at
+   * most one call. Use a positive whole number, or omit this field for no limit. To enforce a
+   * budget, pass the number of tokens left in that budget.
    */
   readonly usageLimit?: number;
 };

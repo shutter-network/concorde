@@ -10,9 +10,9 @@ type Answer = {
 
 export type Watch = {
   readonly observer?: RunObserver;
-  /** Ask the agent to stop, then keep reading until `agent_settled`. */
+  /** Ask the agent to stop. The caller keeps reading until `agent_settled`. */
   readonly abort: () => void;
-  /** Stop the Run and mark it as failed and limited if total tokens exceed this value. */
+  /** Stop the agent and fail the Run with `limited: true` if token usage goes over this limit. */
   readonly usageLimit?: number;
 };
 
@@ -82,7 +82,7 @@ export async function readOutcome(
       case "turn_end":
         answer = answerIn(record.message) ?? answer;
         break;
-      // Compaction uses a separate model call that is not included in message events.
+      // Summarizing the Session uses a separate model call, reported here instead of in a message.
       case "compaction_end":
         await report(usageIn(fieldsOf(record.result), named, true));
         break;
