@@ -98,7 +98,8 @@ const runRecordSchema = {
     state: {
       type: "string",
       enum: runStates,
-      description: "Execution state. The framework imposes no timeout.",
+      description:
+        "Execution state. The worker imposes no timeout; the runtime stops a run after its own.",
     },
     error: { type: "string", nullable: true },
     startedAt: { type: "string", nullable: true },

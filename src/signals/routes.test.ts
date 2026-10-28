@@ -43,7 +43,7 @@ before(async () => {
 
   const runtime = fakeRuntime(async (prompt) => {
     if (prompt.text === "doomed") {
-      return { ok: false, error: "the agent gave up" };
+      return { ok: false, error: "the agent gave up", usage: [] };
     }
     if (prompt.session === "user_e") {
       readsFromInsideARun.push({
@@ -51,7 +51,7 @@ before(async () => {
         runs: (await read("/runs")).json<{ runs: RunRecord[] }>().runs,
       });
     }
-    return { ok: true };
+    return { ok: true, usage: [] };
   });
 
   worker = createSignalWorker({

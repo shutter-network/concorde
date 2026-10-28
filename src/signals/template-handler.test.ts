@@ -124,6 +124,49 @@ describe("the template Handler", () => {
   });
 });
 
+describe("the User a Run is charged to", () => {
+  type Sent = { readonly userId: string };
+
+  it("writes what the user function answers onto the Prompt, awaited if it has to be", async () => {
+    for (const user of [
+      (signal: Signal<Sent>) => signal.payload.userId,
+      async (signal: Signal<Sent>) => signal.payload.userId,
+    ]) {
+      const handler = templateHandler<Sent>({
+        template: "for {{userId}}",
+        session: (signal) => `user_${signal.payload.userId}`,
+        data: (signal) => signal.payload,
+        user,
+      });
+
+      assert.deepEqual(await onlyPrompt(handler, { userId: "42" }), {
+        session: "user_42",
+        text: "for 42",
+        userId: "42",
+      });
+    }
+  });
+
+  it("charges no User when the function answers null or is not given", async () => {
+    const answeringNull = templateHandler<Sent>({
+      template: "x",
+      session: () => null,
+      data: () => ({}),
+      user: () => null,
+    });
+    const notGiven = templateHandler<Sent>({
+      template: "x",
+      session: () => null,
+      data: () => ({}),
+    });
+
+    for (const handler of [answeringNull, notGiven]) {
+      const prompt = await onlyPrompt(handler, { userId: "42" });
+      assert.equal(Object.hasOwn(prompt, "userId"), false);
+    }
+  });
+});
+
 describe("a substituted value", () => {
   it("reaches the Prompt byte for byte, escaping nothing", async () => {
     const text = await renders("{{value}}", { value: everythingHandlebarsWouldEscape });

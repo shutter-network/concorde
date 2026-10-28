@@ -10,9 +10,10 @@ import { createTestDatabase, type TestDatabase } from "../test-support/database.
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
 import type { SignalHandler, SignalHandlers } from "./handlers.ts";
-import type { Runtime } from "./runtime.ts";
+import type { Runtime, UsageReport } from "./runtime.ts";
 import * as signalsSchema from "./schema/index.ts";
-import { runs, signals } from "./schema/index.ts";
+import { runs, signals, usage } from "./schema/index.ts";
+import { createUsage } from "./usage.ts";
 import { createSignalWorker, type SignalWorker, signalChannel } from "./worker.ts";
 
 let database: TestDatabase;
@@ -312,7 +313,7 @@ describe("the worker", () => {
     const timeline: string[] = [];
     const runtime = fakeRuntime((prompt) => {
       timeline.push(`run ${prompt.text}`);
-      return { ok: true };
+      return { ok: true, usage: [] };
     });
     let told: boolean | undefined;
 
@@ -342,7 +343,9 @@ describe("the worker", () => {
 
   it("tells the post phase a Run failed, and fails the Signal with the reason", async () => {
     const runtime = fakeRuntime((prompt) =>
-      prompt.text === "b" ? { ok: false, error: "the model refused" } : { ok: true },
+      prompt.text === "b"
+        ? { ok: false, error: "the model refused", usage: [] }
+        : { ok: true, usage: [] },
     );
     let told: boolean | undefined;
 
@@ -453,8 +456,8 @@ describe("the worker", () => {
   it("hands the Runtime any Session name, and fails only the Run it rejects", async () => {
     const runtime = fakeRuntime((prompt) =>
       prompt.session === "user:2"
-        ? { ok: false, error: "Session id must be alphanumeric" }
-        : { ok: true },
+        ? { ok: false, error: "Session id must be alphanumeric", usage: [] }
+        : { ok: true, usage: [] },
     );
     await withWorker(
       {
@@ -514,7 +517,7 @@ describe("the worker", () => {
         context: found[0]?.context,
         carried: carried.json(),
       });
-      return { ok: true };
+      return { ok: true, usage: [] };
     });
 
     const worker = createSignalWorker({
@@ -620,6 +623,154 @@ describe("the worker", () => {
         );
       },
     );
+  });
+});
+
+describe("usage", () => {
+  const call = (totalTokens: number): UsageReport => ({
+    provider: "mock",
+    model: "mock-1",
+    input: totalTokens,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens,
+    cost: 0.5,
+  });
+
+  function usageOf(runId: string): Promise<(typeof usage.$inferSelect)[]> {
+    return db
+      .handle({ usage })
+      .select()
+      .from(usage)
+      .where(eq(usage.runId, runId))
+      .orderBy(asc(usage.recordedAt));
+  }
+
+  it("saves each model call in a Run's outcome against that Run, in order", async () => {
+    const runtime = fakeRuntime((prompt) => ({
+      ok: true,
+      usage: prompt.text === "first" ? [call(10), call(20)] : [call(5)],
+    }));
+    await withWorker(
+      {
+        spending: {
+          handle: () => [
+            { session: null, text: "first" },
+            { session: null, text: "second" },
+          ],
+        },
+      },
+      runtime,
+      async (worker) => {
+        const id = await emit(worker, "spending");
+        assert.equal((await settled(id)).state, "done");
+
+        const [first, second] = await runsOf(id);
+        assert.ok(first && second);
+        assert.deepEqual(
+          (await usageOf(first.id)).map((row) => [
+            row.provider,
+            row.model,
+            row.totalTokens,
+            row.cost,
+          ]),
+          [
+            ["mock", "mock-1", 10, 0.5],
+            ["mock", "mock-1", 20, 0.5],
+          ],
+        );
+        assert.deepEqual(
+          (await usageOf(second.id)).map((row) => row.totalTokens),
+          [5],
+        );
+      },
+    );
+  });
+
+  it("stores the User a Prompt names on its Run, and totals it from there", async () => {
+    const runtime = fakeRuntime(() => ({ ok: true, usage: [call(3), call(4)] }));
+    await withWorker(
+      {
+        charged: {
+          handle: () => [
+            { session: "user_alice", text: "for alice", userId: "alice" },
+            { session: null, text: "for nobody" },
+          ],
+        },
+      },
+      runtime,
+      async (worker) => {
+        const id = await emit(worker, "charged");
+        assert.equal((await settled(id)).state, "done");
+
+        const [alices, nobodys] = await runsOf(id);
+        assert.ok(alices && nobodys);
+        assert.deepEqual([alices.userId, nobodys.userId], ["alice", null]);
+        const totals = createUsage({ db });
+        assert.equal((await totals.total({ userId: "alice" })).totalTokens, 7);
+        assert.equal(
+          Object.hasOwn(runtime.recorded[0] ?? {}, "userId"),
+          false,
+          "the Runtime is not told whom the Run is charged to",
+        );
+      },
+    );
+  });
+
+  it("saves the usage of a Run that failed", async () => {
+    const runtime = fakeRuntime(() => ({
+      ok: false,
+      error: "the model gave up",
+      usage: [call(7)],
+    }));
+    await withWorker(
+      { costly: { handle: () => [{ session: null, text: "spend then fail" }] } },
+      runtime,
+      async (worker) => {
+        const id = await emit(worker, "costly");
+        assert.equal((await settled(id)).state, "failed");
+        const [run] = await runsOf(id);
+        assert.ok(run);
+        assert.equal(run.error, "the model gave up");
+        assert.deepEqual(
+          (await usageOf(run.id)).map((row) => row.totalTokens),
+          [7],
+        );
+      },
+    );
+  });
+
+  it("fails a Run whose usage cannot be saved, and saves none of it", async () => {
+    const runtime = fakeRuntime(() => ({ ok: true, usage: [call(9), call(1)] }));
+    const tables = db.handle({});
+    // Marking the Run done fails after its usage was inserted, in the same transaction.
+    await tables.execute(
+      sql`alter table concorde_signals.runs add constraint runs_never_done check (state <> 'done') not valid`,
+    );
+    try {
+      await withWorker(
+        { unsaved: { handle: () => [{ session: null, text: "spend" }] } },
+        runtime,
+        async (worker) => {
+          const id = await emit(worker, "unsaved");
+          assert.equal((await settled(id)).state, "failed");
+
+          const [run] = await runsOf(id);
+          assert.ok(run);
+          assert.equal(run.state, "failed");
+          assert.match(run.error ?? "", /^Usage of 2 model calls was not saved: /);
+          assert.ok(run.endedAt !== null);
+          assert.deepEqual(
+            await usageOf(run.id),
+            [],
+            "the Run's usage is saved whole or not at all",
+          );
+        },
+      );
+    } finally {
+      await tables.execute(sql`alter table concorde_signals.runs drop constraint runs_never_done`);
+    }
   });
 });
 

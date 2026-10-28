@@ -11,6 +11,9 @@ export type TemplateHandlerOptions<TPayload = unknown> = {
 
   readonly context?: (signal: Signal<TPayload>) => unknown;
 
+  /** Sets `Prompt.userId`. Return `null` or omit this function to assign no User to the Run. */
+  readonly user?: (signal: Signal<TPayload>) => string | null | Promise<string | null>;
+
   readonly helpers?: Readonly<Record<string, Handlebars.HelperDelegate>>;
 
   readonly partials?: Readonly<Record<string, string>>;
@@ -47,6 +50,8 @@ export function templateHandler<TPayload = unknown>(
       const data = await options.data(signal);
       const context =
         options.context === undefined ? {} : { context: await options.context(signal) };
+      const userId = options.user === undefined ? null : await options.user(signal);
+      const charged = userId === null ? {} : { userId };
 
       let text: string;
       try {
@@ -57,7 +62,7 @@ export function templateHandler<TPayload = unknown>(
         });
       }
 
-      return [{ session, text, ...context }];
+      return [{ session, text, ...context, ...charged }];
     },
 
     ...(options.post === undefined ? {} : { post: options.post }),

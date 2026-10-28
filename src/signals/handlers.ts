@@ -17,6 +17,13 @@ export type Prompt = {
    * Omission becomes `null`. The runtime does not receive it; put agent instructions in `text`.
    */
   readonly context?: unknown;
+  /**
+   * Add this Run's usage to this User's total. Take the id from data authenticated by the
+   * Gateway, such as a Message's `userId`. Never take it from text written by a model or sender.
+   * The agent does not receive this field. It is separate from the Session name and prompt text.
+   * Omit this field to leave the Run's usage unassigned to any User.
+   */
+  readonly userId?: string;
 };
 
 export type PostOutcome = {

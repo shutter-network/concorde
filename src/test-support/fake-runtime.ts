@@ -10,7 +10,7 @@ export type FakeRuntime = Runtime & {
 
 const holdMs = 5;
 
-export function fakeRuntime(script: RuntimeScript = () => ({ ok: true })): FakeRuntime {
+export function fakeRuntime(script: RuntimeScript = () => ({ ok: true, usage: [] })): FakeRuntime {
   const recorded: RunPrompt[] = [];
   let inFlight = 0;
   let overlapped = false;

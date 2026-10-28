@@ -65,15 +65,23 @@ async function failureOf(text: string, chunkSize = 4096): Promise<string> {
   return outcome.ok ? "" : outcome.error;
 }
 
+function withoutUsage({ usage: _, ...rest }: RunOutcome): Omit<RunOutcome, "usage"> {
+  return rest;
+}
+
 describe("a settled run", () => {
   it("is a successful Run", async () => {
-    assert.deepEqual(await outcomeOf(await fixture("settled-ok")), { ok: true });
+    assert.deepEqual(withoutUsage(await outcomeOf(await fixture("settled-ok"))), { ok: true });
   });
 
   it("reads the same however the bytes arrive, one byte at a time included", async () => {
     const text = await fixture("settled-ok");
     for (const size of [1, 2, 3, 7, 64, 1_000_000]) {
-      assert.deepEqual(await outcomeOf(text, size), { ok: true }, `chunks of ${size} bytes`);
+      assert.deepEqual(
+        withoutUsage(await outcomeOf(text, size)),
+        { ok: true },
+        `chunks of ${size} bytes`,
+      );
     }
   });
 
@@ -84,7 +92,7 @@ describe("a settled run", () => {
       message: { role: "assistant", stopReason: "error", errorMessage: "after the settle" },
     });
 
-    assert.deepEqual(await outcomeOf(asStream(records)), { ok: true });
+    assert.deepEqual(withoutUsage(await outcomeOf(asStream(records))), { ok: true });
   });
 
   it("returns at the settle rather than reading to the end of the stream", async () => {
@@ -102,7 +110,7 @@ describe("a settled run", () => {
       },
     };
 
-    assert.deepEqual(await readOutcome(counted, session), { ok: true });
+    assert.deepEqual(withoutUsage(await readOutcome(counted, session)), { ok: true });
     assert.equal(
       pulled,
       settleAt + 1,
@@ -150,7 +158,9 @@ describe("a model error the agent reports as an ordinary settle", () => {
   });
 
   it("succeeds when the answer was cut short by the output-token limit", async () => {
-    assert.deepEqual(await outcomeOf(await settledWith("length", undefined)), { ok: true });
+    assert.deepEqual(withoutUsage(await outcomeOf(await settledWith("length", undefined))), {
+      ok: true,
+    });
   });
 });
 
@@ -165,7 +175,9 @@ async function settledWith(stopReason: string, errorMessage: string | undefined)
 
 describe("an agent_end followed by a retry", () => {
   it("is not the end: the Run is finished at the settle, and it succeeded", async () => {
-    assert.deepEqual(await outcomeOf(await fixture("retry-then-settled")), { ok: true });
+    assert.deepEqual(withoutUsage(await outcomeOf(await fixture("retry-then-settled"))), {
+      ok: true,
+    });
   });
 
   it("carries the opposite outcome at the first agent_end, which is not read as the end", async () => {
@@ -216,8 +228,8 @@ describe("a record containing U+2028", () => {
     assert.ok(text.includes(lineSeparator), "the stream should carry a literal U+2028");
     assert.ok(text.includes(paragraphSeparator), "the stream should carry a literal U+2029");
 
-    assert.deepEqual(await outcomeOf(text), { ok: true });
-    assert.deepEqual(await outcomeOf(text, 1), { ok: true });
+    assert.deepEqual(withoutUsage(await outcomeOf(text)), { ok: true });
+    assert.deepEqual(withoutUsage(await outcomeOf(text, 1)), { ok: true });
   });
 
   it("is torn in half by node:readline, which is why readline is not used", async () => {
@@ -291,5 +303,132 @@ describe("output that cannot be read", () => {
       await failureOf(""),
       `Session ${session}: No records received after the prompt was accepted; completion is unknown`,
     );
+  });
+});
+
+function assistantEnd(usage: Record<string, unknown>, stopReason = "toolUse"): unknown {
+  return {
+    type: "message_end",
+    message: { role: "assistant", provider: "mock", model: "mock-1", stopReason, usage },
+  };
+}
+
+const spent = {
+  input: 100,
+  output: 20,
+  cacheRead: 300,
+  cacheWrite: 5,
+  totalTokens: 425,
+  cost: { total: 0.25 },
+};
+
+describe("the usage a Run reports", () => {
+  it("reports each model call once, a failed attempt before a retry included", async () => {
+    const outcome = await outcomeOf(await fixture("retry-then-settled"));
+
+    assert.equal(outcome.ok, true);
+    assert.deepEqual(
+      outcome.usage.map((report) => [report.provider, report.model, report.totalTokens]),
+      [
+        ["mock", "mock-1", 0],
+        ["mock", "mock-1", 18],
+      ],
+      "two attempts, each reported once although turn_end and agent_end repeat them",
+    );
+    assert.deepEqual(outcome.usage[1], {
+      provider: "mock",
+      model: "mock-1",
+      input: 11,
+      output: 7,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 18,
+      cost: 0,
+    });
+  });
+
+  it("carries every category, the cost, and a total it sums itself", async () => {
+    const { usage } = await outcomeOf(
+      asStream([assistantEnd({ ...spent, totalTokens: 1 }, "stop"), { type: "agent_settled" }]),
+    );
+
+    assert.deepEqual(usage, [
+      {
+        provider: "mock",
+        model: "mock-1",
+        input: 100,
+        output: 20,
+        cacheRead: 300,
+        cacheWrite: 5,
+        totalTokens: 425,
+        cost: 0.25,
+      },
+    ]);
+  });
+
+  it("reports a compaction, naming the model the Run last used", async () => {
+    const { usage } = await outcomeOf(
+      asStream([
+        assistantEnd(spent),
+        { type: "compaction_start", reason: "threshold" },
+        {
+          type: "compaction_end",
+          reason: "threshold",
+          result: { summary: "…", usage: { input: 900, output: 60, cacheRead: 0, cacheWrite: 0 } },
+          aborted: false,
+          willRetry: false,
+        },
+        assistantEnd(spent, "stop"),
+        { type: "agent_settled" },
+      ]),
+    );
+
+    assert.equal(usage.length, 3);
+    assert.deepEqual(usage[1], {
+      provider: "mock",
+      model: "mock-1",
+      input: 900,
+      output: 60,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 960,
+      cost: 0,
+    });
+  });
+
+  it("reports nothing for a user message, or a message with no usage", async () => {
+    const { usage } = await outcomeOf(
+      asStream([
+        { type: "message_end", message: { role: "user", usage: spent } },
+        { type: "message_end", message: { role: "assistant", stopReason: "stop" } },
+        { type: "agent_settled" },
+      ]),
+    );
+
+    assert.deepEqual(usage, []);
+  });
+
+  it("counts a negative or fractional figure as nothing", async () => {
+    const { usage } = await outcomeOf(
+      asStream([
+        assistantEnd({ input: -5, output: 2.5, cacheRead: "9", cacheWrite: 1 }, "stop"),
+        { type: "agent_settled" },
+      ]),
+    );
+
+    assert.equal(usage[0]?.totalTokens, 1);
+  });
+
+  it("returns the calls that finished before a Run failed", async () => {
+    const settled = await outcomeOf(
+      asStream([assistantEnd(spent), assistantEnd(spent, "error"), { type: "agent_settled" }]),
+    );
+    const cut = await outcomeOf(asStream([assistantEnd(spent), { type: "agent_start" }]));
+
+    for (const outcome of [settled, cut]) {
+      assert.equal(outcome.ok, false);
+    }
+    assert.equal(settled.usage.length, 2, "the failed call is charged too");
+    assert.equal(cut.usage.length, 1, "a stream that ended early keeps what it reported");
   });
 });

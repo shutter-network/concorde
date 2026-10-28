@@ -12,7 +12,7 @@ import { openDb } from "../db/index.ts";
 import { createBareGateway, serverComponent } from "../gateway/components.ts";
 import type { SignalHandler } from "../signals/handlers.ts";
 import * as signalsSchema from "../signals/schema/index.ts";
-import { runs } from "../signals/schema/index.ts";
+import { runs, usage } from "../signals/schema/index.ts";
 import { createSignalWorker } from "../signals/worker.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
@@ -39,7 +39,7 @@ const skip = await skipContainerTests();
 type Ask = { readonly session: string | null; readonly text: string };
 
 const asking: SignalHandler<Ask> = {
-  handle: (signal) => [{ session: signal.payload.session, text: signal.payload.text }],
+  handle: (signal) => [signal.payload],
 };
 
 const handlerNote = "handler-note.txt";
@@ -73,6 +73,7 @@ type Rig = {
   runsOf(
     signalId: string,
   ): Promise<{ id: string; session: string | null; state: string; error: string | null }[]>;
+  usageOf(runId?: string): Promise<(typeof usage.$inferSelect)[]>;
 };
 
 type Paths = {
@@ -210,7 +211,7 @@ async function withGateway(
   const worker = createSignalWorker({ db, runtime, handlers: { ask: asking }, agentServer });
   await applySchema(db, signalsSchema);
 
-  const handle = db.handle({ runs });
+  const handle = db.handle({ runs, usage });
   const rig: Rig = {
     model,
     agentServerUrl,
@@ -238,6 +239,10 @@ async function withGateway(
         state: row.state,
         error: row.error,
       }));
+    },
+    async usageOf(runId) {
+      const all = handle.select().from(usage);
+      return runId === undefined ? all : all.where(eq(usage.runId, runId));
     },
   };
 
@@ -305,6 +310,18 @@ describe("a real pi behind a real listener", { skip }, () => {
         );
       }
 
+      const [firstRun] = await rig.runsOf(first);
+      assert.ok(firstRun !== undefined);
+      assert.deepEqual(
+        (await rig.usageOf(firstRun.id)).map(({ input, output, totalTokens }) => ({
+          input,
+          output,
+          totalTokens,
+        })),
+        Array(3).fill({ input: 1, output: 1, totalTokens: 2 }),
+        "each of the first Run's three model calls should be recorded with the counts the model sent",
+      );
+
       const [freshRun] = await rig.runsOf(fresh);
       assert.ok(freshRun !== undefined, "the fresh Signal should have one Run");
       assert.deepEqual(
@@ -362,6 +379,18 @@ describe("a real pi behind a real listener", { skip }, () => {
       assert.equal(failed?.state, "failed");
       assert.match(failed?.error ?? "", /this deployment has no model/);
       assert.match(failed?.error ?? "", /stopReason/);
+      const recorded = await rig.usageOf();
+      assert.deepEqual(
+        recorded.filter((row) => row.totalTokens > 0).map((row) => row.totalTokens),
+        rig.model.requests
+          .filter((request) => !request.texts.some((text) => text.includes(doomed)))
+          .map(() => 2),
+        "every call the model answered should be one Usage record with the counts it sent",
+      );
+      assert.ok(
+        recorded.some((row) => row.runId === failed?.id && row.totalTokens === 0),
+        "the refused call should be recorded too, with nothing charged",
+      );
 
       const rejectedName = "../escape";
       const [rejected] = await rig.runsOf(
