@@ -432,3 +432,87 @@ describe("the usage a Run reports", () => {
     assert.equal(cut.usage.length, 1, "a stream that ended early keeps what it reported");
   });
 });
+
+describe("a Run with a usage limit", () => {
+  async function limitedTo(
+    text: string,
+    usageLimit: number,
+  ): Promise<{ outcome: RunOutcome; aborts: number }> {
+    let aborts = 0;
+    const outcome = await readOutcome(framedRecords(chunks(text, 4096)), session, {
+      abort: () => {
+        aborts += 1;
+      },
+      usageLimit,
+    });
+    return { outcome, aborts };
+  }
+
+  const threeCalls = asStream([
+    assistantEnd(spent),
+    assistantEnd(spent),
+    assistantEnd(spent, "aborted"),
+    { type: "agent_settled" },
+  ]);
+
+  it("aborts once the call that crossed the limit ends, and fails as limited", async () => {
+    const { outcome, aborts } = await limitedTo(threeCalls, 800);
+
+    assert.equal(aborts, 1);
+    assert.deepEqual(withoutUsage(outcome), {
+      ok: false,
+      error: `Session ${session}: Usage limit reached: 850 of 800 tokens`,
+      limited: true,
+    });
+    assert.equal(outcome.usage.length, 3, "a call that finished after the abort is charged too");
+  });
+
+  it("lets a Run that reaches the limit exactly, or stays under it, finish as before", async () => {
+    const stream = asStream([
+      assistantEnd(spent),
+      assistantEnd(spent, "stop"),
+      { type: "agent_settled" },
+    ]);
+    for (const usageLimit of [850, 1_000_000]) {
+      const { outcome, aborts } = await limitedTo(stream, usageLimit);
+      assert.deepEqual(withoutUsage(outcome), { ok: true });
+      assert.equal(aborts, 0);
+    }
+  });
+
+  it("adds a failed attempt and its retry together", async () => {
+    const { outcome, aborts } = await limitedTo(await fixture("retry-then-settled"), 17);
+
+    assert.equal(aborts, 1);
+    assert.match(failureIn(outcome), /Usage limit reached: 18 of 17 tokens/);
+  });
+
+  it("counts compaction toward the limit", async () => {
+    const { outcome } = await limitedTo(
+      asStream([
+        assistantEnd(spent),
+        {
+          type: "compaction_end",
+          result: { usage: { input: 500, output: 0, cacheRead: 0, cacheWrite: 0 } },
+        },
+        assistantEnd(spent, "stop"),
+        { type: "agent_settled" },
+      ]),
+      900,
+    );
+
+    assert.match(failureIn(outcome), /925 of 900/);
+  });
+
+  it("stays limited when the stream ends before pi settles", async () => {
+    const { outcome } = await limitedTo(asStream([assistantEnd(spent), assistantEnd(spent)]), 800);
+
+    assert.match(failureIn(outcome), /without agent_settled/);
+    assert.equal(outcome.ok === false && outcome.limited, true);
+  });
+});
+
+function failureIn(outcome: RunOutcome): string {
+  assert.equal(outcome.ok, false, `this Run should have failed; it was ${JSON.stringify(outcome)}`);
+  return outcome.ok ? "" : outcome.error;
+}

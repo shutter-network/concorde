@@ -129,7 +129,13 @@ Operator-defined JSON a Signal Handler writes on a Prompt beside the Session and
 _Avoid_: scope, claims, permissions, grant, ACL
 
 **Post phase**:
-The Signal Handler's second entry point, for cleanup. Runs once after all Runs arising from a Signal have finished, receives a flag saying whether one failed, and cannot produce Prompts.
+The Signal Handler's cleanup step. It runs once after all Runs for a Signal finish. It also runs if `handle` throws an error. This step cannot produce Prompts.
+
+It receives two values:
+
+- `failed`: true if `handle` or any Run failed.
+- `limited`: true if any Run exceeded its Usage limit.
+
 _Avoid_: post handler, teardown, finalizer, callback
 
 **Session**:
@@ -161,6 +167,18 @@ A database row for one model call in a Run. It stores:
 - The cost calculated by the Agent Implementation.
 
 A record belongs to one Run and does not store a User. Its User is the User on its Run, which a Signal Handler sets on the Prompt as `userId`. Each record is saved once and never changed.
+
+**Usage limit**:
+The token limit for one Run. A Signal Handler sets it on the Prompt as `usageLimit`.
+
+The Runtime adds up tokens as each model call finishes. If the total exceeds the limit, it stops the agent. The Run fails with `limited: true`, and its outcome still carries the usage of every call, including calls that finished after the stop. The Session keeps the history saved so far.
+
+Usage is only known after a model call finishes. This means the Run can go over the limit by one call.
+
+Every token counts equally toward this limit, including tokens read from the provider's cache. Each model call sends the agent's full context again. The provider reports most of that repeated context as cache reads. Cache reads therefore usually make up most of the token count, even though they cost much less.
+
+The framework only enforces a limit for each Run. To enforce a User's budget across Runs, the Signal Handler sets `usageLimit` to the number of tokens the User has left. A Prompt with no `usageLimit` is never stopped for usage.
+_Avoid_: budget, quota, max tokens
 
 **Workspace**:
 The files and data that Signal Handlers and the agent share, as opposed to the Db, which the agent cannot touch directly. Global to a shared agent, not per Session. **The framework has no name for where it is.** The Gateway and the **Agent Instance** come to share it by the Operator's own arrangement, a volume or a bind or a filesystem both containers happen to see, and no option, no path and no check anywhere in the API is about it: nothing here can tell whether the two ends found each other, or notice that they did not.

@@ -25,9 +25,10 @@ const sessionNames = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
  * Run whose agent never settles blocks the worker and its usage is never saved.
  *
  * The outcome carries the usage of each assistant `message_end` and each `compaction_end`,
- * including retries, on success and on failure. Token counts come from the provider. A response
- * interrupted mid-stream reports less output than was generated. If the server reports no usage,
- * the recorded count is zero.
+ * including retries, on success and on failure. If usage exceeds the Prompt's `usageLimit`, the
+ * runtime sends `abort` to pi. Once pi settles, the Run fails with `limited: true` and the Session
+ * file is kept. Token counts come from the provider. A response interrupted mid-stream reports
+ * less output than was generated. If the server reports no usage, the recorded count is zero.
  */
 export function createPiRuntime(instance: PiInstance): Runtime {
   const { host, port, sessionsDir } = instance;
@@ -60,6 +61,14 @@ export function createPiRuntime(instance: PiInstance): Runtime {
       if (prompt.text.trim() === "") {
         return failed("Prompt text must not be blank");
       }
+      if (
+        prompt.usageLimit !== undefined &&
+        !(Number.isSafeInteger(prompt.usageLimit) && prompt.usageLimit > 0)
+      ) {
+        return failed(
+          `usageLimit must be a positive whole number of tokens; received ${String(prompt.usageLimit)}`,
+        );
+      }
 
       const sessionFile = posix.join(sessionsDir, `${prompt.session}.jsonl`);
 
@@ -73,7 +82,7 @@ export function createPiRuntime(instance: PiInstance): Runtime {
       log.debug({ session: prompt.session, sessionFile, host, port }, "connected to the agent");
 
       try {
-        return await performRun(rpc, prompt, sessionFile, failed);
+        return await performRun(rpc, prompt, sessionFile, failed, () => rpc.notify("abort"));
       } catch (error) {
         return failed(messageOf(error));
       } finally {
@@ -89,6 +98,7 @@ async function performRun(
   prompt: RunPrompt,
   sessionFile: string,
   failed: (why: string) => RunOutcome,
+  abort: () => void,
 ): Promise<RunOutcome> {
   const switched = await rpc.send("switch_session", { sessionPath: sessionFile });
   if (!switched.success) {
@@ -117,7 +127,10 @@ async function performRun(
     return failed(`Prompt rejected: ${prompted.error ?? "no error details"}`);
   }
 
-  const outcome = await readOutcome(rpc.records, prompt.session);
+  const outcome = await readOutcome(rpc.records, prompt.session, {
+    abort,
+    ...(prompt.usageLimit === undefined ? {} : { usageLimit: prompt.usageLimit }),
+  });
   const dropped = rpc.dropped();
   if (outcome.ok || dropped === undefined) return outcome;
   return { ...outcome, error: `${outcome.error}. The connection failed: ${dropped}` };

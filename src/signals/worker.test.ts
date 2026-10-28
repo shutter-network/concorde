@@ -741,6 +741,80 @@ describe("usage", () => {
     );
   });
 
+  it("hands the Runtime the Prompt's usage limit, and only when there is one", async () => {
+    const runtime = fakeRuntime();
+    await withWorker(
+      {
+        capped: {
+          handle: () => [
+            { session: "s", text: "capped", usageLimit: 500 },
+            { session: "s", text: "uncapped" },
+          ],
+        },
+      },
+      runtime,
+      async (worker) => {
+        await settled(await emit(worker, "capped"));
+        assert.deepEqual(runtime.recorded, [
+          { session: "s", text: "capped", usageLimit: 500 },
+          { session: "s", text: "uncapped" },
+        ]);
+      },
+    );
+  });
+
+  it("tells the post phase a Run was limited, and saves that Run's usage", async () => {
+    const told: { failed: boolean; limited: boolean }[] = [];
+    const runtime = fakeRuntime((prompt) =>
+      prompt.text === "too much"
+        ? {
+            ok: false,
+            error: "Usage limit reached: 120 of 100 tokens",
+            usage: [call(60), call(60)],
+            limited: true,
+          }
+        : prompt.text === "broken"
+          ? { ok: false, error: "the model is down", usage: [] }
+          : { ok: true, usage: [] },
+    );
+    const posting = (texts: string[]): SignalHandler => ({
+      handle: () => texts.map((text) => ({ session: "s", text })),
+      post: (_signal, outcome) => {
+        told.push({ failed: outcome.failed, limited: outcome.limited });
+      },
+    });
+    await withWorker(
+      {
+        limited: posting(["fine", "too much"]),
+        failed: posting(["broken"]),
+        fine: posting(["fine"]),
+      },
+      runtime,
+      async (worker) => {
+        const limitedId = await emit(worker, "limited");
+        await settled(limitedId);
+        await settled(await emit(worker, "failed"));
+        await settled(await emit(worker, "fine"));
+
+        assert.deepEqual(told, [
+          { failed: true, limited: true },
+          { failed: true, limited: false },
+          { failed: false, limited: false },
+        ]);
+        const [, stopped] = await runsOf(limitedId);
+        assert.ok(stopped);
+        assert.deepEqual(
+          [stopped.state, stopped.error],
+          ["failed", "Usage limit reached: 120 of 100 tokens"],
+        );
+        assert.deepEqual(
+          (await usageOf(stopped.id)).map((row) => row.totalTokens),
+          [60, 60],
+        );
+      },
+    );
+  });
+
   it("fails a Run whose usage cannot be saved, and saves none of it", async () => {
     const runtime = fakeRuntime(() => ({ ok: true, usage: [call(9), call(1)] }));
     const tables = db.handle({});

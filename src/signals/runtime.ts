@@ -6,7 +6,13 @@ import type { Prompt } from "./handlers.ts";
  */
 export type RunOutcome =
   | { readonly ok: true; readonly usage: readonly UsageReport[] }
-  | { readonly ok: false; readonly error: string; readonly usage: readonly UsageReport[] };
+  | {
+      readonly ok: false;
+      readonly error: string;
+      readonly usage: readonly UsageReport[];
+      /** The Run was stopped because it exceeded its `usageLimit`. */
+      readonly limited?: boolean;
+    };
 
 export type RunPrompt = Omit<Prompt, "session" | "context" | "userId"> & {
   readonly session: string;

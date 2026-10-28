@@ -36,7 +36,11 @@ import { createPiRuntime } from "./runtime.ts";
 const run = promisify(execFile);
 const skip = await skipContainerTests();
 
-type Ask = { readonly session: string | null; readonly text: string };
+type Ask = {
+  readonly session: string | null;
+  readonly text: string;
+  readonly usageLimit?: number;
+};
 
 const asking: SignalHandler<Ask> = {
   handle: (signal) => [signal.payload],
@@ -375,6 +379,32 @@ describe("a real pi behind a real listener", { skip }, () => {
       const written = path.join(rig.workspace, agentNote);
       assert.equal(await readFile(written, "utf8"), "written by the agent");
 
+      const [limited] = await rig.runsOf(
+        await rig.ask({ session: "user_9", text: "Spend past the limit.", usageLimit: 3 }),
+      );
+      assert.equal(limited?.state, "failed");
+      assert.match(limited?.error ?? "", /Usage limit reached: \d+ of 3 tokens/);
+      assert.ok(
+        (await rig.usageOf(limited?.id)).length >= 2,
+        "the calls made before the abort should be saved",
+      );
+      const [continued] = await rig.runsOf(
+        await rig.ask({ session: "user_9", text: "Carry on where you stopped." }),
+      );
+      assert.deepEqual(
+        [continued?.state, continued?.error],
+        ["done", null],
+        "the limited Run's Session should take the next Prompt",
+      );
+      assert.ok(
+        rig.model.requests.some(
+          (request) =>
+            request.texts.includes("Carry on where you stopped.") &&
+            request.texts.includes("Spend past the limit."),
+        ),
+        "the next Run should carry the limited Run's conversation",
+      );
+
       const [failed] = await rig.runsOf(await rig.ask({ session: "user_7", text: doomed }));
       assert.equal(failed?.state, "failed");
       assert.match(failed?.error ?? "", /this deployment has no model/);
@@ -401,7 +431,7 @@ describe("a real pi behind a real listener", { skip }, () => {
       assert.match(rejected?.error ?? "", /Invalid session name/);
       assert.deepEqual(
         await rig.sessions(),
-        [`run_${freshRun.id}.jsonl`, "user_42.jsonl", "user_7.jsonl"].sort(),
+        [`run_${freshRun.id}.jsonl`, "user_42.jsonl", "user_7.jsonl", "user_9.jsonl"].sort(),
         "a Session name the framework refused should have left nothing behind",
       );
     });

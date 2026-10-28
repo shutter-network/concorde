@@ -358,6 +358,49 @@ describe("the usage a Run reports", () => {
   });
 });
 
+describe("a usage limit", () => {
+  const spending: Written = {
+    type: "message_end",
+    message: {
+      role: "assistant",
+      stopReason: "toolUse",
+      usage: { input: 60, output: 0, cacheRead: 0, cacheWrite: 0 },
+    },
+  };
+
+  // The fake agent waits for abort; the test timeout catches a missing abort.
+  it("sends abort when usage passes the limit, and fails as limited once the agent settles", {
+    timeout: 5_000,
+  }, async () => {
+    const working = scriptedInstance([{ type: "agent_start" }, spending, spending]);
+    const reply: Reply = (command) =>
+      command.type === "abort"
+        ? [
+            { type: "agent_settled" },
+            { type: "response", id: command.id, command: "abort", success: true },
+          ]
+        : working(command);
+
+    const { outcome, instance } = await runAgainst(reply, { ...prompt, usageLimit: 100 });
+
+    assert.deepEqual(commandTypes(instance), ["switch_session", "get_state", "prompt", "abort"]);
+    assert.deepEqual(withoutUsage(outcome), {
+      ok: false,
+      error: "Session user_42: Usage limit reached: 120 of 100 tokens",
+      limited: true,
+    });
+    assert.equal(outcome.usage.length, 2);
+  });
+
+  it("refuses a limit that is not a positive whole number, before connecting", async () => {
+    for (const usageLimit of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const { outcome, instance } = await runAgainst(scriptedInstance(), { ...prompt, usageLimit });
+      assert.match(failure(outcome), /usageLimit must be a positive whole number/);
+      assert.equal(instance.connections(), 0);
+    }
+  });
+});
+
 function refusing(command: string, why: string): Reply {
   const healthy = scriptedInstance();
   return (received) =>
