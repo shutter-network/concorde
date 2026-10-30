@@ -371,8 +371,8 @@ describe("the template Handler's post phase", () => {
 
     assert.equal(handler.post, post, "the function should reach the Handler as it was written");
     const signal = aSignal({ userId: "u_1" });
-    await handler.post?.(signal, { failed: true });
-    assert.deepEqual(seen, [{ signal, outcome: { failed: true } }]);
+    await handler.post?.(signal, { failed: true, limited: false });
+    assert.deepEqual(seen, [{ signal, outcome: { failed: true, limited: false } }]);
   });
 });
 
@@ -504,8 +504,8 @@ describe("the template Handler under the worker", () => {
       assert.equal((await settled(unsupplied)).state, "failed");
 
       assert.deepEqual(outcomes, {
-        "prompt.good": { failed: false },
-        "prompt.unsupplied": { failed: true },
+        "prompt.good": { failed: false, limited: false },
+        "prompt.unsupplied": { failed: true, limited: false },
       });
       assert.deepEqual(runtime.texts(), ["a Prompt that renders"]);
     });
