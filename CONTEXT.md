@@ -101,7 +101,7 @@ The interchangeable agent program at the centre of the architecture. `pi` is the
 _Avoid_: agent runtime, engine, backend, model, LLM
 
 **Runtime**:
-What the Signal Worker hands a Prompt to and gets an outcome back from, and the narrowest interface in the framework: one method. A construction option of the Worker's rather than a Component, and close to the only thing in the Gateway's design that is neither. It carries none of the Agent Implementation's own configuration, because what that reads on disk is the Operator's to place where it will look. Named for the Worker's own field, which has always been `runtime`, and the name means **what a Run is performed through**. Stating that outright is what makes keeping it honest rather than merely cheap: the other reading, runtime-as-execution-environment, was defensible while the framework started a container for each Run, and nothing in the framework runs an Agent Implementation any more, so the reading it would invite is now false. Formerly the **Runtime Adapter**; "adapter" is gone, since there is no longer a second kind of thing for it to adapt between. What a Runtime reaches is an **Agent Instance** below, which the Operator runs and a Runtime does not own: it opens a connection when a Prompt exists and closes it when the Run is over, and it starts nothing, stops nothing and configures nothing.
+What the Signal Worker hands a Prompt to and gets an outcome back from, and the narrowest interface in the framework: one method. The outcome carries the Run's Usage on success and on failure, which is why a Runtime returns a failure rather than throwing: a call that throws has no Usage to save, and neither does one that never returns. A construction option of the Worker's rather than a Component, and close to the only thing in the Gateway's design that is neither. It carries none of the Agent Implementation's own configuration, because what that reads on disk is the Operator's to place where it will look. Named for the Worker's own field, which has always been `runtime`, and the name means **what a Run is performed through**. Stating that outright is what makes keeping it honest rather than merely cheap: the other reading, runtime-as-execution-environment, was defensible while the framework started a container for each Run, and nothing in the framework runs an Agent Implementation any more, so the reading it would invite is now false. Formerly the **Runtime Adapter**; "adapter" is gone, since there is no longer a second kind of thing for it to adapt between. What a Runtime reaches is an **Agent Instance** below, which the Operator runs and a Runtime does not own: it opens a connection when a Prompt exists and closes it when the Run is over, and it starts nothing, stops nothing and configures nothing.
 _Avoid_: runtime adapter, driver, plugin, connector, backend
 
 **Agent Instance**:
@@ -129,7 +129,13 @@ Operator-defined JSON a Signal Handler writes on a Prompt beside the Session and
 _Avoid_: scope, claims, permissions, grant, ACL
 
 **Post phase**:
-The Signal Handler's second entry point, for cleanup. Runs once after all Runs arising from a Signal have finished, receives a flag saying whether one failed, and cannot produce Prompts.
+The Signal Handler's cleanup step. It runs once after all Runs for a Signal finish. It also runs if `handle` throws an error. This step cannot produce Prompts.
+
+It receives two values:
+
+- `failed`: true if `handle` or any Run failed.
+- `limited`: true if any Run exceeded its Usage limit.
+
 _Avoid_: post handler, teardown, finalizer, callback
 
 **Session**:
@@ -139,6 +145,40 @@ _Avoid_: chat, conversation, thread, context (as a name for a Session; a Prompt'
 **Run**:
 One execution of the agent: a single Prompt, in one Session, producing whatever the agent emits.
 _Avoid_: turn, job, invocation, task
+
+**Usage**:
+The tokens a Run uses when it calls a model. Usage is also the name of the built-in Component that reads saved usage totals. This Component is always enabled.
+
+The Runtime returns the usage of every model call that finished during a Run in the Run's outcome, whether the Run succeeded or failed. Retries count too, as do calls that shorten the Session's history by summarizing it. When the Run ends, the Signal Worker saves that usage as **Usage records** in the same transaction that marks the Run done or failed. Saved records are kept after a restart. Two things follow from saving at the end. A Run's usage is not in any total until the Run ends. If the process stops during a Run, that Run's usage is lost.
+
+The Agent Implementation passes on the token counts reported by the model provider. Tokens do not have a single price: input, output, cache reads, and cache writes can each cost a different amount.
+
+The Usage Component can add up records for one User and a chosen time period. It does not decide how much a User may use. The Operator writes that rule in a Signal Handler.
+
+We use the name "Usage" because "Token" already means the credential a User uses to authenticate.
+_Avoid_: Token Tracker, billing, metering, quota
+
+**Usage record**:
+A database row for one model call in a Run. It stores:
+
+- The provider and model used.
+- The input, output, cache read, and cache write token counts.
+- The total of those four counts.
+- The cost calculated by the Agent Implementation.
+
+A record belongs to one Run and does not store a User. Its User is the User on its Run, which a Signal Handler sets on the Prompt as `userId`. Each record is saved once and never changed.
+
+**Usage limit**:
+The token limit for one Run. A Signal Handler sets it on the Prompt as `usageLimit`.
+
+The Runtime adds up tokens as each model call finishes. If the total exceeds the limit, it stops the agent. The Run fails with `limited: true`, and its outcome still carries the usage of every call, including calls that finished after the stop. The Session keeps the history saved so far.
+
+Usage is only known after a model call finishes. This means the Run can go over the limit by one call.
+
+Every token counts equally toward this limit, including tokens read from the provider's cache. Each model call sends the agent's full context again. The provider reports most of that repeated context as cache reads. Cache reads therefore usually make up most of the token count, even though they cost much less.
+
+The framework only enforces a limit for each Run. To enforce a User's budget across Runs, the Signal Handler sets `usageLimit` to the number of tokens the User has left. A Prompt with no `usageLimit` is never stopped for usage.
+_Avoid_: budget, quota, max tokens
 
 **Workspace**:
 The files and data that Signal Handlers and the agent share, as opposed to the Db, which the agent cannot touch directly. Global to a shared agent, not per Session. **The framework has no name for where it is.** The Gateway and the **Agent Instance** come to share it by the Operator's own arrangement, a volume or a bind or a filesystem both containers happen to see, and no option, no path and no check anywhere in the API is about it: nothing here can tell whether the two ends found each other, or notice that they did not.

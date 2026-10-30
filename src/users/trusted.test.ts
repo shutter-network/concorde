@@ -39,7 +39,7 @@ before(async () => {
   directory = createUsers({ db, agentServer });
   worker = createSignalWorker({
     db,
-    runtime: { run: async () => ({ ok: true }) },
+    runtime: { run: async () => ({ ok: true, usage: [] }) },
     handlers: {},
     logger: silent,
   });

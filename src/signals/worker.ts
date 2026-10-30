@@ -8,6 +8,7 @@ import type { Prompt, Signal, SignalHandlers } from "./handlers.ts";
 import { agentReadRoutes } from "./routes.ts";
 import type { RunOutcome, RunPrompt, Runtime } from "./runtime.ts";
 import { runs, signals, signalsTables } from "./schema/index.ts";
+import { createUsage } from "./usage.ts";
 
 export type EmittedSignal = {
   readonly kind: string;
@@ -73,6 +74,7 @@ type QueuedRun = {
   readonly id: string;
   readonly prompt: RunPrompt;
   readonly context: unknown;
+  readonly userId: string | null;
 };
 
 /**
@@ -84,6 +86,7 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   const log = options.logger ?? defaultLogger();
   const runtime = options.runtime;
   const handlers = options.handlers;
+  const usage = createUsage({ db: options.db });
   const sweepIntervalMs = options.sweepIntervalMs ?? defaultSweepIntervalMs;
 
   const handle = options.db.handle(signalsTables);
@@ -154,6 +157,7 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
 
     let prompts: readonly Prompt[] | undefined;
     let failure: string | undefined;
+    let limited = false;
     try {
       prompts = await handler.handle(signal);
     } catch (error) {
@@ -163,12 +167,12 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
     }
 
     if (prompts !== undefined) {
-      failure = await executeRuns(signal, prompts);
+      ({ failure, limited } = await executeRuns(signal, prompts));
     }
 
     if (handler.post !== undefined) {
       try {
-        await handler.post(signal, { failed: failure !== undefined });
+        await handler.post(signal, { failed: failure !== undefined, limited });
       } catch (error) {
         log.error(
           { signalId: signal.id, kind: signal.kind, err: error },
@@ -185,36 +189,48 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   async function executeRuns(
     signal: Signal,
     prompts: readonly Prompt[],
-  ): Promise<string | undefined> {
+  ): Promise<{ failure: string | undefined; limited: boolean }> {
     if (prompts.length === 0) {
-      return undefined;
+      return { failure: undefined, limited: false };
     }
 
     const queued: QueuedRun[] = prompts.map((prompt) => {
       const id = randomUUID();
-      return { id, prompt: promptForRun(id, prompt), context: prompt.context ?? null };
+      return {
+        id,
+        prompt: promptForRun(id, prompt),
+        context: prompt.context ?? null,
+        userId: prompt.userId ?? null,
+      };
     });
     await handle.insert(runs).values(
-      queued.map(({ id, prompt, context }) => ({
+      queued.map(({ id, prompt, context, userId }) => ({
         id,
         signalId: signal.id,
         session: prompt.session,
         prompt: prompt.text,
         context,
+        userId,
       })),
     );
 
     const failures: string[] = [];
+    let limited = false;
     for (const run of queued) {
       const outcome = await executeRun(signal, run);
-      if (!outcome.ok) failures.push(outcome.error);
+      if (!outcome.ok) {
+        failures.push(outcome.error);
+        limited ||= outcome.limited === true;
+      }
     }
 
-    if (failures.length === 0) return undefined;
+    if (failures.length === 0) return { failure: undefined, limited };
     const first = failures[0] ?? "";
-    return failures.length === 1
-      ? `Run failed: ${first}`
-      : `${failures.length} of ${queued.length} runs failed. First error: ${first}`;
+    const failure =
+      failures.length === 1
+        ? `Run failed: ${first}`
+        : `${failures.length} of ${queued.length} runs failed. First error: ${first}`;
+    return { failure, limited };
   }
 
   async function executeRun(signal: Signal, run: QueuedRun): Promise<RunOutcome> {
@@ -230,19 +246,23 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
     try {
       outcome = await runtime.run(prompt);
     } catch (error) {
-      outcome = { ok: false, error: describe(error) };
+      outcome = { ok: false, error: describe(error), usage: [] };
     } finally {
       current = undefined;
     }
 
-    await handle
-      .update(runs)
-      .set({
-        state: outcome.ok ? "done" : "failed",
-        error: outcome.ok ? null : outcome.error,
-        endedAt: sql`clock_timestamp()`,
-      })
-      .where(eq(runs.id, runId));
+    try {
+      await finishRun(runId, outcome, outcome.usage);
+    } catch (error) {
+      const unsaved = `Usage of ${outcome.usage.length} model calls was not saved: ${describe(error)}`;
+      outcome = {
+        ok: false,
+        error: outcome.ok ? unsaved : `${outcome.error}. ${unsaved}`,
+        usage: outcome.usage,
+        ...(!outcome.ok && outcome.limited === true ? { limited: true } : {}),
+      };
+      await finishRun(runId, outcome, []);
+    }
 
     if (outcome.ok) {
       log.info({ runId, signalId: signal.id, session: prompt.session }, "Run finished");
@@ -253,6 +273,25 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
       );
     }
     return outcome;
+  }
+
+  // Usage and the Run's final state are saved together, so a Run's totals are never partial.
+  async function finishRun(
+    runId: string,
+    outcome: RunOutcome,
+    reports: RunOutcome["usage"],
+  ): Promise<void> {
+    await options.db.tx(async (tx) => {
+      await usage.record(tx, runId, reports);
+      await tx
+        .update(runs)
+        .set({
+          state: outcome.ok ? "done" : "failed",
+          error: outcome.ok ? null : outcome.error,
+          endedAt: sql`clock_timestamp()`,
+        })
+        .where(eq(runs.id, runId));
+    });
   }
 
   async function settle(signal: Signal, failure: string | undefined): Promise<void> {
@@ -377,7 +416,10 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
 }
 
 function promptForRun(runId: string, prompt: Prompt): RunPrompt {
-  return { session: prompt.session ?? `run_${runId}`, text: prompt.text };
+  const session = prompt.session ?? `run_${runId}`;
+  return prompt.usageLimit === undefined
+    ? { session, text: prompt.text }
+    : { session, text: prompt.text, usageLimit: prompt.usageLimit };
 }
 
 function describe(error: unknown): string {

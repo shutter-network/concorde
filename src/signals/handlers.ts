@@ -17,10 +17,30 @@ export type Prompt = {
    * Omission becomes `null`. The runtime does not receive it; put agent instructions in `text`.
    */
   readonly context?: unknown;
+  /**
+   * Add this Run's usage to this User's total. Take the id from data authenticated by the
+   * Gateway, such as a Message's `userId`. Never take it from text written by a model or sender.
+   * The agent does not receive this field. It is separate from the Session name and prompt text.
+   * Omit this field to leave the Run's usage unassigned to any User.
+   */
+  readonly userId?: string;
+  /**
+   * The token limit for this Run, measured by `totalTokens`. This includes model calls that
+   * summarize the Session's history. If usage goes over the limit, the runtime stops the agent.
+   * The Run fails with `limited: true`, and the Session keeps its history so far.
+   *
+   * Usage is reported after each model call finishes, so the Run can go over the limit by at
+   * most one call. Use a positive whole number, or omit this field for no limit. To enforce a
+   * budget, pass the number of tokens left in that budget. A Prompt with no limit is never
+   * stopped for usage, so every Prompt run for a User with a budget needs one.
+   */
+  readonly usageLimit?: number;
 };
 
 export type PostOutcome = {
   readonly failed: boolean;
+  /** True if any Run stopped because it exceeded its `usageLimit`. That Run also failed. */
+  readonly limited: boolean;
 };
 
 /**
@@ -28,8 +48,8 @@ export type PostOutcome = {
  * a failed run does not prevent later prompts from running.
  *
  * `post` runs after all runs, including when `handle` throws. `failed` covers failures in
- * `handle` or any run. A thrown `post` also fails the signal. No phase is automatically retried,
- * and the worker imposes no timeout.
+ * `handle` or any run. `limited` is true if any run exceeded its usage limit. A thrown `post`
+ * also fails the signal. No phase is automatically retried, and the worker imposes no timeout.
  */
 export type SignalHandler<TPayload = unknown> = {
   handle(signal: Signal<TPayload>): readonly Prompt[] | Promise<readonly Prompt[]>;
