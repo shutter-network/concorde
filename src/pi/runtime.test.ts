@@ -12,7 +12,7 @@ import {
   startFakeInstance,
   type Written,
 } from "../test-support/agent-instance.ts";
-import { createPiRuntime, piRuntime } from "./runtime.ts";
+import { createPiRuntime } from "./runtime.ts";
 
 const sessionsDir = "/sessions";
 
@@ -355,83 +355,6 @@ describe("the usage a Run reports", () => {
 
     assert.match(failure(outcome), /blank/);
     assert.deepEqual(outcome.usage, []);
-  });
-});
-
-describe("a Run that times out", () => {
-  const spending: Written = {
-    type: "message_end",
-    message: {
-      role: "assistant",
-      stopReason: "toolUse",
-      usage: { input: 60, output: 0, cacheRead: 0, cacheWrite: 0 },
-    },
-  };
-
-  async function timingOut(
-    reply: Reply,
-    graceMs: number,
-  ): Promise<{ outcome: RunOutcome; instance: FakeInstance }> {
-    const instance = await instanceOf(reply);
-    const runtime = piRuntime(
-      { host: instance.host, port: instance.port, sessionsDir, timeoutMs: 50, logger: silent },
-      graceMs,
-    );
-    return { outcome: await runtime.run(prompt), instance };
-  }
-
-  it("sends abort, and returns the usage pi reports while it settles", {
-    timeout: 5_000,
-  }, async () => {
-    const working = scriptedInstance([{ type: "agent_start" }, spending]);
-    const reply: Reply = (command) =>
-      command.type === "abort"
-        ? [
-            spending,
-            { type: "agent_settled" },
-            { type: "response", id: command.id, command: "abort", success: true },
-          ]
-        : working(command);
-
-    const { outcome, instance } = await timingOut(reply, 5_000);
-
-    assert.deepEqual(commandTypes(instance), ["switch_session", "get_state", "prompt", "abort"]);
-    assert.equal(failure(outcome), "Session user_42: Run timed out after 50 ms");
-    assert.equal(outcome.usage.length, 2, "the call abort interrupted is charged too");
-  });
-
-  it("closes the connection when pi does not settle, and says usage may be missing", {
-    timeout: 5_000,
-  }, async () => {
-    const { outcome, instance } = await timingOut(
-      scriptedInstance([{ type: "agent_start" }, spending]),
-      50,
-    );
-
-    assert.deepEqual(commandTypes(instance), ["switch_session", "get_state", "prompt", "abort"]);
-    assert.match(
-      failure(outcome),
-      /^Session user_42: Run timed out after 50 ms; pi did not settle/,
-    );
-    assert.match(failure(outcome), /usage of the call in progress is missing/);
-    assert.equal(outcome.usage.length, 1);
-    await waitFor(() => instance.ended() === 1, "the connection should be closed");
-  });
-
-  it("times out a pi that never answers a command", { timeout: 5_000 }, async () => {
-    const { outcome } = await timingOut(() => [], 50);
-
-    assert.match(failure(outcome), /Run timed out after 50 ms/);
-    assert.deepEqual(outcome.usage, []);
-  });
-
-  it("refuses a timeout that is not a positive whole number", () => {
-    for (const timeoutMs of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
-      assert.throws(
-        () => createPiRuntime({ host: "127.0.0.1", port: 1, sessionsDir, timeoutMs }),
-        /timeoutMs must be a positive whole number/,
-      );
-    }
   });
 });
 

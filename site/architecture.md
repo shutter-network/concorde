@@ -107,10 +107,9 @@ They are not replayed: the agent may already have sent messages or changed exter
 The worker does not retry failed handlers or runs. Application code can emit another signal
 when appropriate, but it must account for effects of the previous attempt.
 
-The worker imposes no timeout on a handler. A handler call that never resolves blocks the queue
-and graceful shutdown, so provide limits in your own code. The pi runtime stops a run after 15
-minutes by default (`timeoutMs`), and a runtime you write needs a timeout of its own: the worker
-saves a run's usage only when the runtime returns.
+The framework imposes no timeout on a handler or runtime. A call that never resolves blocks the
+queue and graceful shutdown. Provide appropriate limits in your own code or deployment. The worker
+saves a run's usage only when the runtime returns, so a run that never returns records none.
 
 ## Sessions and run context
 

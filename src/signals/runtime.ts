@@ -31,10 +31,9 @@ export type UsageReport = {
 /**
  * The worker calls `run` serially and saves the outcome's `usage` when it returns.
  * A runtime must return rather than throw, since a thrown error carries no usage; the worker
- * records a thrown error as a failed run with no usage. A runtime must also stop its agent after
- * a timeout of its own, because the worker supplies none and an unsettled call blocks subsequent
- * signals. Agent output is not delivered to users automatically. Use the messenger to send
- * messages.
+ * records a thrown error as a failed run with no usage. The framework supplies no timeout or
+ * cancellation; an unsettled call blocks subsequent signals and its usage is never saved.
+ * Agent output is not delivered to users automatically. Use the messenger to send messages.
  */
 export type Runtime = {
   run(prompt: RunPrompt): Promise<RunOutcome>;
