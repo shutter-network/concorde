@@ -14,6 +14,16 @@ export type TemplateHandlerOptions<TPayload = unknown> = {
   /** Sets `Prompt.userId`. Return `null` or omit this function to assign no User to the Run. */
   readonly user?: (signal: Signal<TPayload>) => string | null | Promise<string | null>;
 
+  /**
+   * Sets `Prompt.tag`, and makes the same value available to the template as `{{tag}}` beside
+   * the data's own top-level values, so the template writes it into the text with one
+   * expression. It takes precedence over a data value named `tag`, and `data` must return an
+   * object when this function is given, or the Signal fails. Mint a fresh random value per
+   * Signal. Omit this function to write none, which yields a Run no request can be attributed
+   * to.
+   */
+  readonly tag?: (signal: Signal<TPayload>) => string | Promise<string>;
+
   readonly helpers?: Readonly<Record<string, Handlebars.HelperDelegate>>;
 
   readonly partials?: Readonly<Record<string, string>>;
@@ -52,17 +62,28 @@ export function templateHandler<TPayload = unknown>(
         options.context === undefined ? {} : { context: await options.context(signal) };
       const userId = options.user === undefined ? null : await options.user(signal);
       const charged = userId === null ? {} : { userId };
+      const tagged = options.tag === undefined ? {} : { tag: await options.tag(signal) };
+
+      let scope: unknown = data;
+      if (options.tag !== undefined) {
+        if (!isRecord(data)) {
+          throw new Error(
+            `Cannot render prompt for ${signal.kind}: data must be an object when tag is used, and it was ${kindOf(data)}`,
+          );
+        }
+        scope = { ...data, ...tagged };
+      }
 
       let text: string;
       try {
-        text = render(data);
+        text = render(scope);
       } catch (error) {
         throw new Error(`Cannot render prompt for ${signal.kind}: ${reason(error)}`, {
           cause: error,
         });
       }
 
-      return [{ session, text, ...context, ...charged }];
+      return [{ session, text, ...context, ...charged, ...tagged }];
     },
 
     ...(options.post === undefined ? {} : { post: options.post }),
@@ -71,4 +92,13 @@ export function templateHandler<TPayload = unknown>(
 
 function reason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function kindOf(value: unknown): string {
+  if (value === null) return "null";
+  return Array.isArray(value) ? "an array" : `a ${typeof value}`;
 }

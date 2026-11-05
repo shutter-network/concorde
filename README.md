@@ -70,7 +70,7 @@ from the registry rather than this checkout.
 | [Scheduler](./examples/01_scheduler/) | Scheduled runs without users or messaging |
 | [Decisions](./examples/02_decisions/) | Two users and a shared record of signed decisions |
 | [Nostr](./examples/03_nostr/) | Encrypted direct messages through a local relay |
-| [Agent isolation](./examples/04_agent_isolation/) | Restricted agent networking and a model proxy that holds the credential |
+| [Agent isolation](./examples/04_agent_isolation/) | Restricted agent networking, a model proxy that holds the credential, and per-run rules enforced by run tag |
 | [Usage limits](./examples/05_usage_limits/) | Two users, each with a daily token limit |
 
 ## Deployment boundaries

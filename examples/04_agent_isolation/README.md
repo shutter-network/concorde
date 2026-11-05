@@ -66,6 +66,26 @@ health. An unhealthy status alone does not restart a Docker container.
 Use `docker compose ps` and the gateway and proxy logs to investigate failures. LiteLLM runs
 with telemetry disabled in this example.
 
+## Run attribution
+
+The message handler in `main.ts` mints a run tag per prompt with `randomUUID()`, sets it through
+the template handler's `tag` option and writes it into the prompt text with `{{tag}}`. It also
+sets the prompt's context to the user whose message the run answers. The prompt text and
+`AGENTS.md` both tell the agent to send the tag as the `concorde-run-tag` header on every gateway
+request; the prompt names the header through `runTagHeader` from the signals subpath so it cannot
+drift from the framework's constant, while `AGENTS.md` is static text and names it by hand. The
+framework attributes a request carrying a live tag to its run as `request.concordeRun`.
+
+A `preHandler` hook on the agent server in `main.ts` refuses `POST /messages` unless the request
+is attributed to a run and the body's `userId` is the one in that run's context. A request with
+no header, an unknown tag or the tag of a finished run is attributed to no run and is refused.
+Nothing about tags is stored; a tag lives in memory from run start to run end.
+
+The tag reaches the agent only through the prompt text, so it is also in the session file under
+`state/sessions`. Every run shares that filesystem, and sessions do not restrict access, so a run
+with a shell can read another session's tag. The tag defeats a message that tries to claim
+another run's identity by injected text; it does not confine an agent that goes looking.
+
 ## Limits
 
 The agent can still access the gateway capabilities you expose and send information in a

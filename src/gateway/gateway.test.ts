@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { createPublicKey, generateKeyPairSync, type JsonWebKey, verify } from "node:crypto";
+import {
+  createPublicKey,
+  generateKeyPairSync,
+  type JsonWebKey,
+  randomUUID,
+  verify,
+} from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -27,7 +33,14 @@ import {
   scheduleFiredKind,
 } from "../scheduler/index.ts";
 import * as schedulerSchema from "../scheduler/schema/index.ts";
-import type { RunRecord, SignalHandler, SignalRecord } from "../signals/index.ts";
+import {
+  type RunOutcome,
+  type RunPrompt,
+  type RunRecord,
+  runTagHeader,
+  type SignalHandler,
+  type SignalRecord,
+} from "../signals/index.ts";
 import * as signalsSchema from "../signals/schema/index.ts";
 import { createSignatures, type Signatures } from "../signatures/index.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
@@ -112,7 +125,8 @@ const callbacks: string[] = [];
 const awkwardJson = { list: [1, "two", null, { deep: true }], nothing: null };
 
 const roundTripKind = "the.round.trip";
-const roundTripSession = "the round trip";
+const roundTripSession = "the round trip for ";
+const roundTripSessionFor = (user: string): string => `${roundTripSession}${user}`;
 const roundTripPayload = { text: "say this back to me", nested: awkwardJson };
 
 const theOnePassword = "the only password in this file";
@@ -124,19 +138,32 @@ function roundTripContext(user: string): { readonly user: string; readonly neste
   return { user, nested: awkwardJson };
 }
 
+// The Handler writes the tag into the text, and the Runtime, playing the agent, reads it back
+// out and sends it as the header: nothing on the test's side hands the Runtime the tag.
+const announcingTheTag = "\n\nSend this back as the concorde-run-tag header: ";
+
 const roundTripping: SignalHandler<{ readonly text: string; readonly user: string }> = {
-  handle: (signal) => [
-    {
-      session: roundTripSession,
-      text: signal.payload.text,
-      context: roundTripContext(signal.payload.user),
-    },
-  ],
+  handle: (signal) => {
+    const tag = randomUUID();
+    return [
+      {
+        session: roundTripSessionFor(signal.payload.user),
+        text: `${signal.payload.text}${announcingTheTag}${tag}`,
+        context: roundTripContext(signal.payload.user),
+        tag,
+      },
+    ];
+  },
 };
+
+function tagIn(text: string): string {
+  return text.slice(text.lastIndexOf(announcingTheTag) + announcingTheTag.length);
+}
 
 const duringTheRoundTrip: string[] = [];
 
 const roundTripReply = "said back, by the Run whose context named you";
+const roundTripOverreach = "said to somebody the Run's context did not name";
 
 const scheduleFiring: SignalHandler<ScheduleFiredRecord> = {
   handle: (signal) => [{ session: `schedule_${signal.payload.scheduleName}`, text: "fired" }],
@@ -153,6 +180,7 @@ let gateway: Gateway<Full>;
 let components: Full;
 
 let client: { readonly id: string; readonly token: string };
+let bystander: { readonly id: string; readonly token: string };
 
 let agentUrl: string;
 let publicUrl: string;
@@ -162,18 +190,7 @@ const shuttingDown = Promise.withResolvers<void>();
 const duringTheDrain: string[] = [];
 
 const runtime = fakeRuntime(async (prompt) => {
-  if (prompt.session === roundTripSession) {
-    duringTheRoundTrip.push(
-      await reaching("the Messenger took a Message for the named User", async () => {
-        const sent = await postJson(`${agentUrl}/messages`, {
-          userId: client.id,
-          text: roundTripReply,
-        });
-        return String(sent.status);
-      }),
-    );
-    return { ok: true, usage: [] };
-  }
+  if (prompt.session.startsWith(roundTripSession)) return roundTrip(prompt);
   if (prompt.text !== inFlightAtShutdown) return { ok: true, usage: [] };
   await shuttingDown.promise;
   duringTheDrain.push(...(await whatIsStillUp()));
@@ -183,6 +200,24 @@ const runtime = fakeRuntime(async (prompt) => {
     usage: [],
   };
 });
+
+// Plays the agent on a round trip, knowing only its Prompt and the Users it may address.
+async function roundTrip(prompt: RunPrompt): Promise<RunOutcome> {
+  const tagged = { [runTagHeader]: tagIn(prompt.text) };
+  const messaging = async (userId: string, text: string, headers = tagged): Promise<string> => {
+    const answered = await postJsonWith(`${agentUrl}/messages`, { userId, text }, headers);
+    return String(answered.status);
+  };
+  duringTheRoundTrip.push(
+    await reaching("the hook refused a Message for a User the Context did not name", () =>
+      messaging(bystander.id, roundTripOverreach),
+    ),
+    await reaching("the Messenger took a Message for the named User", () =>
+      messaging(client.id, roundTripReply),
+    ),
+  );
+  return { ok: true, usage: [] };
+}
 
 before(async () => {
   database = await createTestDatabase("gateway");
@@ -195,10 +230,14 @@ before(async () => {
     extend: (infra) => {
       callbacks.push("extend");
       assert.deepEqual(Object.keys(infra), theInfra);
-      infra.agentServer.fastify.addHook("onRequest", async (request, reply) => {
+      // A preHandler, because the body is not parsed when onRequest runs. The Run the request
+      // is attributed to may message the one User its Context names, and nobody else.
+      infra.agentServer.fastify.addHook("preHandler", async (request, reply) => {
         if (request.method !== "POST" || !request.url.startsWith("/messages")) return;
         const context = request.concordeRun?.context;
-        if (isObject(context) && context.user === client.id) return;
+        const named =
+          isObject(context) && isObject(request.body) && request.body.userId === context.user;
+        if (named) return;
         return reply.code(403).send({
           statusCode: 403,
           error: "Forbidden",
@@ -233,6 +272,8 @@ before(async () => {
   agentUrl = components.agentServer.fastify.listeningOrigin;
   publicUrl = components.publicServer.fastify.listeningOrigin;
 
+  // Admitted first, so the listing of the two newest Users still ends with the client.
+  bystander = await admitted();
   client = await admitted();
 });
 
@@ -355,16 +396,21 @@ describe("a whole deployment from one call", () => {
     assert.deepEqual(run, {
       id: run.id,
       signalId,
-      session: roundTripSession,
-      prompt: roundTripPayload.text,
+      session: roundTripSessionFor(client.id),
+      prompt: `${roundTripPayload.text}${announcingTheTag}${tagIn(run.prompt)}`,
       context: roundTripContext(client.id),
       state: "done",
       error: null,
       startedAt: run.startedAt,
       endedAt: run.endedAt,
     } satisfies RunRecord);
+    assert.match(tagIn(run.prompt), /^[0-9a-f-]{36}$/, "the Handler wrote its tag into the text");
 
-    assert.deepEqual(duringTheRoundTrip, ["the Messenger took a Message for the named User: 201"]);
+    assert.deepEqual(duringTheRoundTrip, [
+      "the hook refused a Message for a User the Context did not name: 403",
+      "the Messenger took a Message for the named User: 201",
+    ]);
+    assert.deepEqual(await components.messenger.history(bystander.id), []);
     assert.equal(new Date(String(run.startedAt)).toISOString(), run.startedAt);
     assert.equal(new Date(String(run.endedAt)).toISOString(), run.endedAt);
 
@@ -1591,12 +1637,17 @@ function bearing(url: string, token: string): Promise<Response> {
 }
 
 function postJson(url: string, body: unknown, token?: string): Promise<Response> {
+  return postJsonWith(url, body, token === undefined ? {} : { authorization: `Bearer ${token}` });
+}
+
+function postJsonWith(
+  url: string,
+  body: unknown,
+  headers: Readonly<Record<string, string>>,
+): Promise<Response> {
   return fetch(url, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
-    },
+    headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify(body),
   });
 }

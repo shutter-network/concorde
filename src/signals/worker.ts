@@ -24,10 +24,21 @@ export type CurrentRun = {
 
 declare module "fastify" {
   interface FastifyRequest {
-    /** Present only while a runtime call is active, on requests to the agent server. */
+    /**
+     * The Run the request is attributed to, on requests to the agent server: the in-flight Run
+     * whose `Prompt.tag` the `concorde-run-tag` header names, carrying the Run id, its Signal
+     * id, its Session and its Context. `undefined` when the header is absent, names no in-flight
+     * Run's tag, or names the tag of a Run that has ended, however many Runs are in flight.
+     */
     concordeRun: CurrentRun | undefined;
   }
 }
+
+/**
+ * The request header an agent sends a Run tag in. Fixed here so that agent instructions and
+ * agent server hooks agree without choosing a name.
+ */
+export const runTagHeader = "concorde-run-tag";
 
 export type SignalWorkerOptions = {
   readonly db: Db;
@@ -43,6 +54,13 @@ export type SignalWorkerOptions = {
 export type SignalWorker = Component & {
   readonly agentRoutes: FastifyPluginAsync;
 
+  /**
+   * The onRequest hook that sets `request.concordeRun`: the in-flight Run whose `Prompt.tag` the
+   * `concorde-run-tag` header names, or `undefined`. Installed on the agent server handed to the
+   * constructor; exported so a server the worker was not handed installs it at its own root.
+   * There is no fallback to the only Run in flight, because a heuristic kept beside an exact
+   * mechanism is what gets relied on by accident.
+   */
   readonly decorateRun: onRequestHookHandler;
 
   /**
@@ -67,6 +85,7 @@ const defaultSweepIntervalMs = 5_000;
 const strandedSignal =
   "Worker restart interrupted this signal. It was not retried because its runs may already have produced effects.";
 const strandedRun = "Worker restart interrupted this run. Runs are not automatically retried.";
+const tagAlreadyLive = "Run tag already live on another Run";
 
 type WakeupReason = "start" | "notification" | "listening" | "sweep";
 
@@ -75,6 +94,8 @@ type QueuedRun = {
   readonly prompt: RunPrompt;
   readonly context: unknown;
   readonly userId: string | null;
+  /** The Run tag the Handler wrote, if any; held in `inFlight` while the Run is. */
+  readonly tag: string | undefined;
 };
 
 /**
@@ -91,10 +112,18 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
 
   const handle = options.db.handle(signalsTables);
 
-  let current: CurrentRun | undefined;
+  // Every Run in flight that has a tag, by that tag. Added when the Run starts and removed when
+  // it ends, whichever way it ends, so a held tag is a live one. Never overwritten: a Run whose
+  // tag is already held fails before it starts, so an entry is only ever its own Run's.
+  const inFlight = new Map<string, CurrentRun>();
 
+  // A request is attributed by its header and by nothing else: no header, an unknown tag or a
+  // dead one all resolve to nothing, even while exactly one Run is in flight. Node joins a
+  // repeated custom header into one comma-separated string, which is no Run's tag, so it names
+  // nothing too; the array branch is there because the header typing still allows one.
   const decorateRun: onRequestHookHandler = (request, _reply, done) => {
-    request.concordeRun = current;
+    const tag = request.headers[runTagHeader];
+    request.concordeRun = typeof tag === "string" ? inFlight.get(tag) : undefined;
     done();
   };
 
@@ -201,6 +230,7 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
         prompt: promptForRun(id, prompt),
         context: prompt.context ?? null,
         userId: prompt.userId ?? null,
+        tag: prompt.tag,
       };
     });
     await handle.insert(runs).values(
@@ -234,21 +264,33 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   }
 
   async function executeRun(signal: Signal, run: QueuedRun): Promise<RunOutcome> {
-    const { id: runId, prompt, context } = run;
+    const { id: runId, prompt, context, tag } = run;
     log.info({ runId, signalId: signal.id, session: prompt.session }, "Run started");
     await handle
       .update(runs)
       .set({ state: "running", startedAt: sql`clock_timestamp()` })
       .where(eq(runs.id, runId));
 
-    current = { id: runId, signalId: signal.id, session: prompt.session, context };
+    const current: CurrentRun = {
+      id: runId,
+      signalId: signal.id,
+      session: prompt.session,
+      context,
+    };
     let outcome: RunOutcome;
-    try {
-      outcome = await runtime.run(prompt);
-    } catch (error) {
-      outcome = { ok: false, error: describe(error), usage: [] };
-    } finally {
-      current = undefined;
+    if (tag !== undefined && inFlight.has(tag)) {
+      // Two Prompts minting one tag fail loudly: setting the entry anyway would attribute the
+      // first Run's requests to this one for as long as both were in flight.
+      outcome = { ok: false, error: tagAlreadyLive, usage: [] };
+    } else {
+      if (tag !== undefined) inFlight.set(tag, current);
+      try {
+        outcome = await runtime.run(prompt);
+      } catch (error) {
+        outcome = { ok: false, error: describe(error), usage: [] };
+      } finally {
+        if (tag !== undefined) inFlight.delete(tag);
+      }
     }
 
     try {

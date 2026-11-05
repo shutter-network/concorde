@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { asc, eq, sql } from "drizzle-orm";
-import Fastify from "fastify";
+import Fastify, { type FastifyInstance } from "fastify";
 import type { Db, Listening } from "../db/index.ts";
 import type { LogFields, Logger } from "../logging/logging.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
@@ -9,12 +9,12 @@ import { cutListeningBackends } from "../test-support/backends.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
 import { fakeRuntime } from "../test-support/fake-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
-import type { SignalHandler, SignalHandlers } from "./handlers.ts";
-import type { Runtime, UsageReport } from "./runtime.ts";
+import type { Prompt, SignalHandler, SignalHandlers } from "./handlers.ts";
+import type { RunPrompt, Runtime, UsageReport } from "./runtime.ts";
 import * as signalsSchema from "./schema/index.ts";
 import { runs, signals, usage } from "./schema/index.ts";
 import { createUsage } from "./usage.ts";
-import { createSignalWorker, type SignalWorker, signalChannel } from "./worker.ts";
+import { createSignalWorker, runTagHeader, type SignalWorker, signalChannel } from "./worker.ts";
 
 let database: TestDatabase;
 let db: Db;
@@ -491,16 +491,12 @@ describe("the worker", () => {
     );
   });
 
-  it("has each Run recorded and running by the time the Runtime is called, and the Agent server carrying it", async () => {
-    const fastify = Fastify();
-    fastify.get("/whose", async (request) => request.concordeRun ?? null);
-
+  it("has each Run recorded and running by the time the Runtime is called", async () => {
     type Observed = {
       found: number;
       prompt: string | undefined;
       state: string | undefined;
       context: unknown;
-      carried: unknown;
     };
     const observed: Observed[] = [];
     const runtime = fakeRuntime(async (prompt) => {
@@ -509,21 +505,17 @@ describe("the worker", () => {
         .select()
         .from(runs)
         .where(eq(runs.session, prompt.session));
-      const carried = await fastify.inject({ method: "GET", url: "/whose" });
       observed.push({
         found: found.length,
         prompt: found[0]?.prompt,
         state: found[0]?.state,
         context: found[0]?.context,
-        carried: carried.json(),
       });
       return { ok: true, usage: [] };
     });
 
-    const worker = createSignalWorker({
-      db,
-      runtime,
-      handlers: {
+    await withWorker(
+      {
         paired: {
           handle: () => [
             { session: "paired_1", text: "first", context: { for: "one" } },
@@ -531,42 +523,209 @@ describe("the worker", () => {
           ],
         },
       },
-      agentServer: { fastify },
-      logger: recordingLogger([]),
-      sweepIntervalMs: sweepingMs,
-    });
-    await worker.start();
-    try {
-      const id = await emit(worker, "paired");
-      await settled(id);
-      assert.equal((await fastify.inject("/whose")).json(), null);
+      runtime,
+      async (worker) => {
+        const id = await emit(worker, "paired");
+        await settled(id);
 
-      const [first, second] = await runsOf(id);
-      assert.ok(first !== undefined && second !== undefined, "both Runs should exist");
-      assert.deepEqual(observed, [
-        {
-          found: 1,
-          prompt: "first",
-          state: "running",
-          context: { for: "one" },
-          carried: { id: first.id, signalId: id, session: "paired_1", context: { for: "one" } },
-        },
-        {
-          found: 1,
-          prompt: "second",
-          state: "running",
-          context: null,
-          carried: { id: second.id, signalId: id, session: "paired_2", context: null },
-        },
-      ]);
-      assert.deepEqual(runtime.recorded, [
-        { session: "paired_1", text: "first" },
-        { session: "paired_2", text: "second" },
-      ]);
-    } finally {
-      await worker.stop();
-      await fastify.close();
+        assert.deepEqual(
+          observed.sort((a, b) => (a.prompt ?? "").localeCompare(b.prompt ?? "")),
+          [
+            { found: 1, prompt: "first", state: "running", context: { for: "one" } },
+            { found: 1, prompt: "second", state: "running", context: null },
+          ],
+        );
+        assert.deepEqual(runtime.recorded, [
+          { session: "paired_1", text: "first" },
+          { session: "paired_2", text: "second" },
+        ]);
+      },
+    );
+  });
+
+  describe("attributes a request to the Run whose tag it carries", () => {
+    // Plays the agent: the Handler writes the tag into the text, the Runtime reads it back out.
+    const announcing = "Your Run tag is ";
+    const tagIn = (prompt: RunPrompt): string => prompt.text.slice(announcing.length);
+
+    // An array sends the header once per element, which `inject` joins into one string as Node
+    // joins a repeated header on the wire.
+    type Probe = (tag?: string | string[]) => Promise<unknown>;
+    type Probing = { readonly fastify: FastifyInstance; readonly probe: Probe };
+
+    // An agent server with one route answering what `request.concordeRun` resolved to. Built
+    // before the Runtime, so a Runtime script can probe from inside a Run with nothing to wire.
+    function probing(): Probing {
+      const fastify = Fastify();
+      fastify.get("/whose", async (request) => request.concordeRun ?? null);
+      const probe: Probe = async (tag) =>
+        (
+          await fastify.inject({
+            method: "GET",
+            url: "/whose",
+            headers: tag === undefined ? {} : { [runTagHeader]: tag },
+          })
+        ).json();
+      return { fastify, probe };
     }
+
+    async function withProbedWorker(
+      handlers: SignalHandlers,
+      runtime: Runtime,
+      { fastify }: Probing,
+      body: (worker: SignalWorker) => Promise<void>,
+    ): Promise<void> {
+      const worker = createSignalWorker({
+        db,
+        runtime,
+        handlers,
+        agentServer: { fastify },
+        logger: recordingLogger([]),
+        sweepIntervalMs: sweepingMs,
+      });
+      await worker.start();
+      try {
+        await body(worker);
+      } finally {
+        await worker.stop();
+        await fastify.close();
+      }
+    }
+
+    function taggedPrompt(tag: string, session: string): Prompt {
+      return { session, text: `${announcing}${tag}`, context: { tag }, tag };
+    }
+
+    function tagged(tag: string, session = "tagged"): SignalHandler {
+      return { handle: () => [taggedPrompt(tag, session)] };
+    }
+
+    it("resolves a live tag to that Run, with its id, Signal id, Session and Context", async () => {
+      const seen: unknown[] = [];
+      const probed = probing();
+      const runtime = fakeRuntime(async (prompt) => {
+        seen.push(await probed.probe(tagIn(prompt)));
+        return { ok: true, usage: [] };
+      });
+
+      await withProbedWorker({ tagged: tagged("t_alice") }, runtime, probed, async (worker) => {
+        const id = await emit(worker, "tagged");
+        await settled(id);
+
+        const [run] = await runsOf(id);
+        assert.ok(run !== undefined);
+        assert.deepEqual(seen, [
+          { id: run.id, signalId: id, session: "tagged", context: { tag: "t_alice" } },
+        ]);
+      });
+    });
+
+    it("resolves a request with no header to nothing, even while that Run is alone in flight", async () => {
+      const seen: unknown[] = [];
+      const probed = probing();
+      const runtime = fakeRuntime(async () => {
+        seen.push(await probed.probe());
+        return { ok: true, usage: [] };
+      });
+
+      await withProbedWorker({ tagged: tagged("t_alone") }, runtime, probed, async (worker) => {
+        await settled(await emit(worker, "tagged"));
+
+        assert.deepEqual(seen, [null]);
+      });
+    });
+
+    it("resolves an unknown tag to nothing", async () => {
+      const seen: unknown[] = [];
+      const probed = probing();
+      const runtime = fakeRuntime(async () => {
+        seen.push(await probed.probe("t_nobody"));
+        return { ok: true, usage: [] };
+      });
+
+      await withProbedWorker({ tagged: tagged("t_someone") }, runtime, probed, async (worker) => {
+        await settled(await emit(worker, "tagged"));
+
+        assert.deepEqual(seen, [null]);
+      });
+    });
+
+    it("resolves a header sent twice to nothing while that tag is live, as the values arrive joined into one string", async () => {
+      const seen: unknown[] = [];
+      const probed = probing();
+      const runtime = fakeRuntime(async (prompt) => {
+        const tag = tagIn(prompt);
+        seen.push(await probed.probe([tag, tag]), await probed.probe(tag));
+        return { ok: true, usage: [] };
+      });
+
+      await withProbedWorker({ tagged: tagged("t_twice") }, runtime, probed, async (worker) => {
+        const id = await emit(worker, "tagged");
+        await settled(id);
+
+        const [run] = await runsOf(id);
+        assert.ok(run !== undefined);
+        assert.deepEqual(seen, [
+          null,
+          { id: run.id, signalId: id, session: "tagged", context: { tag: "t_twice" } },
+        ]);
+      });
+    });
+
+    it("resolves the tag to nothing once the Run has ended, whether it succeeded, failed or its Runtime threw", async () => {
+      const runtime = fakeRuntime((prompt) => {
+        const tag = tagIn(prompt);
+        if (tag === "t_failing") return { ok: false, error: "the agent gave up", usage: [] };
+        if (tag === "t_throwing") throw new Error("the connection dropped");
+        return { ok: true, usage: [] };
+      });
+      const handlers: SignalHandlers = {
+        succeeding: tagged("t_succeeding", "s_1"),
+        failing: tagged("t_failing", "s_2"),
+        throwing: tagged("t_throwing", "s_3"),
+      };
+      const probed = probing();
+
+      const { probe } = probed;
+      await withProbedWorker(handlers, runtime, probed, async (worker) => {
+        const ended: Record<string, string> = {};
+        for (const kind of Object.keys(handlers)) {
+          const id = await emit(worker, kind);
+          ended[kind] = (await settled(id)).state;
+        }
+        assert.deepEqual(ended, { succeeding: "done", failing: "failed", throwing: "failed" });
+
+        assert.deepEqual(
+          [await probe("t_succeeding"), await probe("t_failing"), await probe("t_throwing")],
+          [null, null, null],
+        );
+      });
+    });
+
+    it("yields a Run no header resolves to from a Prompt without a tag", async () => {
+      const seen: unknown[] = [];
+      const probed = probing();
+      const runtime = fakeRuntime(async (prompt) => {
+        const [run] = await db
+          .handle({ runs })
+          .select()
+          .from(runs)
+          .where(eq(runs.session, prompt.session));
+        assert.ok(run !== undefined);
+        const { probe } = probed;
+        seen.push(await probe(), await probe(run.id), await probe(prompt.session));
+        return { ok: true, usage: [] };
+      });
+      const untagged: SignalHandler = {
+        handle: () => [{ session: "untagged", text: "no tag written", context: { for: "one" } }],
+      };
+
+      await withProbedWorker({ untagged }, runtime, probed, async (worker) => {
+        await settled(await emit(worker, "untagged"));
+
+        assert.deepEqual(seen, [null, null, null]);
+      });
+    });
   });
 
   it("names a fresh Session after the Run it belongs to, and hands the Runtime that name", async () => {

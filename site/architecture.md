@@ -122,9 +122,24 @@ through the agent server. Session files may also be compacted by the agent imple
 use the message log as the durable record of messages.
 
 `Prompt.context` serves a separate purpose. It is application-defined JSON stored on the run
-and attached to agent server requests as `request.concordeRun.context` while the runtime is
-active. Your hooks can use it to enforce a policy for that run. Built-in routes do not interpret
-it, and it is not sent to the model. Put information intended for the agent in the prompt text.
+and carried as `request.concordeRun.context` on an agent server request attributed to that run.
+Your hooks can read it to enforce a policy per run. Built-in routes do not interpret it, and it
+is not sent to the model. Put information intended for the agent in the prompt text.
+
+A request is attributed to a run by its run tag. The handler mints a random string per prompt,
+sets it as `Prompt.tag` and writes it into the prompt text, where the agent instructions tell
+the agent to send it back as the `concorde-run-tag` header on every agent server request. The
+worker holds the tag while the run is in flight and stores it nowhere. A request carrying a held
+tag is attributed to that run, and `request.concordeRun` carries the run id, the signal id, the
+session and the context. A request with no header, an unknown tag or the tag of a run that has
+ended is attributed to no run, even when only one run is in flight; there is no fallback. A
+prompt without a tag produces a run no request can be attributed to, so a hook that requires
+attribution refuses every request from it.
+
+The tag has one limit. It reaches the agent through the prompt text, so it is in the session
+file, and runs share the agent instance's filesystem: a run with a shell can read another
+session's tag. The tag defeats forgery through text injected into a message, not an agent that
+goes looking. The agent server stays a mediation point, not a boundary.
 
 ## Identity and authentication
 

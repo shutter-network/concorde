@@ -14,7 +14,7 @@ export type RunOutcome =
       readonly limited?: boolean;
     };
 
-export type RunPrompt = Omit<Prompt, "session" | "context" | "userId"> & {
+export type RunPrompt = Omit<Prompt, "session" | "context" | "userId" | "tag"> & {
   readonly session: string;
 };
 

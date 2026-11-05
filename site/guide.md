@@ -139,7 +139,9 @@ from `/messenger`, and `fence`, `quoteHelper` and `templateHandler` from `/signa
 
 `templateHandler` renders one prompt from each signal. It uses strict Handlebars with HTML
 escaping disabled. Missing template values fail that signal. A syntax error in the main template
-fails construction, before the gateway starts.
+fails construction, before the gateway starts. Its optional `tag` function sets `Prompt.tag` and
+makes the same value available to the template as `{{tag}}`, so the template writes the run tag
+into the text with one expression.
 
 `quote` wraps the unchanged user message in two identical delimiter lines, called fence lines,
 to distinguish it from your instructions. In templates, register `quoteHelper` as `quote`; it
@@ -248,7 +250,7 @@ Choose components according to your application:
 | Publish signed decisions | Construct signatures and decisions; supply a private signing key |
 | Exchange messages over Nostr | Replace HTTP channel with Nostr channel and record user public keys |
 | Accept signed HTTP credentials | Add Nostr auth and grant public keys to users |
-| Enforce a policy during a run | Set `Prompt.context` and check `request.concordeRun` in an agent server hook |
+| Enforce a policy during a run | Set `Prompt.context` and `Prompt.tag`, tell the agent to send the tag as the `concorde-run-tag` header, and check `request.concordeRun` in an agent server hook |
 
 For each component with tables, add its `/schema` subpath to `schema.ts` and apply the database
 changes before startup. The repository includes separate examples for

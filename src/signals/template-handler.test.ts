@@ -167,6 +167,66 @@ describe("the User a Run is charged to", () => {
   });
 });
 
+describe("the Run tag", () => {
+  type Sent = { readonly userId: string };
+
+  it("writes what the tag function answers onto the Prompt and into the template as tag, awaited if it has to be", async () => {
+    for (const tag of [
+      (signal: Signal<Sent>) => `t_${signal.payload.userId}`,
+      async (signal: Signal<Sent>) => `t_${signal.payload.userId}`,
+    ]) {
+      const handler = templateHandler<Sent>({
+        template: "for {{userId}}, send {{tag}} back",
+        session: (signal) => `user_${signal.payload.userId}`,
+        data: (signal) => signal.payload,
+        tag,
+      });
+
+      assert.deepEqual(await onlyPrompt(handler, { userId: "42" }), {
+        session: "user_42",
+        text: "for 42, send t_42 back",
+        tag: "t_42",
+      });
+    }
+  });
+
+  it("writes none and leaves the template without one when the function is not given", async () => {
+    const handler = templateHandler<Sent>({
+      template: "x",
+      session: () => null,
+      data: () => ({}),
+    });
+
+    const prompt = await onlyPrompt(handler, { userId: "42" });
+    assert.equal(Object.hasOwn(prompt, "tag"), false);
+    await rejectsNaming(handlerOver("{{tag}}"), /"tag" not defined/);
+  });
+
+  it("takes precedence over a data value named tag", async () => {
+    const handler = templateHandler<Sent>({
+      template: "{{tag}}",
+      session: () => null,
+      data: () => ({ tag: "the data's own" }),
+      tag: () => "t_minted",
+    });
+
+    assert.equal((await onlyPrompt(handler, { userId: "42" })).text, "t_minted");
+  });
+
+  it("refuses data that is not an object rather than spreading it beside the tag", async () => {
+    for (const data of ["a string", 42, null, ["in", "an", "array"]]) {
+      const handler = templateHandler<null>({
+        template: "{{tag}}",
+        session: () => null,
+        data: () => data,
+        tag: () => "t_1",
+      });
+
+      await rejectsNaming(handler, /data must be an object when tag is used/);
+    }
+  });
+});
+
 describe("a substituted value", () => {
   it("reaches the Prompt byte for byte, escaping nothing", async () => {
     const text = await renders("{{value}}", { value: everythingHandlebarsWouldEscape });
