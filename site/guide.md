@@ -251,6 +251,7 @@ Choose components according to your application:
 | Exchange messages over Nostr | Replace HTTP channel with Nostr channel and record user public keys |
 | Accept signed HTTP credentials | Add Nostr auth and grant public keys to users |
 | Enforce a policy during a run | Set `Prompt.context` and `Prompt.tag`, tell the agent to send the tag as the `concorde-run-tag` header, and check `request.concordeRun` in an agent server hook |
+| Keep runs that touch the same thing from overlapping | Name it in `Prompt.resources`; runs sharing a resource run one at a time, in emission order |
 
 For each component with tables, add its `/schema` subpath to `schema.ts` and apply the database
 changes before startup. The repository includes separate examples for

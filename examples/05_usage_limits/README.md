@@ -81,8 +81,10 @@ does not change the saved passwords, even though the example prints the `.env` v
   who sends a second message before the answer to the first arrives gets a `usageLimit` that
   does not count the first Run's tokens, and can exceed `DAILY_TOKEN_LIMIT` by that Run. The
   Session name keeps one user's Runs in order, but it does not delay `handle`. A Signal Handler
-  that needs a `usageLimit` counting every earlier Run counts that user's running Runs from the
-  runs table as spent. If the gateway stops during a Run, that Run's Usage is not saved.
+  that needs a `usageLimit` counting every earlier Run writes a Resource for the user, such as
+  the user id, in `resources` on the Prompt, which serializes that user's Runs, and counts that
+  user's running Runs from the runs table as spent. If the gateway stops during a Run, that
+  Run's Usage is not saved.
 - **The model server must report usage.** The counts are the ones the model provider returns
   with each response, copied by `pi`. Some self-hosted and OpenAI-compatible servers report no
   usage. Those responses are recorded as 0 tokens, so the limit never takes effect. If you

@@ -98,6 +98,12 @@ type QueuedRun = {
   readonly prompt: RunPrompt;
   readonly context: unknown;
   readonly userId: string | null;
+  /**
+   * What the Run must have to itself besides its Session; see `conflicts`. Empty until a Prompt
+   * names some. The Session is never in it, so a Handler's name can never collide with a
+   * Session's.
+   */
+  readonly resources: ReadonlySet<string>;
   /** The Run tag the Handler wrote, if any; held in `inFlight` while the Run is. */
   readonly tag: string | undefined;
   started: boolean;
@@ -105,11 +111,16 @@ type QueuedRun = {
 };
 
 /**
- * The one scheduling rule: two Runs conflict when they name the same Session, and nothing else
- * conflicts. Symmetric; which of the two is earlier in the queue is the caller's to know.
+ * The one scheduling rule: two Runs conflict when they name the same Session or share a
+ * Resource, and nothing else conflicts. Symmetric; which of the two is earlier in the queue is
+ * the caller's to know.
  */
 function conflicts(one: QueuedRun, other: QueuedRun): boolean {
-  return one.prompt.session === other.prompt.session;
+  if (one.prompt.session === other.prompt.session) return true;
+  for (const resource of one.resources) {
+    if (other.resources.has(resource)) return true;
+  }
+  return false;
 }
 
 /**
@@ -119,11 +130,11 @@ function conflicts(one: QueuedRun, other: QueuedRun): boolean {
  * Signals are claimed one at a time, oldest first, and each Handler's `handle` is awaited before
  * the next claim, so a Handler sees Signals in emission order. Runs are queued in the order their
  * Signals were claimed and their Prompts returned, and a queued Run starts as soon as no earlier
- * unfinished Run, running or still waiting, names its Session. Runs for different Sessions
- * therefore overlap, while Runs in one Session keep their order. The next Signal is claimed only
- * once every queued Run has started, so a crash strands the Signals whose Runs are in flight plus
- * one, never the backlog. A Signal's post phase runs once all of its Runs have ended, and Signals
- * settle in whatever order their Runs finish.
+ * unfinished Run, running or still waiting, names its Session or shares a Resource with it. Runs
+ * for different Sessions therefore overlap, while Runs in one Session keep their order. The next
+ * Signal is claimed only once every queued Run has started, so a crash strands the Signals whose
+ * Runs are in flight plus one, never the backlog. A Signal's post phase runs once all of its Runs
+ * have ended, and Signals settle in whatever order their Runs finish.
  *
  * `stop` ends claiming, lets every queued Run start as the Runs before it end and run to its
  * outcome, runs every post phase and settles every claimed Signal before it returns. Pending
@@ -252,6 +263,7 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
         prompt: promptForRun(id, prompt),
         context: prompt.context ?? null,
         userId: prompt.userId ?? null,
+        resources: new Set(prompt.resources ?? []),
         tag: prompt.tag,
         started: false,
         outcome: Promise.withResolvers<RunOutcome>(),

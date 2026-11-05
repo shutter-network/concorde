@@ -61,6 +61,24 @@ export type Prompt = {
    * stopped for usage, so every Prompt run for a User with a budget needs one.
    */
   readonly usageLimit?: number;
+  /**
+   * Names for what this Run must have to itself, chosen freely by the Signal Handler: a
+   * workspace directory, a User's Usage limit, an external account. Two Runs conflict exactly
+   * when they name the same Session or share at least one Resource, and nothing else conflicts.
+   * A Run starts once no earlier unfinished Run conflicts with it, so Runs that share a Resource
+   * never overlap and keep their emission order: the later of two Prompts sharing a Resource
+   * never starts before the earlier one ends, whichever Signals they came from. A Prompt that
+   * names none is serialized only by its Session.
+   *
+   * The Session is never in this array. The worker holds it separately, so a Resource named here
+   * can never collide with a Session name, and a fresh Session the worker names after the Run
+   * is protected without the Handler being able to name it.
+   *
+   * An Agent Instance that can take only one connection at a time is expressed here too: one
+   * Resource shared across every Prompt serializes every Run, and there is no concurrency number
+   * to set instead. The runtime does not receive this field, and nothing is stored.
+   */
+  readonly resources?: readonly string[];
 };
 
 export type PostOutcome = {
@@ -70,9 +88,9 @@ export type PostOutcome = {
 };
 
 /**
- * Prompts are queued in array order, and their runs overlap unless they share a session. An
- * empty array completes the signal without a run; a failed run does not prevent later prompts
- * from running.
+ * Prompts are queued in array order, and their runs overlap unless they share a session or a
+ * Resource. An empty array completes the signal without a run; a failed run does not prevent
+ * later prompts from running.
  *
  * `post` runs after all runs, including when `handle` throws. `failed` covers failures in
  * `handle` or any run. `limited` is true if any run exceeded its usage limit. A thrown `post`

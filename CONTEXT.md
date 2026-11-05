@@ -33,7 +33,7 @@ The methods a Component answers with, called in process by the Operator's own co
 _Avoid_: trusted API, in-process API, the acts no request can express, what trusted code holds, the methods no route has
 
 **Signal Worker**:
-The Component that owns the Signal queue, Signal Handler dispatch, Run execution, and the Agent server routes for Signals and Runs. Holds no identity and knows nothing about messaging. Claims and handles Signals one at a time in emission order, and starts a Run as soon as no earlier unfinished Run shares its Session, so Runs overlap where nothing is shared and keep their order where something is. One per database, which is what "worker" is there to say. Formerly the **Core**.
+The Component that owns the Signal queue, Signal Handler dispatch, Run execution, and the Agent server routes for Signals and Runs. Holds no identity and knows nothing about messaging. Claims and handles Signals one at a time in emission order, and starts a Run as soon as no earlier unfinished Run shares its Session or a Resource, so Runs overlap where nothing is shared and keep their order where something is. One per database, which is what "worker" is there to say. Formerly the **Core**.
 _Avoid_: core, engine, kernel, runner, signal processor, prompt worker
 
 **Producer**:
@@ -118,7 +118,7 @@ Something arriving from outside that may cause the agent to act. Emitted by a Pr
 _Avoid_: trigger, event, request, stimulus
 
 **Signal Handler**:
-Arbitrary code, authored by the Operator, that accepts Signals of one `kind` and produces Prompts from them, declaring which Session each Prompt goes to. The framework's primary extension point, in the way an endpoint handler is a web framework's.
+Arbitrary code, authored by the Operator, that accepts Signals of one `kind` and produces Prompts from them, declaring which Session each Prompt goes to and which Resources its Run holds. The framework's primary extension point, in the way an endpoint handler is a web framework's.
 _Avoid_: trigger, processor, adapter, hook, listener
 
 **Prompt**:
@@ -149,6 +149,10 @@ _Avoid_: chat, conversation, thread, context (as a name for a Session; a Prompt'
 **Run**:
 One execution of the agent: a single Prompt, in one Session, producing whatever the agent emits.
 _Avoid_: turn, job, invocation, task
+
+**Resource**:
+A name a Signal Handler writes on a Prompt, in `resources`, for something the Run must have to itself: a workspace directory, a User's Usage limit, an external account. Two Runs conflict exactly when they name the same Session or share at least one Resource, and nothing else conflicts; the Signal Worker starts a Run once no earlier unfinished Run conflicts with it, so Runs sharing a Resource never overlap and keep their emission order, whichever Signals they came from. The Session is not a Resource and is never in the array: the Worker holds it separately, so a Handler's name can never collide with a Session's, and a fresh Session the Worker names after the Run is protected without the Handler being able to name it. Every Resource is exclusive; there is no count and no concurrency number anywhere, and an Agent Instance that takes one connection at a time is one Resource shared across every Prompt. Consumed by the Worker between `handle` and the Run's end and never stored, like the Usage limit.
+_Avoid_: lock, lane, group, mutex
 
 **Usage**:
 The tokens a Run uses when it calls a model. Usage is also the name of the built-in Component that reads saved usage totals. This Component is always enabled.

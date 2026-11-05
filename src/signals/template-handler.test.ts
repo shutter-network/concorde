@@ -167,6 +167,41 @@ describe("the User a Run is charged to", () => {
   });
 });
 
+describe("the Resources a Run holds", () => {
+  type Sent = { readonly userId: string };
+
+  it("writes what the resources function answers onto the Prompt, awaited if it has to be", async () => {
+    for (const resources of [
+      (signal: Signal<Sent>) => [`usage_${signal.payload.userId}`, "the workspace"],
+      async (signal: Signal<Sent>) => [`usage_${signal.payload.userId}`, "the workspace"],
+    ]) {
+      const handler = templateHandler<Sent>({
+        template: "for {{userId}}",
+        session: (signal) => `user_${signal.payload.userId}`,
+        data: (signal) => signal.payload,
+        resources,
+      });
+
+      assert.deepEqual(await onlyPrompt(handler, { userId: "42" }), {
+        session: "user_42",
+        text: "for 42",
+        resources: ["usage_42", "the workspace"],
+      });
+    }
+  });
+
+  it("names none when the function is not given", async () => {
+    const handler = templateHandler<Sent>({
+      template: "x",
+      session: () => null,
+      data: () => ({}),
+    });
+
+    const prompt = await onlyPrompt(handler, { userId: "42" });
+    assert.equal(Object.hasOwn(prompt, "resources"), false);
+  });
+});
+
 describe("the Run tag", () => {
   type Sent = { readonly userId: string };
 
