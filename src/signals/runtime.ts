@@ -35,10 +35,12 @@ export type UsageReport = {
 };
 
 /**
- * The worker calls `run` serially and saves the outcome's `usage` when it returns.
+ * The worker calls `run` once per run and saves the outcome's `usage` when it returns. `run` may
+ * be called concurrently, and concurrent calls must not affect each other's outcome.
  * A runtime must return rather than throw, since a thrown error carries no usage; the worker
  * records a thrown error as a failed run with no usage. The framework supplies no timeout or
- * cancellation; an unsettled call blocks subsequent signals and its usage is never saved.
+ * cancellation; an unsettled call blocks the runs that conflict with it and the worker's stop,
+ * and its usage is never saved.
  * Agent output is not delivered to users automatically. Use the messenger to send messages.
  */
 export type Runtime = {

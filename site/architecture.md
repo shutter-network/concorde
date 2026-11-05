@@ -36,7 +36,7 @@ and decisions can also be added, although they are not drawn.
 | Agent server | HTTP capabilities the agent uses to read application data and act |
 | Public server | HTTP endpoints for user clients, including authentication and message exchange |
 | Usage | Adds up the model usage the signal worker saved for each run and user |
-| Signal worker | Durable queue that turns signals into agent runs, one signal at a time |
+| Signal worker | Durable queue that turns signals into agent runs, overlapping runs that share no session |
 
 Your `extend` callback constructs additional components using this infrastructure. Dependencies
 are explicit constructor arguments. The gateway does not discover dependencies or construct
@@ -84,19 +84,23 @@ and what information the agent should receive. Messages and scheduled occurrence
 share an execution path while application policy stays in operator-written code.
 
 A handler can decline work by returning an empty array, produce one prompt, or fan out into
-several prompts. Prompts execute in array order. One failed run does not prevent the remaining
+several prompts. Prompts are queued in array order. One failed run does not prevent the remaining
 runs for that signal from executing.
 
-The optional `post` phase runs after the runs, including when `handle` failed. It receives a
-failure flag and can perform application-specific cleanup or reporting. A failure in either
-phase fails the signal; it does not stop processing subsequent signals.
+The optional `post` phase runs once every run of the signal has ended, including when `handle`
+failed. It receives a failure flag and can perform application-specific cleanup or reporting. A
+failure in either phase fails the signal; it does not stop processing subsequent signals.
 
-Execution is serial across one signal worker, including the handler phases. Run exactly one
-worker against a database. Multiple gateways sharing its queue do not preserve that guarantee.
+The worker claims signals one at a time in emission order and awaits each handler's `handle`
+before claiming the next, so handlers see signals in order. Runs overlap where no session is
+shared: a queued run starts as soon as no earlier unfinished run names its session, so two users'
+messages are answered at once while one user's two messages are answered in order. The next
+signal is claimed only once every queued run has started, and a signal settles when its own runs
+finish, so signals can finish out of emission order. Run exactly one worker against a database.
+Multiple gateways sharing its queue do not preserve these guarantees.
 
-Serial execution prevents runs from overlapping their use of shared conversational state and
-gateway data. The tradeoff is that a slow run delays every subsequent signal, including signals
-from other users.
+A slow run therefore delays only the runs that share its session, not every subsequent signal.
+What a handler computes in `handle` is computed while earlier runs are still in flight.
 
 ### Failure and restart behavior
 
@@ -107,8 +111,9 @@ They are not replayed: the agent may already have sent messages or changed exter
 The worker does not retry failed handlers or runs. Application code can emit another signal
 when appropriate, but it must account for effects of the previous attempt.
 
-The framework imposes no timeout on a handler or runtime. A call that never resolves blocks the
-queue and graceful shutdown. Provide appropriate limits in your own code or deployment. The worker
+The framework imposes no timeout on a handler or runtime. A handler call that never resolves
+blocks the queue; a runtime call that never resolves blocks the runs that share its session and
+graceful shutdown. Provide appropriate limits in your own code or deployment. The worker
 saves a run's usage only when the runtime returns, so a run that never returns records none.
 
 ## Sessions and run context
@@ -221,9 +226,9 @@ Constructing a gateway registers routes and builds the handler map. Calling `sta
 the db, starts the agent server and public server, starts extension components in returned key
 order, then starts the signal worker. Return dependencies before the components that need them.
 
-Shutdown reverses this order. The signal worker waits for its active signal to finish before
-other components stop. Pending signals stay in the database. Give the process enough shutdown
-time for the longest run you expect.
+Shutdown reverses this order. The signal worker finishes every signal it has claimed, including
+runs that had not yet started, before other components stop. Pending signals stay in the
+database. Give the process enough shutdown time for the longest run you expect.
 
 If startup fails, the gateway stops components whose startup completed. Shutdown attempts all
 stops even if one fails, and reports collected failures.

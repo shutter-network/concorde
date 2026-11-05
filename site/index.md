@@ -6,7 +6,7 @@ gateway that mediates its interactions with users.
 
 Your application chooses the components, defines how incoming signals become prompts, and
 controls which capabilities the agent can call over HTTP. Concorde provides persistent
-messaging, serial execution, authentication, scheduling, and signed decisions.
+messaging, ordered execution per session, authentication, scheduling, and signed decisions.
 
 ## Get started
 

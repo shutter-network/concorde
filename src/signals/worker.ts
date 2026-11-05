@@ -74,7 +74,10 @@ export type SignalWorker = Component & {
 
   start(): Promise<void>;
 
-  /** Waits for the active signal, including its runs and post phase. Pending signals remain queued. */
+  /**
+   * Waits for every claimed signal, including runs that had not yet started and every post
+   * phase. Pending signals remain queued.
+   */
   stop(): Promise<void>;
 };
 
@@ -91,17 +94,40 @@ type WakeupReason = "start" | "notification" | "listening" | "sweep";
 
 type QueuedRun = {
   readonly id: string;
+  readonly signal: Signal;
   readonly prompt: RunPrompt;
   readonly context: unknown;
   readonly userId: string | null;
   /** The Run tag the Handler wrote, if any; held in `inFlight` while the Run is. */
   readonly tag: string | undefined;
+  started: boolean;
+  readonly outcome: PromiseWithResolvers<RunOutcome>;
 };
 
 /**
+ * The one scheduling rule: two Runs conflict when they name the same Session, and nothing else
+ * conflicts. Symmetric; which of the two is earlier in the queue is the caller's to know.
+ */
+function conflicts(one: QueuedRun, other: QueuedRun): boolean {
+  return one.prompt.session === other.prompt.session;
+}
+
+/**
  * Run only one worker per database. Startup fails interrupted signals and their unfinished runs
- * rather than replaying them. Pending signals are processed in emission order.
- * `createGateway` constructs this component for you.
+ * rather than replaying them. `createGateway` constructs this component for you.
+ *
+ * Signals are claimed one at a time, oldest first, and each Handler's `handle` is awaited before
+ * the next claim, so a Handler sees Signals in emission order. Runs are queued in the order their
+ * Signals were claimed and their Prompts returned, and a queued Run starts as soon as no earlier
+ * unfinished Run, running or still waiting, names its Session. Runs for different Sessions
+ * therefore overlap, while Runs in one Session keep their order. The next Signal is claimed only
+ * once every queued Run has started, so a crash strands the Signals whose Runs are in flight plus
+ * one, never the backlog. A Signal's post phase runs once all of its Runs have ended, and Signals
+ * settle in whatever order their Runs finish.
+ *
+ * `stop` ends claiming, lets every queued Run start as the Runs before it end and run to its
+ * outcome, runs every post phase and settles every claimed Signal before it returns. Pending
+ * Signals remain queued.
  */
 export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   const log = options.logger ?? defaultLogger();
@@ -111,6 +137,11 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   const sweepIntervalMs = options.sweepIntervalMs ?? defaultSweepIntervalMs;
 
   const handle = options.db.handle(signalsTables);
+
+  // Every unfinished Run, in the order its Signal was claimed and its Prompt returned. A Run
+  // starts when nothing before it in this list, started or not, `conflicts` with it, so a Run
+  // never overtakes an earlier one it conflicts with.
+  const queue: QueuedRun[] = [];
 
   // Every Run in flight that has a tag, by that tag. Added when the Run starts and removed when
   // it ends, whichever way it ends, so a held tag is a live one. Never overwritten: a Run whose
@@ -139,6 +170,11 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   let recovered = false;
   let stopping = false;
 
+  let scheduling = false;
+  let startWaiters: (() => void)[] = [];
+  // One per claimed Signal whose Runs, post phase or settlement are still to come.
+  const finishing = new Set<Promise<void>>();
+
   async function claim(): Promise<typeof signals.$inferSelect | undefined> {
     while (!stopping) {
       const [next] = await handle
@@ -164,9 +200,13 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
       const claimed = await claim();
       if (claimed === undefined) return;
       await processSignal(claimed);
+      // The lookahead is one Signal: the next is claimed only once every queued Run has started.
+      await allStarted();
     }
   }
 
+  // Claims through `handle` and the queueing of the Runs; the rest of the Signal is detached so
+  // that the next claim does not wait for this Signal's Runs to end.
   async function processSignal(row: typeof signals.$inferSelect): Promise<void> {
     const signal: Signal = {
       id: row.id,
@@ -186,7 +226,6 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
 
     let prompts: readonly Prompt[] | undefined;
     let failure: string | undefined;
-    let limited = false;
     try {
       prompts = await handler.handle(signal);
     } catch (error) {
@@ -195,46 +234,31 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
       log.error({ signalId: signal.id, kind: signal.kind, err: error }, "Signal handler failed");
     }
 
-    if (prompts !== undefined) {
-      ({ failure, limited } = await executeRuns(signal, prompts));
-    }
-
-    if (handler.post !== undefined) {
-      try {
-        await handler.post(signal, { failed: failure !== undefined, limited });
-      } catch (error) {
-        log.error(
-          { signalId: signal.id, kind: signal.kind, err: error },
-          "Signal handler post phase failed",
-        );
-        const postFailure = `Post phase failed: ${describe(error)}`;
-        failure = failure === undefined ? postFailure : `${failure}; ${postFailure}`;
-      }
-    }
-
-    await settle(signal, failure);
+    const queuedRuns = prompts === undefined ? [] : await enqueue(signal, prompts);
+    const finished: Promise<void> = finishSignal(signal, handler, queuedRuns, failure).finally(() =>
+      finishing.delete(finished),
+    );
+    finishing.add(finished);
   }
 
-  async function executeRuns(
-    signal: Signal,
-    prompts: readonly Prompt[],
-  ): Promise<{ failure: string | undefined; limited: boolean }> {
-    if (prompts.length === 0) {
-      return { failure: undefined, limited: false };
-    }
+  async function enqueue(signal: Signal, prompts: readonly Prompt[]): Promise<QueuedRun[]> {
+    if (prompts.length === 0) return [];
 
-    const queued: QueuedRun[] = prompts.map((prompt) => {
+    const queuedRuns: QueuedRun[] = prompts.map((prompt) => {
       const id = randomUUID();
       return {
         id,
+        signal,
         prompt: promptForRun(id, prompt),
         context: prompt.context ?? null,
         userId: prompt.userId ?? null,
         tag: prompt.tag,
+        started: false,
+        outcome: Promise.withResolvers<RunOutcome>(),
       };
     });
     await handle.insert(runs).values(
-      queued.map(({ id, prompt, context, userId }) => ({
+      queuedRuns.map(({ id, prompt, context, userId }) => ({
         id,
         signalId: signal.id,
         session: prompt.session,
@@ -244,13 +268,60 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
       })),
     );
 
+    queue.push(...queuedRuns);
+    schedule();
+    return queuedRuns;
+  }
+
+  // Never rejects: a Signal it cannot settle stays processing, which the next start recovers.
+  async function finishSignal(
+    signal: Signal,
+    handler: SignalHandlers[string],
+    queuedRuns: readonly QueuedRun[],
+    handleFailure: string | undefined,
+  ): Promise<void> {
+    try {
+      let failure = handleFailure;
+      let limited = false;
+      if (queuedRuns.length > 0) {
+        ({ failure, limited } = await outcomesOf(queuedRuns));
+      }
+
+      if (handler.post !== undefined) {
+        try {
+          await handler.post(signal, { failed: failure !== undefined, limited });
+        } catch (error) {
+          log.error(
+            { signalId: signal.id, kind: signal.kind, err: error },
+            "Signal handler post phase failed",
+          );
+          const postFailure = `Post phase failed: ${describe(error)}`;
+          failure = failure === undefined ? postFailure : `${failure}; ${postFailure}`;
+        }
+      }
+
+      await settle(signal, failure);
+    } catch (error) {
+      log.error(
+        { signalId: signal.id, kind: signal.kind, err: error },
+        "Signal could not be finished; it stays processing until the next worker start",
+      );
+    }
+  }
+
+  // Waits for every Run of the Signal to end, whichever ends first, before judging the Signal.
+  async function outcomesOf(
+    queuedRuns: readonly QueuedRun[],
+  ): Promise<{ failure: string | undefined; limited: boolean }> {
+    const results = await Promise.allSettled(queuedRuns.map((run) => run.outcome.promise));
+
     const failures: string[] = [];
     let limited = false;
-    for (const run of queued) {
-      const outcome = await executeRun(signal, run);
-      if (!outcome.ok) {
-        failures.push(outcome.error);
-        limited ||= outcome.limited === true;
+    for (const result of results) {
+      if (result.status === "rejected") throw result.reason;
+      if (!result.value.ok) {
+        failures.push(result.value.error);
+        limited ||= result.value.limited === true;
       }
     }
 
@@ -259,17 +330,88 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
     const failure =
       failures.length === 1
         ? `Run failed: ${first}`
-        : `${failures.length} of ${queued.length} runs failed. First error: ${first}`;
+        : `${failures.length} of ${queuedRuns.length} runs failed. First error: ${first}`;
     return { failure, limited };
   }
 
-  async function executeRun(signal: Signal, run: QueuedRun): Promise<RunOutcome> {
-    const { id: runId, prompt, context, tag } = run;
+  function startable(): QueuedRun | undefined {
+    for (const [index, run] of queue.entries()) {
+      if (run.started) continue;
+      if (queue.slice(0, index).some((earlier) => conflicts(earlier, run))) continue;
+      return run;
+    }
+    return undefined;
+  }
+
+  // Rescans the queue from its head and starts every Run it may, one at a time, so "Run started"
+  // and the runs table's startedAt keep queue order; only the Runtime calls overlap. Called when
+  // Runs are queued and whenever one ends, and harmless while a scan is already under way,
+  // because that scan starts over after each Run it starts.
+  function schedule(): void {
+    if (scheduling) return;
+    scheduling = true;
+    void (async () => {
+      try {
+        for (;;) {
+          const next = startable();
+          if (next === undefined) break;
+          next.started = true;
+          await startRun(next);
+        }
+      } catch (error) {
+        // Nothing below throws by design, and a throw must not leave `allStarted` waiting.
+        log.error({ err: error }, "Scheduling scan failed; resumed when a Run is queued or ends");
+      } finally {
+        scheduling = false;
+        if (!queue.some((run) => !run.started)) {
+          const waiters = startWaiters;
+          startWaiters = [];
+          for (const wake of waiters) wake();
+        }
+      }
+    })();
+  }
+
+  function allStarted(): Promise<void> {
+    if (!queue.some((run) => !run.started)) return Promise.resolve();
+    return new Promise((resolve) => startWaiters.push(resolve));
+  }
+
+  async function startRun(run: QueuedRun): Promise<void> {
+    const { id: runId, signal, prompt } = run;
     log.info({ runId, signalId: signal.id, session: prompt.session }, "Run started");
-    await handle
-      .update(runs)
-      .set({ state: "running", startedAt: sql`clock_timestamp()` })
-      .where(eq(runs.id, runId));
+    try {
+      await handle
+        .update(runs)
+        .set({ state: "running", startedAt: sql`clock_timestamp()` })
+        .where(eq(runs.id, runId));
+    } catch (error) {
+      endRun(run);
+      run.outcome.reject(error);
+      return;
+    }
+
+    void performRun(run).then(
+      (outcome) => {
+        endRun(run);
+        run.outcome.resolve(outcome);
+      },
+      (error: unknown) => {
+        endRun(run);
+        run.outcome.reject(error);
+      },
+    );
+  }
+
+  function endRun(run: QueuedRun): void {
+    const index = queue.indexOf(run);
+    // A Run ends once; an index of -1 would splice the last Run of the queue away in silence.
+    if (index !== -1) queue.splice(index, 1);
+    schedule();
+  }
+
+  async function performRun(run: QueuedRun): Promise<RunOutcome> {
+    const { id: runId, signal, prompt, context, tag } = run;
 
     const current: CurrentRun = {
       id: runId,
@@ -453,6 +595,8 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
         listening = undefined;
       }
       await working;
+      // Nothing is claimed after `working` ends, so this is every Signal there will be.
+      await Promise.all(finishing);
     },
   };
 }
