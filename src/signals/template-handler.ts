@@ -14,14 +14,9 @@ export type TemplateHandlerOptions<TPayload = unknown> = {
   /** Sets `Prompt.userId`. Return `null` or omit this function to assign no User to the Run. */
   readonly user?: (signal: Signal<TPayload>) => string | null | Promise<string | null>;
 
-  /**
-   * Sets `Prompt.tag`, and makes the same value available to the template as `{{tag}}` beside
-   * the data's own top-level values, so the template writes it into the text with one
-   * expression. It takes precedence over a data value named `tag`, and `data` must return an
-   * object when this function is given, or the Signal fails. Mint a fresh random value per
-   * Signal. Omit this function to write none, which yields a Run no request can be attributed
-   * to.
-   */
+  readonly resources?: (signal: Signal<TPayload>) => readonly string[] | Promise<readonly string[]>;
+
+  /** Sets `Prompt.tag` and `{{tag}}`, overriding data.tag. Requires object data. */
   readonly tag?: (signal: Signal<TPayload>) => string | Promise<string>;
 
   readonly helpers?: Readonly<Record<string, Handlebars.HelperDelegate>>;
@@ -62,6 +57,8 @@ export function templateHandler<TPayload = unknown>(
         options.context === undefined ? {} : { context: await options.context(signal) };
       const userId = options.user === undefined ? null : await options.user(signal);
       const charged = userId === null ? {} : { userId };
+      const held =
+        options.resources === undefined ? {} : { resources: await options.resources(signal) };
       const tagged = options.tag === undefined ? {} : { tag: await options.tag(signal) };
 
       let scope: unknown = data;
@@ -83,7 +80,7 @@ export function templateHandler<TPayload = unknown>(
         });
       }
 
-      return [{ session, text, ...context, ...charged, ...tagged }];
+      return [{ session, text, ...context, ...charged, ...held, ...tagged }];
     },
 
     ...(options.post === undefined ? {} : { post: options.post }),

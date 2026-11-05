@@ -414,6 +414,207 @@ describe("the worker", () => {
     });
   });
 
+  it("runs Prompts in distinct Sessions that share a Resource in emission order, one at a time, across Signals", async () => {
+    const gated = gatedRuntime();
+    await withWorker(
+      {
+        first: {
+          handle: () => [{ session: "alice", text: "alice's", resources: ["the workspace"] }],
+        },
+        rest: {
+          handle: () => [
+            { session: "bob", text: "bob's", resources: ["the workspace"] },
+            { session: "carol", text: "carol's" },
+          ],
+        },
+      },
+      gated.runtime,
+      async (worker) => {
+        try {
+          const firstId = await emit(worker, "first");
+          const restId = await emit(worker, "rest");
+
+          // Carol's Run passes bob's, which waits for alice's to give the workspace back.
+          await gated.started("alice's");
+          await gated.started("carol's");
+          assert.deepEqual(gated.runtime.texts(), ["alice's", "carol's"]);
+
+          gated.release("alice's");
+          await gated.started("bob's");
+          gated.releaseAll();
+
+          assert.equal((await settled(firstId)).state, "done");
+          assert.equal((await settled(restId)).state, "done");
+          assert.deepEqual(gated.runtime.texts(), ["alice's", "carol's", "bob's"]);
+          assert.deepEqual(
+            gated.runtime.recorded[0],
+            { session: "alice", text: "alice's" },
+            "the Runtime should not receive the Resources",
+          );
+        } finally {
+          gated.releaseAll();
+        }
+      },
+    );
+  });
+
+  it("holds a Run behind a waiting Run it shares a Resource with, so a Run never overtakes an earlier one holding its Resource", async () => {
+    const gated = gatedRuntime();
+    await withWorker(
+      {
+        first: { handle: () => [{ session: "a", text: "holding x", resources: ["x"] }] },
+        rest: {
+          handle: () => [
+            { session: "b", text: "needing x and y", resources: ["x", "y"] },
+            { session: "c", text: "needing y", resources: ["y"] },
+            { session: "d", text: "needing nothing" },
+          ],
+        },
+      },
+      gated.runtime,
+      async (worker) => {
+        try {
+          const firstId = await emit(worker, "first");
+          const restId = await emit(worker, "rest");
+
+          // Only the first Run is running, and the third shares nothing with it; still it waits,
+          // because the second, which it shares y with, is queued before it and has not started.
+          await gated.started("holding x");
+          await gated.started("needing nothing");
+          assert.deepEqual(gated.runtime.texts(), ["holding x", "needing nothing"]);
+
+          gated.release("holding x");
+          await gated.started("needing x and y");
+          gated.release("needing x and y");
+          await gated.started("needing y");
+          gated.releaseAll();
+
+          assert.equal((await settled(firstId)).state, "done");
+          assert.equal((await settled(restId)).state, "done");
+          assert.deepEqual(gated.runtime.texts(), [
+            "holding x",
+            "needing nothing",
+            "needing x and y",
+            "needing y",
+          ]);
+        } finally {
+          gated.releaseAll();
+        }
+      },
+    );
+  });
+
+  it("serializes a Prompt naming several Resources against a Run that shares any one of them", async () => {
+    const gated = gatedRuntime();
+    await withWorker(
+      {
+        holders: {
+          handle: () => [
+            { session: "a", text: "holding x", resources: ["x"] },
+            { session: "b", text: "holding z", resources: ["z"] },
+          ],
+        },
+        askers: {
+          handle: () => [
+            { session: "c", text: "needing w and x", resources: ["w", "x"] },
+            { session: "d", text: "needing v and z", resources: ["v", "z"] },
+            { session: "e", text: "needing q", resources: ["q"] },
+          ],
+        },
+      },
+      gated.runtime,
+      async (worker) => {
+        try {
+          const holdersId = await emit(worker, "holders");
+          const askersId = await emit(worker, "askers");
+
+          await gated.started("holding x");
+          await gated.started("holding z");
+          await gated.started("needing q");
+          assert.deepEqual(gated.runtime.texts(), ["holding x", "holding z", "needing q"]);
+
+          gated.release("holding x");
+          await gated.started("needing w and x");
+          gated.release("holding z");
+          await gated.started("needing v and z");
+          gated.releaseAll();
+
+          assert.equal((await settled(holdersId)).state, "done");
+          assert.equal((await settled(askersId)).state, "done");
+          assert.deepEqual(gated.runtime.texts(), [
+            "holding x",
+            "holding z",
+            "needing q",
+            "needing w and x",
+            "needing v and z",
+          ]);
+        } finally {
+          gated.releaseAll();
+        }
+      },
+    );
+  });
+
+  it("runs a Prompt with no Resources alongside a Run in another Session that declares some", async () => {
+    const gated = gatedRuntime();
+    await withWorker(
+      {
+        declaring: {
+          handle: () => [{ session: "a", text: "declaring", resources: ["x", "y"] }],
+        },
+        undeclared: { handle: () => [{ session: "b", text: "undeclared" }] },
+      },
+      gated.runtime,
+      async (worker) => {
+        try {
+          const declaringId = await emit(worker, "declaring");
+          const undeclaredId = await emit(worker, "undeclared");
+
+          await gated.started("declaring");
+          await gated.started("undeclared");
+          assert.equal(gated.runtime.overlapped, true, "both Runs should be in flight");
+
+          gated.releaseAll();
+          assert.equal((await settled(declaringId)).state, "done");
+          assert.equal((await settled(undeclaredId)).state, "done");
+        } finally {
+          gated.releaseAll();
+        }
+      },
+    );
+  });
+
+  it("does not take a Resource named after a Session for that Session", async () => {
+    const gated = gatedRuntime();
+    await withWorker(
+      {
+        inSession: { handle: () => [{ session: "alice", text: "in alice's Session" }] },
+        naming: {
+          handle: () => [
+            { session: "bob", text: "naming alice as a Resource", resources: ["alice"] },
+          ],
+        },
+      },
+      gated.runtime,
+      async (worker) => {
+        try {
+          const inSessionId = await emit(worker, "inSession");
+          const namingId = await emit(worker, "naming");
+
+          await gated.started("in alice's Session");
+          await gated.started("naming alice as a Resource");
+          assert.equal(gated.runtime.overlapped, true, "both Runs should be in flight");
+
+          gated.releaseAll();
+          assert.equal((await settled(inSessionId)).state, "done");
+          assert.equal((await settled(namingId)).state, "done");
+        } finally {
+          gated.releaseAll();
+        }
+      },
+    );
+  });
+
   it("starts a queued Run as soon as no earlier unfinished Run conflicts with it, and the rest when one ends", async () => {
     const gated = gatedRuntime();
     await withWorker(

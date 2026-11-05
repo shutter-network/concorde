@@ -36,7 +36,7 @@ and decisions can also be added, although they are not drawn.
 | Agent server | HTTP capabilities the agent uses to read application data and act |
 | Public server | HTTP endpoints for user clients, including authentication and message exchange |
 | Usage | Adds up the model usage the signal worker saved for each run and user |
-| Signal worker | Durable queue that turns signals into agent runs, overlapping runs that share no session |
+| Signal worker | Durable queue that turns signals into agent runs, overlapping runs that share no session or resource |
 
 Your `extend` callback constructs additional components using this infrastructure. Dependencies
 are explicit constructor arguments. The gateway does not discover dependencies or construct
@@ -92,15 +92,19 @@ failed. It receives a failure flag and can perform application-specific cleanup 
 failure in either phase fails the signal; it does not stop processing subsequent signals.
 
 The worker claims signals one at a time in emission order and awaits each handler's `handle`
-before claiming the next, so handlers see signals in order. Runs overlap where no session is
-shared: a queued run starts as soon as no earlier unfinished run names its session, so two users'
-messages are answered at once while one user's two messages are answered in order. The next
-signal is claimed only once every queued run has started, and a signal settles when its own runs
-finish, so signals can finish out of emission order. Run exactly one worker against a database.
-Multiple gateways sharing its queue do not preserve these guarantees.
+before claiming the next, so handlers see signals in order. Runs overlap where no session or
+resource is shared: a queued run starts as soon as no earlier unfinished run names its session or
+shares one of its `resources`, so two users' messages are answered at once while one user's two
+messages are answered in order. A handler names a resource on a prompt for anything beyond the
+session that the run must have to itself, such as a shared workspace; the session is never in that
+array, and a prompt naming none is serialized only by its session. The next signal is claimed
+only once every queued run has started, and a signal settles when its own runs finish, so
+signals can finish out of emission order. Run exactly one worker against a database. Multiple
+gateways sharing its queue do not preserve these guarantees.
 
-A slow run therefore delays only the runs that share its session, not every subsequent signal.
-What a handler computes in `handle` is computed while earlier runs are still in flight.
+A slow run therefore delays only the runs that share its session or a resource, not every
+subsequent signal. What a handler computes in `handle` is computed while earlier runs are still
+in flight.
 
 ### Failure and restart behavior
 
@@ -112,9 +116,10 @@ The worker does not retry failed handlers or runs. Application code can emit ano
 when appropriate, but it must account for effects of the previous attempt.
 
 The framework imposes no timeout on a handler or runtime. A handler call that never resolves
-blocks the queue; a runtime call that never resolves blocks the runs that share its session and
-graceful shutdown. Provide appropriate limits in your own code or deployment. The worker
-saves a run's usage only when the runtime returns, so a run that never returns records none.
+blocks the queue; a runtime call that never resolves blocks the runs that share its session or a
+resource, and graceful shutdown. Provide appropriate limits in your own code or deployment. The
+worker saves a run's usage only when the runtime returns, so a run that never returns records
+none.
 
 ## Sessions and run context
 
