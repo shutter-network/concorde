@@ -41,19 +41,14 @@ export function fakeRuntime(script: RuntimeScript = () => ({ ok: true, usage: []
 
 export type GatedRuntime = {
   readonly runtime: FakeRuntime;
-  /** Resolves once the Runtime has been called with this text; fails after the usual timeout. */
+
   started(text: string): Promise<void>;
-  /** Lets the Run with this text return. Harmless before the Run exists. */
+
   release(text: string): void;
-  /** For a `finally`: a Run left at a gate would hold the Worker's `stop` forever. */
+
   releaseAll(): void;
 };
 
-/**
- * A Runtime whose every Run waits at a gate named after its text, so which Runs are in flight
- * together is the test's decision and never the clock's. A Run's outcome is the script's, which
- * is consulted after the gate opens.
- */
 export function gatedRuntime(
   script: RuntimeScript = () => ({ ok: true, usage: [] }),
 ): GatedRuntime {
