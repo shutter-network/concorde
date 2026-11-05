@@ -125,7 +125,7 @@ const callbacks: string[] = [];
 const awkwardJson = { list: [1, "two", null, { deep: true }], nothing: null };
 
 const roundTripKind = "the.round.trip";
-// One Session per User, so that two Users' round trips are Runs that overlap.
+
 const roundTripSession = "the round trip for ";
 const roundTripSessionFor = (user: string): string => `${roundTripSession}${user}`;
 const userOfRoundTrip = (session: string): string => session.slice(roundTripSession.length);
@@ -140,8 +140,6 @@ function roundTripContext(user: string): { readonly user: string; readonly neste
   return { user, nested: awkwardJson };
 }
 
-// The Handler writes the tag into the text, and the Runtime, playing the agent, reads it back
-// out and sends it as the header: nothing on the test's side hands the Runtime the tag.
 const announcingTheTag = "\n\nSend this back as the concorde-run-tag header: ";
 
 const roundTripping: SignalHandler<{ readonly text: string; readonly user: string }> = {
@@ -168,15 +166,9 @@ const roundTripReply = "said back, by the Run whose context named you";
 const roundTripOverreach = "said to somebody the Run's context did not name";
 const roundTripLooking = "said to the other Run's User, under a tag read out of the other Session";
 
-/**
- * A round-trip Run the overlap tests hold in flight together with its peer's, keyed by the
- * User it answers. The Run posts only once the peer's Run is in flight, and returns only once
- * the peer has posted, so every answer it records was given while both were in flight. The
- * round trip of a User with no entry posts alone.
- */
 type Overlap = {
   readonly peer: string;
-  /** Whether this Run also reads the peer's tag out of the peer's Prompt and posts with it. */
+
   readonly looking: boolean;
   readonly answers: string[];
   readonly posted: PromiseWithResolvers<void>;
@@ -232,7 +224,6 @@ const runtime = fakeRuntime(async (prompt) => {
   };
 });
 
-// Plays the agent on a round trip, knowing only its Prompt and the Users it may address.
 async function roundTrip(prompt: RunPrompt): Promise<RunOutcome> {
   const tagged = { [runTagHeader]: tagIn(prompt.text) };
   const messaging = async (userId: string, text: string, headers = tagged): Promise<string> => {
@@ -266,8 +257,6 @@ async function roundTrip(prompt: RunPrompt): Promise<RunOutcome> {
     ),
   );
   if (overlap.looking) {
-    // The glossary's limit, played out: the Prompts the Runtime recorded stand in for the
-    // Session files on the shared filesystem, and this Run reads the other Session's tag.
     const found = peerPrompt();
     assert.ok(found !== undefined);
     overlap.answers.push(
@@ -292,8 +281,7 @@ before(async () => {
     extend: (infra) => {
       callbacks.push("extend");
       assert.deepEqual(Object.keys(infra), theInfra);
-      // A preHandler, because the body is not parsed when onRequest runs. The Run the request
-      // is attributed to may message the one User its Context names, and nobody else.
+
       infra.agentServer.fastify.addHook("preHandler", async (request, reply) => {
         if (request.method !== "POST" || !request.url.startsWith("/messages")) return;
         const context = request.concordeRun?.context;
@@ -334,7 +322,6 @@ before(async () => {
   agentUrl = components.agentServer.fastify.listeningOrigin;
   publicUrl = components.publicServer.fastify.listeningOrigin;
 
-  // Admitted first, so the listing of the two newest Users still ends with the client.
   bystander = await admitted();
   client = await admitted();
 });
@@ -759,8 +746,6 @@ describe("a whole deployment from one call", () => {
   describe("while two Users' Runs overlap", () => {
     type Answered = { readonly answers: readonly string[]; readonly history: readonly string[] };
 
-    // Two fresh Users, each with a round trip of their own, held in flight together. Which of
-    // them, if either, also goes looking for the other's tag is the test's choice.
     async function overlappingRoundTrips(
       looking?: "alice" | "bob",
     ): Promise<{ readonly alice: Answered; readonly bob: Answered }> {
