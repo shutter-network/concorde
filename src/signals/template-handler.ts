@@ -14,17 +14,9 @@ export type TemplateHandlerOptions<TPayload = unknown> = {
   /** Sets `Prompt.userId`. Return `null` or omit this function to assign no User to the Run. */
   readonly user?: (signal: Signal<TPayload>) => string | null | Promise<string | null>;
 
-  /** Sets `Prompt.resources`. Omit this function to name none. */
   readonly resources?: (signal: Signal<TPayload>) => readonly string[] | Promise<readonly string[]>;
 
-  /**
-   * Sets `Prompt.tag`, and makes the same value available to the template as `{{tag}}` beside
-   * the data's own top-level values, so the template writes it into the text with one
-   * expression. It takes precedence over a data value named `tag`, and `data` must return an
-   * object when this function is given, or the Signal fails. Mint a fresh random value per
-   * Signal. Omit this function to write none, which yields a Run no request can be attributed
-   * to.
-   */
+  /** Sets `Prompt.tag` and `{{tag}}`, overriding data.tag. Requires object data. */
   readonly tag?: (signal: Signal<TPayload>) => string | Promise<string>;
 
   readonly helpers?: Readonly<Record<string, Handlebars.HelperDelegate>>;

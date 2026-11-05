@@ -24,20 +24,11 @@ export type CurrentRun = {
 
 declare module "fastify" {
   interface FastifyRequest {
-    /**
-     * The Run the request is attributed to, on requests to the agent server: the in-flight Run
-     * whose `Prompt.tag` the `concorde-run-tag` header names, carrying the Run id, its Signal
-     * id, its Session and its Context. `undefined` when the header is absent, names no in-flight
-     * Run's tag, or names the tag of a Run that has ended, however many Runs are in flight.
-     */
+    /** Active Run identified by the `concorde-run-tag` header, or undefined. */
     concordeRun: CurrentRun | undefined;
   }
 }
 
-/**
- * The request header an agent sends a Run tag in. Fixed here so that agent instructions and
- * agent server hooks agree without choosing a name.
- */
 export const runTagHeader = "concorde-run-tag";
 
 export type SignalWorkerOptions = {
@@ -54,13 +45,7 @@ export type SignalWorkerOptions = {
 export type SignalWorker = Component & {
   readonly agentRoutes: FastifyPluginAsync;
 
-  /**
-   * The onRequest hook that sets `request.concordeRun`: the in-flight Run whose `Prompt.tag` the
-   * `concorde-run-tag` header names, or `undefined`. Installed on the agent server handed to the
-   * constructor; exported so a server the worker was not handed installs it at its own root.
-   * There is no fallback to the only Run in flight, because a heuristic kept beside an exact
-   * mechanism is what gets relied on by accident.
-   */
+  /** Install at the server root when constructing an Agent server outside the Gateway. */
   readonly decorateRun: onRequestHookHandler;
 
   /**
@@ -74,10 +59,7 @@ export type SignalWorker = Component & {
 
   start(): Promise<void>;
 
-  /**
-   * Waits for every claimed signal, including runs that had not yet started and every post
-   * phase. Pending signals remain queued.
-   */
+  /** Drain claimed Signals, including queued Runs and post phases; leave pending Signals queued. */
   stop(): Promise<void>;
 };
 
@@ -98,23 +80,14 @@ type QueuedRun = {
   readonly prompt: RunPrompt;
   readonly context: unknown;
   readonly userId: string | null;
-  /**
-   * What the Run must have to itself besides its Session; see `conflicts`. Empty until a Prompt
-   * names some. The Session is never in it, so a Handler's name can never collide with a
-   * Session's.
-   */
+
   readonly resources: ReadonlySet<string>;
-  /** The Run tag the Handler wrote, if any; held in `inFlight` while the Run is. */
+
   readonly tag: string | undefined;
   started: boolean;
   readonly outcome: PromiseWithResolvers<RunOutcome>;
 };
 
-/**
- * The one scheduling rule: two Runs conflict when they name the same Session or share a
- * Resource, and nothing else conflicts. Symmetric; which of the two is earlier in the queue is
- * the caller's to know.
- */
 function conflicts(one: QueuedRun, other: QueuedRun): boolean {
   if (one.prompt.session === other.prompt.session) return true;
   for (const resource of one.resources) {
@@ -123,22 +96,10 @@ function conflicts(one: QueuedRun, other: QueuedRun): boolean {
   return false;
 }
 
-/**
- * Run only one worker per database. Startup fails interrupted signals and their unfinished runs
- * rather than replaying them. `createGateway` constructs this component for you.
- *
- * Signals are claimed one at a time, oldest first, and each Handler's `handle` is awaited before
- * the next claim, so a Handler sees Signals in emission order. Runs are queued in the order their
- * Signals were claimed and their Prompts returned, and a queued Run starts as soon as no earlier
- * unfinished Run, running or still waiting, names its Session or shares a Resource with it. Runs
- * for different Sessions therefore overlap, while Runs in one Session keep their order. The next
- * Signal is claimed only once every queued Run has started, so a crash strands the Signals whose
- * Runs are in flight plus one, never the backlog. A Signal's post phase runs once all of its Runs
- * have ended, and Signals settle in whatever order their Runs finish.
- *
- * `stop` ends claiming, lets every queued Run start as the Runs before it end and run to its
- * outcome, runs every post phase and settles every claimed Signal before it returns. Pending
- * Signals remain queued.
+/** One worker per database. Claims and handles Signals in emission order.
+ * Runs start when no earlier unfinished Run shares their Session or a resource.
+ * Claiming pauses until every queued Run has started, bounding crash recovery to active Signals
+ * plus one waiting Signal. Interrupted work fails on restart without replay.
  */
 export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   const log = options.logger ?? defaultLogger();
@@ -149,20 +110,10 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
 
   const handle = options.db.handle(signalsTables);
 
-  // Every unfinished Run, in the order its Signal was claimed and its Prompt returned. A Run
-  // starts when nothing before it in this list, started or not, `conflicts` with it, so a Run
-  // never overtakes an earlier one it conflicts with.
   const queue: QueuedRun[] = [];
 
-  // Every Run in flight that has a tag, by that tag. Added when the Run starts and removed when
-  // it ends, whichever way it ends, so a held tag is a live one. Never overwritten: a Run whose
-  // tag is already held fails before it starts, so an entry is only ever its own Run's.
   const inFlight = new Map<string, CurrentRun>();
 
-  // A request is attributed by its header and by nothing else: no header, an unknown tag or a
-  // dead one all resolve to nothing, even while exactly one Run is in flight. Node joins a
-  // repeated custom header into one comma-separated string, which is no Run's tag, so it names
-  // nothing too; the array branch is there because the header typing still allows one.
   const decorateRun: onRequestHookHandler = (request, _reply, done) => {
     const tag = request.headers[runTagHeader];
     request.concordeRun = typeof tag === "string" ? inFlight.get(tag) : undefined;
@@ -183,7 +134,7 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
 
   let scheduling = false;
   let startWaiters: (() => void)[] = [];
-  // One per claimed Signal whose Runs, post phase or settlement are still to come.
+
   const finishing = new Set<Promise<void>>();
 
   async function claim(): Promise<typeof signals.$inferSelect | undefined> {
@@ -211,13 +162,11 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
       const claimed = await claim();
       if (claimed === undefined) return;
       await processSignal(claimed);
-      // The lookahead is one Signal: the next is claimed only once every queued Run has started.
+
       await allStarted();
     }
   }
 
-  // Claims through `handle` and the queueing of the Runs; the rest of the Signal is detached so
-  // that the next claim does not wait for this Signal's Runs to end.
   async function processSignal(row: typeof signals.$inferSelect): Promise<void> {
     const signal: Signal = {
       id: row.id,
@@ -285,7 +234,6 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
     return queuedRuns;
   }
 
-  // Never rejects: a Signal it cannot settle stays processing, which the next start recovers.
   async function finishSignal(
     signal: Signal,
     handler: SignalHandlers[string],
@@ -321,7 +269,6 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
     }
   }
 
-  // Waits for every Run of the Signal to end, whichever ends first, before judging the Signal.
   async function outcomesOf(
     queuedRuns: readonly QueuedRun[],
   ): Promise<{ failure: string | undefined; limited: boolean }> {
@@ -346,6 +293,7 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
     return { failure, limited };
   }
 
+  // Include waiting Runs so a later Run cannot overtake an earlier conflicting Run.
   function startable(): QueuedRun | undefined {
     for (const [index, run] of queue.entries()) {
       if (run.started) continue;
@@ -355,10 +303,6 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
     return undefined;
   }
 
-  // Rescans the queue from its head and starts every Run it may, one at a time, so "Run started"
-  // and the runs table's startedAt keep queue order; only the Runtime calls overlap. Called when
-  // Runs are queued and whenever one ends, and harmless while a scan is already under way,
-  // because that scan starts over after each Run it starts.
   function schedule(): void {
     if (scheduling) return;
     scheduling = true;
@@ -371,7 +315,6 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
           await startRun(next);
         }
       } catch (error) {
-        // Nothing below throws by design, and a throw must not leave `allStarted` waiting.
         log.error({ err: error }, "Scheduling scan failed; resumed when a Run is queued or ends");
       } finally {
         scheduling = false;
@@ -417,7 +360,7 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
 
   function endRun(run: QueuedRun): void {
     const index = queue.indexOf(run);
-    // A Run ends once; an index of -1 would splice the last Run of the queue away in silence.
+
     if (index !== -1) queue.splice(index, 1);
     schedule();
   }
@@ -433,8 +376,6 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
     };
     let outcome: RunOutcome;
     if (tag !== undefined && inFlight.has(tag)) {
-      // Two Prompts minting one tag fail loudly: setting the entry anyway would attribute the
-      // first Run's requests to this one for as long as both were in flight.
       outcome = { ok: false, error: tagAlreadyLive, usage: [] };
     } else {
       if (tag !== undefined) inFlight.set(tag, current);
@@ -607,7 +548,7 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
         listening = undefined;
       }
       await working;
-      // Nothing is claimed after `working` ends, so this is every Signal there will be.
+
       await Promise.all(finishing);
     },
   };

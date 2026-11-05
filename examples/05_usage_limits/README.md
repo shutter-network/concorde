@@ -75,16 +75,11 @@ does not change the saved passwords, even though the example prints the `.env` v
   ends. The Run stops once its total exceeds `usageLimit`, but the provider still charges for
   that response. A user's daily total can therefore exceed `DAILY_TOKEN_LIMIT`. The gateway
   replies to their next message without calling the model.
-- **A Run's Usage is saved when the Run ends, and the limit does not see Runs in flight.** The
-  Signal Worker calls `handle` for a message while earlier Runs are still running, so the total
-  `handle` computes leaves out every Run that has not ended, including the same user's. A user
-  who sends a second message before the answer to the first arrives gets a `usageLimit` that
-  does not count the first Run's tokens, and can exceed `DAILY_TOKEN_LIMIT` by that Run. The
-  Session name keeps one user's Runs in order, but it does not delay `handle`. A Signal Handler
-  that needs a `usageLimit` counting every earlier Run writes a Resource for the user, such as
-  the user id, in `resources` on the Prompt, which serializes that user's Runs, and counts that
-  user's running Runs from the runs table as spent. If the gateway stops during a Run, that
-  Run's Usage is not saved.
+- **Usage totals exclude unfinished Runs.** The worker calls `handle` while earlier Runs are
+  running, including Runs for the same user. Multiple messages can therefore receive limits
+  calculated from the same remaining budget. Sessions and resources serialize Runs, but do not
+  delay the budget check in `handle`. This example does not enforce a strict daily cap under
+  overlapping messages. Usage from an interrupted Run is not saved.
 - **The model server must report usage.** The counts are the ones the model provider returns
   with each response, copied by `pi`. Some self-hosted and OpenAI-compatible servers report no
   usage. Those responses are recorded as 0 tokens, so the limit never takes effect. If you
