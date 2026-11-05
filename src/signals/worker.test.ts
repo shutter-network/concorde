@@ -1201,6 +1201,64 @@ describe("the worker", () => {
       });
     });
 
+    it("resolves each of two overlapping Runs' tags to its own Run alone, and the other's tag to the other Run and never to both", async () => {
+      const pair = { t_alice: "alice", t_bob: "bob" } as const;
+      const otherOf = (tag: string): string => (tag === "t_alice" ? "t_bob" : "t_alice");
+      type Looked = { readonly tag: string; readonly own: unknown; readonly other: unknown };
+      const looked: Looked[] = [];
+      const probed = probing();
+      // Each Run looks only once its gate opens, which is once both are in flight, and leaves
+      // only once both have looked, so both tags are live under every probe below.
+      const bothLooked = Promise.withResolvers<void>();
+      const gated = gatedRuntime(async (prompt) => {
+        const tag = tagIn(prompt);
+        const { probe } = probed;
+        looked.push({ tag, own: await probe(tag), other: await probe(otherOf(tag)) });
+        if (looked.length === 2) bothLooked.resolve();
+        await bothLooked.promise;
+        return { ok: true, usage: [] };
+      });
+      const paired: SignalHandler = {
+        handle: () => Object.entries(pair).map(([tag, session]) => taggedPrompt(tag, session)),
+      };
+
+      await withProbedWorker({ paired }, gated.runtime, probed, async (worker) => {
+        const id = await emit(worker, "paired");
+        try {
+          await gated.started(`${announcing}t_alice`);
+          await gated.started(`${announcing}t_bob`);
+          gated.release(`${announcing}t_alice`);
+          gated.release(`${announcing}t_bob`);
+          await settled(id);
+        } finally {
+          gated.releaseAll();
+          bothLooked.resolve();
+        }
+
+        const bySession = new Map((await runsOf(id)).map((run) => [run.session, run.id]));
+        const alice = {
+          id: bySession.get("alice"),
+          signalId: id,
+          session: "alice",
+          context: { tag: "t_alice" },
+        };
+        const bob = {
+          id: bySession.get("bob"),
+          signalId: id,
+          session: "bob",
+          context: { tag: "t_bob" },
+        };
+        assert.notEqual(alice.id, bob.id);
+        assert.deepEqual(
+          looked.sort((a, b) => a.tag.localeCompare(b.tag)),
+          [
+            { tag: "t_alice", own: alice, other: bob },
+            { tag: "t_bob", own: bob, other: alice },
+          ],
+        );
+      });
+    });
+
     it("fails a Run whose tag is live on another Run without calling the Runtime, and leaves the first Run's attribution intact", async () => {
       const probed = probing();
       const gated = gatedRuntime();
