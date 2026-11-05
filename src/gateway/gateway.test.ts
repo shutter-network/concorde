@@ -125,8 +125,10 @@ const callbacks: string[] = [];
 const awkwardJson = { list: [1, "two", null, { deep: true }], nothing: null };
 
 const roundTripKind = "the.round.trip";
+
 const roundTripSession = "the round trip for ";
 const roundTripSessionFor = (user: string): string => `${roundTripSession}${user}`;
+const userOfRoundTrip = (session: string): string => session.slice(roundTripSession.length);
 const roundTripPayload = { text: "say this back to me", nested: awkwardJson };
 
 const theOnePassword = "the only password in this file";
@@ -138,8 +140,6 @@ function roundTripContext(user: string): { readonly user: string; readonly neste
   return { user, nested: awkwardJson };
 }
 
-// The Handler writes the tag into the text, and the Runtime, playing the agent, reads it back
-// out and sends it as the header: nothing on the test's side hands the Runtime the tag.
 const announcingTheTag = "\n\nSend this back as the concorde-run-tag header: ";
 
 const roundTripping: SignalHandler<{ readonly text: string; readonly user: string }> = {
@@ -164,6 +164,29 @@ const duringTheRoundTrip: string[] = [];
 
 const roundTripReply = "said back, by the Run whose context named you";
 const roundTripOverreach = "said to somebody the Run's context did not name";
+const roundTripLooking = "said to the other Run's User, under a tag read out of the other Session";
+
+type Overlap = {
+  readonly peer: string;
+
+  readonly looking: boolean;
+  readonly answers: string[];
+  readonly posted: PromiseWithResolvers<void>;
+};
+const overlapping = new Map<string, Overlap>();
+
+function overlapOf(one: string, other: string, looking: string | undefined): [Overlap, Overlap] {
+  const entry = (user: string, peer: string): Overlap => ({
+    peer,
+    looking: looking === user,
+    answers: [],
+    posted: Promise.withResolvers<void>(),
+  });
+  const pair: [Overlap, Overlap] = [entry(one, other), entry(other, one)];
+  overlapping.set(one, pair[0]);
+  overlapping.set(other, pair[1]);
+  return pair;
+}
 
 const scheduleFiring: SignalHandler<ScheduleFiredRecord> = {
   handle: (signal) => [{ session: `schedule_${signal.payload.scheduleName}`, text: "fired" }],
@@ -201,21 +224,49 @@ const runtime = fakeRuntime(async (prompt) => {
   };
 });
 
-// Plays the agent on a round trip, knowing only its Prompt and the Users it may address.
 async function roundTrip(prompt: RunPrompt): Promise<RunOutcome> {
   const tagged = { [runTagHeader]: tagIn(prompt.text) };
   const messaging = async (userId: string, text: string, headers = tagged): Promise<string> => {
     const answered = await postJsonWith(`${agentUrl}/messages`, { userId, text }, headers);
     return String(answered.status);
   };
-  duringTheRoundTrip.push(
-    await reaching("the hook refused a Message for a User the Context did not name", () =>
-      messaging(bystander.id, roundTripOverreach),
+  const own = userOfRoundTrip(prompt.session);
+  const overlap = overlapping.get(own);
+  if (overlap === undefined) {
+    duringTheRoundTrip.push(
+      await reaching("the hook refused a Message for a User the Context did not name", () =>
+        messaging(bystander.id, roundTripOverreach),
+      ),
+      await reaching("the Messenger took a Message for the named User", () =>
+        messaging(client.id, roundTripReply),
+      ),
+    );
+    return { ok: true, usage: [] };
+  }
+
+  const peerSession = roundTripSessionFor(overlap.peer);
+  const peerPrompt = (): RunPrompt | undefined =>
+    runtime.recorded.find((recorded) => recorded.session === peerSession);
+  await waitUntil("the peer's Run is in flight too", async () => peerPrompt() !== undefined);
+  overlap.answers.push(
+    await reaching("the hook passed the Message to the Run's own User", () =>
+      messaging(own, roundTripReply),
     ),
-    await reaching("the Messenger took a Message for the named User", () =>
-      messaging(client.id, roundTripReply),
+    await reaching("the hook refused the Message to the other Run's User", () =>
+      messaging(overlap.peer, roundTripOverreach),
     ),
   );
+  if (overlap.looking) {
+    const found = peerPrompt();
+    assert.ok(found !== undefined);
+    overlap.answers.push(
+      await reaching("the hook passed the Message to the other Run's User under its tag", () =>
+        messaging(overlap.peer, roundTripLooking, { [runTagHeader]: tagIn(found.text) }),
+      ),
+    );
+  }
+  overlap.posted.resolve();
+  await overlapping.get(overlap.peer)?.posted.promise;
   return { ok: true, usage: [] };
 }
 
@@ -230,8 +281,7 @@ before(async () => {
     extend: (infra) => {
       callbacks.push("extend");
       assert.deepEqual(Object.keys(infra), theInfra);
-      // A preHandler, because the body is not parsed when onRequest runs. The Run the request
-      // is attributed to may message the one User its Context names, and nobody else.
+
       infra.agentServer.fastify.addHook("preHandler", async (request, reply) => {
         if (request.method !== "POST" || !request.url.startsWith("/messages")) return;
         const context = request.concordeRun?.context;
@@ -272,7 +322,6 @@ before(async () => {
   agentUrl = components.agentServer.fastify.listeningOrigin;
   publicUrl = components.publicServer.fastify.listeningOrigin;
 
-  // Admitted first, so the listing of the two newest Users still ends with the client.
   bystander = await admitted();
   client = await admitted();
 });
@@ -692,6 +741,76 @@ describe("a whole deployment from one call", () => {
 
     const listed = await agentJson<{ schedules: ScheduleRecord[] }>("/schedules");
     assert.deepEqual(listed.schedules, [expected]);
+  });
+
+  describe("while two Users' Runs overlap", () => {
+    type Answered = { readonly answers: readonly string[]; readonly history: readonly string[] };
+
+    async function overlappingRoundTrips(
+      looking?: "alice" | "bob",
+    ): Promise<{ readonly alice: Answered; readonly bob: Answered }> {
+      const alice = await admitted();
+      const bob = await admitted();
+      const lookingId = looking === undefined ? undefined : { alice, bob }[looking].id;
+      const [forAlice, forBob] = overlapOf(alice.id, bob.id, lookingId);
+      try {
+        const ids = await components.db.tx((tx) =>
+          Promise.all(
+            [alice, bob].map((user) =>
+              components.worker.emit(tx, {
+                kind: roundTripKind,
+                payload: { ...roundTripPayload, user: user.id },
+              }),
+            ),
+          ),
+        );
+        await waitUntil("both Users' round trips have finished", async () => {
+          const states = await Promise.all(
+            ids.map(async (id) => (await agentJson<SignalRecord>(`/signals/${id}`)).state),
+          );
+          return states.every((state) => state === "done");
+        });
+      } finally {
+        forAlice.posted.resolve();
+        forBob.posted.resolve();
+        overlapping.delete(alice.id);
+        overlapping.delete(bob.id);
+      }
+      return {
+        alice: { answers: forAlice.answers, history: await texts(alice.id) },
+        bob: { answers: forBob.answers, history: await texts(bob.id) },
+      };
+    }
+
+    async function texts(userId: string): Promise<string[]> {
+      return (await components.messenger.history(userId)).map((message) => message.text);
+    }
+
+    const eachAnswered = [
+      "the hook passed the Message to the Run's own User: 201",
+      "the hook refused the Message to the other Run's User: 403",
+    ];
+
+    it("passes each Run the Message to its own User and refuses it the Message to the other's, with both in flight", async () => {
+      const { alice, bob } = await overlappingRoundTrips();
+
+      assert.deepEqual(alice.answers, eachAnswered);
+      assert.deepEqual(bob.answers, eachAnswered);
+      assert.deepEqual(alice.history, [roundTripReply]);
+      assert.deepEqual(bob.history, [roundTripReply]);
+    });
+
+    it("attributes a request from one overlapping Run that carries the other Run's tag to the other Run, which is the documented limit and not a defect: the tag defeats forgery through injected Message text and not an agent that goes looking", async () => {
+      const { alice, bob } = await overlappingRoundTrips("bob");
+
+      assert.deepEqual(alice.answers, eachAnswered);
+      assert.deepEqual(bob.answers, [
+        ...eachAnswered,
+        "the hook passed the Message to the other Run's User under its tag: 201",
+      ]);
+      assert.deepEqual(alice.history, [roundTripReply, roundTripLooking]);
+      assert.deepEqual(bob.history, [roundTripReply]);
+    });
   });
 
   it("drains with everything still up, and closes it all once the drain is done", async () => {

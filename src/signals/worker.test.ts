@@ -127,7 +127,6 @@ function runsOf(signalId: string): Promise<(typeof runs.$inferSelect)[]> {
     .orderBy(asc(runs.startedAt));
 }
 
-/** Resolves once the Signal's Handler has returned and its Runs are on the runs table. */
 async function queued(signalId: string): Promise<void> {
   await waitUntil(
     `Signal ${signalId} has its Runs queued`,
@@ -395,7 +394,6 @@ describe("the worker", () => {
         const second = await emit(worker, "ordered", { n: 2 });
         const third = await emit(worker, "ordered", { n: 3 });
 
-        // The second Run is queued behind the first, which is held at its gate.
         await gated.started("1");
         await queued(second);
         gated.release("1");
@@ -434,7 +432,6 @@ describe("the worker", () => {
           const firstId = await emit(worker, "first");
           const restId = await emit(worker, "rest");
 
-          // Carol's Run passes bob's, which waits for alice's to give the workspace back.
           await gated.started("alice's");
           await gated.started("carol's");
           assert.deepEqual(gated.runtime.texts(), ["alice's", "carol's"]);
@@ -477,8 +474,6 @@ describe("the worker", () => {
           const firstId = await emit(worker, "first");
           const restId = await emit(worker, "rest");
 
-          // Only the first Run is running, and the third shares nothing with it; still it waits,
-          // because the second, which it shares y with, is queued before it and has not started.
           await gated.started("holding x");
           await gated.started("needing nothing");
           assert.deepEqual(gated.runtime.texts(), ["holding x", "needing nothing"]);
@@ -633,7 +628,6 @@ describe("the worker", () => {
           const firstId = await emit(worker, "first");
           const restId = await emit(worker, "rest");
 
-          // Bob's Run passes alice's waiting second, which only the first holds back.
           await gated.started("alice's first");
           await gated.started("bob's");
           assert.deepEqual(gated.runtime.texts(), ["alice's first", "bob's"]);
@@ -669,7 +663,7 @@ describe("the worker", () => {
         const first = await emit(worker, "handling", { n: 1 });
         const second = await emit(worker, "handling", { n: 2 });
         await waitUntil("the first Handler is called", async () => timeline.length === 1);
-        // Two sweeps give the Worker every chance to claim the second Signal early.
+
         const sweeps = wakeups(entries, "sweep");
         await waitUntil("two sweeps pass", async () => wakeups(entries, "sweep") >= sweeps + 2);
         firstHandle.resolve();
@@ -710,7 +704,6 @@ describe("the worker", () => {
           const second = await emit(worker, "shared", "second");
           const other = await emit(worker, "other");
 
-          // The second Run waits behind the first; the third Signal waits for the second to start.
           await gated.started("first");
           await queued(second);
           gated.release("first");
@@ -1018,17 +1011,12 @@ describe("the worker", () => {
   });
 
   describe("attributes a request to the Run whose tag it carries", () => {
-    // Plays the agent: the Handler writes the tag into the text, the Runtime reads it back out.
     const announcing = "Your Run tag is ";
     const tagIn = (prompt: RunPrompt): string => prompt.text.slice(announcing.length);
 
-    // An array sends the header once per element, which `inject` joins into one string as Node
-    // joins a repeated header on the wire.
     type Probe = (tag?: string | string[]) => Promise<unknown>;
     type Probing = { readonly fastify: FastifyInstance; readonly probe: Probe };
 
-    // An agent server with one route answering what `request.concordeRun` resolved to. Built
-    // before the Runtime, so a Runtime script can probe from inside a Run with nothing to wire.
     function probing(): Probing {
       const fastify = Fastify();
       fastify.get("/whose", async (request) => request.concordeRun ?? null);
@@ -1201,10 +1189,67 @@ describe("the worker", () => {
       });
     });
 
+    it("resolves each of two overlapping Runs' tags to its own Run alone, and the other's tag to the other Run and never to both", async () => {
+      const pair = { t_alice: "alice", t_bob: "bob" } as const;
+      const otherOf = (tag: string): string => (tag === "t_alice" ? "t_bob" : "t_alice");
+      type Looked = { readonly tag: string; readonly own: unknown; readonly other: unknown };
+      const looked: Looked[] = [];
+      const probed = probing();
+
+      const bothLooked = Promise.withResolvers<void>();
+      const gated = gatedRuntime(async (prompt) => {
+        const tag = tagIn(prompt);
+        const { probe } = probed;
+        looked.push({ tag, own: await probe(tag), other: await probe(otherOf(tag)) });
+        if (looked.length === 2) bothLooked.resolve();
+        await bothLooked.promise;
+        return { ok: true, usage: [] };
+      });
+      const paired: SignalHandler = {
+        handle: () => Object.entries(pair).map(([tag, session]) => taggedPrompt(tag, session)),
+      };
+
+      await withProbedWorker({ paired }, gated.runtime, probed, async (worker) => {
+        const id = await emit(worker, "paired");
+        try {
+          await gated.started(`${announcing}t_alice`);
+          await gated.started(`${announcing}t_bob`);
+          gated.release(`${announcing}t_alice`);
+          gated.release(`${announcing}t_bob`);
+          await settled(id);
+        } finally {
+          gated.releaseAll();
+          bothLooked.resolve();
+        }
+
+        const bySession = new Map((await runsOf(id)).map((run) => [run.session, run.id]));
+        const alice = {
+          id: bySession.get("alice"),
+          signalId: id,
+          session: "alice",
+          context: { tag: "t_alice" },
+        };
+        const bob = {
+          id: bySession.get("bob"),
+          signalId: id,
+          session: "bob",
+          context: { tag: "t_bob" },
+        };
+        assert.notEqual(alice.id, bob.id);
+        assert.deepEqual(
+          looked.sort((a, b) => a.tag.localeCompare(b.tag)),
+          [
+            { tag: "t_alice", own: alice, other: bob },
+            { tag: "t_bob", own: bob, other: alice },
+          ],
+        );
+      });
+    });
+
     it("fails a Run whose tag is live on another Run without calling the Runtime, and leaves the first Run's attribution intact", async () => {
       const probed = probing();
       const gated = gatedRuntime();
-      // Distinct Sessions, so nothing but the tag keeps the second Run from overlapping the first.
+
       const colliding: SignalHandler = {
         handle: () => [taggedPrompt("t_shared", "first"), taggedPrompt("t_shared", "second")],
       };
