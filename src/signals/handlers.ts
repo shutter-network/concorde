@@ -70,8 +70,9 @@ export type PostOutcome = {
 };
 
 /**
- * Prompts run serially in array order. An empty array completes the signal without a run;
- * a failed run does not prevent later prompts from running.
+ * Prompts are queued in array order, and their runs overlap unless they share a session. An
+ * empty array completes the signal without a run; a failed run does not prevent later prompts
+ * from running.
  *
  * `post` runs after all runs, including when `handle` throws. `failed` covers failures in
  * `handle` or any run. `limited` is true if any run exceeded its usage limit. A thrown `post`

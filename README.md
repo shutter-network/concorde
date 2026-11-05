@@ -17,7 +17,7 @@ Concorde supplies:
 
 - Persistent message logs, with an HTTP channel or Nostr channel for delivery.
 - Users and authentication through passwords or signed Nostr requests.
-- A signal worker that executes runs one at a time.
+- A signal worker that runs prompts in order per session and in parallel across sessions.
 - Schedules that wake the agent.
 - Signed statements and stored, numbered decisions.
 
