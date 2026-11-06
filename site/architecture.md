@@ -95,7 +95,9 @@ The worker claims signals one at a time in emission order and awaits each handle
 before claiming the next, so handlers see signals in order. Runs overlap where no session or
 resource is shared: a queued run starts as soon as no earlier unfinished run names its session or
 shares one of its `resources`, so two users' messages are answered at once while one user's two
-messages are answered in order. A handler names a resource on a prompt for anything beyond the
+messages are answered in order. Where a handler has a `post` phase, its runs' sessions and
+resources stay held until that phase returns, so a later signal's run never overlaps a post
+phase that may still be using them. A handler names a resource on a prompt for anything beyond the
 session that the run must have to itself, such as a shared workspace; the session is never in that
 array, and a prompt naming none is serialized only by its session. The next signal is claimed
 only once every queued run has started, and a signal settles when its own runs finish, so

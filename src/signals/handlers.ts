@@ -53,7 +53,9 @@ export type PostOutcome = {
 };
 
 /** Prompts run in array order where Sessions or resources conflict; other Runs may overlap.
- * `post` runs after all Runs, including when `handle` throws. No phase is retried automatically.
+ * `post` runs after all Runs, including when `handle` throws; where a Handler has one, its Runs'
+ * Sessions and resources stay held until it returns. `handle` of a later Signal runs while
+ * earlier Signals' Runs and `post` are still in flight. No phase is retried automatically.
  */
 export type SignalHandler<TPayload = unknown> = {
   handle(signal: Signal<TPayload>): readonly Prompt[] | Promise<readonly Prompt[]>;

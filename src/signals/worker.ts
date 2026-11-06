@@ -85,8 +85,18 @@ type QueuedRun = {
 
   readonly tag: string | undefined;
   started: boolean;
+  ended: boolean;
+  /** Stay queued after ending, until the Signal's post phase has returned. */
+  readonly heldThroughPost: boolean;
   readonly outcome: PromiseWithResolvers<RunOutcome>;
 };
+
+// A Run held through its Signal's post phase blocks a later Signal's Run until that phase
+// returns, and never a Run of its own Signal, which the post phase is waiting for.
+function blocks(earlier: QueuedRun, run: QueuedRun): boolean {
+  if (earlier.ended && earlier.signal.id === run.signal.id) return false;
+  return conflicts(earlier, run);
+}
 
 function conflicts(one: QueuedRun, other: QueuedRun): boolean {
   if (one.prompt.session === other.prompt.session) return true;
@@ -97,7 +107,8 @@ function conflicts(one: QueuedRun, other: QueuedRun): boolean {
 }
 
 /** One worker per database. Claims and handles Signals in emission order.
- * Runs start when no earlier unfinished Run shares their Session or a resource.
+ * A Run starts when no earlier unfinished Run shares its Session or a resource, counting a Run
+ * as unfinished until its Signal's post phase returns, where the Handler has one.
  * Claiming pauses until every queued Run has started, bounding crash recovery to active Signals
  * plus one waiting Signal. Interrupted work fails on restart without replay.
  */
@@ -194,14 +205,19 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
       log.error({ signalId: signal.id, kind: signal.kind, err: error }, "Signal handler failed");
     }
 
-    const queuedRuns = prompts === undefined ? [] : await enqueue(signal, prompts);
+    const queuedRuns =
+      prompts === undefined ? [] : await enqueue(signal, prompts, handler.post !== undefined);
     const finished: Promise<void> = finishSignal(signal, handler, queuedRuns, failure).finally(() =>
       finishing.delete(finished),
     );
     finishing.add(finished);
   }
 
-  async function enqueue(signal: Signal, prompts: readonly Prompt[]): Promise<QueuedRun[]> {
+  async function enqueue(
+    signal: Signal,
+    prompts: readonly Prompt[],
+    heldThroughPost: boolean,
+  ): Promise<QueuedRun[]> {
     if (prompts.length === 0) return [];
 
     const queuedRuns: QueuedRun[] = prompts.map((prompt) => {
@@ -215,6 +231,8 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
         resources: new Set(prompt.resources ?? []),
         tag: prompt.tag,
         started: false,
+        ended: false,
+        heldThroughPost,
         outcome: Promise.withResolvers<RunOutcome>(),
       };
     });
@@ -266,6 +284,9 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
         { signalId: signal.id, kind: signal.kind, err: error },
         "Signal could not be finished; it stays processing until the next worker start",
       );
+    } finally {
+      for (const run of queuedRuns) dequeue(run);
+      schedule();
     }
   }
 
@@ -297,7 +318,7 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   function startable(): QueuedRun | undefined {
     for (const [index, run] of queue.entries()) {
       if (run.started) continue;
-      if (queue.slice(0, index).some((earlier) => conflicts(earlier, run))) continue;
+      if (queue.slice(0, index).some((earlier) => blocks(earlier, run))) continue;
       return run;
     }
     return undefined;
@@ -359,10 +380,14 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   }
 
   function endRun(run: QueuedRun): void {
-    const index = queue.indexOf(run);
-
-    if (index !== -1) queue.splice(index, 1);
+    run.ended = true;
+    if (!run.heldThroughPost) dequeue(run);
     schedule();
+  }
+
+  function dequeue(run: QueuedRun): void {
+    const index = queue.indexOf(run);
+    if (index !== -1) queue.splice(index, 1);
   }
 
   async function performRun(run: QueuedRun): Promise<RunOutcome> {

@@ -776,6 +776,53 @@ describe("the worker", () => {
     );
   });
 
+  it("holds a Session and its Resources through the post phase, so a later Signal's Run waits for it", async () => {
+    const timeline: string[] = [];
+    const gated = gatedRuntime((prompt) => {
+      timeline.push(`end ${prompt.text}`);
+      return { ok: true, usage: [] };
+    });
+    const posting = Promise.withResolvers<void>();
+    const holding: SignalHandler<{ session: string; text: string }> = {
+      handle: (signal) => [{ session: signal.payload.session, text: signal.payload.text }],
+      post: async () => {
+        timeline.push("post begins");
+        await posting.promise;
+        timeline.push("post ends");
+      },
+    };
+    const following: SignalHandler<{ session: string; text: string }> = {
+      handle: (signal) => [{ session: signal.payload.session, text: signal.payload.text }],
+    };
+
+    await withWorker({ holding, following }, gated.runtime, async (worker) => {
+      try {
+        const first = await emit(worker, "holding", { session: "shared", text: "1" });
+        const other = await emit(worker, "following", { session: "other", text: "3" });
+        const second = await emit(worker, "following", { session: "shared", text: "2" });
+
+        await gated.started("1");
+        await gated.started("3");
+        gated.release("1");
+        await waitUntil("the post phase has begun", async () => timeline.includes("post begins"));
+        await queued(second);
+        gated.release("3");
+        assert.equal((await settled(other)).state, "done");
+        assert.deepEqual(gated.runtime.texts(), ["1", "3"]);
+
+        posting.resolve();
+        await gated.started("2");
+        gated.release("2");
+
+        for (const id of [first, second]) assert.equal((await settled(id)).state, "done");
+        assert.deepEqual(timeline, ["end 1", "post begins", "end 3", "post ends", "end 2"]);
+      } finally {
+        posting.resolve();
+        gated.releaseAll();
+      }
+    });
+  });
+
   it("runs the post phase after every Run, told that none failed", async () => {
     const timeline: string[] = [];
     const runtime = fakeRuntime((prompt) => {
