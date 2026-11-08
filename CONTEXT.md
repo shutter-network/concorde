@@ -143,7 +143,7 @@ It receives two values:
 _Avoid_: post handler, teardown, finalizer, callback
 
 **Session**:
-The Agent Implementation's unit of conversational continuity. A Signal Handler routes each Prompt to a fresh or a named Session. Organises context; does not isolate it. A Handler asking for a fresh one is answered by the Signal Worker, which names it after the Run it belongs to before any Runtime sees it. So every Run records the Session it actually used, and no Runtime invents a naming convention of its own.
+The agent implementation's unit of conversational continuity. A signal handler selects a named session or requests a fresh one. Sessions preserve conversational history but do not restrict access. The signal worker names a fresh session `run_<uuid>` using the run's id, so every run records the session it used. Each runtime defines which session names it can address and returns a failed outcome for an unsupported name. Every runtime must accept the names the signal worker generates.
 _Avoid_: chat, conversation, thread, context (as a name for a Session; a Prompt's Context, below, is a different thing)
 
 **Run**:
