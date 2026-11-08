@@ -34,8 +34,13 @@ export type UsageReport = {
   readonly cost: number;
 };
 
-/** Calls may overlap. Return Usage on success and failure; throwing loses Usage.
- * No timeout or cancellation is supplied. An unsettled call also blocks worker shutdown.
+/**
+ * Calls may overlap. Return usage on success and failure; throwing loses usage.
+ * No timeout or cancellation is supplied. An unsettled call also blocks signal worker shutdown.
+ *
+ * Each runtime defines its session-name restrictions and fails a run for an unsupported name.
+ * Every runtime must accept `run_<uuid>`, the name the signal worker generates for a fresh
+ * session, where `<uuid>` is the run's id in lowercase hexadecimal with hyphens.
  */
 export type Runtime = {
   run(prompt: RunPrompt): Promise<RunOutcome>;

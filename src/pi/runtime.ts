@@ -19,14 +19,16 @@ const sessionNames = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
  * Connects to an operator-run pi RPC listener once per run. It does not start the agent instance
  * or configure its model, credentials, tools, or workspace.
  *
- * session names must begin and end with an ASCII letter or digit; interior characters may also
- * include `.`, `_`, and `-`. Blank prompt text fails the run. Completion requires `agent_settled`
+ * A session name becomes `<sessionsDir>/<name>.jsonl` on the agent instance. It must start and
+ * end with an ASCII letter or digit; interior characters may also include `.`, `_`, and `-`.
+ * Unsupported names fail before connecting. Fresh names (`run_<uuid>`) satisfy these rules.
+ * Blank prompt text fails the run. Completion requires `agent_settled`
  * and a final assistant stop reason of `stop` or `length`. There is no execution timeout, so a
- * Run whose agent never settles blocks the worker and its usage is never saved.
+ * run whose agent never settles blocks the worker and its usage is never saved.
  *
  * The outcome carries the usage of each assistant `message_end` and each `compaction_end`,
- * including retries, on success and on failure. If usage exceeds the Prompt's `usageLimit`, the
- * runtime sends `abort` to pi. Once pi settles, the Run fails with `limited: true` and the Session
+ * including retries, on success and on failure. If usage exceeds the prompt's `usageLimit`, the
+ * runtime sends `abort` to pi. Once pi settles, the run fails with `limited: true` and the session
  * file is kept. Token counts come from the provider. A response interrupted mid-stream reports
  * less output than was generated. If the server reports no usage, the recorded count is zero.
  */

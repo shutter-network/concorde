@@ -178,11 +178,15 @@ Four ways that fails quietly, all of them a deployment's to get right:
   and nothing anywhere checks that it still matches.** The framework never had to carry one before:
   `pi` was handed `--session-id` and refused a bad one itself, with its own message. A Session is
   addressed **by path** over RPC now and `pi` opens any path it is handed, so the grammar has to
-  live on this side and a copy goes stale in silence. It is also the whole of the traversal
-  argument, there being no `/` in it and both ends required to be alphanumeric, so nothing resolves
-  a path and compares it against a prefix. Widening that character class is therefore a Signal
-  Handler's Session name climbing out of `sessionsDir` and not a cosmetic edit; re-read
-  `core/session-manager` against it whenever the pinned `pi` version moves.
+  live on this side and a copy goes stale in silence. It is `pi`'s grammar and not the framework's:
+  the constraint is that the name becomes a file under `sessionsDir`, another Runtime's name becomes
+  something else, and the one shape every Runtime has to take is the `run_<uuid>` the Signal Worker
+  mints for a fresh Session, which `src/pi/runtime.test.ts` holds this one to. It is also the whole
+  of the traversal argument, there being no `/` in it and both ends required to be alphanumeric, so
+  nothing resolves a path and compares it against a prefix. Widening that character class is
+  therefore a Signal Handler's Session name climbing out of `sessionsDir` and not a cosmetic edit;
+  re-read `core/session-manager` against it whenever the pinned `pi` version moves, because `pi`'s
+  source is the only place that says what the grammar is.
 - **`src/chat-tui/` is the one shipped directory that is not a subpath.** It is a `bin`, so
   the export map is untouched. **It has zero dependencies and must keep them**: a dependency added
   here lands in every consumer's install, and the answer to needing one is a second package.
