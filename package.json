@@ -123,7 +123,7 @@
     "lint": "biome check .",
     "format": "biome check --write .",
     "test": "node --test \"src/**/*.test.ts\"",
-    "test:container": "CONCORDE_CONTAINER_TESTS=1 node --test \"src/pi/agent-instance.test.ts\"",
+    "test:container": "CONCORDE_CONTAINER_TESTS=1 node --test \"src/pi/agent-instance.test.ts\" \"src/openclaw/agent-instance.test.ts\"",
     "check": "npm run typecheck && npm run build && npm run lint && npm test",
     "check:package": "node scripts/check-package.ts",
     "extract:routes": "node scripts/reference/extract-routes.ts",

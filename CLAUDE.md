@@ -38,9 +38,15 @@ Docker or the network:
   every `exports` subpath resolves there for Node *and* the type checker. It is also the only thing
   anywhere that holds the fourteen table names apart, and the only proof that the root still
   resolves to nothing.
-- **`npm run test:container`** is the single end-to-end test: a real container running real `pi`
-  against the real Agent server, with a scripted model on localhost, so it needs no model
-  credentials. About ten seconds. `CONCORDE_CONTAINER_TESTS` opts in.
+- **`npm run test:container`** is the two end-to-end tests, each against the real thing in a
+  container with a scripted model on localhost, so neither needs a model credential.
+  `src/pi/agent-instance.test.ts` runs real `pi` against the real Agent server, about ten
+  seconds. `src/openclaw/agent-instance.test.ts` runs the pinned OpenClaw daemon
+  (`openClawImage` in `src/test-support/docker.ts`, the one place the version is named), pairs
+  a fresh device through the daemon's CLI inside the container and proves the Runtime's failure
+  message, Usage and Session continuity against it, about eight seconds; it is the only thing
+  that notices when the daemon moves away from what `src/test-support/openclaw-daemon.ts`
+  scripts. `CONCORDE_CONTAINER_TESTS` opts in.
 - **`npm run check:docs`** regenerates `site/reference`, asserts every page still holds a
   preformatted block with a link inside it, and builds the site.
 

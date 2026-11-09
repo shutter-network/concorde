@@ -123,6 +123,8 @@ try {
     "dist/openclaw/connection.d.ts",
     "dist/openclaw/session-names.js",
     "dist/openclaw/session-names.d.ts",
+    "dist/openclaw/usage.js",
+    "dist/openclaw/usage.d.ts",
     "dist/db/index.js",
     "dist/db/index.d.ts",
     "dist/db/db.js",
