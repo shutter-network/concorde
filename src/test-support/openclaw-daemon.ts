@@ -363,12 +363,19 @@ function rawToString(data: RawData): string {
   return Array.isArray(data) ? Buffer.concat(data).toString("utf8") : String(data);
 }
 
-/** The chat frames of a Run that finishes with one reply, as the daemon sent them. */
-export function settledRun(said = "I did it."): readonly Written[] {
+/**
+ * The chat frames of a Run that finishes with one reply, as the daemon sent them. `between` goes
+ * after the status frames and before the reply, which is where a Run's model calls were observed.
+ */
+export function settledRun(
+  said = "I did it.",
+  between: readonly Written[] = [],
+): readonly Written[] {
   return [
     { event: "chat", payload: { seq: 1, state: "status", phase: "preparing_workspace" } },
     { event: "chat", payload: { seq: 2, state: "status", phase: "preparing_context" } },
     { event: "chat", payload: { seq: 4, state: "status", phase: "starting_model" } },
+    ...between,
     {
       event: "chat",
       payload: {
@@ -393,7 +400,9 @@ export function settledRun(said = "I did it."): readonly Written[] {
 /**
  * Answers the subscription, acknowledges `chat.send` with a fresh run id and then sends `events`
  * for that Run: a `chat` payload without a `runId` is stamped with the Run's id and its
- * canonical session key; one that carries its own `runId` is sent as written.
+ * canonical session key, and a `session.message` record whose `__openclaw` names no Run gets the
+ * Run's id there and the session key beside the message; one that carries its own `runId` is sent
+ * as written.
  */
 export function scriptedDaemon(
   events: readonly Written[] = settledRun(),
@@ -417,11 +426,7 @@ export function scriptedDaemon(
         );
         return [
           ok({ runId, status: "started" }),
-          ...events.map((written) =>
-            isRecord(written.payload) && written.payload.runId === undefined
-              ? { ...written, payload: { runId, sessionKey, ...written.payload } }
-              : written,
-          ),
+          ...events.map((written) => stamped(written, runId, sessionKey)),
         ];
       }
       case "chat.abort":
@@ -430,6 +435,133 @@ export function scriptedDaemon(
         return [ok({})];
     }
   };
+}
+
+function stamped(written: Written, runId: string, sessionKey: string): Written {
+  const payload = written.payload;
+  if (!isRecord(payload)) return written;
+  if (written.event === "chat" || written.event === "agent") {
+    return payload.runId === undefined
+      ? { ...written, payload: { runId, sessionKey, ...payload } }
+      : written;
+  }
+  if (written.event === "session.message" && isRecord(payload.message)) {
+    const message = payload.message;
+    const openclaw = isRecord(message.__openclaw) ? message.__openclaw : {};
+    if (openclaw.runId !== undefined) return written;
+    const [, agentId] = sessionKey.split(":");
+    return {
+      ...written,
+      payload: {
+        sessionKey,
+        agentId,
+        ...payload,
+        message: {
+          ...message,
+          __openclaw: {
+            runId,
+            id: randomUUID(),
+            recordTimestampMs: Date.now(),
+            transcriptPosition: { lineOffset: 1, byteOffset: 1 },
+            seq: 1,
+            ...openclaw,
+          },
+        },
+      },
+    };
+  }
+  return written;
+}
+
+/** The usage of one model call, as the daemon's transcript record carries it (Finding 3). */
+export type ModelCall = {
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead?: number;
+  readonly cacheWrite?: number;
+  /** The daemon's computed cost of the call, `usage.cost.total`. */
+  readonly cost?: number;
+  readonly provider?: string;
+  readonly model?: string;
+  readonly stopReason?: string;
+  readonly content?: readonly Written[];
+};
+
+/**
+ * The `session.message` record of one assistant message, which a subscribed connection receives
+ * once per model call with that call's full usage. The scripted daemon stamps the Run's id into
+ * `__openclaw` when it sends it.
+ */
+export function modelCall(call: ModelCall): Written {
+  const cacheRead = call.cacheRead ?? 0;
+  const cacheWrite = call.cacheWrite ?? 0;
+  const cost = call.cost ?? 0;
+  return {
+    event: "session.message",
+    payload: {
+      message: {
+        role: "assistant",
+        content: call.content ?? [{ type: "text", text: "Done." }],
+        api: "openai-completions",
+        provider: call.provider ?? "mock",
+        model: call.model ?? "mock-model",
+        usage: {
+          input: call.input,
+          output: call.output,
+          totalTokens: call.input + call.output + cacheRead + cacheWrite,
+          cacheRead,
+          cacheWrite,
+          cost: { input: cost, output: 0, cacheRead: 0, cacheWrite: 0, total: cost },
+        },
+        stopReason: call.stopReason ?? "stop",
+        timestamp: 1794180731352,
+        responseId: "concorde-mock",
+      },
+    },
+  };
+}
+
+/**
+ * The synthetic assistant record the daemon writes for a model call it could not complete, usage
+ * all zero and `stopReason: "error"`; a refused call produces one (Finding 3).
+ */
+export const refusedCall: ModelCall = {
+  input: 0,
+  output: 0,
+  stopReason: "error",
+  content: [{ type: "text", text: "The agent run failed before producing a reply." }],
+};
+
+/**
+ * The frames a Run's model calls produce, in the order observed: the Prompt's own `user` record
+ * first, then per call the `agent` `usage` frame with the running output total and the call's
+ * `session.message` record.
+ */
+export function modelCalls(...calls: readonly ModelCall[]): readonly Written[] {
+  const frames: Written[] = [
+    {
+      event: "session.message",
+      payload: {
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "what happened?" }],
+          timestamp: 1794180731000,
+        },
+      },
+    },
+  ];
+  let outputTokens = 0;
+  for (const call of calls) {
+    outputTokens += call.output;
+    if (call.output > 0) {
+      frames.push({
+        event: "agent",
+        payload: { stream: "usage", data: { outputTokens }, seq: frames.length },
+      });
+    }
+    frames.push(modelCall(call));
+  }
+  return frames;
 }
 
 // The daemon stores a bare key as `agent:<agentId>:<key>`, under the agent id it was sent or its

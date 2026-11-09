@@ -1,8 +1,9 @@
 import { type KeyObject, KeyObject as KeyObjectClass, randomUUID } from "node:crypto";
 import type { ChatEvent } from "@openclaw/gateway-protocol";
 import { defaultLogger, type Logger } from "../logging/index.ts";
-import type { RunOutcome, RunPrompt, Runtime } from "../signals/runtime.ts";
+import type { RunOutcome, RunPrompt, Runtime, UsageReport } from "../signals/runtime.ts";
 import { type Connection, deviceIdentityOf, openConnection } from "./connection.ts";
+import { usageOf } from "./usage.ts";
 
 export type OpenClawDaemon = {
   /** `ws://` for a private network, `wss://` for everything else. */
@@ -43,7 +44,14 @@ export type OpenClawDaemon = {
  * `OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1` in its environment; an Operator on a private Docker
  * network reaching the daemon by its service name sets that variable. `wss://` needs nothing.
  *
- * The outcome carries no Usage yet: this Runtime does not read the daemon's per-call records.
+ * The outcome carries one Usage report per model call the Run made, on success and on failure,
+ * read from the transcript records the daemon streams to a connection subscribed to the Session:
+ * provider, model, the four token counts and the daemon's own cost figure. A record counts for
+ * this Run by the run id it carries, never by order, since the connection hears every Run in the
+ * Session. The daemon's all-zero record for a call it refused or cut off is kept as a call that
+ * charged nothing. Usage for a call in flight when the Run was aborted does not exist on the wire
+ * and is not reported. The daemon's session-level usage method is never called: it reports per
+ * Session, not per Run, and would count turns that were never ours.
  */
 export function createOpenClawRuntime(daemon: OpenClawDaemon): Runtime {
   const { url, token, deviceKey, agentId } = daemon;
@@ -136,30 +144,42 @@ async function performRun(
 
 // Every connection with operator.read receives every Run's chat frames, so a frame belongs to this
 // Run only by its runId. A failed Run sends two error frames; the first terminal frame ends it.
+// The Run's Usage is the session.message records collected until then: every record of a Run
+// arrived before its terminal frame in every observed Run, so nothing waits after it.
 async function followRun(
   connection: Connection,
   runId: string,
   failed: (why: string) => RunOutcome,
 ): Promise<RunOutcome> {
+  const usage: UsageReport[] = [];
+  const failedWithUsage = (why: string): RunOutcome => ({ ...failed(why), usage });
+
   for await (const frame of connection.events()) {
+    if (frame.event === "session.message") {
+      const report = usageOf(frame.payload, runId);
+      if (report !== undefined) usage.push(report);
+      continue;
+    }
     if (frame.event !== "chat" || !isChatEvent(frame.payload) || frame.payload.runId !== runId) {
       continue;
     }
     const chat = frame.payload;
     switch (chat.state) {
       case "final":
-        return { ok: true, usage: [] };
+        return { ok: true, usage };
       case "error":
-        return failed(`The agent failed: ${chat.errorMessage ?? "the daemon gave no reason"}`);
+        return failedWithUsage(
+          `The agent failed: ${chat.errorMessage ?? "the daemon gave no reason"}`,
+        );
       case "aborted":
-        return failed(
+        return failedWithUsage(
           `The Run was aborted${chat.errorMessage === undefined ? "" : `: ${chat.errorMessage}`}`,
         );
       default:
         continue;
     }
   }
-  return failed(connection.closed() ?? "The connection closed before the Run ended");
+  return failedWithUsage(connection.closed() ?? "The connection closed before the Run ended");
 }
 
 function isChatEvent(payload: unknown): payload is ChatEvent {
