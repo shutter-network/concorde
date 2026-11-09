@@ -20,4 +20,4 @@ export type {
   SignalWorker,
   SignalWorkerOptions,
 } from "./worker.ts";
-export { createSignalWorker } from "./worker.ts";
+export { createSignalWorker, runTagHeader } from "./worker.ts";

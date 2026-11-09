@@ -17,7 +17,8 @@ Concorde supplies:
 
 - Persistent message logs, with an HTTP channel or Nostr channel for delivery.
 - Users and authentication through passwords or signed Nostr requests.
-- A signal worker that executes runs one at a time.
+- A signal worker that runs prompts in parallel, except where they share a session or a
+  resource, which it runs in order.
 - Schedules that wake the agent.
 - Signed statements and stored, numbered decisions.
 
@@ -70,7 +71,7 @@ from the registry rather than this checkout.
 | [Scheduler](./examples/01_scheduler/) | Scheduled runs without users or messaging |
 | [Decisions](./examples/02_decisions/) | Two users and a shared record of signed decisions |
 | [Nostr](./examples/03_nostr/) | Encrypted direct messages through a local relay |
-| [Agent isolation](./examples/04_agent_isolation/) | Restricted agent networking and a model proxy that holds the credential |
+| [Agent isolation](./examples/04_agent_isolation/) | Restricted agent networking, a model proxy that holds the credential, and per-run rules enforced by run tag |
 | [Usage limits](./examples/05_usage_limits/) | Two users, each with a daily token limit |
 
 ## Deployment boundaries

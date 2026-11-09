@@ -24,10 +24,12 @@ export type CurrentRun = {
 
 declare module "fastify" {
   interface FastifyRequest {
-    /** Present only while a runtime call is active, on requests to the agent server. */
+    /** Active Run identified by the `concorde-run-tag` header, or undefined. */
     concordeRun: CurrentRun | undefined;
   }
 }
+
+export const runTagHeader = "concorde-run-tag";
 
 export type SignalWorkerOptions = {
   readonly db: Db;
@@ -43,6 +45,7 @@ export type SignalWorkerOptions = {
 export type SignalWorker = Component & {
   readonly agentRoutes: FastifyPluginAsync;
 
+  /** Install at the server root when constructing an Agent server outside the Gateway. */
   readonly decorateRun: onRequestHookHandler;
 
   /**
@@ -56,7 +59,7 @@ export type SignalWorker = Component & {
 
   start(): Promise<void>;
 
-  /** Waits for the active signal, including its runs and post phase. Pending signals remain queued. */
+  /** Drain claimed Signals, including queued Runs and post phases; leave pending Signals queued. */
   stop(): Promise<void>;
 };
 
@@ -67,20 +70,47 @@ const defaultSweepIntervalMs = 5_000;
 const strandedSignal =
   "Worker restart interrupted this signal. It was not retried because its runs may already have produced effects.";
 const strandedRun = "Worker restart interrupted this run. Runs are not automatically retried.";
+const tagAlreadyLive = "Run tag already live on another Run";
 
 type WakeupReason = "start" | "notification" | "listening" | "sweep";
 
 type QueuedRun = {
   readonly id: string;
+  readonly signal: Signal;
   readonly prompt: RunPrompt;
   readonly context: unknown;
   readonly userId: string | null;
+
+  readonly resources: ReadonlySet<string>;
+
+  readonly tag: string | undefined;
+  started: boolean;
+  ended: boolean;
+  /** Stay queued after ending, until the Signal's post phase has returned. */
+  readonly heldThroughPost: boolean;
+  readonly outcome: PromiseWithResolvers<RunOutcome>;
 };
 
-/**
- * Run only one worker per database. Startup fails interrupted signals and their unfinished runs
- * rather than replaying them. Pending signals are processed in emission order.
- * `createGateway` constructs this component for you.
+// A Run held through its Signal's post phase blocks a later Signal's Run until that phase
+// returns, and never a Run of its own Signal, which the post phase is waiting for.
+function blocks(earlier: QueuedRun, run: QueuedRun): boolean {
+  if (earlier.ended && earlier.signal.id === run.signal.id) return false;
+  return conflicts(earlier, run);
+}
+
+function conflicts(one: QueuedRun, other: QueuedRun): boolean {
+  if (one.prompt.session === other.prompt.session) return true;
+  for (const resource of one.resources) {
+    if (other.resources.has(resource)) return true;
+  }
+  return false;
+}
+
+/** One worker per database. Claims and handles Signals in emission order.
+ * A Run starts when no earlier unfinished Run shares its Session or a resource, counting a Run
+ * as unfinished until its Signal's post phase returns, where the Handler has one.
+ * Claiming pauses until every queued Run has started, bounding crash recovery to active Signals
+ * plus one waiting Signal. Interrupted work fails on restart without replay.
  */
 export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   const log = options.logger ?? defaultLogger();
@@ -91,10 +121,13 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
 
   const handle = options.db.handle(signalsTables);
 
-  let current: CurrentRun | undefined;
+  const queue: QueuedRun[] = [];
+
+  const inFlight = new Map<string, CurrentRun>();
 
   const decorateRun: onRequestHookHandler = (request, _reply, done) => {
-    request.concordeRun = current;
+    const tag = request.headers[runTagHeader];
+    request.concordeRun = typeof tag === "string" ? inFlight.get(tag) : undefined;
     done();
   };
 
@@ -109,6 +142,11 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
   let woken = false;
   let recovered = false;
   let stopping = false;
+
+  let scheduling = false;
+  let startWaiters: (() => void)[] = [];
+
+  const finishing = new Set<Promise<void>>();
 
   async function claim(): Promise<typeof signals.$inferSelect | undefined> {
     while (!stopping) {
@@ -135,6 +173,8 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
       const claimed = await claim();
       if (claimed === undefined) return;
       await processSignal(claimed);
+
+      await allStarted();
     }
   }
 
@@ -157,7 +197,6 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
 
     let prompts: readonly Prompt[] | undefined;
     let failure: string | undefined;
-    let limited = false;
     try {
       prompts = await handler.handle(signal);
     } catch (error) {
@@ -166,45 +205,39 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
       log.error({ signalId: signal.id, kind: signal.kind, err: error }, "Signal handler failed");
     }
 
-    if (prompts !== undefined) {
-      ({ failure, limited } = await executeRuns(signal, prompts));
-    }
-
-    if (handler.post !== undefined) {
-      try {
-        await handler.post(signal, { failed: failure !== undefined, limited });
-      } catch (error) {
-        log.error(
-          { signalId: signal.id, kind: signal.kind, err: error },
-          "Signal handler post phase failed",
-        );
-        const postFailure = `Post phase failed: ${describe(error)}`;
-        failure = failure === undefined ? postFailure : `${failure}; ${postFailure}`;
-      }
-    }
-
-    await settle(signal, failure);
+    const queuedRuns =
+      prompts === undefined ? [] : await enqueue(signal, prompts, handler.post !== undefined);
+    const finished: Promise<void> = finishSignal(signal, handler, queuedRuns, failure).finally(() =>
+      finishing.delete(finished),
+    );
+    finishing.add(finished);
   }
 
-  async function executeRuns(
+  async function enqueue(
     signal: Signal,
     prompts: readonly Prompt[],
-  ): Promise<{ failure: string | undefined; limited: boolean }> {
-    if (prompts.length === 0) {
-      return { failure: undefined, limited: false };
-    }
+    heldThroughPost: boolean,
+  ): Promise<QueuedRun[]> {
+    if (prompts.length === 0) return [];
 
-    const queued: QueuedRun[] = prompts.map((prompt) => {
+    const queuedRuns: QueuedRun[] = prompts.map((prompt) => {
       const id = randomUUID();
       return {
         id,
+        signal,
         prompt: promptForRun(id, prompt),
         context: prompt.context ?? null,
         userId: prompt.userId ?? null,
+        resources: new Set(prompt.resources ?? []),
+        tag: prompt.tag,
+        started: false,
+        ended: false,
+        heldThroughPost,
+        outcome: Promise.withResolvers<RunOutcome>(),
       };
     });
     await handle.insert(runs).values(
-      queued.map(({ id, prompt, context, userId }) => ({
+      queuedRuns.map(({ id, prompt, context, userId }) => ({
         id,
         signalId: signal.id,
         session: prompt.session,
@@ -214,13 +247,61 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
       })),
     );
 
+    queue.push(...queuedRuns);
+    schedule();
+    return queuedRuns;
+  }
+
+  async function finishSignal(
+    signal: Signal,
+    handler: SignalHandlers[string],
+    queuedRuns: readonly QueuedRun[],
+    handleFailure: string | undefined,
+  ): Promise<void> {
+    try {
+      let failure = handleFailure;
+      let limited = false;
+      if (queuedRuns.length > 0) {
+        ({ failure, limited } = await outcomesOf(queuedRuns));
+      }
+
+      if (handler.post !== undefined) {
+        try {
+          await handler.post(signal, { failed: failure !== undefined, limited });
+        } catch (error) {
+          log.error(
+            { signalId: signal.id, kind: signal.kind, err: error },
+            "Signal handler post phase failed",
+          );
+          const postFailure = `Post phase failed: ${describe(error)}`;
+          failure = failure === undefined ? postFailure : `${failure}; ${postFailure}`;
+        }
+      }
+
+      await settle(signal, failure);
+    } catch (error) {
+      log.error(
+        { signalId: signal.id, kind: signal.kind, err: error },
+        "Signal could not be finished; it stays processing until the next worker start",
+      );
+    } finally {
+      for (const run of queuedRuns) dequeue(run);
+      schedule();
+    }
+  }
+
+  async function outcomesOf(
+    queuedRuns: readonly QueuedRun[],
+  ): Promise<{ failure: string | undefined; limited: boolean }> {
+    const results = await Promise.allSettled(queuedRuns.map((run) => run.outcome.promise));
+
     const failures: string[] = [];
     let limited = false;
-    for (const run of queued) {
-      const outcome = await executeRun(signal, run);
-      if (!outcome.ok) {
-        failures.push(outcome.error);
-        limited ||= outcome.limited === true;
+    for (const result of results) {
+      if (result.status === "rejected") throw result.reason;
+      if (!result.value.ok) {
+        failures.push(result.value.error);
+        limited ||= result.value.limited === true;
       }
     }
 
@@ -229,26 +310,107 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
     const failure =
       failures.length === 1
         ? `Run failed: ${first}`
-        : `${failures.length} of ${queued.length} runs failed. First error: ${first}`;
+        : `${failures.length} of ${queuedRuns.length} runs failed. First error: ${first}`;
     return { failure, limited };
   }
 
-  async function executeRun(signal: Signal, run: QueuedRun): Promise<RunOutcome> {
-    const { id: runId, prompt, context } = run;
-    log.info({ runId, signalId: signal.id, session: prompt.session }, "Run started");
-    await handle
-      .update(runs)
-      .set({ state: "running", startedAt: sql`clock_timestamp()` })
-      .where(eq(runs.id, runId));
+  // Include waiting Runs so a later Run cannot overtake an earlier conflicting Run.
+  function startable(): QueuedRun | undefined {
+    for (const [index, run] of queue.entries()) {
+      if (run.started) continue;
+      if (queue.slice(0, index).some((earlier) => blocks(earlier, run))) continue;
+      return run;
+    }
+    return undefined;
+  }
 
-    current = { id: runId, signalId: signal.id, session: prompt.session, context };
-    let outcome: RunOutcome;
+  function schedule(): void {
+    if (scheduling) return;
+    scheduling = true;
+    void (async () => {
+      try {
+        for (;;) {
+          const next = startable();
+          if (next === undefined) break;
+          next.started = true;
+          await startRun(next);
+        }
+      } catch (error) {
+        log.error({ err: error }, "Scheduling scan failed; resumed when a Run is queued or ends");
+      } finally {
+        scheduling = false;
+        if (!queue.some((run) => !run.started)) {
+          const waiters = startWaiters;
+          startWaiters = [];
+          for (const wake of waiters) wake();
+        }
+      }
+    })();
+  }
+
+  function allStarted(): Promise<void> {
+    if (!queue.some((run) => !run.started)) return Promise.resolve();
+    return new Promise((resolve) => startWaiters.push(resolve));
+  }
+
+  async function startRun(run: QueuedRun): Promise<void> {
+    const { id: runId, signal, prompt } = run;
+    log.info({ runId, signalId: signal.id, session: prompt.session }, "Run started");
     try {
-      outcome = await runtime.run(prompt);
+      await handle
+        .update(runs)
+        .set({ state: "running", startedAt: sql`clock_timestamp()` })
+        .where(eq(runs.id, runId));
     } catch (error) {
-      outcome = { ok: false, error: describe(error), usage: [] };
-    } finally {
-      current = undefined;
+      endRun(run);
+      run.outcome.reject(error);
+      return;
+    }
+
+    void performRun(run).then(
+      (outcome) => {
+        endRun(run);
+        run.outcome.resolve(outcome);
+      },
+      (error: unknown) => {
+        endRun(run);
+        run.outcome.reject(error);
+      },
+    );
+  }
+
+  function endRun(run: QueuedRun): void {
+    run.ended = true;
+    if (!run.heldThroughPost) dequeue(run);
+    schedule();
+  }
+
+  function dequeue(run: QueuedRun): void {
+    const index = queue.indexOf(run);
+    if (index !== -1) queue.splice(index, 1);
+  }
+
+  async function performRun(run: QueuedRun): Promise<RunOutcome> {
+    const { id: runId, signal, prompt, context, tag } = run;
+
+    const current: CurrentRun = {
+      id: runId,
+      signalId: signal.id,
+      session: prompt.session,
+      context,
+    };
+    let outcome: RunOutcome;
+    if (tag !== undefined && inFlight.has(tag)) {
+      outcome = { ok: false, error: tagAlreadyLive, usage: [] };
+    } else {
+      if (tag !== undefined) inFlight.set(tag, current);
+      try {
+        outcome = await runtime.run(prompt);
+      } catch (error) {
+        outcome = { ok: false, error: describe(error), usage: [] };
+      } finally {
+        if (tag !== undefined) inFlight.delete(tag);
+      }
     }
 
     try {
@@ -411,6 +573,8 @@ export function createSignalWorker(options: SignalWorkerOptions): SignalWorker {
         listening = undefined;
       }
       await working;
+
+      await Promise.all(finishing);
     },
   };
 }

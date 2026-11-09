@@ -12,11 +12,15 @@ export type Prompt = {
    */
   readonly session: string | null;
   readonly text: string;
-  /**
-   * JSON stored on the run and exposed as `request.concordeRun.context` during execution.
-   * Omission becomes `null`. The runtime does not receive it; put agent instructions in `text`.
-   */
+
+  /** JSON stored on the Run and exposed through `request.concordeRun.context`; omitted means null. */
   readonly context?: unknown;
+
+  /** Fresh random tag. Include it in `text` and instruct the agent to send it as `concorde-run-tag`.
+   * Used only while the Run is active; omitted or unknown tags give no request attribution.
+   * Tags are visible in Session files and are not an authorization boundary.
+   */
+  readonly tag?: string;
   /**
    * Add this Run's usage to this User's total. Take the id from data authenticated by the
    * Gateway, such as a Message's `userId`. Never take it from text written by a model or sender.
@@ -35,6 +39,11 @@ export type Prompt = {
    * stopped for usage, so every Prompt run for a User with a budget needs one.
    */
   readonly usageLimit?: number;
+
+  /** Exclusive resource names. Runs sharing a Session or resource execute in emission order.
+   * Resources are separate from Session names and are neither stored nor passed to the Runtime.
+   */
+  readonly resources?: readonly string[];
 };
 
 export type PostOutcome = {
@@ -43,13 +52,10 @@ export type PostOutcome = {
   readonly limited: boolean;
 };
 
-/**
- * Prompts run serially in array order. An empty array completes the signal without a run;
- * a failed run does not prevent later prompts from running.
- *
- * `post` runs after all runs, including when `handle` throws. `failed` covers failures in
- * `handle` or any run. `limited` is true if any run exceeded its usage limit. A thrown `post`
- * also fails the signal. No phase is automatically retried, and the worker imposes no timeout.
+/** Prompts run in array order where Sessions or resources conflict; other Runs may overlap.
+ * `post` runs after all Runs, including when `handle` throws; where a Handler has one, its Runs'
+ * Sessions and resources stay held until it returns. `handle` of a later Signal runs while
+ * earlier Signals' Runs and `post` are still in flight. No phase is retried automatically.
  */
 export type SignalHandler<TPayload = unknown> = {
   handle(signal: Signal<TPayload>): readonly Prompt[] | Promise<readonly Prompt[]>;

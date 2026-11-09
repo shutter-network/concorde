@@ -14,7 +14,7 @@ export type RunOutcome =
       readonly limited?: boolean;
     };
 
-export type RunPrompt = Omit<Prompt, "session" | "context" | "userId"> & {
+export type RunPrompt = Omit<Prompt, "session" | "context" | "userId" | "resources" | "tag"> & {
   readonly session: string;
 };
 
@@ -34,12 +34,8 @@ export type UsageReport = {
   readonly cost: number;
 };
 
-/**
- * The worker calls `run` serially and saves the outcome's `usage` when it returns.
- * A runtime must return rather than throw, since a thrown error carries no usage; the worker
- * records a thrown error as a failed run with no usage. The framework supplies no timeout or
- * cancellation; an unsettled call blocks subsequent signals and its usage is never saved.
- * Agent output is not delivered to users automatically. Use the messenger to send messages.
+/** Calls may overlap. Return Usage on success and failure; throwing loses Usage.
+ * No timeout or cancellation is supplied. An unsettled call also blocks worker shutdown.
  */
 export type Runtime = {
   run(prompt: RunPrompt): Promise<RunOutcome>;

@@ -1,20 +1,20 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { asc, eq, sql } from "drizzle-orm";
-import Fastify from "fastify";
+import Fastify, { type FastifyInstance } from "fastify";
 import type { Db, Listening } from "../db/index.ts";
 import type { LogFields, Logger } from "../logging/logging.ts";
 import { applySchema } from "../test-support/apply-schema.ts";
 import { cutListeningBackends } from "../test-support/backends.ts";
 import { createTestDatabase, type TestDatabase } from "../test-support/database.ts";
-import { fakeRuntime } from "../test-support/fake-runtime.ts";
+import { fakeRuntime, gatedRuntime } from "../test-support/fake-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
-import type { SignalHandler, SignalHandlers } from "./handlers.ts";
-import type { Runtime, UsageReport } from "./runtime.ts";
+import type { Prompt, SignalHandler, SignalHandlers } from "./handlers.ts";
+import type { RunPrompt, Runtime, UsageReport } from "./runtime.ts";
 import * as signalsSchema from "./schema/index.ts";
 import { runs, signals, usage } from "./schema/index.ts";
 import { createUsage } from "./usage.ts";
-import { createSignalWorker, type SignalWorker, signalChannel } from "./worker.ts";
+import { createSignalWorker, runTagHeader, type SignalWorker, signalChannel } from "./worker.ts";
 
 let database: TestDatabase;
 let db: Db;
@@ -127,6 +127,13 @@ function runsOf(signalId: string): Promise<(typeof runs.$inferSelect)[]> {
     .orderBy(asc(runs.startedAt));
 }
 
+async function queued(signalId: string): Promise<void> {
+  await waitUntil(
+    `Signal ${signalId} has its Runs queued`,
+    async () => (await runsOf(signalId)).length > 0,
+  );
+}
+
 describe("worker.emit", () => {
   it("records a Signal as pending", async () => {
     const worker = createSignalWorker({
@@ -206,6 +213,53 @@ export function constructingWithoutHandlersDoesNotCompile(runtime: Runtime): Sig
   return createSignalWorker({ db, runtime });
 }
 
+describe("worker.stop", () => {
+  it("lets a Run that had not started run to its outcome and settles its Signal, leaving pending Signals queued", async () => {
+    const gated = gatedRuntime();
+    const posted: string[] = [];
+    const sharing: SignalHandler<string> = {
+      handle: (signal) => [{ session: "shared", text: signal.payload }],
+      post: (signal) => {
+        posted.push(signal.payload);
+      },
+    };
+    const worker = createSignalWorker({
+      db,
+      runtime: gated.runtime,
+      handlers: { sharing },
+      logger: recordingLogger([]),
+      sweepIntervalMs: sweepingMs,
+    });
+    await worker.start();
+    let pending: string | undefined;
+    try {
+      const first = await emit(worker, "sharing", "first");
+      const second = await emit(worker, "sharing", "second");
+      await gated.started("first");
+      await queued(second);
+      pending = await emit(worker, "sharing", "never claimed");
+
+      const stopping = worker.stop();
+      gated.release("first");
+      await gated.started("second");
+      gated.release("second");
+      await stopping;
+
+      assert.equal((await signalRow(first))?.state, "done");
+      assert.equal((await signalRow(second))?.state, "done");
+      assert.deepEqual(posted, ["first", "second"]);
+      assert.deepEqual(gated.runtime.texts(), ["first", "second"]);
+      assert.equal((await signalRow(pending))?.state, "pending");
+    } finally {
+      gated.releaseAll();
+      await worker.stop();
+      if (pending !== undefined) {
+        await db.handle({ signals }).delete(signals).where(eq(signals.id, pending));
+      }
+    }
+  });
+});
+
 describe("the worker", () => {
   it("dispatches on kind to exactly one Handler", async () => {
     const seenByA: string[] = [];
@@ -251,7 +305,8 @@ describe("the worker", () => {
   });
 
   it("produces one Run per Prompt, each carrying its own Session name", async () => {
-    const runtime = fakeRuntime();
+    const gated = gatedRuntime();
+    const runtime = gated.runtime;
     await withWorker(
       {
         fan: {
@@ -265,6 +320,11 @@ describe("the worker", () => {
       runtime,
       async (worker) => {
         const id = await emit(worker, "fan");
+        try {
+          await gated.started("three, in a fresh Session");
+        } finally {
+          gated.releaseAll();
+        }
         assert.equal((await settled(id)).state, "done");
 
         const rows = await runsOf(id);
@@ -283,29 +343,483 @@ describe("the worker", () => {
           "every Run should be timed",
         );
         assert.deepEqual(runtime.texts(), ["one", "two", "three, in a fresh Session"]);
-        assert.equal(runtime.overlapped, false);
+        assert.equal(runtime.overlapped, true, "three distinct Sessions should run together");
       },
     );
   });
 
-  it("processes Signals in arrival order, one Run at a time", async () => {
-    const runtime = fakeRuntime();
+  it("runs two Prompts in distinct Sessions at the same time, from one Signal or from two", async () => {
+    const gated = gatedRuntime();
+    await withWorker(
+      {
+        pair: {
+          handle: () => [
+            { session: "alice", text: "for alice" },
+            { session: "bob", text: "for bob" },
+          ],
+        },
+        one: { handle: () => [{ session: "carol", text: "for carol" }] },
+      },
+      gated.runtime,
+      async (worker) => {
+        try {
+          const pairId = await emit(worker, "pair");
+          const oneId = await emit(worker, "one");
+
+          await gated.started("for alice");
+          await gated.started("for bob");
+          await gated.started("for carol");
+          assert.equal(gated.runtime.overlapped, true, "the three Runs should be in flight");
+
+          gated.releaseAll();
+          assert.equal((await settled(pairId)).state, "done");
+          assert.equal((await settled(oneId)).state, "done");
+          assert.deepEqual(gated.runtime.texts(), ["for alice", "for bob", "for carol"]);
+        } finally {
+          gated.releaseAll();
+        }
+      },
+    );
+  });
+
+  it("runs Prompts that share a Session in emission order, one at a time, across Signals", async () => {
+    const gated = gatedRuntime();
     const ordered: SignalHandler<{ n: number }> = {
-      handle: (signal) => [
-        { session: `user_${signal.payload.n}`, text: `${signal.payload.n}a` },
-        { session: null, text: `${signal.payload.n}b` },
-      ],
+      handle: (signal) => [{ session: "shared", text: String(signal.payload.n) }],
     };
 
-    await withWorker({ ordered }, runtime, async (worker) => {
-      const ids: string[] = [];
-      for (const n of [1, 2, 3] as const) {
-        ids.push(await emit(worker, "ordered", { n }));
-      }
-      for (const id of ids) await settled(id);
+    await withWorker({ ordered }, gated.runtime, async (worker) => {
+      try {
+        const first = await emit(worker, "ordered", { n: 1 });
+        const second = await emit(worker, "ordered", { n: 2 });
+        const third = await emit(worker, "ordered", { n: 3 });
 
-      assert.deepEqual(runtime.texts(), ["1a", "1b", "2a", "2b", "3a", "3b"]);
-      assert.equal(runtime.overlapped, false, "two Runs were in flight at once");
+        await gated.started("1");
+        await queued(second);
+        gated.release("1");
+
+        await gated.started("2");
+        await queued(third);
+        gated.release("2");
+        gated.release("3");
+
+        for (const id of [first, second, third]) assert.equal((await settled(id)).state, "done");
+        assert.deepEqual(gated.runtime.texts(), ["1", "2", "3"]);
+        assert.equal(gated.runtime.overlapped, false, "two Runs of one Session were in flight");
+      } finally {
+        gated.releaseAll();
+      }
+    });
+  });
+
+  it("runs Prompts in distinct Sessions that share a Resource in emission order, one at a time, across Signals", async () => {
+    const gated = gatedRuntime();
+    await withWorker(
+      {
+        first: {
+          handle: () => [{ session: "alice", text: "alice's", resources: ["the workspace"] }],
+        },
+        rest: {
+          handle: () => [
+            { session: "bob", text: "bob's", resources: ["the workspace"] },
+            { session: "carol", text: "carol's" },
+          ],
+        },
+      },
+      gated.runtime,
+      async (worker) => {
+        try {
+          const firstId = await emit(worker, "first");
+          const restId = await emit(worker, "rest");
+
+          await gated.started("alice's");
+          await gated.started("carol's");
+          assert.deepEqual(gated.runtime.texts(), ["alice's", "carol's"]);
+
+          gated.release("alice's");
+          await gated.started("bob's");
+          gated.releaseAll();
+
+          assert.equal((await settled(firstId)).state, "done");
+          assert.equal((await settled(restId)).state, "done");
+          assert.deepEqual(gated.runtime.texts(), ["alice's", "carol's", "bob's"]);
+          assert.deepEqual(
+            gated.runtime.recorded[0],
+            { session: "alice", text: "alice's" },
+            "the Runtime should not receive the Resources",
+          );
+        } finally {
+          gated.releaseAll();
+        }
+      },
+    );
+  });
+
+  it("holds a Run behind a waiting Run it shares a Resource with, so a Run never overtakes an earlier one holding its Resource", async () => {
+    const gated = gatedRuntime();
+    await withWorker(
+      {
+        first: { handle: () => [{ session: "a", text: "holding x", resources: ["x"] }] },
+        rest: {
+          handle: () => [
+            { session: "b", text: "needing x and y", resources: ["x", "y"] },
+            { session: "c", text: "needing y", resources: ["y"] },
+            { session: "d", text: "needing nothing" },
+          ],
+        },
+      },
+      gated.runtime,
+      async (worker) => {
+        try {
+          const firstId = await emit(worker, "first");
+          const restId = await emit(worker, "rest");
+
+          await gated.started("holding x");
+          await gated.started("needing nothing");
+          assert.deepEqual(gated.runtime.texts(), ["holding x", "needing nothing"]);
+
+          gated.release("holding x");
+          await gated.started("needing x and y");
+          gated.release("needing x and y");
+          await gated.started("needing y");
+          gated.releaseAll();
+
+          assert.equal((await settled(firstId)).state, "done");
+          assert.equal((await settled(restId)).state, "done");
+          assert.deepEqual(gated.runtime.texts(), [
+            "holding x",
+            "needing nothing",
+            "needing x and y",
+            "needing y",
+          ]);
+        } finally {
+          gated.releaseAll();
+        }
+      },
+    );
+  });
+
+  it("serializes a Prompt naming several Resources against a Run that shares any one of them", async () => {
+    const gated = gatedRuntime();
+    await withWorker(
+      {
+        holders: {
+          handle: () => [
+            { session: "a", text: "holding x", resources: ["x"] },
+            { session: "b", text: "holding z", resources: ["z"] },
+          ],
+        },
+        askers: {
+          handle: () => [
+            { session: "c", text: "needing w and x", resources: ["w", "x"] },
+            { session: "d", text: "needing v and z", resources: ["v", "z"] },
+            { session: "e", text: "needing q", resources: ["q"] },
+          ],
+        },
+      },
+      gated.runtime,
+      async (worker) => {
+        try {
+          const holdersId = await emit(worker, "holders");
+          const askersId = await emit(worker, "askers");
+
+          await gated.started("holding x");
+          await gated.started("holding z");
+          await gated.started("needing q");
+          assert.deepEqual(gated.runtime.texts(), ["holding x", "holding z", "needing q"]);
+
+          gated.release("holding x");
+          await gated.started("needing w and x");
+          gated.release("holding z");
+          await gated.started("needing v and z");
+          gated.releaseAll();
+
+          assert.equal((await settled(holdersId)).state, "done");
+          assert.equal((await settled(askersId)).state, "done");
+          assert.deepEqual(gated.runtime.texts(), [
+            "holding x",
+            "holding z",
+            "needing q",
+            "needing w and x",
+            "needing v and z",
+          ]);
+        } finally {
+          gated.releaseAll();
+        }
+      },
+    );
+  });
+
+  it("runs a Prompt with no Resources alongside a Run in another Session that declares some", async () => {
+    const gated = gatedRuntime();
+    await withWorker(
+      {
+        declaring: {
+          handle: () => [{ session: "a", text: "declaring", resources: ["x", "y"] }],
+        },
+        undeclared: { handle: () => [{ session: "b", text: "undeclared" }] },
+      },
+      gated.runtime,
+      async (worker) => {
+        try {
+          const declaringId = await emit(worker, "declaring");
+          const undeclaredId = await emit(worker, "undeclared");
+
+          await gated.started("declaring");
+          await gated.started("undeclared");
+          assert.equal(gated.runtime.overlapped, true, "both Runs should be in flight");
+
+          gated.releaseAll();
+          assert.equal((await settled(declaringId)).state, "done");
+          assert.equal((await settled(undeclaredId)).state, "done");
+        } finally {
+          gated.releaseAll();
+        }
+      },
+    );
+  });
+
+  it("does not take a Resource named after a Session for that Session", async () => {
+    const gated = gatedRuntime();
+    await withWorker(
+      {
+        inSession: { handle: () => [{ session: "alice", text: "in alice's Session" }] },
+        naming: {
+          handle: () => [
+            { session: "bob", text: "naming alice as a Resource", resources: ["alice"] },
+          ],
+        },
+      },
+      gated.runtime,
+      async (worker) => {
+        try {
+          const inSessionId = await emit(worker, "inSession");
+          const namingId = await emit(worker, "naming");
+
+          await gated.started("in alice's Session");
+          await gated.started("naming alice as a Resource");
+          assert.equal(gated.runtime.overlapped, true, "both Runs should be in flight");
+
+          gated.releaseAll();
+          assert.equal((await settled(inSessionId)).state, "done");
+          assert.equal((await settled(namingId)).state, "done");
+        } finally {
+          gated.releaseAll();
+        }
+      },
+    );
+  });
+
+  it("starts a queued Run as soon as no earlier unfinished Run conflicts with it, and the rest when one ends", async () => {
+    const gated = gatedRuntime();
+    await withWorker(
+      {
+        first: { handle: () => [{ session: "alice", text: "alice's first" }] },
+        rest: {
+          handle: () => [
+            { session: "alice", text: "alice's second" },
+            { session: "bob", text: "bob's" },
+          ],
+        },
+      },
+      gated.runtime,
+      async (worker) => {
+        try {
+          const firstId = await emit(worker, "first");
+          const restId = await emit(worker, "rest");
+
+          await gated.started("alice's first");
+          await gated.started("bob's");
+          assert.deepEqual(gated.runtime.texts(), ["alice's first", "bob's"]);
+
+          gated.release("alice's first");
+          await gated.started("alice's second");
+          gated.releaseAll();
+
+          assert.equal((await settled(firstId)).state, "done");
+          assert.equal((await settled(restId)).state, "done");
+          assert.deepEqual(gated.runtime.texts(), ["alice's first", "bob's", "alice's second"]);
+        } finally {
+          gated.releaseAll();
+        }
+      },
+    );
+  });
+
+  it("claims Signals oldest first and awaits each Handler before the next claim", async () => {
+    const timeline: string[] = [];
+    const firstHandle = Promise.withResolvers<void>();
+    const handling: SignalHandler<{ n: number }> = {
+      handle: async (signal) => {
+        timeline.push(`handle ${signal.payload.n} called`);
+        if (signal.payload.n === 1) await firstHandle.promise;
+        timeline.push(`handle ${signal.payload.n} returned`);
+        return [];
+      },
+    };
+
+    await withWorker({ handling }, fakeRuntime(), async (worker, entries) => {
+      try {
+        const first = await emit(worker, "handling", { n: 1 });
+        const second = await emit(worker, "handling", { n: 2 });
+        await waitUntil("the first Handler is called", async () => timeline.length === 1);
+
+        const sweeps = wakeups(entries, "sweep");
+        await waitUntil("two sweeps pass", async () => wakeups(entries, "sweep") >= sweeps + 2);
+        firstHandle.resolve();
+
+        assert.equal((await settled(first)).state, "done");
+        assert.equal((await settled(second)).state, "done");
+        assert.deepEqual(timeline, [
+          "handle 1 called",
+          "handle 1 returned",
+          "handle 2 called",
+          "handle 2 returned",
+        ]);
+      } finally {
+        firstHandle.resolve();
+      }
+    });
+  });
+
+  it("claims the next Signal only once every queued Run has started", async () => {
+    const gated = gatedRuntime();
+    let startedWhenHandled: string[] | undefined;
+    await withWorker(
+      {
+        shared: {
+          handle: (signal) => [{ session: "shared", text: String(signal.payload) }],
+        },
+        other: {
+          handle: () => {
+            startedWhenHandled = gated.runtime.texts();
+            return [];
+          },
+        },
+      },
+      gated.runtime,
+      async (worker) => {
+        try {
+          const first = await emit(worker, "shared", "first");
+          const second = await emit(worker, "shared", "second");
+          const other = await emit(worker, "other");
+
+          await gated.started("first");
+          await queued(second);
+          gated.release("first");
+          gated.release("second");
+
+          assert.equal((await settled(other)).state, "done");
+          assert.deepEqual(startedWhenHandled, ["first", "second"]);
+          assert.equal((await settled(first)).state, "done");
+          assert.equal((await settled(second)).state, "done");
+        } finally {
+          gated.releaseAll();
+        }
+      },
+    );
+  });
+
+  it("runs a Signal's post phase once its last Run ends, and settles Signals as their Runs finish", async () => {
+    const timeline: string[] = [];
+    const gated = gatedRuntime((prompt) => {
+      timeline.push(`end ${prompt.text}`);
+      return prompt.text === "1a"
+        ? { ok: false, error: "the model refused", usage: [] }
+        : prompt.text === "1b"
+          ? { ok: false, error: "Usage limit reached: 120 of 100 tokens", usage: [], limited: true }
+          : { ok: true, usage: [] };
+    });
+    const told: Record<string, { failed: boolean; limited: boolean }> = {};
+    const posting = (n: string, sessions: readonly string[]): SignalHandler => ({
+      handle: () => sessions.map((session, index) => ({ session, text: `${n}${"ab"[index]}` })),
+      post: (_signal, outcome) => {
+        timeline.push(`post ${n}`);
+        told[n] = { failed: outcome.failed, limited: outcome.limited };
+      },
+    });
+
+    await withWorker(
+      { one: posting("1", ["alice", "bob"]), two: posting("2", ["carol"]) },
+      gated.runtime,
+      async (worker) => {
+        try {
+          const one = await emit(worker, "one");
+          const two = await emit(worker, "two");
+          await gated.started("1a");
+          await gated.started("1b");
+          await gated.started("2a");
+
+          gated.release("2a");
+          assert.equal((await settled(two)).state, "done");
+          assert.deepEqual(
+            (await runsOf(one)).map((run) => run.state),
+            ["running", "running"],
+          );
+
+          gated.release("1b");
+          await waitUntil("1b has ended", async () => timeline.includes("end 1b"));
+          gated.release("1a");
+          const row = await settled(one);
+
+          assert.deepEqual(timeline, ["end 2a", "post 2", "end 1b", "end 1a", "post 1"]);
+          assert.deepEqual(told, {
+            "1": { failed: true, limited: true },
+            "2": { failed: false, limited: false },
+          });
+          assert.equal(row.state, "failed");
+          assert.equal(row.error, "2 of 2 runs failed. First error: the model refused");
+        } finally {
+          gated.releaseAll();
+        }
+      },
+    );
+  });
+
+  it("holds a Session and its Resources through the post phase, so a later Signal's Run waits for it", async () => {
+    const timeline: string[] = [];
+    const gated = gatedRuntime((prompt) => {
+      timeline.push(`end ${prompt.text}`);
+      return { ok: true, usage: [] };
+    });
+    const posting = Promise.withResolvers<void>();
+    const holding: SignalHandler<{ session: string; text: string }> = {
+      handle: (signal) => [{ session: signal.payload.session, text: signal.payload.text }],
+      post: async () => {
+        timeline.push("post begins");
+        await posting.promise;
+        timeline.push("post ends");
+      },
+    };
+    const following: SignalHandler<{ session: string; text: string }> = {
+      handle: (signal) => [{ session: signal.payload.session, text: signal.payload.text }],
+    };
+
+    await withWorker({ holding, following }, gated.runtime, async (worker) => {
+      try {
+        const first = await emit(worker, "holding", { session: "shared", text: "1" });
+        const other = await emit(worker, "following", { session: "other", text: "3" });
+        const second = await emit(worker, "following", { session: "shared", text: "2" });
+
+        await gated.started("1");
+        await gated.started("3");
+        gated.release("1");
+        await waitUntil("the post phase has begun", async () => timeline.includes("post begins"));
+        await queued(second);
+        gated.release("3");
+        assert.equal((await settled(other)).state, "done");
+        assert.deepEqual(gated.runtime.texts(), ["1", "3"]);
+
+        posting.resolve();
+        await gated.started("2");
+        gated.release("2");
+
+        for (const id of [first, second]) assert.equal((await settled(id)).state, "done");
+        assert.deepEqual(timeline, ["end 1", "post begins", "end 3", "post ends", "end 2"]);
+      } finally {
+        posting.resolve();
+        gated.releaseAll();
+      }
     });
   });
 
@@ -491,16 +1005,12 @@ describe("the worker", () => {
     );
   });
 
-  it("has each Run recorded and running by the time the Runtime is called, and the Agent server carrying it", async () => {
-    const fastify = Fastify();
-    fastify.get("/whose", async (request) => request.concordeRun ?? null);
-
+  it("has each Run recorded and running by the time the Runtime is called", async () => {
     type Observed = {
       found: number;
       prompt: string | undefined;
       state: string | undefined;
       context: unknown;
-      carried: unknown;
     };
     const observed: Observed[] = [];
     const runtime = fakeRuntime(async (prompt) => {
@@ -509,21 +1019,17 @@ describe("the worker", () => {
         .select()
         .from(runs)
         .where(eq(runs.session, prompt.session));
-      const carried = await fastify.inject({ method: "GET", url: "/whose" });
       observed.push({
         found: found.length,
         prompt: found[0]?.prompt,
         state: found[0]?.state,
         context: found[0]?.context,
-        carried: carried.json(),
       });
       return { ok: true, usage: [] };
     });
 
-    const worker = createSignalWorker({
-      db,
-      runtime,
-      handlers: {
+    await withWorker(
+      {
         paired: {
           handle: () => [
             { session: "paired_1", text: "first", context: { for: "one" } },
@@ -531,42 +1037,300 @@ describe("the worker", () => {
           ],
         },
       },
-      agentServer: { fastify },
-      logger: recordingLogger([]),
-      sweepIntervalMs: sweepingMs,
-    });
-    await worker.start();
-    try {
-      const id = await emit(worker, "paired");
-      await settled(id);
-      assert.equal((await fastify.inject("/whose")).json(), null);
+      runtime,
+      async (worker) => {
+        const id = await emit(worker, "paired");
+        await settled(id);
 
-      const [first, second] = await runsOf(id);
-      assert.ok(first !== undefined && second !== undefined, "both Runs should exist");
-      assert.deepEqual(observed, [
-        {
-          found: 1,
-          prompt: "first",
-          state: "running",
-          context: { for: "one" },
-          carried: { id: first.id, signalId: id, session: "paired_1", context: { for: "one" } },
-        },
-        {
-          found: 1,
-          prompt: "second",
-          state: "running",
-          context: null,
-          carried: { id: second.id, signalId: id, session: "paired_2", context: null },
-        },
-      ]);
-      assert.deepEqual(runtime.recorded, [
-        { session: "paired_1", text: "first" },
-        { session: "paired_2", text: "second" },
-      ]);
-    } finally {
-      await worker.stop();
-      await fastify.close();
+        assert.deepEqual(
+          observed.sort((a, b) => (a.prompt ?? "").localeCompare(b.prompt ?? "")),
+          [
+            { found: 1, prompt: "first", state: "running", context: { for: "one" } },
+            { found: 1, prompt: "second", state: "running", context: null },
+          ],
+        );
+        assert.deepEqual(runtime.recorded, [
+          { session: "paired_1", text: "first" },
+          { session: "paired_2", text: "second" },
+        ]);
+      },
+    );
+  });
+
+  describe("attributes a request to the Run whose tag it carries", () => {
+    const announcing = "Your Run tag is ";
+    const tagIn = (prompt: RunPrompt): string => prompt.text.slice(announcing.length);
+
+    type Probe = (tag?: string | string[]) => Promise<unknown>;
+    type Probing = { readonly fastify: FastifyInstance; readonly probe: Probe };
+
+    function probing(): Probing {
+      const fastify = Fastify();
+      fastify.get("/whose", async (request) => request.concordeRun ?? null);
+      const probe: Probe = async (tag) =>
+        (
+          await fastify.inject({
+            method: "GET",
+            url: "/whose",
+            headers: tag === undefined ? {} : { [runTagHeader]: tag },
+          })
+        ).json();
+      return { fastify, probe };
     }
+
+    async function withProbedWorker(
+      handlers: SignalHandlers,
+      runtime: Runtime,
+      { fastify }: Probing,
+      body: (worker: SignalWorker) => Promise<void>,
+    ): Promise<void> {
+      const worker = createSignalWorker({
+        db,
+        runtime,
+        handlers,
+        agentServer: { fastify },
+        logger: recordingLogger([]),
+        sweepIntervalMs: sweepingMs,
+      });
+      await worker.start();
+      try {
+        await body(worker);
+      } finally {
+        await worker.stop();
+        await fastify.close();
+      }
+    }
+
+    function taggedPrompt(tag: string, session: string): Prompt {
+      return { session, text: `${announcing}${tag}`, context: { tag }, tag };
+    }
+
+    function tagged(tag: string, session = "tagged"): SignalHandler {
+      return { handle: () => [taggedPrompt(tag, session)] };
+    }
+
+    it("resolves a live tag to that Run, with its id, Signal id, Session and Context", async () => {
+      const seen: unknown[] = [];
+      const probed = probing();
+      const runtime = fakeRuntime(async (prompt) => {
+        seen.push(await probed.probe(tagIn(prompt)));
+        return { ok: true, usage: [] };
+      });
+
+      await withProbedWorker({ tagged: tagged("t_alice") }, runtime, probed, async (worker) => {
+        const id = await emit(worker, "tagged");
+        await settled(id);
+
+        const [run] = await runsOf(id);
+        assert.ok(run !== undefined);
+        assert.deepEqual(seen, [
+          { id: run.id, signalId: id, session: "tagged", context: { tag: "t_alice" } },
+        ]);
+      });
+    });
+
+    it("resolves a request with no header to nothing, even while that Run is alone in flight", async () => {
+      const seen: unknown[] = [];
+      const probed = probing();
+      const runtime = fakeRuntime(async () => {
+        seen.push(await probed.probe());
+        return { ok: true, usage: [] };
+      });
+
+      await withProbedWorker({ tagged: tagged("t_alone") }, runtime, probed, async (worker) => {
+        await settled(await emit(worker, "tagged"));
+
+        assert.deepEqual(seen, [null]);
+      });
+    });
+
+    it("resolves an unknown tag to nothing", async () => {
+      const seen: unknown[] = [];
+      const probed = probing();
+      const runtime = fakeRuntime(async () => {
+        seen.push(await probed.probe("t_nobody"));
+        return { ok: true, usage: [] };
+      });
+
+      await withProbedWorker({ tagged: tagged("t_someone") }, runtime, probed, async (worker) => {
+        await settled(await emit(worker, "tagged"));
+
+        assert.deepEqual(seen, [null]);
+      });
+    });
+
+    it("resolves a header sent twice to nothing while that tag is live, as the values arrive joined into one string", async () => {
+      const seen: unknown[] = [];
+      const probed = probing();
+      const runtime = fakeRuntime(async (prompt) => {
+        const tag = tagIn(prompt);
+        seen.push(await probed.probe([tag, tag]), await probed.probe(tag));
+        return { ok: true, usage: [] };
+      });
+
+      await withProbedWorker({ tagged: tagged("t_twice") }, runtime, probed, async (worker) => {
+        const id = await emit(worker, "tagged");
+        await settled(id);
+
+        const [run] = await runsOf(id);
+        assert.ok(run !== undefined);
+        assert.deepEqual(seen, [
+          null,
+          { id: run.id, signalId: id, session: "tagged", context: { tag: "t_twice" } },
+        ]);
+      });
+    });
+
+    it("resolves the tag to nothing once the Run has ended, whether it succeeded, failed or its Runtime threw", async () => {
+      const runtime = fakeRuntime((prompt) => {
+        const tag = tagIn(prompt);
+        if (tag === "t_failing") return { ok: false, error: "the agent gave up", usage: [] };
+        if (tag === "t_throwing") throw new Error("the connection dropped");
+        return { ok: true, usage: [] };
+      });
+      const handlers: SignalHandlers = {
+        succeeding: tagged("t_succeeding", "s_1"),
+        failing: tagged("t_failing", "s_2"),
+        throwing: tagged("t_throwing", "s_3"),
+      };
+      const probed = probing();
+
+      const { probe } = probed;
+      await withProbedWorker(handlers, runtime, probed, async (worker) => {
+        const ended: Record<string, string> = {};
+        for (const kind of Object.keys(handlers)) {
+          const id = await emit(worker, kind);
+          ended[kind] = (await settled(id)).state;
+        }
+        assert.deepEqual(ended, { succeeding: "done", failing: "failed", throwing: "failed" });
+
+        assert.deepEqual(
+          [await probe("t_succeeding"), await probe("t_failing"), await probe("t_throwing")],
+          [null, null, null],
+        );
+      });
+    });
+
+    it("yields a Run no header resolves to from a Prompt without a tag", async () => {
+      const seen: unknown[] = [];
+      const probed = probing();
+      const runtime = fakeRuntime(async (prompt) => {
+        const [run] = await db
+          .handle({ runs })
+          .select()
+          .from(runs)
+          .where(eq(runs.session, prompt.session));
+        assert.ok(run !== undefined);
+        const { probe } = probed;
+        seen.push(await probe(), await probe(run.id), await probe(prompt.session));
+        return { ok: true, usage: [] };
+      });
+      const untagged: SignalHandler = {
+        handle: () => [{ session: "untagged", text: "no tag written", context: { for: "one" } }],
+      };
+
+      await withProbedWorker({ untagged }, runtime, probed, async (worker) => {
+        await settled(await emit(worker, "untagged"));
+
+        assert.deepEqual(seen, [null, null, null]);
+      });
+    });
+
+    it("resolves each of two overlapping Runs' tags to its own Run alone, and the other's tag to the other Run and never to both", async () => {
+      const pair = { t_alice: "alice", t_bob: "bob" } as const;
+      const otherOf = (tag: string): string => (tag === "t_alice" ? "t_bob" : "t_alice");
+      type Looked = { readonly tag: string; readonly own: unknown; readonly other: unknown };
+      const looked: Looked[] = [];
+      const probed = probing();
+
+      const bothLooked = Promise.withResolvers<void>();
+      const gated = gatedRuntime(async (prompt) => {
+        const tag = tagIn(prompt);
+        const { probe } = probed;
+        looked.push({ tag, own: await probe(tag), other: await probe(otherOf(tag)) });
+        if (looked.length === 2) bothLooked.resolve();
+        await bothLooked.promise;
+        return { ok: true, usage: [] };
+      });
+      const paired: SignalHandler = {
+        handle: () => Object.entries(pair).map(([tag, session]) => taggedPrompt(tag, session)),
+      };
+
+      await withProbedWorker({ paired }, gated.runtime, probed, async (worker) => {
+        const id = await emit(worker, "paired");
+        try {
+          await gated.started(`${announcing}t_alice`);
+          await gated.started(`${announcing}t_bob`);
+          gated.release(`${announcing}t_alice`);
+          gated.release(`${announcing}t_bob`);
+          await settled(id);
+        } finally {
+          gated.releaseAll();
+          bothLooked.resolve();
+        }
+
+        const bySession = new Map((await runsOf(id)).map((run) => [run.session, run.id]));
+        const alice = {
+          id: bySession.get("alice"),
+          signalId: id,
+          session: "alice",
+          context: { tag: "t_alice" },
+        };
+        const bob = {
+          id: bySession.get("bob"),
+          signalId: id,
+          session: "bob",
+          context: { tag: "t_bob" },
+        };
+        assert.notEqual(alice.id, bob.id);
+        assert.deepEqual(
+          looked.sort((a, b) => a.tag.localeCompare(b.tag)),
+          [
+            { tag: "t_alice", own: alice, other: bob },
+            { tag: "t_bob", own: bob, other: alice },
+          ],
+        );
+      });
+    });
+
+    it("fails a Run whose tag is live on another Run without calling the Runtime, and leaves the first Run's attribution intact", async () => {
+      const probed = probing();
+      const gated = gatedRuntime();
+
+      const colliding: SignalHandler = {
+        handle: () => [taggedPrompt("t_shared", "first"), taggedPrompt("t_shared", "second")],
+      };
+
+      await withProbedWorker({ colliding }, gated.runtime, probed, async (worker) => {
+        const id = await emit(worker, "colliding");
+        try {
+          await gated.started(`${announcing}t_shared`);
+          await waitUntil("the second Run has ended", async () =>
+            (await runsOf(id)).some((run) => run.session === "second" && run.endedAt !== null),
+          );
+
+          const bySession = new Map((await runsOf(id)).map((run) => [run.session, run]));
+          const first = bySession.get("first");
+          const second = bySession.get("second");
+          assert.ok(first !== undefined && second !== undefined);
+          assert.equal(first.state, "running");
+          assert.equal(second.state, "failed");
+          assert.equal(second.error, "Run tag already live on another Run");
+          assert.deepEqual(await probed.probe("t_shared"), {
+            id: first.id,
+            signalId: id,
+            session: "first",
+            context: { tag: "t_shared" },
+          });
+        } finally {
+          gated.releaseAll();
+        }
+
+        assert.equal((await settled(id)).state, "failed");
+        assert.equal(gated.runtime.recorded.length, 1);
+        assert.equal(await probed.probe("t_shared"), null);
+      });
+    });
   });
 
   it("names a fresh Session after the Run it belongs to, and hands the Runtime that name", async () => {
@@ -863,7 +1627,8 @@ describe("wakeup", () => {
   });
 
   it("drains a burst emitted together without one wakeup per Signal", async () => {
-    const runtime = fakeRuntime();
+    const gated = gatedRuntime();
+    const runtime = gated.runtime;
     const numbered: SignalHandler<{ n: number }> = {
       handle: (signal) => [{ session: null, text: String(signal.payload.n) }],
     };
@@ -876,10 +1641,15 @@ describe("wakeup", () => {
         }
         return emitted;
       });
+      try {
+        await gated.started("5");
+      } finally {
+        gated.releaseAll();
+      }
       for (const id of ids) assert.equal((await settled(id)).state, "done");
 
       assert.deepEqual(runtime.texts(), ["1", "2", "3", "4", "5"]);
-      assert.equal(runtime.overlapped, false);
+      assert.equal(runtime.overlapped, true, "five fresh Sessions should run together");
       assert.equal(wakeups(entries, "notification"), 1);
       assert.equal(wakeups(entries, "sweep"), 0);
     });
