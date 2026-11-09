@@ -45,7 +45,7 @@ The HTTP server exposed outside the Gateway. Named for its exposure rather than 
 _Avoid_: user server, external API, frontend
 
 **Agent server**:
-The HTTP server only the Agent Implementation reaches, carrying the Signal Worker's Signal and Run routes plus whatever Producers expose to the agent. A mediation point, not a security boundary against the agent. **It is one of two unauthenticated privileged addresses on the agent network, and they point opposite ways.** This one is inbound: the agent reaches it and no credential is asked for. The **Agent Instance**'s RPC is outbound: the Gateway reaches that and no credential is asked for there either, `pi`'s RPC having no authentication of any kind and a command set that includes `bash`. Which is worth saying plainly rather than leaving to be discovered, and is still not a new trust: the network is the boundary for both, it is the same boundary the Agent server has always rested on, and what changed is only that it now carries traffic in both directions.
+The HTTP server the agent implementation uses to reach the signal worker's signal and run routes and any routes exposed by producers. The agent server accepts requests without credentials and must remain on the private agent network. The gateway also reaches the agent instance on that network. A pi RPC listener has no authentication and can execute shell commands. The OpenClaw daemon requires a shared token and a signed device challenge, with device approval and scopes controlled by the operator. Both addresses are privileged; the network remains their security boundary.
 _Avoid_: internal API, private server, control plane
 
 **Db**:
@@ -105,7 +105,7 @@ What the Signal Worker hands a Prompt to and gets an outcome back from, and the 
 _Avoid_: runtime adapter, driver, plugin, connector, backend
 
 **Agent Instance**:
-A running Agent Implementation the Operator hosts, which the Gateway reaches over the RPC channel it accepts on. The Operator owns its whole environment (its image, its files, its model credential, its flags) and the framework starts it, stops it and configures it not at all. One connection is opened per Run and closed at the end of it; whether one process serves every connection or the listener starts one per connection is the Operator's arrangement, and nothing in the framework can tell the difference or depends on the answer. That last clause is the entry's one piece of work: with a listener that forks, "instance" names a thing that is a socket most of the time and a process only while a Run is happening, and the word is kept anyway because what a Runtime addresses is one place where the agent can be reached. **Agent Endpoint** was the considered alternative and collides with the **Agent server**, which is an address pointing the other way; **Agent Host** was refused because the **Operator** entry bans "host" outright. This term replaced four that named a mechanism the framework no longer has, the declaration of a container the Gateway started and of what that container could see on disk. None of it is gone as a practice: it moved into the Operator's compose file, which is where a container has always been better expressed, and the framework has no name for any of it now.
+A running agent implementation reached by the gateway at an address provided by the operator. The operator configures and runs it, including its image, files, model credentials, and tools. Each run opens a connection and closes it when finished. An agent instance may serve every connection in one process, as the OpenClaw daemon does, or start a process per connection, as a pi RPC listener can. The runtime does not depend on that choice. The term describes where the agent can be reached, even when no agent process exists between runs.
 _Avoid_: agent container, agent endpoint, agent host, agent service, sidecar
 
 **OpenClaw daemon**:
@@ -181,7 +181,7 @@ The token limit for one Run. A Signal Handler sets it on the Prompt as `usageLim
 
 The Runtime adds up tokens as each model call finishes. If the total exceeds the limit, it stops the agent. The Run fails with `limited: true`, and its outcome still carries the usage of every call, including calls that finished after the stop. The Session keeps the history saved so far.
 
-Usage is only known after a model call finishes. This means the Run can go over the limit by one call.
+Usage is known only after a model call finishes, so a run can exceed its limit while another call is in progress. pi reports partial usage for an interrupted call. The OpenClaw daemon reports none for that call, so a limited run's saved usage can understate the tokens it used.
 
 Every token counts equally toward this limit, including tokens read from the provider's cache. Each model call sends the agent's full context again. The provider reports most of that repeated context as cache reads. Cache reads therefore usually make up most of the token count, even though they cost much less.
 

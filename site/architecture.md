@@ -130,7 +130,7 @@ session name on each prompt. You might use one session per user, one shared sess
 session for each run. `session: null` requests a fresh session named after the run.
 
 Sessions do not restrict access. The agent can read gateway data across users and sessions
-through the agent server. Session files may also be compacted by the agent implementation;
+through the agent server. The agent implementation may also compact a session's history;
 use the message log as the durable record of messages.
 
 `Prompt.context` serves a separate purpose. It is application-defined JSON stored on the run
@@ -148,10 +148,42 @@ ended is attributed to no run, even when only one run is in flight; there is no 
 prompt without a tag produces a run no request can be attributed to, so a hook that requires
 attribution refuses every request from it.
 
-The tag has one limit. It reaches the agent through the prompt text, so it is in the session
-file, and runs share the agent instance's filesystem: a run with a shell can read another
-session's tag. The tag defeats forgery through text injected into a message, not an agent that
-goes looking. The agent server stays a mediation point, not a boundary.
+The tag has one limit. It reaches the agent through the prompt text, so it is in the session's
+stored history, and runs share the agent instance's filesystem: a run with a shell can read
+another session's tag. The tag defeats forgery through text injected into a message, not an agent
+that goes looking. The agent server stays a mediation point, not a boundary.
+
+## Running OpenClaw as the agent implementation
+
+The pi runtime connects to an operator-run RPC listener; the OpenClaw runtime connects to the
+OpenClaw daemon. A pi listener can start a process per connection, while the daemon runs
+continuously and serves all runs. Each run uses a separate connection. The operator configures
+the agent instance's model, credentials, tools, workspace, and channels.
+
+Each connection to the daemon presents its shared token and signs a challenge with an Ed25519
+device key. The operator supplies both to the runtime. The first run from a new key fails with a
+pairing request id and an approval command. Approve the device on the daemon host, then submit
+a new prompt. Approval survives restarts in the daemon's state. The runtime stores no key file
+or device token. Keep the daemon on the private agent network despite its authentication.
+
+When using `ws://` with a Compose service name, set `OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1` in
+the gateway's environment. Otherwise the client permits plaintext only for IP literals,
+`localhost`, `.local`, and `.ts.net`. Use `wss://` outside a private network.
+
+The runtime disables delivery through OpenClaw's own channels. Leave those channels unconfigured
+so every message to a user passes through the messenger and appears in the message log.
+
+A session name becomes `agent:<agentId>:<name>` on the daemon. To avoid names being merged by
+the daemon's normalization, the runtime rejects uppercase letters and surrounding whitespace.
+It also rejects blank names, names longer than 512 characters, colons, and the reserved names
+`main` and `global`. The signal worker's fresh names (`run_<uuid>`) are accepted. Unsupported
+names fail the run before connecting.
+
+The daemon reports usage through session-message subscriptions. The runtime subscribes before
+sending the prompt and selects records by run id. When reported tokens exceed the usage limit,
+it requests an abort and marks the run limited. Another model call may already be in progress.
+The daemon reports no usage for the interrupted call, so saved usage can understate tokens used.
+pi reports partial usage for an interrupted call instead.
 
 ## Identity and authentication
 
@@ -246,9 +278,10 @@ The operator controls the application, agent instructions, credentials, database
 All parties must trust that operator. The gateway gives users a mediated path to the agent;
 it does not constrain someone who controls the deployment.
 
-The agent server and the agent instance's RPC listener are privileged, unauthenticated
-endpoints. Restrict both to a private network. The agent must not be able to reach the database,
-gateway secrets, or infrastructure controls unless your application explicitly needs that access.
+The agent server and agent instance provide privileged access and must stay on a private network.
+The agent server and a pi RPC listener accept unauthenticated connections; the OpenClaw daemon
+requires a shared token and an approved device key. The agent must not be able to reach the
+database, gateway secrets, or infrastructure controls unless your application needs that access.
 
 Configure the agent instance's tools, workspace permissions, outbound access, and model
 credentials according to the work it performs. The runtime connects to the instance; it does
