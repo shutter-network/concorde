@@ -11,29 +11,21 @@ export type ConnectionTarget = {
   readonly url: string;
   readonly token: string;
   readonly identity: DeviceIdentity;
-  readonly agentId: string | undefined;
 };
 
-/** One authenticated connection to the OpenClaw daemon, opened for one Run and closed with it. */
 export type Connection = {
   request<T>(method: string, params: unknown): Promise<T>;
-  /** Every event frame since the connection opened, in order; ends when the connection closes. */
+  /** Includes buffered events from before iteration began, in arrival order. */
   events(): AsyncGenerator<EventFrame, void, undefined>;
-  /** Why the connection closed, once it has. */
   closed(): string | undefined;
   close(): Promise<void>;
 };
 
-// chat.send needs operator.write and the event streams operator.read. The client's default is
-// operator.admin; a connection that sends no scopes at all is accepted and refused every method.
+// Request the scopes these methods need instead of the client's operator.admin default.
 const scopes = ["operator.read", "operator.write"];
 
 const clientDisplayName = "concorde";
 
-/**
- * The daemon derives a device id as the hex SHA-256 of the raw public key and refuses a mismatch,
- * so the id is computed here and never asked of the Operator.
- */
 export function deviceIdentityOf(privateKey: KeyObject): DeviceIdentity {
   const publicKey = createPublicKey(privateKey);
   return {
@@ -43,14 +35,12 @@ export function deviceIdentityOf(privateKey: KeyObject): DeviceIdentity {
   };
 }
 
-// An Ed25519 SPKI DER is a 12 byte header followed by the 32 byte key.
+// Ed25519 SPKI encoding ends with the 32-byte public key, after a 12-byte header.
 function rawPublicKey(publicKey: KeyObject): Buffer {
   return (publicKey.export({ type: "spki", format: "der" }) as Buffer).subarray(-32);
 }
 
-// The two hooks whose client defaults throw. The client builds the payload (nonce, challenge
-// timestamp, scopes, token); these only sign it and present the raw key. The token-store hooks
-// stay at their no-op defaults, which is how the Runtime stores nothing.
+// The client requires these crypto hooks; its defaults throw. Leave token storage disabled.
 const hostDeps: GatewayClientHostDeps = {
   signDevicePayload: (privateKeyPem, payload) =>
     sign(null, Buffer.from(payload, "utf8"), createPrivateKey(privateKeyPem)).toString("base64url"),
@@ -59,8 +49,8 @@ const hostDeps: GatewayClientHostDeps = {
 };
 
 /**
- * Resolves once the daemon has answered `hello-ok`; rejects with the daemon's refusal otherwise.
- * The client package would reconnect with backoff on a refusal, so it is stopped either way.
+ * Stop the client before returning from a failed connection hook. It schedules reconnection
+ * after the hook returns, which would leave a failed run reconnecting in the background.
  */
 export async function openConnection(target: ConnectionTarget): Promise<Connection> {
   const frames: EventFrame[] = [];
@@ -100,6 +90,7 @@ export async function openConnection(target: ConnectionTarget): Promise<Connecti
       notify();
       if (settled) return;
       settled = true;
+      client.stop();
       opened.reject(new Error(closed));
     },
     onEvent: (frame) => {

@@ -1,53 +1,8 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync } from "node:crypto";
-import { after, describe, it } from "node:test";
-import type { RunOutcome } from "../signals/runtime.ts";
-import {
-  type FakeDaemon,
-  type FakeDaemonOptions,
-  scriptedDaemon,
-  startFakeDaemon,
-  type Written,
-} from "../test-support/openclaw-daemon.ts";
-import { createOpenClawRuntime, type OpenClawDaemon } from "./runtime.ts";
-
-// Every way a Run fails under this Runtime is an ok: false outcome with a reason, never a throw.
-
-const deviceKey = generateKeyPairSync("ed25519").privateKey;
-
-const running: FakeDaemon[] = [];
-
-after(async () => {
-  await Promise.all(running.map((daemon) => daemon.close()));
-});
-
-async function daemonOf(options: FakeDaemonOptions = {}): Promise<FakeDaemon> {
-  const daemon = await startFakeDaemon(options);
-  running.push(daemon);
-  return daemon;
-}
-
-function runtimeFor(daemon: FakeDaemon, extra: Partial<OpenClawDaemon> = {}) {
-  return createOpenClawRuntime({
-    url: daemon.url,
-    token: daemon.token,
-    deviceKey,
-    logger: silent,
-    ...extra,
-  });
-}
-
-function failure(outcome: RunOutcome): string {
-  assert.equal(outcome.ok, false, `this Run should have failed; it was ${JSON.stringify(outcome)}`);
-  return outcome.ok ? "" : outcome.error;
-}
-
-const silent = {
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-};
+import { describe, it } from "node:test";
+import { scriptedDaemon, type Written } from "../test-support/openclaw-daemon.ts";
+import { daemonOf, failure, runtimeFor } from "../test-support/openclaw-runtime.ts";
+import { waitUntil } from "../test-support/wait.ts";
 
 describe("the Session names this Runtime refuses, before any connection", () => {
   const refused: readonly (readonly [name: string, rule: RegExp])[] = [
@@ -116,7 +71,7 @@ describe("the Session names this Runtime passes through", () => {
 describe("a device the daemon has not approved", () => {
   const requestId = "a36286de-6964-416c-9feb-1d9cc78e61a2";
 
-  // The connect refusal of daemon 2026.8.1 for a key it has never seen, as recorded.
+  // Captured pairing refusal from OpenClaw daemon 2026.8.1.
   const pairingRequired = (params: Written): Written | undefined => {
     const device = params.device;
     const deviceId =
@@ -159,7 +114,7 @@ describe("a device the daemon has not approved", () => {
       daemon.received.map((request) => request.method),
       ["connect"],
     );
-    await waitFor(() => daemon.ended() === 1, "the refused connection should be closed");
+    await waitUntil("the refused connection is closed", async () => daemon.ended() === 1);
     assert.equal(daemon.open(), 0);
   });
 });
@@ -181,11 +136,3 @@ describe("the usageLimit a Prompt carries", () => {
     assert.equal(daemon.connections.length, 0);
   });
 });
-
-async function waitFor(done: () => boolean, why: string): Promise<void> {
-  for (let attempt = 0; attempt < 400; attempt += 1) {
-    if (done()) return;
-    await new Promise((later) => setTimeout(later, 5));
-  }
-  assert.fail(why);
-}

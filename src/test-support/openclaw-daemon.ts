@@ -3,14 +3,13 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { type RawData, WebSocket, WebSocketServer } from "ws";
 
-// A scripted OpenClaw daemon, 2026.8.1 as observed: every frame it sends is shaped like one the
-// prototype recorded from the real daemon, and every frame it receives is kept for assertions.
+// Fixtures reproduce frames captured from OpenClaw daemon 2026.8.1. The container test checks
+// compatibility with the real daemon; this scripted daemon cannot detect protocol changes.
 
 export type Written = Record<string, unknown>;
 
 export const dropsTheConnection: Written = { theDaemonHangsUp: true };
 
-/** A request frame the daemon received, with the connection it arrived on. */
 export type DaemonRequest = {
   readonly connection: number;
   readonly id: string;
@@ -18,11 +17,10 @@ export type DaemonRequest = {
   readonly params: Record<string, unknown>;
 };
 
-/** What one connection proved about itself at `connect`. */
 export type ConnectionRecord = {
   readonly index: number;
   readonly nonce: string;
-  /** The daemon's own agent, which a bare key resolves to when no `agentId` is sent. */
+  /** Used to resolve session keys when a request omits `agentId`. */
   readonly agentId: string;
   auth:
     | {
@@ -35,24 +33,17 @@ export type ConnectionRecord = {
   closed: boolean;
 };
 
-/**
- * Answers one request after `hello-ok`, with frames in order: a `{ type: "res" }` frame or an
- * `{ event, payload }` entry, which the daemon numbers and sends as an event frame. An async
- * iterable lets a test hold a Run open and release it.
- */
 export type DaemonReply = (
   request: DaemonRequest,
   connection: ConnectionRecord,
 ) => Iterable<Written> | AsyncIterable<Written> | Promise<Iterable<Written>>;
 
 export type FakeDaemonOptions = {
-  /** The shared token, `gateway.auth.token` on the real daemon. */
   readonly token?: string;
-  /** The agent a bare key resolves to, as the sole or default agent of the real daemon would. */
   readonly agentId?: string;
   readonly reply?: DaemonReply;
-  /** Refuses `connect` with this error shape instead of answering `hello-ok`. */
   readonly refuseConnect?: (params: Written) => Written | undefined;
+  readonly closesBeforeChallenge?: boolean;
 };
 
 export type FakeDaemon = {
@@ -74,7 +65,6 @@ const requiredScope: Record<string, string> = {
   "chat.send": "operator.write",
   "chat.abort": "operator.write",
   "sessions.messages.subscribe": "operator.read",
-  "sessions.list": "operator.read",
 };
 
 const ed25519SpkiPrefix = Buffer.from("302a300506032b6570032100", "hex");
@@ -125,6 +115,10 @@ export async function startFakeDaemon(options: FakeDaemonOptions = {}): Promise<
       void handle(JSON.parse(rawToString(data)) as Written);
     });
 
+    if (options.closesBeforeChallenge === true) {
+      socket.close(1012, "service restart");
+      return;
+    }
     event("connect.challenge", { nonce: record.nonce, ts: Date.now() });
 
     async function handle(frame: Written): Promise<void> {
@@ -217,7 +211,7 @@ export async function startFakeDaemon(options: FakeDaemonOptions = {}): Promise<
         ? params.scopes.filter((scope): scope is string => typeof scope === "string")
         : [];
 
-      // The real daemon accepts a connection that sends no identity and hands it no scopes.
+      // Match the real daemon: a valid token without a device identity grants no scopes.
       if (device === undefined) {
         record.auth = { token: sentToken, deviceId: undefined, signatureValid: false, scopes: [] };
         send({ type: "res", id: request.id, ok: true, payload: helloOk(record, []) });
@@ -302,8 +296,6 @@ function helloOk(connection: ConnectionRecord, scopes: readonly string[]): Writt
   };
 }
 
-// The daemon checks a v3 payload: the fields the client signs, joined by `|`, with the device id
-// the SHA-256 of the raw public key. A mismatch on either is refused as on the real daemon.
 function verifiesChallenge(
   device: Record<string, unknown>,
   params: Record<string, unknown>,
@@ -363,10 +355,6 @@ function rawToString(data: RawData): string {
   return Array.isArray(data) ? Buffer.concat(data).toString("utf8") : String(data);
 }
 
-/**
- * The chat frames of a Run that finishes with one reply, as the daemon sent them. `between` goes
- * after the status frames and before the reply, which is where a Run's model calls were observed.
- */
 export function settledRun(
   said = "I did it.",
   between: readonly Written[] = [],
@@ -403,13 +391,6 @@ function runReply(said: string): readonly Written[] {
   ];
 }
 
-/**
- * Answers the subscription, acknowledges `chat.send` with a fresh run id and then sends `events`
- * for that Run: a `chat` payload without a `runId` is stamped with the Run's id and its
- * canonical session key, and a `session.message` record whose `__openclaw` names no Run gets the
- * Run's id there and the session key beside the message; one that carries its own `runId` is sent
- * as written.
- */
 export function scriptedDaemon(
   events: readonly Written[] = settledRun(),
 ): (request: DaemonRequest, connection: ConnectionRecord) => readonly Written[] {
@@ -479,13 +460,11 @@ function stamped(written: Written, runId: string, sessionKey: string): Written {
   return written;
 }
 
-/** The usage of one model call, as the daemon's transcript record carries it (Finding 3). */
 export type ModelCall = {
   readonly input: number;
   readonly output: number;
   readonly cacheRead?: number;
   readonly cacheWrite?: number;
-  /** The daemon's computed cost of the call, `usage.cost.total`. */
   readonly cost?: number;
   readonly provider?: string;
   readonly model?: string;
@@ -493,11 +472,6 @@ export type ModelCall = {
   readonly content?: readonly Written[];
 };
 
-/**
- * The `session.message` record of one assistant message, which a subscribed connection receives
- * once per model call with that call's full usage. The scripted daemon stamps the Run's id into
- * `__openclaw` when it sends it.
- */
 export function modelCall(call: ModelCall): Written {
   const cacheRead = call.cacheRead ?? 0;
   const cacheWrite = call.cacheWrite ?? 0;
@@ -527,10 +501,6 @@ export function modelCall(call: ModelCall): Written {
   };
 }
 
-/**
- * The synthetic assistant record the daemon writes for a model call it could not complete, usage
- * all zero and `stopReason: "error"`; a refused call produces one (Finding 3).
- */
 export const refusedCall: ModelCall = {
   input: 0,
   output: 0,
@@ -538,11 +508,6 @@ export const refusedCall: ModelCall = {
   content: [{ type: "text", text: "The agent run failed before producing a reply." }],
 };
 
-/**
- * The frames a Run's model calls produce, in the order observed: the Prompt's own `user` record
- * first, then per call the `agent` `usage` frame with the running output total and the call's
- * `session.message` record.
- */
 export function modelCalls(...calls: readonly ModelCall[]): readonly Written[] {
   const frames: Written[] = [promptRecord];
   let outputTokens = 0;
@@ -564,8 +529,6 @@ const promptRecord: Written = {
   },
 };
 
-// The daemon emits the running output total the moment a call's stream ends, nothing for a call
-// that produced no output, and the call's record after it.
 function callFrames(call: ModelCall, outputTokens: number, seq: number): readonly Written[] {
   return [
     ...(call.output > 0
@@ -576,11 +539,8 @@ function callFrames(call: ModelCall, outputTokens: number, seq: number): readonl
 }
 
 /**
- * What the daemon sent once `chat.abort` stopped a Run while a model call was in flight
- * (Finding 5): the `aborted` terminal with `stopReason: "rpc"` carrying what the call had streamed
- * so far, the lifecycle end, two all-zero transcript records for the cut call, and the lifecycle
- * error that follows for the same Run and is not a second failure. The cut call's usage is in
- * none of them: the daemon closed the provider's stream before its usage chunk.
+ * After aborting, the daemon emits two zero-usage records and a lifecycle error for the same
+ * run. These do not report the interrupted call's actual usage or represent another run failure.
  */
 export function abortedFrames(streamed = "word0"): readonly Written[] {
   const partial = { role: "assistant", content: [{ type: "text", text: streamed }], timestamp: 3 };
@@ -614,22 +574,15 @@ export function abortedFrames(streamed = "word0"): readonly Written[] {
 }
 
 export type AbortableRunOptions = {
-  /** The reply the Run ends with when nothing stops it. */
   readonly said?: string;
-  /** How long each call after the first is in flight: the window in which an abort lands. */
+  /** Milliseconds to allow an abort between completed model calls. */
   readonly holdMs?: number;
 };
 
 type LiveRun = { readonly sessionKey: string; readonly stopped: PromiseWithResolvers<void> };
 
 /**
- * A daemon whose Run can be stopped between its model calls, as the real one was. After each
- * call's record the Run holds for `holdMs`, the time the next call would be in flight; a
- * `chat.abort` naming the Run and its Session that arrives in that window ends it with
- * `abortedFrames`, and the calls not yet made never start. Left alone, the Run plays every call
- * and finishes with `said`. The abort is answered as the daemon answers it:
- * `{ ok: true, aborted: true, runIds: [runId] }` for a Run it stopped, `runIds: []` for one it
- * does not know or that had already ended.
+ * Pauses between model calls so tests can abort a run before the next call completes.
  */
 export function abortableDaemon(
   calls: readonly ModelCall[],
@@ -697,8 +650,6 @@ function stoppedWithin(ms: number, stopped: Promise<void>): Promise<boolean> {
   });
 }
 
-// The daemon stores a bare key as `agent:<agentId>:<key>`, under the agent id it was sent or its
-// own agent when none was (Finding 4).
 function canonicalKey(key: unknown, agentId: unknown, connection: ConnectionRecord): string {
   const bare = String(key ?? "");
   const owner = typeof agentId === "string" ? agentId : connection.agentId;

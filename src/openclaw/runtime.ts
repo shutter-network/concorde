@@ -1,4 +1,4 @@
-import { type KeyObject, KeyObject as KeyObjectClass, randomUUID } from "node:crypto";
+import { KeyObject, randomUUID } from "node:crypto";
 import type { ChatEvent } from "@openclaw/gateway-protocol";
 import { defaultLogger, type Logger } from "../logging/index.ts";
 import type { RunOutcome, RunPrompt, Runtime, UsageReport } from "../signals/runtime.ts";
@@ -62,7 +62,7 @@ export function createOpenClawRuntime(daemon: OpenClawDaemon): Runtime {
   if (typeof token !== "string" || token.trim() === "") {
     throw new Error("Missing token. Pass the OpenClaw daemon's shared gateway token.");
   }
-  if (!(deviceKey instanceof KeyObjectClass) || deviceKey.type !== "private") {
+  if (!(deviceKey instanceof KeyObject) || deviceKey.type !== "private") {
     throw new Error("deviceKey must be a private KeyObject; received something else.");
   }
   if (deviceKey.asymmetricKeyType !== "ed25519") {
@@ -102,7 +102,7 @@ export function createOpenClawRuntime(daemon: OpenClawDaemon): Runtime {
 
       let connection: Connection;
       try {
-        connection = await openConnection({ url, token, identity, agentId });
+        connection = await openConnection({ url, token, identity });
       } catch (error) {
         return failed(`Cannot connect to the OpenClaw daemon at ${url}: ${connectRefusal(error)}`);
       }
@@ -114,11 +114,19 @@ export function createOpenClawRuntime(daemon: OpenClawDaemon): Runtime {
       } catch (error) {
         return failed(messageOf(error));
       } finally {
-        await connection.close();
-        log.debug(
-          { session: prompt.session, closed: connection.closed() },
-          "closed the connection",
-        );
+        // A close timeout must not discard the outcome and its usage.
+        try {
+          await connection.close();
+          log.debug(
+            { session: prompt.session, closed: connection.closed() },
+            "closed the connection",
+          );
+        } catch (error) {
+          log.warn(
+            { session: prompt.session, error: messageOf(error) },
+            "the connection to the OpenClaw daemon did not close in time; the outcome stands",
+          );
+        }
       }
     },
   };

@@ -1,45 +1,27 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, type KeyObject, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
-import { after, describe, it } from "node:test";
+import { describe, it } from "node:test";
 import type { RunOutcome, RunPrompt } from "../signals/runtime.ts";
 import {
   type DaemonReply,
   dropsTheConnection,
   type FakeDaemon,
-  type FakeDaemonOptions,
   scriptedDaemon,
   settledRun,
-  startFakeDaemon,
   type Written,
 } from "../test-support/openclaw-daemon.ts";
+import {
+  daemonOf,
+  deviceKey,
+  failure,
+  runtimeFor,
+  silent,
+} from "../test-support/openclaw-runtime.ts";
+import { waitUntil } from "../test-support/wait.ts";
 import { createOpenClawRuntime, type OpenClawDaemon } from "./runtime.ts";
 
 const prompt: RunPrompt = { session: "user_42", text: "what happened?" };
-
-const deviceKey = generateKeyPairSync("ed25519").privateKey;
-
-const running: FakeDaemon[] = [];
-
-after(async () => {
-  await Promise.all(running.map((daemon) => daemon.close()));
-});
-
-async function daemonOf(options: FakeDaemonOptions = {}): Promise<FakeDaemon> {
-  const daemon = await startFakeDaemon(options);
-  running.push(daemon);
-  return daemon;
-}
-
-function runtimeFor(daemon: FakeDaemon, extra: Partial<OpenClawDaemon> = {}) {
-  return createOpenClawRuntime({
-    url: daemon.url,
-    token: daemon.token,
-    deviceKey,
-    logger: silent,
-    ...extra,
-  });
-}
 
 async function runAgainst(
   reply: DaemonReply = scriptedDaemon(),
@@ -50,18 +32,6 @@ async function runAgainst(
   const outcome = await runtimeFor(daemon, extra).run(given);
   return { outcome, daemon };
 }
-
-function failure(outcome: RunOutcome): string {
-  assert.equal(outcome.ok, false, `this Run should have failed; it was ${JSON.stringify(outcome)}`);
-  return outcome.ok ? "" : outcome.error;
-}
-
-const silent = {
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-};
 
 describe("the shape of one Run", () => {
   it("returns ok with no usage once the daemon sends the Run's final frame", async () => {
@@ -120,7 +90,7 @@ describe("the shape of one Run", () => {
     for (const reply of [scriptedDaemon(), scriptedDaemon(failedRun("LLM request failed."))]) {
       const { daemon } = await runAgainst(reply);
       assert.equal(daemon.connections.length, 1);
-      await waitFor(() => daemon.ended() === 1, "the connection should have been closed");
+      await waitUntil("the connection is closed", async () => daemon.ended() === 1);
     }
   });
 
@@ -151,7 +121,10 @@ describe("the shape of one Run", () => {
 
     const first = runtime.run({ session: "user_1", text: "first" });
     const second = runtime.run({ session: "user_2", text: "second" });
-    await waitFor(() => daemon.requests("chat.send").length === 2, "both Runs should have started");
+    await waitUntil(
+      "both Runs have started",
+      async () => daemon.requests("chat.send").length === 2,
+    );
     assert.equal(daemon.open(), 2);
 
     gate("user_1").resolve();
@@ -332,7 +305,19 @@ describe("the daemon the Operator has to run", () => {
       daemon.received.map((request) => request.method),
       ["connect"],
     );
-    await waitFor(() => daemon.ended() === 1, "the refused connection should be closed");
+    await waitUntil("the refused connection is closed", async () => daemon.ended() === 1);
+  });
+
+  it("is a failed Run, and no reconnection, when the daemon hangs up before its challenge", async () => {
+    const daemon = await daemonOf({ reply: scriptedDaemon(), closesBeforeChallenge: true });
+
+    const outcome = await runtimeFor(daemon).run(prompt);
+
+    assert.match(failure(outcome), /^Session user_42: Cannot connect to the OpenClaw daemon/);
+    assert.equal(daemon.connections.length, 1);
+    // Wait past the client's one-second reconnect delay to catch a leaked retry.
+    await new Promise((later) => setTimeout(later, 1500));
+    assert.equal(daemon.connections.length, 1, "the client should not have reconnected");
   });
 
   it("is a failed Run when the daemon hangs up before the Run ends", async () => {
@@ -370,12 +355,4 @@ async function unusedPort(): Promise<number> {
   if (address === null || typeof address === "string") throw new Error("no port");
   await new Promise<void>((closed) => socket.close(() => closed()));
   return address.port;
-}
-
-async function waitFor(done: () => boolean, why: string): Promise<void> {
-  for (let attempt = 0; attempt < 400; attempt += 1) {
-    if (done()) return;
-    await new Promise((later) => setTimeout(later, 5));
-  }
-  assert.fail(why);
 }

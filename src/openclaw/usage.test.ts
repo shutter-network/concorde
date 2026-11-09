@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import type { RunOutcome, RunPrompt } from "../signals/runtime.ts";
@@ -18,46 +17,21 @@ import {
   refusedCall,
   scriptedDaemon,
   settledRun,
-  startFakeDaemon,
   type Written,
 } from "../test-support/openclaw-daemon.ts";
+import { daemonOf, failure, runtimeFor, silent } from "../test-support/openclaw-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
-import { createOpenClawRuntime } from "./runtime.ts";
 
 const prompt: RunPrompt = { session: "user_42", text: "what happened?" };
-
-const deviceKey = generateKeyPairSync("ed25519").privateKey;
-
-const silent = {
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-};
-
-const running: FakeDaemon[] = [];
-
-after(async () => {
-  await Promise.all(running.map((daemon) => daemon.close()));
-});
 
 async function runAgainst(
   reply: DaemonReply,
   given: RunPrompt = prompt,
 ): Promise<{ outcome: RunOutcome; daemon: FakeDaemon }> {
-  const daemon = await startFakeDaemon({ reply });
-  running.push(daemon);
-  const runtime = createOpenClawRuntime({
-    url: daemon.url,
-    token: daemon.token,
-    deviceKey,
-    logger: silent,
-  });
-  return { outcome: await runtime.run(given), daemon };
+  const daemon = await daemonOf({ reply });
+  return { outcome: await runtimeFor(daemon).run(given), daemon };
 }
 
-// The counts the prototype's scripted model reported: call n of request k is 1000n + k in,
-// 10n out (Finding 3).
 const threeCalls = modelCalls(
   { input: 1003, output: 10, stopReason: "toolUse" },
   { input: 2004, output: 20, stopReason: "toolUse" },
@@ -189,7 +163,7 @@ describe("the Usage a Run reports", () => {
       scriptedDaemon([
         ...modelCalls({ input: 1014, output: 10, stopReason: "toolUse" }),
         { event: "chat", payload: { seq: 11, state: "aborted", stopReason: "rpc" } },
-        // What the daemon sent after the aborted frame in every observed abort: two zero records.
+        // The daemon emits these zero-usage records after the terminal frame.
         modelCall({ input: 0, output: 0, provider: "openclaw", model: "gateway-injected" }),
         modelCall({ input: 0, output: 0, stopReason: "aborted", content: [] }),
       ]),
@@ -340,16 +314,10 @@ describe("the Usage the Signal Worker saves for an OpenClaw Run", () => {
           : settledRun("Done.", modelCalls({ input: 3, output: 0 }, { input: 4, output: 0 }));
       return scriptedDaemon(frames)(request, connection);
     };
-    const daemon = await startFakeDaemon({ reply: byPrompt });
-    running.push(daemon);
+    const daemon = await daemonOf({ reply: byPrompt });
     const worker = createSignalWorker({
       db,
-      runtime: createOpenClawRuntime({
-        url: daemon.url,
-        token: daemon.token,
-        deviceKey,
-        logger: silent,
-      }),
+      runtime: runtimeFor(daemon),
       handlers: {
         charged: {
           handle: () => [
@@ -390,8 +358,3 @@ describe("the Usage the Signal Worker saves for an OpenClaw Run", () => {
     assert.equal(daemon.requests("sessions.usage").length, 0);
   });
 });
-
-function failure(outcome: RunOutcome): string {
-  assert.equal(outcome.ok, false, `this Run should have failed; it was ${JSON.stringify(outcome)}`);
-  return outcome.ok ? "" : outcome.error;
-}

@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync } from "node:crypto";
-import { after, describe, it } from "node:test";
+import { describe, it } from "node:test";
 import type { RunOutcome, RunPrompt } from "../signals/runtime.ts";
 import {
   abortableDaemon,
@@ -11,44 +10,19 @@ import {
   modelCalls,
   scriptedDaemon,
   settledRun,
-  startFakeDaemon,
 } from "../test-support/openclaw-daemon.ts";
-import { createOpenClawRuntime } from "./runtime.ts";
-
-const deviceKey = generateKeyPairSync("ed25519").privateKey;
-
-const silent = {
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-};
-
-const running: FakeDaemon[] = [];
-
-after(async () => {
-  await Promise.all(running.map((daemon) => daemon.close()));
-});
+import { daemonOf, runtimeFor } from "../test-support/openclaw-runtime.ts";
 
 async function runAgainst(
   reply: DaemonReply,
   prompt: RunPrompt,
   agentId?: string,
 ): Promise<{ outcome: RunOutcome; daemon: FakeDaemon }> {
-  const daemon = await startFakeDaemon({ reply, ...(agentId === undefined ? {} : { agentId }) });
-  running.push(daemon);
-  const runtime = createOpenClawRuntime({
-    url: daemon.url,
-    token: daemon.token,
-    deviceKey,
-    logger: silent,
-    ...(agentId === undefined ? {} : { agentId }),
-  });
-  return { outcome: await runtime.run(prompt), daemon };
+  const agent = agentId === undefined ? {} : { agentId };
+  const daemon = await daemonOf({ reply, ...agent });
+  return { outcome: await runtimeFor(daemon, agent).run(prompt), daemon };
 }
 
-// Finding 3's counts: call n of request k costs 1000n + k in and 10n out, so the first three calls
-// total 1013, 2024 and 3035 tokens, 6072 together, and a fourth would add 4046.
 const fourCalls: readonly ModelCall[] = [
   { input: 1003, output: 10, stopReason: "toolUse" },
   { input: 2004, output: 20, stopReason: "toolUse" },

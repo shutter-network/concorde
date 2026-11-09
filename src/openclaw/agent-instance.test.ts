@@ -6,7 +6,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it, type TestContext } from "node:test";
 import { promisify } from "node:util";
-import type { RunOutcome } from "../signals/runtime.ts";
 import {
   addHostToGateway,
   openClawImage,
@@ -19,6 +18,7 @@ import {
   type ModelRequest,
   startMockModel,
 } from "../test-support/mock-model.ts";
+import { failure, silent } from "../test-support/openclaw-runtime.ts";
 import { waitUntil } from "../test-support/wait.ts";
 import { createOpenClawRuntime } from "./runtime.ts";
 
@@ -30,17 +30,6 @@ const agentId = "concorde";
 const insidePort = 18789;
 const insideState = "/home/node/.openclaw";
 
-const silent = {
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-};
-
-// The daemon's one configuration file: a local-mode daemon bound to every interface so the
-// published port reaches it, token auth, the browser UI off, and the scripted model as its only
-// provider. `skipBootstrap` keeps the daemon from writing its own AGENTS.md into the Workspace,
-// and the minimal tool profile leaves the model one tool, which a text answer never calls.
 function daemonConfig(modelBaseUrl: string): Record<string, unknown> {
   return {
     gateway: {
@@ -77,7 +66,7 @@ function daemonConfig(modelBaseUrl: string): Record<string, unknown> {
         workspace: `${insideState}/workspace`,
         skipBootstrap: true,
       },
-      entries: { [agentId]: { name: "Concorde", default: true } },
+      entries: { [agentId]: { name: "Concorde" } },
     },
     tools: { profile: "minimal" },
   };
@@ -85,7 +74,6 @@ function daemonConfig(modelBaseUrl: string): Record<string, unknown> {
 
 type Daemon = {
   readonly url: string;
-  /** Runs the daemon's own CLI inside the container and returns what it printed. */
   cli(...args: string[]): Promise<string>;
 };
 
@@ -93,8 +81,7 @@ async function startDaemon(t: TestContext, modelBaseUrl: string): Promise<Daemon
   const state = await mkdtemp(path.join(tmpdir(), "concorde-openclaw-"));
   t.after(() => rm(state, { recursive: true, force: true }));
   await mkdir(path.join(state, "workspace"));
-  // The image runs as its own `node` user and dies at once under `--user <host uid>`, so the
-  // state directory is opened to that user instead of the container being run as ours.
+  // The image requires its own node user. Allow it to write to these host-owned test directories.
   await Promise.all([chmod(state, 0o777), chmod(path.join(state, "workspace"), 0o777)]);
   await writeFile(
     path.join(state, "openclaw.json"),
@@ -153,11 +140,6 @@ async function healthy(port: number): Promise<boolean> {
   }
 }
 
-function failure(outcome: RunOutcome): string {
-  assert.equal(outcome.ok, false, `this Run should have failed; it was ${JSON.stringify(outcome)}`);
-  return outcome.ok ? "" : outcome.error;
-}
-
 const firstPrompt = "This is the first Prompt.";
 const secondPrompt = "This is the second Prompt.";
 const thirdPrompt = "This is the third Prompt.";
@@ -165,14 +147,11 @@ const firstAnswer = "Noted: the first Prompt.";
 const secondAnswer = "Noted: the second Prompt.";
 const thirdAnswer = "Noted: the third Prompt, after a look at the session.";
 
-// The daemon hands each Prompt to the model behind a timestamp, so a text is looked for inside a
-// message and never equal to one.
+// OpenClaw prepends a timestamp to prompt text, so exact equality would miss it.
 function heard(request: ModelRequest, text: string): boolean {
   return request.texts.some((message) => message.includes(text));
 }
 
-// The third Prompt is answered in two calls: the one tool the minimal profile leaves the model,
-// then the reply once its result is in the conversation. The Run's limit never lets it get there.
 function scripted(request: ModelRequest): ModelReply {
   if (heard(request, thirdPrompt)) {
     return request.messages.some((message) => message.role === "tool")
@@ -182,8 +161,6 @@ function scripted(request: ModelRequest): ModelReply {
   return { say: heard(request, secondPrompt) ? secondAnswer : firstAnswer };
 }
 
-// What the scripted model's one answer per Run costs, as the daemon reports it: the counts the
-// model sent, the provider and model the daemon resolved, and a cost of zero from the price table.
 const oneCall = {
   provider: "mock",
   model: "mock-model",
@@ -243,10 +220,7 @@ describe("a real OpenClaw daemon in a container", { skip }, () => {
       "the first Run's one answer should be the only assistant message before the second Prompt",
     );
 
-    // The third Run's first call, the tool call, costs two tokens against a limit of one, so its
-    // record sends the abort while the daemon is running the tool or streaming the second call.
-    // The daemon ends the Run as aborted, the second call's usage never reaches the wire, and the
-    // Run's Usage is the one call that finished: below the cap it was stopped for.
+    // Abort can race with the next model call. Only the completed call's usage is reported.
     const third = await runtime.run({ session: "user_42", text: thirdPrompt, usageLimit: 1 });
     assert.deepEqual(third, {
       ok: false,
