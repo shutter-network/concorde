@@ -1,0 +1,24 @@
+{
+  "gateway": {
+    "mode": "local",
+    "bind": "lan",
+    "port": 18789,
+    "auth": { "mode": "token", "token": "${OPENCLAW_GATEWAY_TOKEN}" },
+    "controlUi": { "enabled": false }
+  },
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "anthropic": { "apiKey": "${ANTHROPIC_API_KEY}" }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": "anthropic/claude-sonnet-5",
+      "workspace": "/home/node/.openclaw/workspace",
+      "skipBootstrap": true
+    },
+    "entries": { "concorde": { "name": "Concorde" } }
+  },
+  "tools": { "profile": "minimal", "alsoAllow": ["exec"] }
+}
