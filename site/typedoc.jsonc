@@ -16,6 +16,7 @@
     "../src/db/index.ts",
     "../src/signals/index.ts",
     "../src/pi/index.ts",
+    "../src/openclaw/index.ts",
     "../src/users/index.ts",
     "../src/password-auth/index.ts",
     "../src/nostr-auth/index.ts",

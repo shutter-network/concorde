@@ -22,6 +22,17 @@ const confinements = [
   { library: "nostr-tools/core", specifier: "nostr-tools/core", owner: "nostr-auth" },
   { library: "nostr-tools/pure", specifier: "nostr-tools/pure", owner: "nostr-auth" },
   { library: "nostr-tools/nip98", specifier: "nostr-tools/nip98", owner: "nostr-auth" },
+  { library: "@openclaw/gateway-client", specifier: "@openclaw/gateway-client", owner: "openclaw" },
+  {
+    library: "@openclaw/gateway-protocol",
+    specifier: "@openclaw/gateway-protocol",
+    owner: "openclaw",
+  },
+  {
+    library: "@openclaw/gateway-protocol/version",
+    specifier: "@openclaw/gateway-protocol/version",
+    owner: "openclaw",
+  },
 ] as const;
 
 function refusesImport(directory: string, specifier: string): boolean {
@@ -68,5 +79,12 @@ describe("a library confined to the component that owns it", () => {
   it("lets the test support import the Nostr libraries, because the fake Relay is one", () => {
     assert.equal(refusesImport(path.join("src", "test-support"), "@nostrify/nostrify"), false);
     assert.equal(refusesImport(path.join("src", "test-support"), "nostr-tools/pure"), false);
+  });
+
+  it("lets the test support import the OpenClaw packages, so a scripted daemon may speak the wire", () => {
+    assert.equal(
+      refusesImport(path.join("src", "test-support"), "@openclaw/gateway-protocol"),
+      false,
+    );
   });
 });

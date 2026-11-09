@@ -29,8 +29,9 @@ the gateway manages their lifecycle.
 ![Gateway components and their connections to the agent instance, a user client, and a Nostr relay.](./site/public/architecture.svg)
 
 The two channels in the diagram are alternatives: a messenger currently accepts one channel.
-You run the agent instance separately. The included pi runtime connects to it over RPC; it does
-not configure the model, credentials, tools, or container.
+You run the agent instance separately. Use the pi runtime for a pi RPC listener or the
+OpenClaw runtime for the authenticated WebSocket connection to the OpenClaw daemon. The operator
+configures the model, credentials, tools, and container.
 
 ## Try it
 
@@ -73,12 +74,14 @@ from the registry rather than this checkout.
 | [Nostr](./examples/03_nostr/) | Encrypted direct messages through a local relay |
 | [Agent isolation](./examples/04_agent_isolation/) | Restricted agent networking, a model proxy that holds the credential, and per-run rules enforced by run tag |
 | [Usage limits](./examples/05_usage_limits/) | Two users, each with a daily token limit |
+| [OpenClaw](./examples/06_openclaw/) | The minimal application with the OpenClaw daemon as the agent implementation, paired once by device key |
 
 ## Deployment boundaries
 
-All parties must trust the operator. The agent server and agent RPC listener are privileged,
-unauthenticated endpoints; keep them on a private network. Configure agent permissions, TLS,
-rate limiting, secret management, and backups for your application.
+All parties must trust the operator. Keep the agent server and agent instance on a private
+network. The agent server and a pi RPC listener accept connections without authentication. The
+OpenClaw daemon requires authentication but also provides privileged access to the agent. Configure
+agent permissions, TLS, rate limiting, secret management, and backups for your application.
 
 Concorde does not prevent prompt injection or enforce confidentiality between users. Use `quote`
 to mark user message boundaries in prompts and reduce prompt injection risk. A valid

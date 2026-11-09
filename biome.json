@@ -51,6 +51,7 @@
         "!src/signatures/**",
         "!src/nostr-channel/**",
         "!src/nostr-auth/**",
+        "!src/openclaw/**",
         "!src/test-support/**"
       ],
       "linter": {
@@ -67,6 +68,10 @@
                   {
                     "group": ["nostr-tools", "nostr-tools/**", "@nostrify/**"],
                     "message": "Nostr belongs to the two parts that speak it, the Nostr Channel and Nostr Auth, the way pg belongs to the Db: nothing from either library crosses this framework's API boundary, so they are ordinary dependencies rather than peers, and a third part reaching for one would make them something a consumer has to install. src/test-support/** is exempt too, because a real client is the only thing that proves the fake Relay is a Relay and a real signer the only thing that proves a NIP-98 forgery is refused."
+                  },
+                  {
+                    "group": ["@openclaw/**"],
+                    "message": "Import OpenClaw packages only in src/openclaw/** or src/test-support/**. The OpenClaw runtime owns the protocol; other components must remain independent of the agent implementation."
                   }
                 ]
               }

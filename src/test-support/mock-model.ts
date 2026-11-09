@@ -13,9 +13,12 @@ export type ModelRequest = {
   readonly texts: readonly string[];
 };
 
+export type ToolCall = { readonly name: string; readonly arguments: Record<string, unknown> };
+
 export type ModelReply =
   | { readonly say: string }
   | { readonly bash: string }
+  | { readonly call: ToolCall }
   | { readonly refuse: { readonly status: number; readonly message: string } };
 
 export type MockModel = {
@@ -98,7 +101,7 @@ function textOf(content: unknown): string {
     .join("");
 }
 
-function stream(answer: { readonly say: string } | { readonly bash: string }): string[] {
+function stream(answer: Exclude<ModelReply, { readonly refuse: unknown }>): string[] {
   const chunks = [frame({ index: 0, delta: { role: "assistant", content: "" } })];
   if ("say" in answer) {
     chunks.push(
@@ -106,6 +109,8 @@ function stream(answer: { readonly say: string } | { readonly bash: string }): s
       frame({ index: 0, delta: {}, finish_reason: "stop" }),
     );
   } else {
+    const call: ToolCall =
+      "bash" in answer ? { name: "bash", arguments: { command: answer.bash } } : answer.call;
     chunks.push(
       frame({
         index: 0,
@@ -115,7 +120,7 @@ function stream(answer: { readonly say: string } | { readonly bash: string }): s
               index: 0,
               id: "call_1",
               type: "function",
-              function: { name: "bash", arguments: JSON.stringify({ command: answer.bash }) },
+              function: { name: call.name, arguments: JSON.stringify(call.arguments) },
             },
           ],
         },

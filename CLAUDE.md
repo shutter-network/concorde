@@ -38,9 +38,12 @@ Docker or the network:
   every `exports` subpath resolves there for Node *and* the type checker. It is also the only thing
   anywhere that holds the fourteen table names apart, and the only proof that the root still
   resolves to nothing.
-- **`npm run test:container`** is the single end-to-end test: a real container running real `pi`
-  against the real Agent server, with a scripted model on localhost, so it needs no model
-  credentials. About ten seconds. `CONCORDE_CONTAINER_TESTS` opts in.
+- **`npm run test:container`** runs both agent implementations in containers against a scripted
+  model, without model credentials. `src/pi/agent-instance.test.ts` covers pi;
+  `src/openclaw/agent-instance.test.ts` covers pairing, session continuity, usage, and usage limits
+  against the image pinned in `src/test-support/docker.ts`. Run these when changing a runtime or
+  upgrading an agent implementation: the scripted daemons cannot detect protocol drift.
+  `CONCORDE_CONTAINER_TESTS` opts in.
 - **`npm run check:docs`** regenerates `site/reference`, asserts every page still holds a
   preformatted block with a link inside it, and builds the site.
 
@@ -124,9 +127,9 @@ Four ways that fails quietly, all of them a deployment's to get right:
   Declared by the Messenger, the Nostr Channel (two), Password Auth (two) and Nostr Auth, in the
   `references(() => users.id)` calls. `src/schemas.test.ts` pushes every part's schema together,
   which is what keeps the assembled set honest.
-- **Three libraries are confined to the component that owns each, in one Biome `overrides`
-  entry.** `pg` is the Db's, `jose` is Signatures', and `nostr-tools`/`@nostrify/nostrify` belong to
-  the two parts that speak Nostr. **Add a confinement to that entry and never as a second one**:
+- **Keep library import restrictions in one Biome `overrides` entry.** `pg` belongs to the db,
+  `jose` to signatures, `nostr-tools`/`@nostrify/nostrify` to the Nostr channel and Nostr auth,
+  and `@openclaw/*` to the OpenClaw runtime. **Extend that entry instead of adding another**:
   Biome applies the *last* matching entry per rule and **replaces** its configuration rather than
   merging, so a second entry naming the same rule silently disables the first. A `//` comment
   anywhere in `biome.json` disables the overrides too, with no parse error. Neither says anything on
@@ -174,20 +177,30 @@ Four ways that fails quietly, all of them a deployment's to get right:
   the previous connection happened to leave open. `success: true` carrying `cancelled: true`, which
   is an extension of the Operator's refusing the switch, is the same failure by a documented route
   and is refused two lines above it.
-- **`sessionNames` in `src/pi/runtime.ts` is a transcription of `pi`'s own `assertValidSessionId`,
-  and nothing anywhere checks that it still matches.** The framework never had to carry one before:
-  `pi` was handed `--session-id` and refused a bad one itself, with its own message. A Session is
-  addressed **by path** over RPC now and `pi` opens any path it is handed, so the grammar has to
-  live on this side and a copy goes stale in silence. It is also the whole of the traversal
-  argument, there being no `/` in it and both ends required to be alphanumeric, so nothing resolves
-  a path and compares it against a prefix. Widening that character class is therefore a Signal
-  Handler's Session name climbing out of `sessionsDir` and not a cosmetic edit; re-read
-  `core/session-manager` against it whenever the pinned `pi` version moves.
+- **Keep `sessionNames` in `src/pi/runtime.ts` aligned with pi's `assertValidSessionId`.**
+  pi opens any session path it receives, so this check also prevents a session name from escaping
+  `sessionsDir`. Review it against `core/session-manager` when upgrading pi. Other runtimes define
+  their own restrictions; all must accept `run_<uuid>` for a fresh session.
+- **Review OpenClaw's session-key normalization when upgrading `openClawImage`.**
+  `refusedSessionName` prevents distinct session names from resolving to one session. The scripted
+  daemon does not reproduce normalization, so unit tests cannot detect changes to those rules.
+- **Keep `deliver: false` on `chat.send`.** Enabling OpenClaw's own delivery could send replies
+  outside the messenger and leave them out of the message log.
+- **Pass an explicit `deviceIdentity` and supply the crypto `hostDeps` in
+  `src/openclaw/connection.ts`.** The client's default identity loader returns no identity. A
+  token-only connection can complete the handshake with zero scopes, then fail every run method
+  with `MISSING_SCOPE` without opening a pairing request. The crypto hook defaults throw.
+- **Subscribe to session messages before `chat.send` and filter frames by `runId`.**
+  Late subscriptions miss usage records; broadcasts include other runs. The runtime tests cover
+  request ordering and unrelated frames; the container test checks the real subscription behavior.
 - **`src/chat-tui/` is the one shipped directory that is not a subpath.** It is a `bin`, so
   the export map is untouched. **It has zero dependencies and must keep them**: a dependency added
   here lands in every consumer's install, and the answer to needing one is a second package.
 - **`dependencies` carry caret ranges; `devDependencies` are pinned exactly.** The lockfile is
   committed, so exact pins in `dependencies` buy nothing and cost a consumer duplicate installs.
+  OpenClaw's calendar-versioned caret ranges allow updates within the same year. Protocol-version
+  negotiation rejects incompatible protocol versions, but cannot detect behavior changes within
+  one version. Check client updates against the pinned `openClawImage` with the container test.
 - **Anything shipped is proven by `npm run check:package`, not by reading `files`.** Every public
   export must appear in the annotated `main.ts` that check writes, and anything reaching for a new
   runtime dependency must be *imported and called* in its runtime step — that is what proves the

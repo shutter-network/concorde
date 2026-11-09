@@ -32,8 +32,9 @@ such as `@shutter-network/concorde/messenger`.
 ## Understand the trust model
 
 Users access the gateway rather than the agent instance. The operator controls both and is
-trusted by all parties. The agent server and the agent instance's RPC listener require private
-network access: neither authenticates callers.
+trusted by all parties. Keep the agent server and agent instance on a private network. The
+agent server and a pi RPC listener accept unauthenticated connections. The OpenClaw daemon
+requires authentication and provides privileged access to the agent.
 
 Concorde does not prevent prompt injection or enforce confidentiality between users.
 Read [deployment responsibilities](./architecture#deployment-responsibilities) before exposing

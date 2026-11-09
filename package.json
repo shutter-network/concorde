@@ -40,6 +40,10 @@
       "types": "./dist/pi/index.d.ts",
       "default": "./dist/pi/index.js"
     },
+    "./openclaw": {
+      "types": "./dist/openclaw/index.d.ts",
+      "default": "./dist/openclaw/index.js"
+    },
     "./users": {
       "types": "./dist/users/index.d.ts",
       "default": "./dist/users/index.js"
@@ -119,7 +123,7 @@
     "lint": "biome check .",
     "format": "biome check --write .",
     "test": "node --test \"src/**/*.test.ts\"",
-    "test:container": "CONCORDE_CONTAINER_TESTS=1 node --test \"src/pi/agent-instance.test.ts\"",
+    "test:container": "CONCORDE_CONTAINER_TESTS=1 node --test \"src/pi/agent-instance.test.ts\" \"src/openclaw/agent-instance.test.ts\"",
     "check": "npm run typecheck && npm run build && npm run lint && npm test",
     "check:package": "node scripts/check-package.ts",
     "extract:routes": "node scripts/reference/extract-routes.ts",
@@ -145,6 +149,8 @@
     "@fastify/swagger": "^9.8.1",
     "@fastify/swagger-ui": "^6.1.1",
     "@nostrify/nostrify": "^0.54.0",
+    "@openclaw/gateway-client": "^2026.8.1",
+    "@openclaw/gateway-protocol": "^2026.8.1",
     "cron-parser": "^5.7.0",
     "handlebars": "^4.7.9",
     "jose": "^6.2.8",

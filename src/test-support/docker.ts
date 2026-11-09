@@ -13,6 +13,8 @@ export const addHostToGateway = `--add-host=${hostFromContainer}:host-gateway`;
 
 export const piImageTag = "concorde-pi-test:0.85.1";
 
+export const openClawImage = "ghcr.io/openclaw/openclaw:2026.8.1";
+
 export async function skipContainerTests(): Promise<string | false> {
   if (process.env[containerTestsVariable] === undefined) {
     return `set ${containerTestsVariable}=1 to run the container tests (npm run test:container); they need Docker, the network, and about ten seconds`;

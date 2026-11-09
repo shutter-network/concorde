@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import { after, describe, it } from "node:test";
 import type { RunOutcome, RunPrompt } from "../signals/runtime.ts";
@@ -230,6 +231,16 @@ describe("a Session name outside pi's grammar", () => {
       assert.deepEqual(withoutUsage(outcome), { ok: true }, session);
       assert.equal(instance.received[0]?.sessionPath, `/sessions/${session}.jsonl`);
     }
+  });
+});
+
+describe("the fresh Session the Signal Worker mints", () => {
+  it("is accepted by name, so a Prompt asking for a fresh Session works under this Runtime", async () => {
+    const session = `run_${randomUUID()}`;
+    const { outcome, instance } = await runAgainst(scriptedInstance(), { session, text: "hello" });
+
+    assert.deepEqual(withoutUsage(outcome), { ok: true }, session);
+    assert.equal(instance.received[0]?.sessionPath, `/sessions/${session}.jsonl`);
   });
 });
 
