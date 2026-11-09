@@ -160,8 +160,10 @@ function failure(outcome: RunOutcome): string {
 
 const firstPrompt = "This is the first Prompt.";
 const secondPrompt = "This is the second Prompt.";
+const thirdPrompt = "This is the third Prompt.";
 const firstAnswer = "Noted: the first Prompt.";
 const secondAnswer = "Noted: the second Prompt.";
+const thirdAnswer = "Noted: the third Prompt, after a look at the session.";
 
 // The daemon hands each Prompt to the model behind a timestamp, so a text is looked for inside a
 // message and never equal to one.
@@ -169,7 +171,14 @@ function heard(request: ModelRequest, text: string): boolean {
   return request.texts.some((message) => message.includes(text));
 }
 
+// The third Prompt is answered in two calls: the one tool the minimal profile leaves the model,
+// then the reply once its result is in the conversation. The Run's limit never lets it get there.
 function scripted(request: ModelRequest): ModelReply {
+  if (heard(request, thirdPrompt)) {
+    return request.messages.some((message) => message.role === "tool")
+      ? { say: thirdAnswer }
+      : { call: { name: "session_status", arguments: {} } };
+  }
   return { say: heard(request, secondPrompt) ? secondAnswer : firstAnswer };
 }
 
@@ -232,6 +241,30 @@ describe("a real OpenClaw daemon in a container", { skip }, () => {
       assistantMessages(continued),
       1,
       "the first Run's one answer should be the only assistant message before the second Prompt",
+    );
+
+    // The third Run's first call, the tool call, costs two tokens against a limit of one, so its
+    // record sends the abort while the daemon is running the tool or streaming the second call.
+    // The daemon ends the Run as aborted, the second call's usage never reaches the wire, and the
+    // Run's Usage is the one call that finished: below the cap it was stopped for.
+    const third = await runtime.run({ session: "user_42", text: thirdPrompt, usageLimit: 1 });
+    assert.deepEqual(third, {
+      ok: false,
+      error: "Session user_42: Usage limit reached: 2 of 1 tokens",
+      limited: true,
+      usage: [oneCall],
+    });
+    const limitedCalls = model.requests.length - 2;
+    assert.ok(
+      limitedCalls === 1 || limitedCalls === 2,
+      `the limited Run should make its first call and at most start a second; it made ${limitedCalls}`,
+    );
+    assert.ok(
+      model.requests.slice(2).every((request) => heard(request, thirdPrompt)),
+      "every call of the limited Run should carry the third Prompt",
+    );
+    t.diagnostic(
+      `the limited Run reached the model ${limitedCalls} time(s) before the abort landed`,
     );
 
     t.diagnostic(`wall time ${Math.round(performance.now() - started)}ms`);

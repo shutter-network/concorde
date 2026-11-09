@@ -371,11 +371,17 @@ export function settledRun(
   said = "I did it.",
   between: readonly Written[] = [],
 ): readonly Written[] {
+  return [...runStatuses, ...between, ...runReply(said)];
+}
+
+const runStatuses: readonly Written[] = [
+  { event: "chat", payload: { seq: 1, state: "status", phase: "preparing_workspace" } },
+  { event: "chat", payload: { seq: 2, state: "status", phase: "preparing_context" } },
+  { event: "chat", payload: { seq: 4, state: "status", phase: "starting_model" } },
+];
+
+function runReply(said: string): readonly Written[] {
   return [
-    { event: "chat", payload: { seq: 1, state: "status", phase: "preparing_workspace" } },
-    { event: "chat", payload: { seq: 2, state: "status", phase: "preparing_context" } },
-    { event: "chat", payload: { seq: 4, state: "status", phase: "starting_model" } },
-    ...between,
     {
       event: "chat",
       payload: {
@@ -538,30 +544,157 @@ export const refusedCall: ModelCall = {
  * `session.message` record.
  */
 export function modelCalls(...calls: readonly ModelCall[]): readonly Written[] {
-  const frames: Written[] = [
+  const frames: Written[] = [promptRecord];
+  let outputTokens = 0;
+  for (const call of calls) {
+    outputTokens += call.output;
+    frames.push(...callFrames(call, outputTokens, frames.length));
+  }
+  return frames;
+}
+
+const promptRecord: Written = {
+  event: "session.message",
+  payload: {
+    message: {
+      role: "user",
+      content: [{ type: "text", text: "what happened?" }],
+      timestamp: 1794180731000,
+    },
+  },
+};
+
+// The daemon emits the running output total the moment a call's stream ends, nothing for a call
+// that produced no output, and the call's record after it.
+function callFrames(call: ModelCall, outputTokens: number, seq: number): readonly Written[] {
+  return [
+    ...(call.output > 0
+      ? [{ event: "agent", payload: { stream: "usage", data: { outputTokens }, seq } }]
+      : []),
+    modelCall(call),
+  ];
+}
+
+/**
+ * What the daemon sent once `chat.abort` stopped a Run while a model call was in flight
+ * (Finding 5): the `aborted` terminal with `stopReason: "rpc"` carrying what the call had streamed
+ * so far, the lifecycle end, two all-zero transcript records for the cut call, and the lifecycle
+ * error that follows for the same Run and is not a second failure. The cut call's usage is in
+ * none of them: the daemon closed the provider's stream before its usage chunk.
+ */
+export function abortedFrames(streamed = "word0"): readonly Written[] {
+  const partial = { role: "assistant", content: [{ type: "text", text: streamed }], timestamp: 3 };
+  return [
+    { event: "chat", payload: { seq: 11, state: "aborted", stopReason: "rpc", message: partial } },
     {
-      event: "session.message",
+      event: "agent",
+      payload: { stream: "lifecycle", data: { phase: "end", stopReason: "rpc", aborted: true } },
+    },
+    modelCall({
+      input: 0,
+      output: 0,
+      provider: "openclaw",
+      model: "gateway-injected",
+      content: partial.content,
+    }),
+    modelCall({ input: 0, output: 0, stopReason: "aborted", content: [] }),
+    {
+      event: "agent",
       payload: {
-        message: {
-          role: "user",
-          content: [{ type: "text", text: "what happened?" }],
-          timestamp: 1794180731000,
+        stream: "lifecycle",
+        data: {
+          phase: "error",
+          stopReason: "aborted",
+          aborted: true,
+          error: "This operation was aborted",
         },
       },
     },
   ];
-  let outputTokens = 0;
-  for (const call of calls) {
-    outputTokens += call.output;
-    if (call.output > 0) {
-      frames.push({
-        event: "agent",
-        payload: { stream: "usage", data: { outputTokens }, seq: frames.length },
-      });
+}
+
+export type AbortableRunOptions = {
+  /** The reply the Run ends with when nothing stops it. */
+  readonly said?: string;
+  /** How long each call after the first is in flight: the window in which an abort lands. */
+  readonly holdMs?: number;
+};
+
+type LiveRun = { readonly sessionKey: string; readonly stopped: PromiseWithResolvers<void> };
+
+/**
+ * A daemon whose Run can be stopped between its model calls, as the real one was. After each
+ * call's record the Run holds for `holdMs`, the time the next call would be in flight; a
+ * `chat.abort` naming the Run and its Session that arrives in that window ends it with
+ * `abortedFrames`, and the calls not yet made never start. Left alone, the Run plays every call
+ * and finishes with `said`. The abort is answered as the daemon answers it:
+ * `{ ok: true, aborted: true, runIds: [runId] }` for a Run it stopped, `runIds: []` for one it
+ * does not know or that had already ended.
+ */
+export function abortableDaemon(
+  calls: readonly ModelCall[],
+  options: AbortableRunOptions = {},
+): DaemonReply {
+  const said = options.said ?? "Done.";
+  const holdMs = options.holdMs ?? 250;
+  const live = new Map<string, LiveRun>();
+  const scripted = scriptedDaemon();
+
+  async function* play(ack: Written, runId: string, run: LiveRun): AsyncIterable<Written> {
+    const stamp = (written: Written): Written => stamped(written, runId, run.sessionKey);
+    yield ack;
+    yield* runStatuses.map(stamp);
+    yield stamp(promptRecord);
+    let outputTokens = 0;
+    for (const [index, call] of calls.entries()) {
+      if (index > 0 && (await stoppedWithin(holdMs, run.stopped.promise))) {
+        live.delete(runId);
+        yield* abortedFrames().map(stamp);
+        return;
+      }
+      outputTokens += call.output;
+      yield* callFrames(call, outputTokens, 5 + index).map(stamp);
     }
-    frames.push(modelCall(call));
+    live.delete(runId);
+    yield* runReply(said).map(stamp);
   }
-  return frames;
+
+  return (request, connection) => {
+    const ok = (payload: Written): Written => ({ type: "res", id: request.id, ok: true, payload });
+    switch (request.method) {
+      case "chat.send": {
+        const runId = randomUUID();
+        const run: LiveRun = {
+          sessionKey: canonicalKey(request.params.sessionKey, request.params.agentId, connection),
+          stopped: Promise.withResolvers<void>(),
+        };
+        live.set(runId, run);
+        return play(ok({ runId, status: "started" }), runId, run);
+      }
+      case "chat.abort": {
+        const runId = request.params.runId;
+        const run = typeof runId === "string" ? live.get(runId) : undefined;
+        const key = canonicalKey(request.params.sessionKey, request.params.agentId, connection);
+        if (run === undefined || run.sessionKey !== key) {
+          return [ok({ ok: true, aborted: false, runIds: [] })];
+        }
+        run.stopped.resolve();
+        return [ok({ ok: true, aborted: true, runIds: [runId] })];
+      }
+      default:
+        return scripted(request, connection);
+    }
+  };
+}
+
+function stoppedWithin(ms: number, stopped: Promise<void>): Promise<boolean> {
+  return new Promise((settle) => {
+    const timer = setTimeout(() => settle(false), ms);
+    void stopped.then(() => {
+      clearTimeout(timer);
+      settle(true);
+    });
+  });
 }
 
 // The daemon stores a bare key as `agent:<agentId>:<key>`, under the agent id it was sent or its

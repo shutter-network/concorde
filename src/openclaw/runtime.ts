@@ -70,6 +70,18 @@ export type OpenClawDaemon = {
  * charged nothing. Usage for a call in flight when the Run was aborted does not exist on the wire
  * and is not reported. The daemon's session-level usage method is never called: it reports per
  * Session, not per Run, and would count turns that were never ours.
+ *
+ * A Prompt's `usageLimit` is enforced as the Run streams: each record's tokens are added to the
+ * Run's total as it arrives, and the record that takes the total past the limit sends the
+ * daemon's `chat.abort` for this Run. The daemon stops the Run within one of its event-loop turns
+ * and starts no further model call, so the overshoot is the one call in flight when the abort
+ * lands, as under pi. That call's usage never reaches the wire: the daemon cuts the provider's
+ * stream before the usage chunk, and the records it writes for the cut call afterwards are all
+ * zero and follow the `aborted` frame. A limited Run's recorded Usage can therefore be below the
+ * cap it was stopped for, by the whole of the stopped call. The Run fails with `limited: true`,
+ * the reports collected until the terminal frame, and the Session keeps its history. A Run that
+ * finished or failed before the abort landed is still limited, and its message says so; an abort
+ * the Runtime did not send fails the Run without `limited`.
  */
 export function createOpenClawRuntime(daemon: OpenClawDaemon): Runtime {
   const { url, token, deviceKey, agentId } = daemon;
@@ -129,7 +141,7 @@ export function createOpenClawRuntime(daemon: OpenClawDaemon): Runtime {
       log.debug({ session: prompt.session, url }, "connected to the OpenClaw daemon");
 
       try {
-        return await performRun(connection, prompt, agentId, failed);
+        return await performRun(connection, prompt, agentId, failed, log);
       } catch (error) {
         return failed(messageOf(error));
       } finally {
@@ -148,6 +160,7 @@ async function performRun(
   prompt: RunPrompt,
   agentId: string | undefined,
   failed: (why: string) => RunOutcome,
+  log: Logger,
 ): Promise<RunOutcome> {
   const agent = agentId === undefined ? {} : { agentId };
 
@@ -166,47 +179,94 @@ async function performRun(
     return failed(`chat.send answered without a run id: ${JSON.stringify(started)}`);
   }
 
-  return followRun(connection, started.runId, failed);
+  const run: StartedRun = { sessionKey: prompt.session, ...agent, runId: started.runId };
+  return followRun(connection, run, prompt.usageLimit, failed, log);
 }
+
+/** How the daemon addresses a Run it started: the parameters `chat.abort` takes. */
+type StartedRun = {
+  readonly sessionKey: string;
+  readonly agentId?: string;
+  readonly runId: string;
+};
 
 // Every connection with operator.read receives every Run's chat frames, so a frame belongs to this
 // Run only by its runId. A failed Run sends two error frames; the first terminal frame ends it.
 // The Run's Usage is the session.message records collected until then: every record of a Run
-// arrived before its terminal frame in every observed Run, so nothing waits after it.
+// arrived before its terminal frame in every observed Run, so nothing waits after it. Each record
+// is added to the Run's total as it arrives, and the one that takes the total past the limit sends
+// the abort; the daemon then ends the Run with an `aborted` frame, and the Run fails as limited.
 async function followRun(
   connection: Connection,
-  runId: string,
+  run: StartedRun,
+  usageLimit: number | undefined,
   failed: (why: string) => RunOutcome,
+  log: Logger,
 ): Promise<RunOutcome> {
+  const { runId } = run;
   const usage: UsageReport[] = [];
-  const failedWithUsage = (why: string): RunOutcome => ({ ...failed(why), usage });
+  let used = 0;
+  let limited: string | undefined;
+  const ended = (why: string): RunOutcome => ({
+    ...failed(why),
+    usage,
+    ...(limited === undefined ? {} : { limited: true }),
+  });
 
   for await (const frame of connection.events()) {
     if (frame.event === "session.message") {
       const report = usageOf(frame.payload, runId);
-      if (report !== undefined) usage.push(report);
+      if (report === undefined) continue;
+      usage.push(report);
+      used += report.totalTokens;
+      if (limited === undefined && usageLimit !== undefined && used > usageLimit) {
+        limited = `Usage limit reached: ${used} of ${usageLimit} tokens`;
+        await abortRun(connection, run, log);
+      }
       continue;
     }
     if (frame.event !== "chat" || !isChatEvent(frame.payload) || frame.payload.runId !== runId) {
       continue;
     }
     const chat = frame.payload;
+    // After the abort the expected terminal is `aborted`; a Run that finished or failed before
+    // the abort landed is still over its limit, and the message says which it was.
     switch (chat.state) {
       case "final":
-        return { ok: true, usage };
-      case "error":
-        return failedWithUsage(
-          `The agent failed: ${chat.errorMessage ?? "the daemon gave no reason"}`,
+        return limited === undefined
+          ? { ok: true, usage }
+          : ended(`${limited}; the Run finished before the abort landed`);
+      case "error": {
+        const reason = chat.errorMessage ?? "the daemon gave no reason";
+        return ended(
+          limited === undefined
+            ? `The agent failed: ${reason}`
+            : `${limited}; the agent then failed: ${reason}`,
         );
+      }
       case "aborted":
-        return failedWithUsage(
-          `The Run was aborted${chat.errorMessage === undefined ? "" : `: ${chat.errorMessage}`}`,
+        return ended(
+          limited ??
+            `The Run was aborted${chat.errorMessage === undefined ? "" : `: ${chat.errorMessage}`}`,
         );
       default:
         continue;
     }
   }
-  return failedWithUsage(connection.closed() ?? "The connection closed before the Run ended");
+  return ended(connection.closed() ?? "The connection closed before the Run ended");
+}
+
+// The daemon acknowledges the abort and ends the Run within one of its event-loop turns; a refusal
+// leaves the Run to finish on its own, and it fails as limited at whichever terminal frame comes.
+async function abortRun(connection: Connection, run: StartedRun, log: Logger): Promise<void> {
+  try {
+    await connection.request("chat.abort", run);
+  } catch (error) {
+    log.warn(
+      { session: run.sessionKey, runId: run.runId, error: messageOf(error) },
+      "the daemon refused to abort the Run over its usage limit; following it to its end",
+    );
+  }
 }
 
 function isChatEvent(payload: unknown): payload is ChatEvent {
