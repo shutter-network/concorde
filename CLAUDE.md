@@ -124,9 +124,10 @@ Four ways that fails quietly, all of them a deployment's to get right:
   Declared by the Messenger, the Nostr Channel (two), Password Auth (two) and Nostr Auth, in the
   `references(() => users.id)` calls. `src/schemas.test.ts` pushes every part's schema together,
   which is what keeps the assembled set honest.
-- **Three libraries are confined to the component that owns each, in one Biome `overrides`
-  entry.** `pg` is the Db's, `jose` is Signatures', and `nostr-tools`/`@nostrify/nostrify` belong to
-  the two parts that speak Nostr. **Add a confinement to that entry and never as a second one**:
+- **Four libraries are confined to the component that owns each, in one Biome `overrides`
+  entry.** `pg` is the Db's, `jose` is Signatures', `nostr-tools`/`@nostrify/nostrify` belong to
+  the two parts that speak Nostr, and `@openclaw/*` to the OpenClaw Runtime. **Add a confinement to
+  that entry and never as a second one**:
   Biome applies the *last* matching entry per rule and **replaces** its configuration rather than
   merging, so a second entry naming the same rule silently disables the first. A `//` comment
   anywhere in `biome.json` disables the overrides too, with no parse error. Neither says anything on
