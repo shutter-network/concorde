@@ -3,6 +3,7 @@ import type { ChatEvent } from "@openclaw/gateway-protocol";
 import { defaultLogger, type Logger } from "../logging/index.ts";
 import type { RunOutcome, RunPrompt, Runtime, UsageReport } from "../signals/runtime.ts";
 import { type Connection, deviceIdentityOf, openConnection } from "./connection.ts";
+import { refusedSessionName } from "./session-names.ts";
 import { usageOf } from "./usage.ts";
 
 export type OpenClawDaemon = {
@@ -29,15 +30,32 @@ export type OpenClawDaemon = {
  * routes it to none of its channels, so a User hears from the agent through the Messenger alone.
  *
  * A Session name is the daemon's session key, passed through verbatim; the daemon stores it as
- * `agent:<agentId>:<name>`, under `agentId` or its sole agent when none is given. A blank name
- * fails the Run before a connection is opened, as does blank Prompt text. The `run_<uuid>` the
- * Signal Worker mints for a fresh Session is accepted unchanged.
+ * `agent:<agentId>:<name>`, under `agentId` or its sole agent when none is given. The names this
+ * Runtime accepts are its own grammar, decided from what the daemon does with a key: the daemon
+ * refuses an empty key and one over 512 characters, and it normalises the rest in silence, by
+ * lowercasing every key, trimming surrounding whitespace and folding `global` into `main`. So a
+ * name is refused, and the Run fails before a connection is opened, when it is blank or
+ * whitespace-only; over 512 characters; contains a colon, the daemon's key segment separator,
+ * which keeps the name one segment and the daemon's own `agent:`, `subagent:`, `cron:` and `acp:`
+ * forms out of a Handler's reach; is `main` or `global`, the agent's main Session, where the
+ * daemon's heartbeats and channel traffic go; contains an uppercase letter, since the daemon
+ * lowercases and `User_42` would silently share a Session with `user_42`; or has leading or
+ * trailing whitespace, which the daemon trims. Everything else is passed through: dots, dashes,
+ * underscores, slashes, spaces inside, non-ASCII and the `incognito-` prefix. The `run_<uuid>` the
+ * Signal Worker mints for a fresh Session is within the grammar and accepted unchanged. Blank
+ * Prompt text and a `usageLimit` that is not a positive whole number fail the Run the same way,
+ * before any connection.
  *
  * The daemon approves a device once. The first connection from a new key is refused with a pairing
- * request, which the Operator approves on the daemon host (`openclaw devices approve <requestId>`);
- * every later connection from the same key is accepted. The Runtime persists nothing of its own,
- * no key file and no device token. Construction throws if `deviceKey` is not an Ed25519 private
- * key, so the mistake fails `createGateway` and never a Signal.
+ * request, and the Run fails with the request id and the command that approves it on the daemon
+ * host (`openclaw devices approve <requestId>`); every later connection from the same key is
+ * accepted. The Runtime persists nothing of its own, no key file and no device token. Construction
+ * throws if `deviceKey` is not an Ed25519 private key, so the mistake fails `createGateway` and
+ * never a Signal.
+ *
+ * Every failure is an `ok: false` outcome and `run` throws nothing: a daemon that cannot be
+ * reached, a refused connection, a connection dropped mid-Run, and a Run the daemon ends with an
+ * error each fail the Run with the reason, and the connection is closed either way.
  *
  * The client package refuses plaintext `ws://` to a hostname that is not an IP literal,
  * `localhost`, `.local` or `.ts.net` unless the Gateway process has
@@ -85,18 +103,27 @@ export function createOpenClawRuntime(daemon: OpenClawDaemon): Runtime {
         usage: [],
       });
 
-      if (prompt.session.trim() === "") {
-        return failed("Session name must not be blank");
+      const refusedName = refusedSessionName(prompt.session);
+      if (refusedName !== undefined) {
+        return failed(refusedName);
       }
       if (prompt.text.trim() === "") {
         return failed("Prompt text must not be blank");
+      }
+      if (
+        prompt.usageLimit !== undefined &&
+        !(Number.isSafeInteger(prompt.usageLimit) && prompt.usageLimit > 0)
+      ) {
+        return failed(
+          `usageLimit must be a positive whole number of tokens; received ${String(prompt.usageLimit)}`,
+        );
       }
 
       let connection: Connection;
       try {
         connection = await openConnection({ url, token, identity, agentId });
       } catch (error) {
-        return failed(`Cannot connect to the OpenClaw daemon at ${url}: ${messageOf(error)}`);
+        return failed(`Cannot connect to the OpenClaw daemon at ${url}: ${connectRefusal(error)}`);
       }
 
       log.debug({ session: prompt.session, url }, "connected to the OpenClaw daemon");
@@ -189,6 +216,22 @@ function isChatEvent(payload: unknown): payload is ChatEvent {
     typeof (payload as { runId?: unknown }).runId === "string" &&
     typeof (payload as { state?: unknown }).state === "string"
   );
+}
+
+// The daemon refuses a key it has never seen with `details.code: "PAIRING_REQUIRED"` and the id of
+// the pairing request it opened; approving that id on the daemon host is the Operator's one step.
+function connectRefusal(error: unknown): string {
+  const details = (error as { details?: unknown })?.details;
+  if (
+    typeof details === "object" &&
+    details !== null &&
+    (details as { code?: unknown }).code === "PAIRING_REQUIRED"
+  ) {
+    const requestId = (details as { requestId?: unknown }).requestId;
+    const id = typeof requestId === "string" ? requestId : "<requestId>";
+    return `this Gateway's device key is not approved yet. On the daemon host run \`openclaw devices approve ${id}\` (pairing request ${id}), then the next Run connects`;
+  }
+  return messageOf(error);
 }
 
 function messageOf(error: unknown): string {

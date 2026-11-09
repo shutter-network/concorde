@@ -242,7 +242,7 @@ describe("the Prompt and the Session name, before any connection", () => {
   });
 
   it("passes the name through verbatim as the session key, prefixing nothing", async () => {
-    for (const session of ["user_42", "run_01K9-x.y", "a.b.c"]) {
+    for (const session of ["user_42", "run_01k9-x.y", "a.b.c"]) {
       const { outcome, daemon } = await runAgainst(scriptedDaemon(), { session, text: "hello" });
 
       assert.deepEqual(outcome, { ok: true, usage: [] }, session);
